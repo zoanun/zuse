@@ -1,8 +1,8 @@
-# Backlog
+# 待办点子
 
-Ideas that came up during development but aren't in scope for the current phase.
-Review at the end of each phase to decide if any are worth pulling forward.
+开发过程中冒出来、但不属于当前 phase 范围的想法。
+每个 phase 结束时回顾一遍，决定是否要拉进下一阶段。
 
-## Ideas
+## 点子
 
-- (none yet)
+- （暂无）
