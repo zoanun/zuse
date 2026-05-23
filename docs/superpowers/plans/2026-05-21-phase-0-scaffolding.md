@@ -784,6 +784,24 @@ git commit -m "docs: phase 0 complete, advance status"
 git push
 ```
 
+- [ ] **Step 10.4: Update main design document with fault mode reference**
+
+Add a reference to the supplement document in `2026-05-21-zuse-design.md`:
+At the end of section "8. 风险与未决问题", add:
+
+```markdown
+### 8.1 故障模式防御矩阵（参见补充文档）
+
+详细的故障模式防御矩阵见 [2026-05-23-zuse-design-supplement.md](./2026-05-23-zuse-design-supplement.md) 第一章。
+该矩阵定义了8个故障模式及其对应的Zuse应对措施和实现Phase。
+```
+
+Commit:
+```bash
+git add docs/superpowers/specs/2026-05-21-zuse-design.md
+git commit -m "docs: link fault mode matrix from supplement"
+```
+
 ---
 
 ## What's NOT in Phase 0 (deferred)
