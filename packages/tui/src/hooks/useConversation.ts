@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import type { UIMessage, ConversationState } from '../types.js'
-import type { StreamEvent, Usage, ModelClient } from '@zuse/core'
+import type { Usage, ModelClient } from '@zuse/core'
 
 interface UseConversationOptions {
   client: ModelClient
