@@ -6,4 +6,4 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
-Phase 0: Scaffolding.
+Phase 0: Done. Next: Phase 1 — single-turn conversation.
