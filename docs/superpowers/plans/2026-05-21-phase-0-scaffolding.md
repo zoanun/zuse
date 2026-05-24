@@ -53,6 +53,7 @@ zuse/
 ## Task 1: Repository housekeeping
 
 **Files:**
+
 - Create: `.gitignore`
 - Create: `README.md`
 - Create: `BACKLOG.md`
@@ -60,14 +61,17 @@ zuse/
 - [ ] **Step 1.1: Install pnpm via Volta**
 
 Run:
+
 ```bash
 volta install pnpm@9
 ```
+
 Expected: prints `success: installed and set pnpm@9.x.x as default` (or similar). Verify with `pnpm --version`, should print `9.x.x`.
 
 - [ ] **Step 1.2: Create `.gitignore`**
 
 Content:
+
 ```
 # deps
 node_modules/
@@ -99,6 +103,7 @@ coverage/
 - [ ] **Step 1.3: Create `README.md`**
 
 Content:
+
 ```markdown
 # Zuse
 
@@ -114,6 +119,7 @@ Phase 0: Scaffolding.
 - [ ] **Step 1.4: Create `BACKLOG.md`**
 
 Content:
+
 ```markdown
 # Backlog
 
@@ -137,12 +143,14 @@ git commit -m "chore: add gitignore, readme, backlog (phase 0.1)"
 ## Task 2: pnpm workspace and root package.json
 
 **Files:**
+
 - Create: `package.json` (root)
 - Create: `pnpm-workspace.yaml`
 
 - [ ] **Step 2.1: Create `pnpm-workspace.yaml`**
 
 Content:
+
 ```yaml
 packages:
   - 'packages/*'
@@ -151,6 +159,7 @@ packages:
 - [ ] **Step 2.2: Create root `package.json`**
 
 Content:
+
 ```json
 {
   "name": "zuse-monorepo",
@@ -189,17 +198,21 @@ Content:
 - [ ] **Step 2.3: Install dependencies**
 
 Run:
+
 ```bash
 pnpm install
 ```
+
 Expected: creates `node_modules/` and `pnpm-lock.yaml`. No errors.
 
 - [ ] **Step 2.4: Verify pnpm sees the (currently empty) workspace**
 
 Run:
+
 ```bash
 pnpm list --depth=-1
 ```
+
 Expected: shows root package `zuse-monorepo@0.0.0` and the dev dependencies. No workspace packages yet (we add them in later tasks).
 
 - [ ] **Step 2.5: Commit**
@@ -214,12 +227,14 @@ git commit -m "chore: pnpm workspace + root deps (phase 0.1)"
 ## Task 3: Shared TypeScript and Prettier config
 
 **Files:**
+
 - Create: `tsconfig.base.json`
 - Create: `.prettierrc.json`
 
 - [ ] **Step 3.1: Create `tsconfig.base.json`**
 
 Content:
+
 ```json
 {
   "compilerOptions": {
@@ -248,6 +263,7 @@ Content:
 ```
 
 Notes:
+
 - `noEmit: true` because we use `tsx` to run; if a package later wants to build, it sets `"noEmit": false` and `"outDir": "./dist"` in its own tsconfig.
 - `moduleResolution: "Bundler"` avoids the `.js`-extension-in-imports tax during dev.
 - `jsx: "react-jsx"` is needed for Ink (uses React).
@@ -255,6 +271,7 @@ Notes:
 - [ ] **Step 3.2: Create `.prettierrc.json`**
 
 Content:
+
 ```json
 {
   "semi": false,
@@ -269,9 +286,11 @@ Content:
 - [ ] **Step 3.3: Verify Prettier runs**
 
 Run:
+
 ```bash
 pnpm format:check
 ```
+
 Expected: lists existing files and reports they match style (or asks to format — that's also fine, just run `pnpm format` after if so).
 
 - [ ] **Step 3.4: Commit**
@@ -286,11 +305,13 @@ git commit -m "chore: shared tsconfig + prettier config (phase 0.1)"
 ## Task 4: ESLint flat config
 
 **Files:**
+
 - Create: `eslint.config.js`
 
 - [ ] **Step 4.1: Create `eslint.config.js`**
 
 Content:
+
 ```js
 import tseslint from 'typescript-eslint'
 
@@ -313,9 +334,11 @@ export default tseslint.config(
 - [ ] **Step 4.2: Verify ESLint runs (will find no files yet — that's fine)**
 
 Run:
+
 ```bash
 pnpm lint
 ```
+
 Expected: completes with no errors (no TS files yet to lint). If it complains about missing source files, that's OK at this stage — proceed.
 
 - [ ] **Step 4.3: Commit**
@@ -330,6 +353,7 @@ git commit -m "chore: eslint flat config (phase 0.1)"
 ## Task 5: Create @zuse/core package
 
 **Files:**
+
 - Create: `packages/core/package.json`
 - Create: `packages/core/tsconfig.json`
 - Create: `packages/core/src/index.ts`
@@ -337,6 +361,7 @@ git commit -m "chore: eslint flat config (phase 0.1)"
 - [ ] **Step 5.1: Create `packages/core/package.json`**
 
 Content:
+
 ```json
 {
   "name": "@zuse/core",
@@ -357,6 +382,7 @@ Note: `exports` points at the `.ts` source. This works because consumers run via
 - [ ] **Step 5.2: Create `packages/core/tsconfig.json`**
 
 Content:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -367,6 +393,7 @@ Content:
 - [ ] **Step 5.3: Create `packages/core/src/index.ts`**
 
 Content:
+
 ```ts
 export const VERSION = '0.0.0'
 ```
@@ -374,17 +401,21 @@ export const VERSION = '0.0.0'
 - [ ] **Step 5.4: Re-install so pnpm picks up the new workspace package**
 
 Run:
+
 ```bash
 pnpm install
 ```
+
 Expected: pnpm-lock updates, `@zuse/core` is now a workspace package.
 
 - [ ] **Step 5.5: Typecheck the package**
 
 Run:
+
 ```bash
 pnpm -F @zuse/core typecheck
 ```
+
 Expected: no output, exit code 0.
 
 - [ ] **Step 5.6: Commit**
@@ -399,6 +430,7 @@ git commit -m "feat(core): create empty @zuse/core package (phase 0.2)"
 ## Task 6: Create @zuse/tools package
 
 **Files:**
+
 - Create: `packages/tools/package.json`
 - Create: `packages/tools/tsconfig.json`
 - Create: `packages/tools/src/index.ts`
@@ -406,6 +438,7 @@ git commit -m "feat(core): create empty @zuse/core package (phase 0.2)"
 - [ ] **Step 6.1: Create `packages/tools/package.json`**
 
 Content:
+
 ```json
 {
   "name": "@zuse/tools",
@@ -427,6 +460,7 @@ Content:
 - [ ] **Step 6.2: Create `packages/tools/tsconfig.json`**
 
 Content:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -437,6 +471,7 @@ Content:
 - [ ] **Step 6.3: Create `packages/tools/src/index.ts`**
 
 Content:
+
 ```ts
 export {}
 ```
@@ -446,10 +481,12 @@ export {}
 - [ ] **Step 6.4: Install + typecheck**
 
 Run:
+
 ```bash
 pnpm install
 pnpm -F @zuse/tools typecheck
 ```
+
 Expected: install completes with `@zuse/tools` linked to `@zuse/core` via workspace protocol; typecheck has no output.
 
 - [ ] **Step 6.5: Commit**
@@ -464,6 +501,7 @@ git commit -m "feat(tools): create empty @zuse/tools package (phase 0.2)"
 ## Task 7: Create @zuse/tui package (Ink Hello World)
 
 **Files:**
+
 - Create: `packages/tui/package.json`
 - Create: `packages/tui/tsconfig.json`
 - Create: `packages/tui/src/App.tsx`
@@ -472,6 +510,7 @@ git commit -m "feat(tools): create empty @zuse/tools package (phase 0.2)"
 - [ ] **Step 7.1: Create `packages/tui/package.json`**
 
 Content:
+
 ```json
 {
   "name": "@zuse/tui",
@@ -500,6 +539,7 @@ Content:
 - [ ] **Step 7.2: Create `packages/tui/tsconfig.json`**
 
 Content:
+
 ```json
 {
   "extends": "../../tsconfig.base.json",
@@ -510,6 +550,7 @@ Content:
 - [ ] **Step 7.3: Create `packages/tui/src/App.tsx`**
 
 Content:
+
 ```tsx
 import { Box, Text } from 'ink'
 import { VERSION } from '@zuse/core'
@@ -527,6 +568,7 @@ export function App() {
 - [ ] **Step 7.4: Create `packages/tui/src/index.tsx`**
 
 Content:
+
 ```tsx
 #!/usr/bin/env tsx
 import { render } from 'ink'
@@ -540,18 +582,22 @@ Note: the import uses `./App.js` even though the file is `.tsx` — this is the 
 - [ ] **Step 7.5: Install and typecheck**
 
 Run:
+
 ```bash
 pnpm install
 pnpm -F @zuse/tui typecheck
 ```
+
 Expected: install brings in `ink`, `react`, `@types/react`. Typecheck has no output.
 
 - [ ] **Step 7.6: Run the TUI**
 
 Run:
+
 ```bash
 pnpm -F @zuse/tui dev
 ```
+
 Expected: prints two lines to the terminal — `Hello from Zuse` (in cyan) and `core version: 0.0.0` (dimmed). The process should exit on its own after rendering since there's no input loop. If it hangs, press Ctrl+C.
 
 - [ ] **Step 7.7: Commit**
@@ -566,12 +612,14 @@ git commit -m "feat(tui): ink hello world (phase 0.3)"
 ## Task 8: Vitest setup + smoke test in @zuse/core
 
 **Files:**
+
 - Create: `vitest.config.ts`
 - Create: `packages/core/src/version.test.ts`
 
 - [ ] **Step 8.1: Create root `vitest.config.ts`**
 
 Content:
+
 ```ts
 import { defineConfig } from 'vitest/config'
 
@@ -586,6 +634,7 @@ export default defineConfig({
 - [ ] **Step 8.2: Write the smoke test in `packages/core/src/version.test.ts`**
 
 Content:
+
 ```ts
 import { describe, it, expect } from 'vitest'
 import { VERSION } from './index.js'
@@ -600,10 +649,13 @@ describe('VERSION', () => {
 - [ ] **Step 8.3: Run the test to verify it passes**
 
 Run:
+
 ```bash
 pnpm test
 ```
+
 Expected output (something like):
+
 ```
  ✓ packages/core/src/version.test.ts (1)
    ✓ VERSION (1)
@@ -625,6 +677,7 @@ git commit -m "test(core): vitest smoke test (phase 0)"
 ## Task 9: Anthropic API ping script
 
 **Files:**
+
 - Create: `.env.example`
 - Create: `scripts/ping-anthropic.ts`
 - Modify: root `package.json` (add `@anthropic-ai/sdk` dep and `ping` script)
@@ -632,14 +685,17 @@ git commit -m "test(core): vitest smoke test (phase 0)"
 - [ ] **Step 9.1: Add `@anthropic-ai/sdk` to root devDependencies**
 
 Run:
+
 ```bash
 pnpm add -D -w @anthropic-ai/sdk
 ```
+
 Expected: installs the SDK, updates root `package.json` and `pnpm-lock.yaml`. The `-w` flag (or `--workspace-root`) tells pnpm to add to the root, not a sub-package.
 
 - [ ] **Step 9.2: Add the `ping` script to root `package.json`**
 
 In root `package.json`, add to the `"scripts"` object:
+
 ```json
 "ping": "tsx scripts/ping-anthropic.ts"
 ```
@@ -647,6 +703,7 @@ In root `package.json`, add to the `"scripts"` object:
 - [ ] **Step 9.3: Create `.env.example`**
 
 Content:
+
 ```
 # Copy this file to .env and fill in your real key.
 ANTHROPIC_API_KEY=sk-ant-...
@@ -655,19 +712,23 @@ ANTHROPIC_API_KEY=sk-ant-...
 - [ ] **Step 9.4: Create your real `.env` (NOT committed)**
 
 Create `.env` in repo root with your actual Anthropic API key:
+
 ```
 ANTHROPIC_API_KEY=<your real key here>
 ```
 
 Verify it's gitignored:
+
 ```bash
 git check-ignore .env
 ```
+
 Expected: prints `.env`. (If it prints nothing, the file is NOT being ignored — fix `.gitignore` before continuing.)
 
 - [ ] **Step 9.5: Create `scripts/ping-anthropic.ts`**
 
 Content:
+
 ```ts
 import Anthropic from '@anthropic-ai/sdk'
 import { readFileSync, existsSync } from 'node:fs'
@@ -725,10 +786,13 @@ main().catch((err) => {
 - [ ] **Step 9.6: Run the ping**
 
 Run:
+
 ```bash
 pnpm ping
 ```
+
 Expected output (approximately):
+
 ```
 Model: claude-haiku-4-5-20251001
 Stop reason: end_turn
@@ -737,6 +801,7 @@ Response text: pong
 ```
 
 If you see `Ping failed:` followed by an error, the most common causes are:
+
 - API key invalid → re-check `.env`
 - Network/proxy issues → check your connection
 - Model name retired → update the `model` field (current default for the project is Haiku 4.5, ID `claude-haiku-4-5-20251001`)
@@ -757,6 +822,7 @@ git commit -m "feat: anthropic api ping script (phase 0.4)"
 - [ ] **Step 10.1: Run full check**
 
 Run each in order, confirm all pass:
+
 ```bash
 pnpm install
 pnpm typecheck
@@ -778,6 +844,7 @@ git push origin master --tags
 In `README.md`, change `Phase 0: Scaffolding.` to `Phase 0: Done. Next: Phase 1 — single-turn conversation.`
 
 Commit:
+
 ```bash
 git add README.md
 git commit -m "docs: phase 0 complete, advance status"
@@ -797,6 +864,7 @@ At the end of section "8. 风险与未决问题", add:
 ```
 
 Commit:
+
 ```bash
 git add docs/superpowers/specs/2026-05-21-zuse-design.md
 git commit -m "docs: link fault mode matrix from supplement"
@@ -820,6 +888,7 @@ If any of these come up during execution, add them to `BACKLOG.md` and move on.
 ## Done Criteria
 
 Phase 0 is done when ALL of these are true:
+
 1. `pnpm install` produces no errors from a clean clone.
 2. `pnpm test` shows the 1 smoke test passing.
 3. `pnpm -F @zuse/tui dev` renders "Hello from Zuse" + the core version.
