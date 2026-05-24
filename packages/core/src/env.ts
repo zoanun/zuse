@@ -1,6 +1,24 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { cwd } from 'node:process'
 import type { ClientConfig } from './types.js'
+
+/**
+ * Find the project root directory by looking for pnpm-workspace.yaml
+ */
+function findProjectRoot(): string {
+  let dir = cwd()
+  while (dir !== resolve(dir, '..')) {
+    if (existsSync(resolve(dir, 'pnpm-workspace.yaml'))) {
+      return dir
+    }
+    dir = resolve(dir, '..')
+  }
+  // Fallback to cwd if not found
+  return cwd()
+}
+
+const PROJECT_ROOT = findProjectRoot()
 
 /**
  * Minimal .env loader — no dotenv dependency needed.
@@ -23,8 +41,8 @@ function loadDotEnv(path: string): void {
   }
 }
 
-// Load .env from cwd on module init
-loadDotEnv(resolve(process.cwd(), '.env'))
+// Load .env from project root on module init
+loadDotEnv(resolve(PROJECT_ROOT, '.env'))
 
 /**
  * Get API client config from environment.
