@@ -1,0 +1,22 @@
+{
+  "name": "@zuse/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "zuse": "./src/index.tsx"
+  },
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zuse/core": "workspace:*",
+    "@zuse/tools": "workspace:*",
+    "ink": "^5.0.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0"
+  }
+}
