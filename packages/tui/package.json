@@ -14,6 +14,7 @@
     "@zuse/core": "workspace:*",
     "@zuse/tools": "workspace:*",
     "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
     "react": "^18.3.1"
   },
   "devDependencies": {
