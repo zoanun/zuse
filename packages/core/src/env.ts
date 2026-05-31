@@ -49,20 +49,27 @@ loadDotEnv(resolve(PROJECT_ROOT, '.env'))
  * Supports both Anthropic native and DashScope/Qwen endpoints.
  */
 export function getClientConfig(): ClientConfig {
-  // Prefer DashScope vars if present (user's current setup)
-  const apiKey =
-    process.env.DASHSCOPE_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    ''
+  // Prefer DashScope vars if present (user's current setup).
+  // A DashScope key MUST be paired with its base URL — otherwise it would be
+  // sent to the Anthropic default endpoint and fail with a confusing 401.
+  const dashKey = process.env.DASHSCOPE_API_KEY
+  if (dashKey) {
+    const dashBaseURL = process.env.DASHSCOPE_BASE_URL
+    if (!dashBaseURL) {
+      throw new Error(
+        'DASHSCOPE_API_KEY is set but DASHSCOPE_BASE_URL is missing. ' +
+        'A DashScope key must be paired with its base URL.'
+      )
+    }
+    return { apiKey: dashKey, baseURL: dashBaseURL }
+  }
 
-  const baseURL =
-    process.env.DASHSCOPE_BASE_URL ||
-    process.env.ANTHROPIC_BASE_URL ||
-    undefined  // undefined means use Anthropic default
+  const apiKey = process.env.ANTHROPIC_API_KEY || ''
+  const baseURL = process.env.ANTHROPIC_BASE_URL || undefined  // undefined means use Anthropic default
 
   if (!apiKey) {
     throw new Error(
-      'API key not found. Set DASHSCOPE_API_KEY or ANTHROPIC_API_KEY in .env or environment.'
+      'API key not found. Set DASHSCOPE_API_KEY (+ DASHSCOPE_BASE_URL) or ANTHROPIC_API_KEY in .env or environment.'
     )
   }
 

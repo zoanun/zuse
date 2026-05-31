@@ -52,15 +52,14 @@ export class AnthropicClient implements ModelClient {
         messages: sdkMessages,
       })
 
-      let messageId = ''
-      let responseModel = model
-
-      yield { type: 'message-start', id: messageId, model: responseModel }
-
       for await (const event of stream) {
         if (event.type === 'message_start') {
-          messageId = event.message.id
-          responseModel = event.message.model
+          // Emit with the real message id and resolved model from the API
+          yield {
+            type: 'message-start',
+            id: event.message.id,
+            model: event.message.model,
+          }
         } else if (event.type === 'content_block_delta') {
           if (event.delta.type === 'text_delta') {
             yield { type: 'text-delta', text: event.delta.text }

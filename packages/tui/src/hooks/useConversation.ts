@@ -3,7 +3,7 @@ import type { UIMessage, ConversationState } from '../types.js'
 import type { Usage, ModelClient } from '@zuse/core'
 
 interface UseConversationOptions {
-  client: ModelClient
+  client: ModelClient | null
   maxTokens: number
 }
 
@@ -21,11 +21,16 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
   const [state, setState] = useState<ConversationState>({
     messages: [],
     isThinking: false,
-    lastUsage: undefined,
+    totalUsage: undefined,
     error: undefined,
   })
 
   const sendMessage = useCallback(async (text: string) => {
+    if (!client) {
+      setState((prev) => ({ ...prev, error: 'Client not initialized' }))
+      return
+    }
+
     // Add user message
     const userMessage: UIMessage = {
       id: generateId(),
@@ -81,16 +86,23 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
           }))
         } else if (event.type === 'message-stop') {
           finalUsage = event.usage
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, isStreaming: false, usage: finalUsage }
-                : m
-            ),
-            isThinking: false,
-            lastUsage: finalUsage,
-          }))
+          setState((prev) => {
+            // Accumulate across the conversation, not just the last turn.
+            const totalUsage: Usage = {
+              input_tokens: (prev.totalUsage?.input_tokens ?? 0) + event.usage.input_tokens,
+              output_tokens: (prev.totalUsage?.output_tokens ?? 0) + event.usage.output_tokens,
+            }
+            return {
+              ...prev,
+              messages: prev.messages.map((m) =>
+                m.id === assistantMessage.id
+                  ? { ...m, isStreaming: false, usage: finalUsage }
+                  : m
+              ),
+              isThinking: false,
+              totalUsage,
+            }
+          })
         } else if (event.type === 'error') {
           setState((prev) => ({
             ...prev,
@@ -124,7 +136,7 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     setState({
       messages: [],
       isThinking: false,
-      lastUsage: undefined,
+      totalUsage: undefined,
       error: undefined,
     })
   }, [])

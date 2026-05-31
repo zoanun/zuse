@@ -13,6 +13,6 @@ export interface UIMessage {
 export interface ConversationState {
   messages: UIMessage[]
   isThinking: boolean  // true while waiting for model response
-  lastUsage?: Usage  // cumulative or last response usage
+  totalUsage?: Usage  // cumulative usage across the whole conversation
   error?: string  // error message if any
 }

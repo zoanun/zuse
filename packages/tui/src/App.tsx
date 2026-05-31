@@ -17,7 +17,7 @@ export function App() {
   }
 
   const { state, sendMessage } = useConversation({
-    client: client!,
+    client,
     maxTokens: getDefaultMaxTokens(),
   })
 
@@ -54,7 +54,7 @@ export function App() {
 
       <UsageFooter
         model={client?.getModel() || 'unknown'}
-        totalUsage={state.lastUsage}
+        totalUsage={state.totalUsage}
         isThinking={state.isThinking}
       />
 
