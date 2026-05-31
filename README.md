@@ -6,4 +6,4 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
-Phase 0: Scaffolding.
+Phase 1: Done. Single-turn conversation with streaming works. Next: Phase 2 — multi-turn + context.

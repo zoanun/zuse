@@ -11,14 +11,17 @@
     "pnpm": "9.15.0"
   },
   "scripts": {
+    "dev": "pnpm -F @zuse/tui dev",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "api:ping": "tsx scripts/ping-api.ts"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
     "@types/node": "^22.10.0",
     "@typescript-eslint/eslint-plugin": "^8.15.0",
     "@typescript-eslint/parser": "^8.15.0",
