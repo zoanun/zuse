@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef } from 'react'
 import type { UIMessage, ConversationState } from '../types.js'
 import { Conversation, type ModelClient } from '@zuse/core'
+import type { CommandContext } from '../commands/types.js'
+import { parseInput, findCommand } from '../commands/registry.js'
 
 interface UseConversationOptions {
   client: ModelClient | null
@@ -9,7 +11,8 @@ interface UseConversationOptions {
 
 interface UseConversationReturn {
   state: ConversationState
-  sendMessage: (text: string) => Promise<void>
+  /** Entry point for the input box: dispatches slash commands or sends a message. */
+  submit: (input: string) => Promise<void>
   clear: () => void
 }
 
@@ -130,5 +133,60 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     })
   }, [])
 
-  return { state, sendMessage, clear }
+  // Append a local notice to the transcript (slash-command output).
+  const print = useCallback((text: string) => {
+    setState((prev) => ({
+      ...prev,
+      messages: [...prev.messages, { id: generateId(), role: 'system', text, isStreaming: false }],
+    }))
+  }, [])
+
+  // Swap in a loaded conversation and rebuild the UI list from its history.
+  const load = useCallback((conv: Conversation) => {
+    conversationRef.current = conv
+    const messages: UIMessage[] = conv.getMessages().map((m) => ({
+      id: generateId(),
+      role: m.role,
+      text: m.content.map((b) => (b.type === 'text' ? b.text : '')).join(''),
+      isStreaming: false,
+    }))
+    setState({
+      messages,
+      isThinking: false,
+      totalUsage: conv.totalUsage,
+      contextTokens: undefined,
+      error: undefined,
+    })
+  }, [])
+
+  // The input box's single entry point: a slash command, or a chat message.
+  const submit = useCallback(
+    async (input: string) => {
+      const parsed = parseInput(input)
+      if (!parsed) {
+        await sendMessage(input)
+        return
+      }
+      const cmd = findCommand(parsed.name)
+      if (!cmd) {
+        print(`Unknown command: /${parsed.name}. Type /help for a list.`)
+        return
+      }
+      const ctx: CommandContext = {
+        args: parsed.args,
+        print,
+        clear,
+        conversation: conversationRef.current,
+        load,
+      }
+      try {
+        await cmd.run(ctx)
+      } catch (err) {
+        print(`Error: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    },
+    [sendMessage, print, clear, load],
+  )
+
+  return { state, submit, clear }
 }

@@ -16,7 +16,7 @@ export function App() {
     initError = err instanceof Error ? err.message : 'Failed to initialize client'
   }
 
-  const { state, sendMessage } = useConversation({
+  const { state, submit } = useConversation({
     client,
     maxTokens: getDefaultMaxTokens(),
   })
@@ -54,7 +54,7 @@ export function App() {
       />
 
       <InputBox
-        onSubmit={sendMessage}
+        onSubmit={submit}
         isDisabled={state.isThinking}
       />
     </Box>

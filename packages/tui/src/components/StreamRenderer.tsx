@@ -7,6 +7,15 @@ interface StreamRendererProps {
 }
 
 export function StreamRenderer({ message }: StreamRendererProps) {
+  // System messages are local notices (slash-command output): dim, unframed.
+  if (message.role === 'system') {
+    return (
+      <Box marginBottom={1}>
+        <Text dimColor>{message.text}</Text>
+      </Box>
+    )
+  }
+
   // User messages are framed in a box; assistant replies are marked with a
   // left-side bullet (Claude Code style).
   if (message.role === 'user') {
