@@ -3,7 +3,12 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   // Future: tool_use, tool_result will be added in Phase 3
 
-// Message in conversation
+// Message in conversation.
+// v1 only emits 'user' / 'assistant'. The global system prompt is passed via
+// the API's top-level `system` field, NOT as a message here.
+// Note: newer models (Opus 4.8+) also accept a mid-conversation `role: 'system'`
+// message inside the array (must not be first; appended so it won't bust the
+// cached prefix). Deferred — not in the union until we support it (see Phase 2).
 export interface Message {
   role: 'user' | 'assistant'
   content: ContentBlock[]
@@ -11,8 +16,8 @@ export interface Message {
 
 // Events emitted during streaming
 export type StreamEvent =
-  | { type: 'text-delta'; text: string }
   | { type: 'message-start'; id: string; model: string }
+  | { type: 'text-delta'; text: string }
   | { type: 'message-stop'; stop_reason: string; usage: Usage }
   | { type: 'error'; message: string }
 

@@ -40,11 +40,6 @@ export function App() {
 
       <Box flexGrow={1} flexDirection="column">
         <MessageList messages={state.messages} />
-        {state.isThinking && (
-          <Box paddingX={1}>
-            <Text dimColor color="yellow">Waiting for response...</Text>
-          </Box>
-        )}
         {state.error && !state.isThinking && (
           <Box paddingX={1}>
             <Text color="red">Error: {state.error}</Text>

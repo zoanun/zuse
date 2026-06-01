@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { UIMessage, ConversationState } from '../types.js'
-import type { Usage, ModelClient } from '@zuse/core'
+import { Conversation, type ModelClient } from '@zuse/core'
 
 interface UseConversationOptions {
   client: ModelClient | null
@@ -18,10 +18,18 @@ function generateId(): string {
 }
 
 export function useConversation({ client, maxTokens }: UseConversationOptions): UseConversationReturn {
+  // The committed history — the authoritative ledger that gets re-sent each turn.
+  // Lives in a ref (not state): mutating it must not trigger a re-render, and we
+  // never want a stale closure of it inside sendMessage.
+  const conversationRef = useRef<Conversation>(new Conversation())
+
+  // The render view. Mirrors the conversation, plus any in-flight (uncommitted)
+  // user + assistant placeholder while streaming.
   const [state, setState] = useState<ConversationState>({
     messages: [],
     isThinking: false,
     totalUsage: undefined,
+    contextTokens: undefined,
     error: undefined,
   })
 
@@ -31,21 +39,11 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
       return
     }
 
-    // Add user message
-    const userMessage: UIMessage = {
-      id: generateId(),
-      role: 'user',
-      text,
-      isStreaming: false,
-    }
+    const conversation = conversationRef.current
 
-    // Create placeholder for assistant response
-    const assistantMessage: UIMessage = {
-      id: generateId(),
-      role: 'assistant',
-      text: '',
-      isStreaming: true,
-    }
+    // Optimistic UI: show the user turn + an empty assistant placeholder at once.
+    const userMessage: UIMessage = { id: generateId(), role: 'user', text, isStreaming: false }
+    const assistantMessage: UIMessage = { id: generateId(), role: 'assistant', text: '', isStreaming: true }
 
     setState((prev) => ({
       ...prev,
@@ -54,62 +52,51 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
       error: undefined,
     }))
 
-    // Build core Message format
-    const coreMessages = state.messages
-      .filter((m) => m.role === 'user' || (m.role === 'assistant' && !m.isStreaming))
-      .map((m) => ({
-        role: m.role,
-        content: [{ type: 'text' as const, text: m.text }],
-      }))
-    // Add the new user message
-    coreMessages.push({ role: 'user' as const, content: [{ type: 'text' as const, text: userMessage.text }] })
+    // Stateless server: send the committed history plus this new (still uncommitted)
+    // user turn. Nothing is written to `conversation` until the turn succeeds, so a
+    // failed turn leaves no dangling user message to break role alternation.
+    const coreMessages = [
+      ...conversation.getMessages(),
+      { role: 'user' as const, content: [{ type: 'text' as const, text }] },
+    ]
 
     let accumulatedText = ''
-    let finalUsage: Usage | undefined
 
     try {
-      // Stream events from client
       for await (const event of client.sendMessages(coreMessages, {
         model: client.getModel(),
         max_tokens: maxTokens,
       })) {
         if (event.type === 'text-delta') {
           accumulatedText += event.text
-          // Update assistant message in place
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, text: accumulatedText }
-                : m
+              m.id === assistantMessage.id ? { ...m, text: accumulatedText } : m,
             ),
           }))
         } else if (event.type === 'message-stop') {
-          finalUsage = event.usage
-          setState((prev) => {
-            // Accumulate across the conversation, not just the last turn.
-            const totalUsage: Usage = {
-              input_tokens: (prev.totalUsage?.input_tokens ?? 0) + event.usage.input_tokens,
-              output_tokens: (prev.totalUsage?.output_tokens ?? 0) + event.usage.output_tokens,
-            }
-            return {
-              ...prev,
-              messages: prev.messages.map((m) =>
-                m.id === assistantMessage.id
-                  ? { ...m, isStreaming: false, usage: finalUsage }
-                  : m
-              ),
-              isThinking: false,
-              totalUsage,
-            }
-          })
+          // Commit the whole turn (user + assistant) to the ledger now that it succeeded.
+          conversation.appendUserText(text)
+          conversation.appendAssistantText(accumulatedText)
+          conversation.addUsage(event.usage)
+          const usage = event.usage
+          setState((prev) => ({
+            ...prev,
+            messages: prev.messages.map((m) =>
+              m.id === assistantMessage.id ? { ...m, isStreaming: false, usage } : m,
+            ),
+            isThinking: false,
+            totalUsage: conversation.totalUsage,
+            contextTokens: usage.input_tokens,
+          }))
         } else if (event.type === 'error') {
           setState((prev) => ({
             ...prev,
             messages: prev.messages.map((m) =>
               m.id === assistantMessage.id
                 ? { ...m, isStreaming: false, text: `Error: ${event.message}` }
-                : m
+                : m,
             ),
             isThinking: false,
             error: event.message,
@@ -124,19 +111,21 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
         messages: prev.messages.map((m) =>
           m.id === assistantMessage.id
             ? { ...m, isStreaming: false, text: `Error: ${message}` }
-            : m
+            : m,
         ),
         isThinking: false,
         error: message,
       }))
     }
-  }, [client, maxTokens, state.messages])
+  }, [client, maxTokens])
 
   const clear = useCallback(() => {
+    conversationRef.current.clear()
     setState({
       messages: [],
       isThinking: false,
       totalUsage: undefined,
+      contextTokens: undefined,
       error: undefined,
     })
   }, [])
