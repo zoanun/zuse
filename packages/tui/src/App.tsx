@@ -50,6 +50,7 @@ export function App() {
       <UsageFooter
         model={client?.getModel() || 'unknown'}
         totalUsage={state.totalUsage}
+        contextTokens={state.contextTokens}
         isThinking={state.isThinking}
       />
 
