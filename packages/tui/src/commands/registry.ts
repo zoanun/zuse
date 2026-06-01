@@ -1,4 +1,5 @@
 import type { SlashCommand } from './types.js'
+import { saveConversation, loadConversation } from './sessionStore.js'
 
 /** Parsed slash input. null means "not a command — treat as a chat message". */
 export interface ParsedCommand {
@@ -24,8 +25,35 @@ const clear: SlashCommand = {
   },
 }
 
+const save: SlashCommand = {
+  name: 'save',
+  description: 'Save the conversation: /save <name>',
+  run: async ({ args, conversation, print }) => {
+    if (!args) {
+      print('Usage: /save <name>')
+      return
+    }
+    const path = await saveConversation(args, conversation)
+    print(`Saved to ${path}`)
+  },
+}
+
+const load: SlashCommand = {
+  name: 'load',
+  description: 'Load a saved conversation: /load <name>',
+  run: async ({ args, load: replaceConversation, print }) => {
+    if (!args) {
+      print('Usage: /load <name>')
+      return
+    }
+    const conv = await loadConversation(args)
+    replaceConversation(conv)
+    print(`Loaded "${args}" (${conv.length} messages).`)
+  },
+}
+
 /** The command table. Adding a command = one entry here (data-driven). */
-export const COMMANDS: SlashCommand[] = [help, clear]
+export const COMMANDS: SlashCommand[] = [help, clear, save, load]
 
 /** Split raw input into command name + args, or null if it isn't a slash command. */
 export function parseInput(input: string): ParsedCommand | null {
