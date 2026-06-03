@@ -4,9 +4,13 @@ import { MessageList } from './components/MessageList.js'
 import { UsageFooter } from './components/UsageFooter.js'
 import { useConversation } from './hooks/useConversation.js'
 import { createAnthropicClientFromEnv, getDefaultMaxTokens } from '@zuse/core'
+import { createDefaultRegistry } from '@zuse/tools'
+
+// 整个会话期间工具集是固定的 —— 在组件外构建一次。
+const registry = createDefaultRegistry()
 
 export function App() {
-  // Create client (will throw if no API key — handled by error display)
+  // 创建 client（没有 API key 时会抛错 —— 由错误展示处理）
   let client: ReturnType<typeof createAnthropicClientFromEnv> | null = null
   let initError: string | undefined
 
@@ -19,9 +23,10 @@ export function App() {
   const { state, submit } = useConversation({
     client,
     maxTokens: getDefaultMaxTokens(),
+    registry,
   })
 
-  // Show init error if any
+  // 如有初始化错误则展示
   if (initError) {
     return (
       <Box flexDirection="column" padding={1}>

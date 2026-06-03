@@ -1,17 +1,19 @@
 import { useState, useCallback, useRef } from 'react'
+import { cwd } from 'node:process'
 import type { UIMessage, ConversationState } from '../types.js'
-import { Conversation, type ModelClient } from '@zuse/core'
+import { Conversation, runAgent, type ModelClient, type ToolRegistry } from '@zuse/core'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
 
 interface UseConversationOptions {
   client: ModelClient | null
   maxTokens: number
+  registry: ToolRegistry
 }
 
 interface UseConversationReturn {
   state: ConversationState
-  /** Entry point for the input box: dispatches slash commands or sends a message. */
+  /** 输入框的入口：分发斜杠命令，或发送一条消息。 */
   submit: (input: string) => Promise<void>
   clear: () => void
 }
@@ -20,14 +22,16 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export function useConversation({ client, maxTokens }: UseConversationOptions): UseConversationReturn {
-  // The committed history — the authoritative ledger that gets re-sent each turn.
-  // Lives in a ref (not state): mutating it must not trigger a re-render, and we
-  // never want a stale closure of it inside sendMessage.
+export function useConversation({ client, maxTokens, registry }: UseConversationOptions): UseConversationReturn {
+  // 已提交的历史 —— 每个回合重新发送的权威账本。
+  // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
+  // sendMessage 内部闭包拿到它的陈旧快照。
   const conversationRef = useRef<Conversation>(new Conversation())
+  // 让将来的 Ctrl+C/Esc 处理器能够中断进行中的回合（signal 已经穿过
+  // runAgent 接线到了每个工具里）。
+  const abortRef = useRef<AbortController | null>(null)
 
-  // The render view. Mirrors the conversation, plus any in-flight (uncommitted)
-  // user + assistant placeholder while streaming.
+  // 渲染视图。镜像会话内容，外加流式期间任何进行中（尚未提交）的气泡。
   const [state, setState] = useState<ConversationState>({
     messages: [],
     isThinking: false,
@@ -36,91 +40,120 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     error: undefined,
   })
 
-  const sendMessage = useCallback(async (text: string) => {
-    if (!client) {
-      setState((prev) => ({ ...prev, error: 'Client not initialized' }))
-      return
-    }
+  // 小辅助函数：按 id 不可变地更新某一条消息。
+  const patch = useCallback((id: string, fn: (m: UIMessage) => UIMessage) => {
+    setState((prev) => ({ ...prev, messages: prev.messages.map((m) => (m.id === id ? fn(m) : m)) }))
+  }, [])
 
-    const conversation = conversationRef.current
-
-    // Optimistic UI: show the user turn + an empty assistant placeholder at once.
-    const userMessage: UIMessage = { id: generateId(), role: 'user', text, isStreaming: false }
-    const assistantMessage: UIMessage = { id: generateId(), role: 'assistant', text: '', isStreaming: true }
-
-    setState((prev) => ({
-      ...prev,
-      messages: [...prev.messages, userMessage, assistantMessage],
-      isThinking: true,
-      error: undefined,
-    }))
-
-    // Stateless server: send the committed history plus this new (still uncommitted)
-    // user turn. Nothing is written to `conversation` until the turn succeeds, so a
-    // failed turn leaves no dangling user message to break role alternation.
-    const coreMessages = [
-      ...conversation.getMessages(),
-      { role: 'user' as const, content: [{ type: 'text' as const, text }] },
-    ]
-
-    let accumulatedText = ''
-
-    try {
-      for await (const event of client.sendMessages(coreMessages, {
-        model: client.getModel(),
-        max_tokens: maxTokens,
-      })) {
-        if (event.type === 'text-delta') {
-          accumulatedText += event.text
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantMessage.id ? { ...m, text: accumulatedText } : m,
-            ),
-          }))
-        } else if (event.type === 'message-stop') {
-          // Commit the whole turn (user + assistant) to the ledger now that it succeeded.
-          conversation.appendUserText(text)
-          conversation.appendAssistantText(accumulatedText)
-          conversation.addUsage(event.usage)
-          const usage = event.usage
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantMessage.id ? { ...m, isStreaming: false, usage } : m,
-            ),
-            isThinking: false,
-            totalUsage: conversation.totalUsage,
-            contextTokens: usage.input_tokens,
-          }))
-        } else if (event.type === 'error') {
-          setState((prev) => ({
-            ...prev,
-            messages: prev.messages.map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, isStreaming: false, text: `Error: ${event.message}` }
-                : m,
-            ),
-            isThinking: false,
-            error: event.message,
-          }))
-          break
-        }
+  const sendMessage = useCallback(
+    async (text: string) => {
+      if (!client) {
+        setState((prev) => ({ ...prev, error: 'Client not initialized' }))
+        return
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      setState((prev) => ({
-        ...prev,
-        messages: prev.messages.map((m) =>
-          m.id === assistantMessage.id
-            ? { ...m, isStreaming: false, text: `Error: ${message}` }
-            : m,
-        ),
-        isThinking: false,
-        error: message,
-      }))
-    }
-  }, [client, maxTokens])
+      const conversation = conversationRef.current
+
+      // 乐观更新：立刻显示用户这一回合。
+      const userMessage: UIMessage = { id: generateId(), role: 'user', text, isStreaming: false }
+      setState((prev) => ({ ...prev, messages: [...prev.messages, userMessage], isThinking: true, error: undefined }))
+
+      const controller = new AbortController()
+      abortRef.current = controller
+
+      // 每回合的流式状态。Agent 可能经历多个模型回合（text -> tool -> text...），
+      // 所以我们在每个 message-start 时新建一个助手气泡，并把每个 tool_use id
+      // 映射到它在屏幕上的工具气泡。
+      let currentAssistantId: string | null = null
+      let accumulated = ''
+      const toolBubbleId: Record<string, string> = {}
+      let lastInputTokens: number | undefined
+
+      try {
+        for await (const event of runAgent({
+          conversation,
+          client,
+          registry,
+          userText: text,
+          config: { model: client.getModel(), max_tokens: maxTokens },
+          cwd: cwd(),
+          signal: controller.signal,
+        })) {
+          if (event.type === 'message-start') {
+            const id = generateId()
+            currentAssistantId = id
+            accumulated = ''
+            setState((prev) => ({
+              ...prev,
+              messages: [...prev.messages, { id, role: 'assistant', text: '', isStreaming: true }],
+            }))
+          } else if (event.type === 'text-delta') {
+            accumulated += event.text
+            const id = currentAssistantId
+            if (id) patch(id, (m) => ({ ...m, text: accumulated }))
+          } else if (event.type === 'tool-use') {
+            // 模型在这一回合说完了，并请求调用一个工具。
+            const aid = currentAssistantId
+            const tid = generateId()
+            toolBubbleId[event.id] = tid
+            const tool = { name: event.name, input: event.input, status: 'running' as const }
+            setState((prev) => ({
+              ...prev,
+              messages: [
+                ...prev.messages.map((m) => (m.id === aid ? { ...m, isStreaming: false } : m)),
+                { id: tid, role: 'tool', text: '', isStreaming: true, tool },
+              ],
+            }))
+          } else if (event.type === 'tool-result') {
+            const tid = toolBubbleId[event.id]
+            if (tid) {
+              patch(tid, (m) => ({
+                ...m,
+                isStreaming: false,
+                tool: m.tool
+                  ? { ...m.tool, status: 'done', isError: event.is_error, output: event.output }
+                  : m.tool,
+              }))
+            }
+          } else if (event.type === 'message-stop') {
+            lastInputTokens = event.usage.input_tokens
+            const id = currentAssistantId
+            const usage = event.usage
+            if (id) patch(id, (m) => ({ ...m, isStreaming: false, usage }))
+          } else if (event.type === 'warning') {
+            setState((prev) => ({
+              ...prev,
+              messages: [...prev.messages, { id: generateId(), role: 'system', text: event.message, isStreaming: false }],
+            }))
+          } else if (event.type === 'error') {
+            const aid = currentAssistantId
+            const msg = event.message
+            setState((prev) => ({
+              ...prev,
+              messages: aid
+                ? prev.messages.map((m) => (m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m))
+                : [...prev.messages, { id: generateId(), role: 'assistant', text: `Error: ${msg}`, isStreaming: false }],
+              error: msg,
+            }))
+          }
+        }
+
+        // 回合结束。runAgent 此时已把整个回合提交进账本（成功时）或什么都
+        // 没提交（出错时），所以直接从它读取总计。
+        setState((prev) => ({
+          ...prev,
+          isThinking: false,
+          totalUsage: conversation.totalUsage,
+          contextTokens: lastInputTokens ?? prev.contextTokens,
+        }))
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        setState((prev) => ({ ...prev, isThinking: false, error: message }))
+      } finally {
+        abortRef.current = null
+      }
+    },
+    [client, maxTokens, registry, patch],
+  )
 
   const clear = useCallback(() => {
     conversationRef.current.clear()
@@ -133,7 +166,7 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     })
   }, [])
 
-  // Append a local notice to the transcript (slash-command output).
+  // 向对话记录追加一条本地通知（斜杠命令的输出）。
   const print = useCallback((text: string) => {
     setState((prev) => ({
       ...prev,
@@ -141,7 +174,7 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     }))
   }, [])
 
-  // Swap in a loaded conversation and rebuild the UI list from its history.
+  // 换入一个已加载的会话，并据其历史重建 UI 列表。
   const load = useCallback((conv: Conversation) => {
     conversationRef.current = conv
     const messages: UIMessage[] = conv.getMessages().map((m) => ({
@@ -159,7 +192,7 @@ export function useConversation({ client, maxTokens }: UseConversationOptions): 
     })
   }, [])
 
-  // The input box's single entry point: a slash command, or a chat message.
+  // 输入框唯一的入口：一条斜杠命令，或一条聊天消息。
   const submit = useCallback(
     async (input: string) => {
       const parsed = parseInput(input)
