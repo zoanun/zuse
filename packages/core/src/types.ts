@@ -1,27 +1,37 @@
-// Content blocks in a message
+// 消息里的内容块（与 Anthropic 的消息格式对齐）。
 export type ContentBlock =
   | { type: 'text'; text: string }
-  // Future: tool_use, tool_result will be added in Phase 3
+  // 助手请求调用一个工具。`input` 是已解析好的参数对象。
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  // 把工具的输出作为一个 user 角色的块回喂给模型，用调用 id 关联。
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
 
-// Message in conversation.
-// v1 only emits 'user' / 'assistant'. The global system prompt is passed via
-// the API's top-level `system` field, NOT as a message here.
-// Note: newer models (Opus 4.8+) also accept a mid-conversation `role: 'system'`
-// message inside the array (must not be first; appended so it won't bust the
-// cached prefix). Deferred — not in the union until we support it (see Phase 2).
+// 会话中的一条消息。
+// v1 只产生 'user' / 'assistant'。全局系统提示词通过 API 顶层的 `system`
+// 字段传入，而不是作为这里的一条消息。
+// 注意：较新的模型（Opus 4.8+）也接受会话中途的 `role: 'system'` 消息
+//（不能放在首条；追加在末尾以免破坏已缓存的前缀）。暂缓——在我们支持它
+// 之前不放进这个联合类型（见 Phase 2）。
 export interface Message {
   role: 'user' | 'assistant'
   content: ContentBlock[]
 }
 
-// Events emitted during streaming
+// 一个回合中产生的事件。前四个来自 ModelClient；后三个由 Agent 循环在
+// 运行工具时产生（Phase 3）。
 export type StreamEvent =
   | { type: 'message-start'; id: string; model: string }
   | { type: 'text-delta'; text: string }
+  // 模型决定调用一个工具（由 client 在流把完整 tool_use 块拼装好后产生）。
+  | { type: 'tool-use'; id: string; name: string; input: unknown }
   | { type: 'message-stop'; stop_reason: string; usage: Usage }
+  // 一个工具运行完成（由 Agent 循环产生，不是 client）。
+  | { type: 'tool-result'; id: string; name: string; output: string; is_error: boolean }
+  // Agent 触达 max_turns 并停止（故障模式①）。
+  | { type: 'warning'; message: string }
   | { type: 'error'; message: string }
 
-// Token usage tracking (fault mode ⑧ defense)
+// Token 用量追踪（故障模式⑧的防御）
 export interface Usage {
   input_tokens: number
   output_tokens: number
@@ -29,14 +39,14 @@ export interface Usage {
   // cache_write_input_tokens?: number // Phase 6
 }
 
-// Model configuration
+// 模型配置
 export interface ModelConfig {
   model: string
   max_tokens: number
   // temperature?: number  // Phase 2+
 }
 
-// Client config (API key, base URL, etc.)
+// 客户端配置（API key、base URL 等）
 export interface ClientConfig {
   apiKey: string
   baseURL?: string
