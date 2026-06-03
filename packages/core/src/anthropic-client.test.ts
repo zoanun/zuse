@@ -7,7 +7,7 @@ describe('AnthropicClient', () => {
   let client: AnthropicClient
 
   beforeAll(() => {
-    // Skip if no API key configured
+    // 若没有配置 API key 则跳过
     try {
       client = new AnthropicClient(getClientConfig(), getDefaultModel())
     } catch {
@@ -19,7 +19,7 @@ describe('AnthropicClient', () => {
     try {
       expect(client.getModel()).toBeTruthy()
     } catch {
-      // Skipped
+      // 已跳过
     }
   })
 
@@ -34,15 +34,15 @@ describe('AnthropicClient', () => {
         events.push(event)
       }
 
-      // Should have message-start
+      // 应当有 message-start
       const startEvent = events.find((e) => e.type === 'message-start')
       expect(startEvent).toBeDefined()
 
-      // Should have text-deltas
+      // 应当有 text-delta
       const deltas = events.filter((e) => e.type === 'text-delta')
       expect(deltas.length).toBeGreaterThan(0)
 
-      // Should have message-stop with usage (fault mode ⑧ defense)
+      // 应当有带 usage 的 message-stop（故障模式⑧的防御）
       const stopEvent = events.find((e) => e.type === 'message-stop')
       expect(stopEvent).toBeDefined()
       if (stopEvent && stopEvent.type === 'message-stop') {

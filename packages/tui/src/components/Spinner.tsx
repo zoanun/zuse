@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Text } from 'ink'
 
-// Dependency-free braille spinner. Used as the assistant marker while a reply
-// is still streaming, so the bullet itself "thinks" (Claude Code style).
+// 无依赖的盲文（braille）旋转动画。在回复还在流式输出时用作助手标记，
+// 让圆点本身"在思考"（Claude Code 风格）。
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 interface SpinnerProps {

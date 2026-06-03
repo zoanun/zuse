@@ -48,7 +48,7 @@ describe('Conversation', () => {
 
   it('fromJSON throws on unknown version', () => {
     expect(() =>
-      // @ts-expect-error testing runtime guard with a bad version
+      // @ts-expect-error 故意传一个错误的 version 来测试运行时校验
       Conversation.fromJSON({ version: 2, messages: [], totalUsage: { input_tokens: 0, output_tokens: 0 } }),
     ).toThrow()
   })

@@ -1,6 +1,6 @@
 import type { Message, Usage } from './types.js'
 
-/** Serialized form for /save and /load (Phase 2.7). version gates future migrations. */
+/** 用于 /save 和 /load 的序列化形式（Phase 2.7）。version 为将来的迁移留出闸门。 */
 export interface ConversationSnapshot {
   version: 1
   messages: Message[]
@@ -8,11 +8,11 @@ export interface ConversationSnapshot {
 }
 
 /**
- * Conversation — the authoritative store of committed conversation history.
- * This is exactly what gets re-sent to the model each turn (stateless server).
+ * Conversation —— 已提交会话历史的权威存储。
+ * 这正是每个回合重新发给模型的内容（无状态服务端）。
  *
- * Pure data + operations, no React. The TUI holds an instance in a ref and
- * mirrors a render-friendly view into component state.
+ * 纯数据 + 操作，不含 React。TUI 在 ref 里持有一个实例，并把一份
+ * 适合渲染的视图镜像到组件 state 中。
  */
 export class Conversation {
   private messages: Message[] = []
@@ -30,7 +30,7 @@ export class Conversation {
     this.append({ role: 'assistant', content: [{ type: 'text', text }] })
   }
 
-  /** A defensive copy — callers must not mutate our internal array. */
+  /** 返回一份防御性拷贝 —— 调用方不得修改我们内部的数组。 */
   getMessages(): Message[] {
     return this.messages.map((m) => ({ role: m.role, content: [...m.content] }))
   }
@@ -39,7 +39,7 @@ export class Conversation {
     return this.messages.length
   }
 
-  /** Accumulate one turn's usage into the running total (fault mode ⑧). */
+  /** 把一个回合的用量累加进运行总计（故障模式⑧）。 */
   addUsage(usage: Usage): void {
     this._totalUsage = {
       input_tokens: this._totalUsage.input_tokens + usage.input_tokens,

@@ -2,15 +2,15 @@ import { Box, Text } from 'ink'
 import type { Usage } from '@zuse/core'
 
 /**
- * Soft warning threshold for the live context size (fault mode ②). Past this,
- * `ctx` turns yellow as a nudge to /clear or /save — not a hard cap.
+ * 实时上下文大小的软警戒线（故障模式②）。超过它之后，`ctx` 会变黄，
+ * 提示去 /clear 或 /save —— 这不是硬上限。
  */
 const CONTEXT_SOFT_LIMIT = 100_000
 
 interface UsageFooterProps {
   model: string
   totalUsage?: Usage
-  contextTokens?: number  // last turn's input_tokens — the live context size
+  contextTokens?: number  // 上一回合的 input_tokens —— 实时上下文大小
   isThinking: boolean
 }
 

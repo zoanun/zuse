@@ -1,24 +1,24 @@
 import type { Conversation } from '@zuse/core'
 
 /**
- * What a slash command is handed when it runs. The hook owns the actual state;
- * commands only act through these capabilities, so they stay decoupled from React.
+ * 斜杠命令运行时被交予的东西。真正的 state 由 hook 持有；命令只通过这些
+ * 能力来行动，因此与 React 解耦。
  */
 export interface CommandContext {
-  /** Everything after the command name, trimmed. e.g. "/save foo" → "foo". */
+  /** 命令名之后的全部内容，已 trim。例如 "/save foo" → "foo"。 */
   args: string
-  /** Emit a local notice into the transcript (rendered as a dim system line). */
+  /** 向对话记录发出一条本地通知（渲染成一行暗色的 system 行）。 */
   print: (text: string) => void
-  /** Wipe the conversation (history + usage) and the UI. */
+  /** 清空会话（历史 + 用量）和 UI。 */
   clear: () => void
-  /** The live committed history — read it (e.g. to serialize for /save). */
+  /** 实时的已提交历史 —— 读取它（例如为 /save 序列化）。 */
   conversation: Conversation
-  /** Replace the live conversation and rebuild the UI from it (for /load). */
+  /** 替换实时会话并据此重建 UI（用于 /load）。 */
   load: (conversation: Conversation) => void
 }
 
 export interface SlashCommand {
-  /** Invoked as `/<name>`. No leading slash here. */
+  /** 以 `/<name>` 调用。这里不带前导斜杠。 */
   name: string
   description: string
   run: (ctx: CommandContext) => void | Promise<void>
