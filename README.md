@@ -7,10 +7,12 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 ## Status
 
 Phase 4: Done. Full v1 toolset. `Write` (whole-file, creates parent dirs),
-`Edit` (exact-string replace, `replace_all`), `LS`, `Glob` (Node 22 built-in
-`fs.glob`, zero deps), `Grep` (hand-rolled enumerate + per-line regex, no
-ripgrep dep), and `Bash` (spawn via shell with cwd, timeout, output truncation,
-abort-signal kill, cross-platform process-tree kill). The headline is
+`Edit` (exact-string replace, `replace_all`), `Glob` (readdir walk +
+`path.matchesGlob`, includes dotfiles, sorted by mtime), `Grep` (ripgrep via
+`@vscode/ripgrep`, respects `.gitignore`), and `Bash` (spawn via shell with cwd,
+timeout, output truncation, abort-signal kill, cross-platform process-tree
+kill). No standalone `LS` tool — like Claude Code, directory listing goes
+through `Bash(ls)`. The headline is
 **read-before-edit**: `Edit` refuses to touch a file that hasn't been `Read`,
 and refuses if the file's mtime changed since it was read (optimistic lock
 against TOCTOU). Read state lives in a session `FileReadTracker` carried on

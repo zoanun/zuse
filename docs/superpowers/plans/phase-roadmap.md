@@ -18,10 +18,14 @@
 | 4     | 工具集补全  | 一（④工具错误吞）                           | 【专题课】Harness Engineering驾驭工程实战/Part 2/              | BashTool/         |
 | 5     | 权限模型    | 一（⑥缺权限闸）+ 11.3（23项安全检查）       | 【专题课】Harness Engineering驾驭工程实战/Part 1/              | bashSecurity.ts   |
 | 6     | 多Provider  | 三（Cache优化）                             | 【专题课】Harness Engineering驾驭工程实战/Part 4/              | —                 |
+| 6.5   | 联网工具    | —                                           | —                                                              | WebFetch/WebSearch|
+| 6.6   | 代码智能LSP | —                                           | —                                                              | tools/LSP         |
 | 7     | UI打磨      | —                                           | —                                                              | ink/ components/  |
 | 8     | 会话管理    | 四（Token Budget）+ 11.6（压缩策略）        | 【Part 7】+【Part 8】+【专题课】Claude Code架构/Part 3/        | services/compact/ |
 | 9     | 项目记忆    | 五（记忆系统SQLite）+ 11.2（四种记忆类型）  | 【专题课】Harness Engineering驾驭工程实战/Part 4/ + 【Part 7】 | memdir/           |
 | 10+   | Skills系统  | 六（SKILL.md格式）+ 11.7（Skills实现）      | 【Part 6】Agent Skills/                                        | skills/           |
+| 11    | 多Agent编排 | 11.4（多Agent架构）                         | Claude Code专题课Part 3 + LangGraph Part 7                     | Agent/Team/Workflow|
+| 12    | 调度与自动化| —                                           | —                                                              | Cron/ScheduleWakeup|
 
 ---
 
@@ -241,6 +245,71 @@
 
 ---
 
+## Phase 6.5: 联网工具（WebFetch / WebSearch）
+
+### 补充文档参考
+
+—（设计文档 §2 把"文件上传/多模态"列为 out-of-scope，但联网读取/检索是 coding agent
+的常用能力，单列一个轻量 Phase；放在 Phase 6 之后是因为它依赖多 Provider 抽象做抽取，
+依赖 Phase 5 权限闸做授权。）
+
+### 课程知识点
+
+无直接对应课程，参考 Claude Code 的 WebFetch/WebSearch 行为对齐。
+
+### Claude Code 行为参考
+
+| 工具         | CC 行为                                                                       |
+| ------------ | ----------------------------------------------------------------------------- |
+| **WebFetch** | 抓 URL → HTML 转 Markdown → 用**小/快模型**按 prompt 抽取答案；约 15 分钟缓存 |
+| **WebSearch**| 走 Anthropic 后端搜索，只回 标题/URL，**不抓正文**；正文再交给 WebFetch       |
+
+### 选型（开源免费优先）
+
+| 环节                | OSS/免费方案                                                                    |
+| ------------------- | ------------------------------------------------------------------------------- |
+| HTML→Markdown       | `turndown`(MIT) 或 `node-html-markdown`；正文抽取可加 `@mozilla/readability`     |
+| 抽取用的小模型      | 复用 Phase 6 的 ModelClient，配一个便宜模型（如各家的 mini/flash 档）            |
+| 搜索 provider       | **无现成 OSS 二进制**——需接一个搜索 API。OSS 自托管首选 **SearXNG**（元搜索，   |
+|                     | 全开源）；托管免费档可选 Tavily / Brave Search API。**这是个 provider 决策，待定** |
+
+### 开发要点
+
+- WebFetch：fetch → 转 Markdown → 小模型抽取；带短期缓存（防重复抓取）
+- WebSearch：封装搜索 provider，返回 标题/URL 列表；正文按需交给 WebFetch
+- 两者都走 Phase 5 权限闸（CC 中均为需授权工具）
+- provider 配置沿用数据驱动思路：加搜索源 = 一条配置 + 一个 env var
+- **阻塞项**：先定搜索 provider（SearXNG 自托管 vs Tavily/Brave 托管）再动 WebSearch
+
+---
+
+## Phase 6.6: 代码智能（LSP）
+
+### 补充文档参考
+
+—（CC 的 LSP 工具：跳转定义 / 找引用 / 类型查询，只读代码智能。归在工具扩展段，紧挨
+联网工具；只读、无需授权，主要依赖 Phase 4 的进程 spawn 基建。）
+
+### 课程知识点
+
+无直接对应课程，参考 CC 的 LSP 工具行为。
+
+### 选型（开源免费优先）
+
+| 环节        | OSS/免费方案                                                                       |
+| ----------- | ---------------------------------------------------------------------------------- |
+| LSP 客户端  | 走标准 LSP（JSON-RPC over stdio），自写薄客户端                                     |
+| 语言服务器  | TS/JS：`typescript-language-server`；其余语言按需挂对应 OSS language server         |
+
+### 开发要点
+
+- 薄 LSP 客户端：spawn language server，JSON-RPC 收发（复用 Phase 4 的 spawn 经验）
+- 暴露 定义跳转 / 找引用 / 悬停类型 三个高频能力
+- 按 cwd 探测项目语言，懒启动对应 server，复用同一进程
+- 只读、无副作用 → 不进权限闸
+
+---
+
 ## Phase 7: UI打磨
 
 ### 补充文档参考
@@ -370,7 +439,76 @@
 - SKILL.md格式定义
 - 技能加载机制
 - 技能匹配触发
-- 多Agent Coordinator模式（可选）
+- 多Agent Coordinator模式 → 抽到 **Phase 11** 单独做
+
+---
+
+## Phase 11: 多Agent与编排
+
+### 补充文档参考
+
+11.4（多Agent架构）
+
+### 课程知识点
+
+| 知识点               | 课程文件                                                                                                                                               | 具体位置                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| 多Agent架构          | `【专题课】Claude Code架构与源码深度解析\Part 3. Claude Code 浓缩版第 3 节·多智能体与上下文工程\Claude Code 专题课第 3 节：多智能体与上下文工程.ipynb` | "Coordinator Mode"章节    |
+| LangGraph多Agent     | `【专题课】Agent框架 LangGraph应用实战\7. LangGraph Multi-Agent Systems 开发实战.ipynb`                                                                | "Multi-Agent Systems"章节 |
+
+### Claude Code 工具对照
+
+| 工具                          | 作用                                       |
+| ----------------------------- | ------------------------------------------ |
+| **Agent**（= 老的 Task）      | 生成子 Agent 执行隔离的子任务，返回结果      |
+| **TeamCreate / TeamDelete**   | 创建/销毁可寻址的 agent team                 |
+| **SendMessage**               | 子 Agent 间 / 与子 Agent 通信                |
+| **Workflow**                  | 确定性多 Agent 编排脚本（fan-out / pipeline）|
+
+### Claude Code 源码参考
+
+| 源码目录/文件                    | 参考内容      |
+| -------------------------------- | ------------- |
+| `coordinator/coordinatorMode.ts` | 多Agent编排   |
+| `tools/AgentTool/`               | 子Agent生成   |
+| `tools/SendMessageTool/`         | Agent间通信   |
+
+### 开发要点
+
+- Agent/Task 工具：子 Agent 隔离上下文跑子任务，结果回填父循环（max_turns、token 预算独立）
+- team 注册表 + SendMessage 通信通道
+- Workflow：确定性编排（parallel / pipeline 原语），子 Agent 并发上限 + 总数兜底
+- 自研为主——无现成 OSS 二进制可换（与 CC 一致，多 Agent 编排是手搓）
+
+---
+
+## Phase 12: 调度与自动化（Cron / Wakeup）
+
+### 补充文档参考
+
+—（CC 的 Cron / ScheduleWakeup：定时触发与自唤醒。属于自动化能力，依赖会话管理
+（Phase 8）能 resume，放在最后。）
+
+### Claude Code 工具对照
+
+| 工具                                | 作用                       |
+| ----------------------------------- | -------------------------- |
+| **CronCreate / CronDelete / CronList** | 注册/删除/列出定时任务      |
+| **ScheduleWakeup**                  | 会话内自唤醒（延时再跑）    |
+
+### 选型（开源免费优先）
+
+| 环节       | OSS/免费方案                                                          |
+| ---------- | -------------------------------------------------------------------- |
+| 进程内调度 | `node-cron` / `croner`（轻量、MIT）                                   |
+| 持久化触发 | 或委托 OS 调度器（Windows 任务计划 / cron），zuse 以 `--resume` 拉起 |
+
+### 开发要点
+
+- Cron 任务表：cron 表达式 + 目标会话 + 触发动作，持久化到 ~/.zuse/
+- ScheduleWakeup：相对延时的一次性唤醒
+- 触发时以 `--resume` 拉起对应会话（依赖 Phase 8 会话管理）
+- 自动化跑务必走 Phase 5 权限闸，避免无人值守下的越权
 
 ---
 

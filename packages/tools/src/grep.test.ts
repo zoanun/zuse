@@ -27,13 +27,16 @@ beforeAll(async () => {
       0x6e, 0x74,
     ]),
   )
-  // node_modules 里也放一个含 pattern 的文件：默认应被忽略目录过滤掉。
+  // node_modules 里也放一个含 pattern 的文件：默认应被 .gitignore 过滤掉。
   await mkdir(join(dir, 'node_modules', 'dep'), { recursive: true })
   await writeFile(
     join(dir, 'node_modules', 'dep', 'index.ts'),
     'export const runAgent = 1\n',
     'utf8',
   )
+  // ripgrep 仅在搜索目录处于 git 仓库内（存在 .git）时才读 .gitignore，故造一个空 .git。
+  await mkdir(join(dir, '.git'), { recursive: true })
+  await writeFile(join(dir, '.gitignore'), 'node_modules/\n', 'utf8')
 })
 
 afterAll(async () => {
@@ -76,15 +79,15 @@ describe('GrepTool', () => {
     expect(result.output).not.toContain('\r')
   })
 
-  it('ignores node_modules by default, but searches it when targeted by an explicit glob', async () => {
+  it('respects .gitignore (node_modules is excluded, even when targeted by a glob)', async () => {
     const def = await GrepTool.run({ pattern: 'runAgent' }, makeCtx())
     expect(def.output).not.toContain('node_modules')
-    // 显式把 glob 指向 node_modules：绕过默认忽略，应能命中。
+    // ripgrep 与 CC 一致：忽略规则优先于 -g include glob，显式 glob 也无法绕过 .gitignore。
     const explicit = await GrepTool.run(
       { pattern: 'runAgent', glob: 'node_modules/**/*.ts' },
       makeCtx(),
     )
-    expect(explicit.output).toContain('index.ts')
+    expect(explicit.output).not.toContain('index.ts')
   })
 
   it('skips binary files (NUL byte) instead of matching their bytes as text', async () => {
@@ -98,7 +101,7 @@ describe('GrepTool', () => {
   it('returns is_error for an invalid regular expression', async () => {
     const result = await GrepTool.run({ pattern: '(' }, makeCtx())
     expect(result.isError).toBe(true)
-    expect(result.output).toMatch(/invalid regular expression/i)
+    expect(result.output).toMatch(/regex/i)
   })
 
   it('returns is_error when pattern is missing', async () => {

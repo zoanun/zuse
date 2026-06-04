@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { writeFile, mkdir, mkdtemp, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GlobTool } from './glob.js'
@@ -18,6 +18,16 @@ beforeAll(async () => {
   await writeFile(join(dir, 'src', 'b.ts'), '', 'utf8')
   await writeFile(join(dir, 'src', 'c.js'), '', 'utf8')
   await writeFile(join(dir, 'readme.md'), '', 'utf8')
+  // 隐藏文件：用来验证不再对 dotfile 全盲（fs.glob 时代的 bug）。
+  await writeFile(join(dir, '.env'), '', 'utf8')
+  // 受控 mtime 的两个文件：old 早于 new，用来验证按修改时间倒序排序。
+  await writeFile(join(dir, 'src', 'old.ts'), '', 'utf8')
+  await writeFile(join(dir, 'src', 'new.ts'), '', 'utf8')
+  await utimes(join(dir, 'src', 'old.ts'), new Date(1_000_000), new Date(1_000_000))
+  await utimes(join(dir, 'src', 'new.ts'), new Date(2_000_000), new Date(2_000_000))
+  // node_modules 应被剪枝：里面的 .ts 不应出现在结果里。
+  await mkdir(join(dir, 'node_modules', 'dep'), { recursive: true })
+  await writeFile(join(dir, 'node_modules', 'dep', 'index.ts'), '', 'utf8')
 })
 
 afterAll(async () => {
@@ -32,6 +42,24 @@ describe('GlobTool', () => {
     expect(result.output).toContain('b.ts')
     expect(result.output).not.toContain('c.js')
     expect(result.output).not.toContain('readme.md')
+  })
+
+  it('finds hidden dotfiles (no longer dotfile-blind)', async () => {
+    const result = await GlobTool.run({ pattern: '**/.env*' }, makeCtx())
+    expect(result.isError).toBeFalsy()
+    expect(result.output).toContain('.env')
+  })
+
+  it('sorts results by modification time, most recent first', async () => {
+    const result = await GlobTool.run({ pattern: '**/*.ts' }, makeCtx())
+    expect(result.isError).toBeFalsy()
+    // new.ts（mtime 更晚）应排在 old.ts 之前。
+    expect(result.output.indexOf('new.ts')).toBeLessThan(result.output.indexOf('old.ts'))
+  })
+
+  it('prunes node_modules from traversal', async () => {
+    const result = await GlobTool.run({ pattern: '**/*.ts' }, makeCtx())
+    expect(result.output).not.toContain('node_modules')
   })
 
   it('returns a no-match message (not an error) when nothing matches', async () => {

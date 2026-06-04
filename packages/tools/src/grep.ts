@@ -1,37 +1,12 @@
-import { glob } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
-import { StringDecoder } from 'node:string_decoder'
-import { resolve, relative, isAbsolute } from 'node:path'
+import { spawn } from 'node:child_process'
+import { rgPath } from '@vscode/ripgrep'
 import { resolvePath } from '@zuse/core'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
-/** 命中行数上限（让输出有界）。 */
+/** 命中行数上限（让输出有界）。达到即杀掉 rg 进程并标注截断。 */
 const MAX_MATCHES = 200
-/** 单行展示的字符上限。 */
+/** 单行展示的字符上限：交给 ripgrep 的 --max-columns，超长行只给预览。 */
 const MAX_LINE_LENGTH = 500
-/**
- * 单行缓冲上限（字符数）。分块流式读取时，若某一行迟迟不出现换行、缓冲已超过
- * 此值，判定为压缩/非常规文本并跳过该文件。这才是内存的真正约束 —— 文件总
- * 大小不设限，多大的"正常多行文件"（日志等）都能逐行扫完，内存只占约一行；
- * 只有"无换行的超大单行"（压缩 bundle、数据块等）才会触发跳过。参考 ripgrep
- * 对超长行/二进制的处理：按行扫，文件大小本身不是门槛。
- */
-const MAX_LINE_BYTES = 1024 * 1024
-/** NUL 字节：用来判定二进制文件（仿 ripgrep，遇到即停止扫描该文件）。 */
-const NUL = String.fromCharCode(0)
-/**
- * 默认忽略的目录：几乎不会想搜、又往往巨大的生成/依赖目录。交给 fs.glob 的
- * exclude 选项，命中即剪枝（连里面都不遍历，省掉 walk 开销），而非事后过滤。
- * 注意 glob 默认就不匹配点开头的目录（.git/.next 等），这里 .git 只是冗余兜底。
- * 要搜被忽略的目录，显式传 glob（如 "node_modules/foo/**"）即可绕过。
- */
-const IGNORED_DIRS = new Set(['node_modules', '.git'])
-
-/** glob 的 exclude 回调：路径任一段命中忽略目录则剪枝。兼容回调传入 basename
- *  或完整相对路径两种形态（按分隔符切段后逐段判断）。 */
-function isIgnoredPath(p: string): boolean {
-  return p.split(/[\\/]/).some((seg) => IGNORED_DIRS.has(seg))
-}
 
 interface GrepInput {
   pattern: string
@@ -65,141 +40,132 @@ const inputSchema: JSONSchema = {
   required: ['pattern'],
 }
 
-/**
- * 命中行的展示路径：尽量给相对 cwd 的短路径；当搜索目录在 cwd 之外、相对路径
- * 会退化成一串 `../` 时，改用绝对路径，免得模型拿到一个对不上 cwd 的怪路径。
- */
-function displayPath(cwd: string, absPath: string): string {
-  const rel = relative(cwd, absPath)
-  return rel === '' || rel.startsWith('..') || isAbsolute(rel) ? absPath : rel
+/** rg 在搜索当前目录 '.' 时会给每条路径加 './'（Windows 下为 '.\'）前缀，去掉它。 */
+function stripDotPrefix(line: string): string {
+  if (line.startsWith('./') || line.startsWith('.\\')) return line.slice(2)
+  return line
 }
 
 /**
- * GrepTool —— 按文件内容搜索（"是什么"），手搓:用 fs.glob 枚举候选文件，
- * 分块流式逐行跑正则，命中输出 `相对路径:行号:命中行`。无 ripgrep 依赖。
+ * GrepTool —— 按文件内容搜索（"是什么"），后端是 ripgrep（经 @vscode/ripgrep
+ * 提供的预编译 rg 二进制）。这与 Claude Code 一致：直接复用 ripgrep，而不是手搓
+ * 文件遍历 + 正则。由此免费获得完整的 gitignore 语义（嵌套 .gitignore、.ignore、
+ * .rgignore、全局 gitignore、否定规则等）、二进制文件自动跳过、超长行截断、
+ * Unicode 等能力——这些都不必我们自己维护。
  *
- * 内存安全（与文件总大小无关）：用 createReadStream 分块读 + StringDecoder
- * 跨块解码 utf8 + 手动按 \n 切行，内存只占"当前这一行"。约束落在单行上而非
- * 文件大小 —— 正常的多行大文件（日志等）能完整逐行扫完；只有遇到 NUL 字节
- * （二进制）或单行超过 MAX_LINE_BYTES（压缩/非常规文本）才跳过该文件。命中数、
- * 行长、被跳过的非文本文件数都有界并在输出里如实标注。按文件名找文件用 Glob。
+ * 输出为 `路径:行号:命中行`。命中数上限 MAX_MATCHES，单行长度上限 MAX_LINE_LENGTH
+ * （交给 rg 的 --max-columns）。注意：gitignore 仅在搜索目录处于 git 仓库内（存在
+ * .git）时才生效，这正是 ripgrep 的原生行为，与 CC 对齐。按文件名找文件用 Glob。
  */
 export const GrepTool: Tool = {
   name: 'Grep',
   description:
-    'Search file contents with a regular expression. Returns matches as "path:line:text". ' +
-    'Use the glob option to narrow which files are scanned. Use Glob to find files by name instead.',
+    'Search file contents with a regular expression (powered by ripgrep). Returns matches as ' +
+    '"path:line:text". Respects .gitignore. Use the glob option to narrow which files are ' +
+    'scanned. Use Glob to find files by name instead.',
   inputSchema,
 
-  async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+  run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as GrepInput
     if (!input.pattern || typeof input.pattern !== 'string') {
-      return { output: 'Grep requires a pattern.', isError: true }
+      return Promise.resolve({ output: 'Grep requires a pattern.', isError: true })
     }
 
-    let regex: RegExp
-    try {
-      regex = new RegExp(input.pattern, input.ignore_case ? 'i' : '')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return { output: `Invalid regular expression: ${message}`, isError: true }
-    }
+    // 给了 path 就解析成绝对路径（rg 会原样输出绝对路径前缀）；否则搜当前目录 '.'。
+    const searchPath = input.path ? resolvePath(ctx.cwd, input.path) : '.'
 
-    const base = input.path ? resolvePath(ctx.cwd, input.path) : ctx.cwd
+    const args = [
+      '--no-heading',
+      '--with-filename',
+      '--line-number',
+      '--color',
+      'never',
+      '--crlf', // 让 `$` 在 CRLF 文件上锚定到 \r 之前
+      '--no-messages', // 抑制无法读取的文件等噪声（非法正则仍会照常报错）
+      '--max-columns',
+      String(MAX_LINE_LENGTH),
+      '--max-columns-preview', // 超长行给一段预览，而非整行丢弃
+    ]
+    if (input.ignore_case) args.push('--ignore-case')
+    if (input.glob) args.push('--glob', input.glob)
+    args.push('-e', input.pattern, '--', searchPath)
 
-    const filePattern = input.glob ?? '**/*'
-    // 默认剪掉忽略目录；但若用户的 glob 本身就指向忽略目录（如 "node_modules/**"），
-    // 视为显式意图、不再过滤（仿 ripgrep：显式指定的路径优先于默认忽略）。
-    const exclude = !input.glob || !isIgnoredPath(input.glob) ? isIgnoredPath : undefined
-    const lines: string[] = []
-    let count = 0
-    let truncated = false
-    let skippedNonText = 0
+    return new Promise<ToolResult>((resolve) => {
+      const child = spawn(rgPath, args, { cwd: ctx.cwd, signal: ctx.signal })
+      const lines: string[] = []
+      let stdoutBuf = ''
+      let stderr = ''
+      let truncated = false
+      let settled = false
 
-    try {
-      outer: for await (const entry of glob(filePattern, { cwd: base, exclude })) {
-        const absPath = resolve(base, entry)
-        const rel = displayPath(ctx.cwd, absPath)
-        const decoder = new StringDecoder('utf8')
-        let buffer = ''
-        let lineNo = 0
-        let nonText = false
-
-        // 测试一行并记录命中；返回 true 表示命中已达上限、应停止整轮搜索。
-        // 每行都先 lineNo++（行号必须把未命中的行也数进去）。
-        const recordLine = (line: string): boolean => {
-          lineNo++
-          if (!regex.test(line)) return false
-          if (count >= MAX_MATCHES) {
-            truncated = true
-            return true
-          }
-          const text =
-            line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) + '…[truncated]' : line
-          lines.push(`${rel}:${lineNo}:${text}`)
-          count++
-          return false
-        }
-
-        const stream = createReadStream(absPath)
-        try {
-          for await (const chunk of stream as AsyncIterable<Buffer>) {
-            const text = decoder.write(chunk)
-            // NUL 字节 → 二进制文件，停止扫描该文件。
-            if (text.includes(NUL)) {
-              nonText = true
-              break
-            }
-            buffer += text
-            // 取出本次缓冲里所有完整行（以 \n 分隔）；CRLF 的尾随 \r 去掉，避免
-            // 命中行夹带杂散回车、且让 `$` 锚定的正则正常匹配。
-            let nl: number
-            while ((nl = buffer.indexOf('\n')) !== -1) {
-              let line = buffer.slice(0, nl)
-              buffer = buffer.slice(nl + 1)
-              if (line.endsWith('\r')) line = line.slice(0, -1)
-              if (recordLine(line)) break outer // 退出前 finally 会销毁 stream
-            }
-            // 一行迟迟不出现换行、缓冲超限：判为压缩/非常规文本，跳过该文件。
-            if (buffer.length > MAX_LINE_BYTES) {
-              nonText = true
-              break
-            }
-          }
-          // EOF：处理最后一段（没有尾随 \n 的最后一行）。
-          if (!nonText) {
-            buffer += decoder.end()
-            if (buffer.length > 0) {
-              if (buffer.includes(NUL)) {
-                nonText = true
-              } else {
-                const line = buffer.endsWith('\r') ? buffer.slice(0, -1) : buffer
-                if (recordLine(line)) break outer
-              }
-            }
-          }
-        } catch {
-          // 目录(EISDIR)/权限/读取错误：跳过该文件。
-        } finally {
-          stream.destroy()
-        }
-
-        if (nonText) skippedNonText++
+      const finish = (result: ToolResult): void => {
+        if (settled) return
+        settled = true
+        resolve(result)
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return { output: `Grep failed: ${message}`, isError: true }
-    }
 
-    if (lines.length === 0) {
-      const skip = skippedNonText > 0 ? ` (${skippedNonText} non-text file(s) skipped)` : ''
-      return { output: `No matches for: ${input.pattern}${skip}`, isError: false }
-    }
+      // 把一行 rg 输出规整后收入 lines；返回 true 表示已达上限、应停止。
+      const pushLine = (raw: string): boolean => {
+        let line = raw
+        if (line.endsWith('\r')) line = line.slice(0, -1) // CRLF 残留
+        line = stripDotPrefix(line)
+        lines.push(line)
+        if (lines.length >= MAX_MATCHES) {
+          truncated = true
+          child.kill()
+          return true
+        }
+        return false
+      }
 
-    const notes: string[] = []
-    if (truncated) notes.push(`showing first ${MAX_MATCHES} matches`)
-    if (skippedNonText > 0) notes.push(`${skippedNonText} non-text file(s) skipped`)
-    const note = notes.length > 0 ? `\n\n[${notes.join('; ')}]` : ''
-    return { output: lines.join('\n') + note, isError: false }
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => {
+        if (truncated) return
+        stdoutBuf += chunk
+        let nl: number
+        while ((nl = stdoutBuf.indexOf('\n')) !== -1) {
+          const raw = stdoutBuf.slice(0, nl)
+          stdoutBuf = stdoutBuf.slice(nl + 1)
+          if (pushLine(raw)) break
+        }
+      })
+
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk
+      })
+
+      child.on('error', (err: Error) => {
+        finish({ output: `Grep failed to launch ripgrep: ${err.message}`, isError: true })
+      })
+
+      child.on('close', (code: number | null) => {
+        if (truncated) {
+          finish({
+            output: lines.join('\n') + `\n\n[showing first ${MAX_MATCHES} matches]`,
+            isError: false,
+          })
+          return
+        }
+        // 处理没有尾随换行的最后一行。
+        if (stdoutBuf.length > 0) pushLine(stdoutBuf)
+        if (truncated) {
+          finish({
+            output: lines.join('\n') + `\n\n[showing first ${MAX_MATCHES} matches]`,
+            isError: false,
+          })
+          return
+        }
+        // rg 退出码：0=有命中，1=无命中（非错误），其余=出错（含非法正则）。
+        if (code === 0) {
+          finish({ output: lines.join('\n'), isError: false })
+        } else if (code === 1) {
+          finish({ output: `No matches for: ${input.pattern}`, isError: false })
+        } else {
+          const detail = stderr.trim() || `ripgrep exited with code ${code}`
+          finish({ output: `Grep failed: ${detail}`, isError: true })
+        }
+      })
+    })
   },
 }

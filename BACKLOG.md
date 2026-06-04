@@ -9,5 +9,7 @@
   - 选型 A：`marked` + `marked-terminal` 或 `ink-markdown`，省事。
   - 选型 B（更贴合"手搓"学习目标）：自渲染。关键难点是流式——文本由 `text-delta` 逐段拼接，某一刻可能只拿到半个代码围栏，边解析边渲染会闪烁。参考 Claude Code 的双态策略：流式期间按纯文本走，`message-stop` 定稿后再重渲染成富文本。这个"流式 vs 定稿"双态值得专门学。
 
-- **Glob/Grep 对 dotfile 全盲（挂 Phase 5/6 · 文件树遍历硬化）。** Phase 4 实测发现的真 bug：Glob 和 Grep 都基于 Node 内置 `fs.glob` 枚举文件，而 `fs.glob` 默认 `dot:false` 且**没有开启 dotfile 的选项**（`{dot:true}` 被无视）。后果：`Glob("**/.env*")`、`Grep` 搜内容时全都跳过 `.env`/`.gitignore`/`.prettierrc.json` 等隐藏文件，只有写死的字面量名 `Glob(".env")` 才命中。模型据此会误判"项目里没有 .env"。LS 走 `readdir` 不受影响。
-  - 修法：Glob/Grep 改用自写的 `readdir` 递归遍历（像 ripgrep 那样默认含 dotfile，再靠 `.gitignore` 规则排除 `node_modules`/`.git` 等）。这跟 Phase 5/6 要做的"尊重 .gitignore 的文件树遍历"是同一件事，合并做更省。
+- **~~Glob 与 CC 的两处行为差异~~（已完成）。** Grep 已改用 ripgrep（见 `grep.ts`），默认跳过隐藏文件——这正是 CC 的 Grep 行为，算对齐而非 bug。Glob 也已从 `fs.glob` 重写为自写 `readdir` 递归遍历 + `path.matchesGlob`（见 `glob.ts`），原先两处差异均已修复：
+  - (1) ~~**dotfile 全盲**~~ → 已含 dotfile，`Glob("**/.env*")` 现可命中 `.env` 等隐藏文件。
+  - (2) ~~**排序口径**（字母序）~~ → 已改为按**修改时间倒序**，与 CC 的 Glob 一致。
+  - 注：只硬剪 `.git`/`node_modules` 不下钻（性能取舍），其余隐藏文件照常包含；这是相对 CC「默认不应用 gitignore」的一处刻意取舍，非 bug。本条无遗留工作。
