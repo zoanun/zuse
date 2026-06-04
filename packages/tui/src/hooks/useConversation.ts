@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { cwd } from 'node:process'
+import { cwd, env } from 'node:process'
 import type { UIMessage, ConversationState } from '../types.js'
 import {
   Conversation,
@@ -85,7 +85,9 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
           registry,
           userText: text,
           config: { model: client.getModel(), max_tokens: maxTokens },
-          cwd: cwd(),
+          // pnpm -F 会把进程 cwd 切到包目录（packages/tui），INIT_CWD 才记着
+          // 用户真正敲命令的目录。dev 时优先用它；装成 CLI 直接跑时回落 process.cwd()。
+          cwd: env.INIT_CWD ?? cwd(),
           signal: controller.signal,
           tracker: trackerRef.current,
         })) {
