@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
 /** 默认超时（毫秒）。 */
@@ -18,7 +19,8 @@ const inputSchema: JSONSchema = {
   properties: {
     command: {
       type: 'string',
-      description: 'The shell command to run. Executed via the system shell in the working directory.',
+      description:
+        'The shell command to run. Executed via the system shell in the working directory.',
     },
     timeout: {
       type: 'number',
@@ -26,12 +28,6 @@ const inputSchema: JSONSchema = {
     },
   },
   required: ['command'],
-}
-
-/** 把合并输出截断到上限，并标注。 */
-function clamp(text: string): string {
-  if (text.length <= MAX_OUTPUT) return text
-  return text.slice(0, MAX_OUTPUT) + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
 }
 
 /**
@@ -83,14 +79,28 @@ export const BashTool: Tool = {
       })
 
       let output = ''
+      let outputTruncated = false
       let timedOut = false
       let aborted = false
 
-      const onData = (chunk: Buffer): void => {
-        output += chunk.toString('utf8')
+      // 累加时即时封顶：到上限就停止追加，内存恒为 ~MAX_OUTPUT，而不是把整条流
+      // 都堆进内存、最后才截断（刷屏命令如 `yes`/`cat 大文件` 会先把进程撑爆）。
+      const append = (text: string): void => {
+        if (outputTruncated || text === '') return
+        if (output.length + text.length > MAX_OUTPUT) {
+          output += text.slice(0, MAX_OUTPUT - output.length)
+          outputTruncated = true
+        } else {
+          output += text
+        }
       }
-      child.stdout.on('data', onData)
-      child.stderr.on('data', onData)
+
+      // 每条流各用一个 StringDecoder：多字节 UTF-8 码点跨 chunk 边界时，decoder 会
+      // 缓存半个字符等下一块，避免 chunk.toString() 各自解码造成的乱码（中文/emoji）。
+      const outDecoder = new StringDecoder('utf8')
+      const errDecoder = new StringDecoder('utf8')
+      child.stdout.on('data', (chunk: Buffer) => append(outDecoder.write(chunk)))
+      child.stderr.on('data', (chunk: Buffer) => append(errDecoder.write(chunk)))
 
       const timer = setTimeout(() => {
         timedOut = true
@@ -114,12 +124,20 @@ export const BashTool: Tool = {
         finish({ output: `Failed to spawn command: ${err.message}`, isError: true })
       })
 
-      child.on('close', (code) => {
-        const body = clamp(output)
+      child.on('close', (code, signal) => {
+        // 冲刷 decoder 里可能缓着的尾字节（已封顶则丢弃）。
+        append(outDecoder.end())
+        append(errDecoder.end())
+        const body = outputTruncated
+          ? output + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
+          : output
         if (timedOut) {
           finish({ output: `${body}\n[timed out after ${timeout}ms]`, isError: true })
         } else if (aborted) {
           finish({ output: `${body}\n[interrupted]`, isError: true })
+        } else if (code === null) {
+          // code 为 null 表示被信号杀死（段错误、被外部 kill 等），真正原因在 signal。
+          finish({ output: `${body}\n[killed by signal: ${signal}]`, isError: true })
         } else if (code !== 0) {
           finish({ output: `${body}\n[exit code: ${code}]`, isError: true })
         } else {

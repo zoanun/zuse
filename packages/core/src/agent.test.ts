@@ -53,7 +53,17 @@ describe('runAgent', () => {
     ])
     const conv = new Conversation()
     const reg = new ToolRegistry()
-    await collect(runAgent({ conversation: conv, client, registry: reg, userText: 'hi', config, cwd: '.', signal }))
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'hi',
+        config,
+        cwd: '.',
+        signal,
+      }),
+    )
 
     const msgs = conv.getMessages()
     expect(msgs).toHaveLength(2)
@@ -80,19 +90,38 @@ describe('runAgent', () => {
     reg.register(echoTool())
 
     const events = await collect(
-      runAgent({ conversation: conv, client, registry: reg, userText: 'go', config, cwd: '.', signal })
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+      }),
     )
 
     // 产生了一个带工具输出的 tool-result 事件
     const toolResult = events.find((e) => e.type === 'tool-result')
-    expect(toolResult).toEqual({ type: 'tool-result', id: 'call_1', name: 'echo', output: 'echoed:x', is_error: false })
+    expect(toolResult).toEqual({
+      type: 'tool-result',
+      id: 'call_1',
+      name: 'echo',
+      output: 'echoed:x',
+      is_error: false,
+    })
 
     // 第 2 次模型调用看到了作为 user 消息回喂的 tool_result
     expect(calls).toHaveLength(2)
     const secondCall = calls[1]!
     const lastSent = secondCall[secondCall.length - 1]!
     expect(lastSent.role).toBe('user')
-    expect(lastSent.content[0]).toEqual({ type: 'tool_result', tool_use_id: 'call_1', content: 'echoed:x', is_error: false })
+    expect(lastSent.content[0]).toEqual({
+      type: 'tool_result',
+      tool_use_id: 'call_1',
+      content: 'echoed:x',
+      is_error: false,
+    })
 
     // 账本：user、assistant(tool_use)、user(tool_result)、assistant(text) = 4 条
     expect(conv.getMessages()).toHaveLength(4)
@@ -112,7 +141,15 @@ describe('runAgent', () => {
     const reg = new ToolRegistry()
 
     const events = await collect(
-      runAgent({ conversation: conv, client, registry: reg, userText: 'go', config, cwd: '.', signal })
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+      }),
     )
     const tr = events.find((e) => e.type === 'tool-result')
     expect(tr).toMatchObject({ is_error: true, output: 'Unknown tool: nope' })
@@ -122,7 +159,17 @@ describe('runAgent', () => {
     const { client } = fakeClient([[{ type: 'error', message: 'boom' }]])
     const conv = new Conversation()
     const reg = new ToolRegistry()
-    await collect(runAgent({ conversation: conv, client, registry: reg, userText: 'hi', config, cwd: '.', signal }))
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'hi',
+        config,
+        cwd: '.',
+        signal,
+      }),
+    )
     expect(conv.getMessages()).toHaveLength(0)
   })
 
@@ -138,7 +185,16 @@ describe('runAgent', () => {
     reg.register(echoTool())
 
     const events = await collect(
-      runAgent({ conversation: conv, client, registry: reg, userText: 'go', config, cwd: '.', signal, maxTurns: 2 })
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+        maxTurns: 2,
+      }),
     )
     expect(events.some((e) => e.type === 'warning')).toBe(true)
     const msgs = conv.getMessages()

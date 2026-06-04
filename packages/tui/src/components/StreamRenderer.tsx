@@ -19,10 +19,14 @@ function summarizeInput(input: unknown): string {
 
 function ToolBlock({ tool }: { tool: UIToolCall }) {
   const marker =
-    tool.status === 'running' ? <Spinner /> : <Text color={tool.isError ? 'red' : 'green'}>{tool.isError ? '✗' : '✓'}</Text>
+    tool.status === 'running' ? (
+      <Spinner />
+    ) : (
+      <Text color={tool.isError ? 'red' : 'green'}>{tool.isError ? '✗' : '✓'}</Text>
+    )
 
   // 取输出的第一行作为紧凑的预览。
-  const preview = tool.output ? tool.output.split('\n')[0]?.slice(0, 80) ?? '' : ''
+  const preview = tool.output ? (tool.output.split('\n')[0]?.slice(0, 80) ?? '') : ''
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -77,9 +81,7 @@ export function StreamRenderer({ message }: StreamRendererProps) {
   //（悬挂缩进）。流式期间标记是个 spinner；完成后定格成一个静态圆点。
   return (
     <Box flexDirection="row" marginBottom={1}>
-      <Box marginRight={1}>
-        {message.isStreaming ? <Spinner /> : <Text color="yellow">●</Text>}
-      </Box>
+      <Box marginRight={1}>{message.isStreaming ? <Spinner /> : <Text color="yellow">●</Text>}</Box>
       <Box flexDirection="column">
         <Text>{message.text}</Text>
         {message.usage && (

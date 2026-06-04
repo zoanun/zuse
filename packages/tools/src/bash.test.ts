@@ -14,10 +14,7 @@ function makeCtx(signal?: AbortSignal): ToolContext {
 // 在 Windows 上走 cmd.exe，echo/sleep 行为不一致，node 是唯一稳的公分母。
 describe('BashTool', () => {
   it('runs a command and returns its output', async () => {
-    const result = await BashTool.run(
-      { command: `node -e "console.log('hello-bash')"` },
-      makeCtx(),
-    )
+    const result = await BashTool.run({ command: `node -e "console.log('hello-bash')"` }, makeCtx())
     expect(result.isError).toBeFalsy()
     expect(result.output).toContain('hello-bash')
   })
@@ -31,10 +28,7 @@ describe('BashTool', () => {
   })
 
   it('returns is_error with the exit code on non-zero exit', async () => {
-    const result = await BashTool.run(
-      { command: `node -e "process.exit(3)"` },
-      makeCtx(),
-    )
+    const result = await BashTool.run({ command: `node -e "process.exit(3)"` }, makeCtx())
     expect(result.isError).toBe(true)
     expect(result.output).toMatch(/exit code: 3/)
   })

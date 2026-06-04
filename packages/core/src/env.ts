@@ -58,18 +58,18 @@ export function getClientConfig(): ClientConfig {
     if (!dashBaseURL) {
       throw new Error(
         'DASHSCOPE_API_KEY is set but DASHSCOPE_BASE_URL is missing. ' +
-        'A DashScope key must be paired with its base URL.'
+          'A DashScope key must be paired with its base URL.',
       )
     }
     return { apiKey: dashKey, baseURL: dashBaseURL }
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY || ''
-  const baseURL = process.env.ANTHROPIC_BASE_URL || undefined  // undefined 表示使用 Anthropic 默认端点
+  const baseURL = process.env.ANTHROPIC_BASE_URL || undefined // undefined 表示使用 Anthropic 默认端点
 
   if (!apiKey) {
     throw new Error(
-      'API key not found. Set DASHSCOPE_API_KEY (+ DASHSCOPE_BASE_URL) or ANTHROPIC_API_KEY in .env or environment.'
+      'API key not found. Set DASHSCOPE_API_KEY (+ DASHSCOPE_BASE_URL) or ANTHROPIC_API_KEY in .env or environment.',
     )
   }
 
@@ -81,9 +81,7 @@ export function getClientConfig(): ClientConfig {
  */
 export function getDefaultModel(): string {
   return (
-    process.env.ZUSE_MODEL ||
-    process.env.DASHSCOPE_MODEL ||
-    'claude-sonnet-4-5-20250514'  // 回退到 Claude Sonnet 4.5
+    process.env.ZUSE_MODEL || process.env.DASHSCOPE_MODEL || 'claude-sonnet-4-5-20250514' // 回退到 Claude Sonnet 4.5
   )
 }
 
@@ -96,5 +94,5 @@ export function getDefaultMaxTokens(): number {
     const parsed = parseInt(val, 10)
     if (parsed > 0) return parsed
   }
-  return 4096  // 合理的默认值
+  return 4096 // 合理的默认值
 }

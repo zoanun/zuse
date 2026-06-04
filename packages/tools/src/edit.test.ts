@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { writeFile, readFile, mkdtemp, rm, utimes, stat } from 'node:fs/promises'
+import { writeFile, readFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EditTool } from './edit.js'
 import { ReadTool } from './read.js'
-import { createFileTracker, type ToolContext } from '@zuse/core'
+import { createFileTracker, fingerprintContent, type ToolContext } from '@zuse/core'
 
 let dir: string
 let filePath: string
@@ -42,11 +42,11 @@ describe('EditTool', () => {
     expect(result.output).toMatch(/has not been read/i)
   })
 
-  it('refuses to edit when the file changed after being read (mtime lock)', async () => {
+  it('refuses to edit when the file changed after being read (content lock)', async () => {
     await ReadTool.run({ file_path: filePath }, ctx)
-    // 把 mtime 推到一个明显不同的时刻，模拟读后被外部改动。
-    const future = new Date(Date.now() + 10_000)
-    await utimes(filePath, future, future)
+    // 读后被外部改动（改动内容，使指纹不再匹配）。仍保留 old_string，确保拦截
+    // 发生在指纹校验、而非"找不到 old_string"。
+    await writeFile(filePath, 'const foo = 1\nconst extra = 99\n', 'utf8')
     const result = await EditTool.run(
       { file_path: filePath, old_string: 'const foo = 1', new_string: 'const foo = 2' },
       ctx,
@@ -104,13 +104,25 @@ describe('EditTool', () => {
       { file_path: filePath, old_string: 'const foo = 1', new_string: 'const foo = 2' },
       ctx,
     )
-    // 不再 Read，直接第二次 Edit —— 应当通过（写后已刷新 mtime）。
+    // 不再 Read，直接第二次 Edit —— 应当通过（写后已刷新指纹）。
     const second = await EditTool.run(
       { file_path: filePath, old_string: 'const foo = 2', new_string: 'const foo = 3' },
       ctx,
     )
     expect(second.isError).toBeFalsy()
-    const { mtimeMs } = await stat(filePath)
-    expect(ctx.tracker.getReadTime(filePath)).toBe(mtimeMs)
+    const current = await readFile(filePath, 'utf8')
+    expect(ctx.tracker.getFingerprint(filePath)).toBe(fingerprintContent(current))
+  })
+
+  it('treats $ sequences in new_string as literal text, not replacement patterns', async () => {
+    await ReadTool.run({ file_path: filePath }, ctx)
+    // new_string 含 $&、$1、$$ 等：用 String.replace 会被当成特殊替换模式而写错。
+    const literal = "const foo = '$& $1 $$ end'"
+    const result = await EditTool.run(
+      { file_path: filePath, old_string: 'const foo = 1', new_string: literal },
+      ctx,
+    )
+    expect(result.isError).toBeFalsy()
+    expect(await readFile(filePath, 'utf8')).toContain(literal)
   })
 })

@@ -146,7 +146,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
 async function runOneTool(
   registry: ToolRegistry,
   tu: PendingToolUse,
-  ctx: ToolContext
+  ctx: ToolContext,
 ): Promise<{ output: string; isError: boolean }> {
   const tool = registry.get(tu.name)
   if (!tool) {

@@ -1,9 +1,11 @@
 import { glob } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { resolvePath } from '@zuse/core'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
-/** 一次 Glob 返回的路径条数上限（让输出有界）。 */
+/** 一次 Glob 返回（展示）的路径条数上限（让输出有界）。 */
 const MAX_RESULTS = 100
+/** 枚举阶段的硬上限：避免在超大目录树上无限收集，同时给排序留足候选。 */
+const HARD_CAP = 10_000
 
 interface GlobInput {
   pattern: string
@@ -19,7 +21,8 @@ const inputSchema: JSONSchema = {
     },
     cwd: {
       type: 'string',
-      description: 'Directory to search from. Relative paths resolve against the working directory. Defaults to cwd.',
+      description:
+        'Directory to search from. Relative paths resolve against the working directory. Defaults to cwd.',
     },
   },
   required: ['pattern'],
@@ -42,17 +45,16 @@ export const GlobTool: Tool = {
       return { output: 'Glob requires a pattern.', isError: true }
     }
 
-    const base = input.cwd
-      ? isAbsolute(input.cwd)
-        ? input.cwd
-        : resolve(ctx.cwd, input.cwd)
-      : ctx.cwd
+    const base = input.cwd ? resolvePath(ctx.cwd, input.cwd) : ctx.cwd
 
+    // 先收集（到 HARD_CAP 为止）再排序再截断：fs.glob 的产出是文件系统顺序，
+    // 若边收边按 MAX_RESULTS 截断，再排序，得到的只是"任意一批里的前 N 个"，
+    // 字母序靠前却恰好排在磁盘后面的文件会被漏掉、且结果随文件系统而变。
     const matches: string[] = []
     try {
       for await (const entry of glob(input.pattern, { cwd: base })) {
         matches.push(entry)
-        if (matches.length > MAX_RESULTS) break
+        if (matches.length >= HARD_CAP) break
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -66,7 +68,9 @@ export const GlobTool: Tool = {
     matches.sort()
     const truncated = matches.length > MAX_RESULTS
     const shown = truncated ? matches.slice(0, MAX_RESULTS) : matches
-    const note = truncated ? `\n\n[truncated: showing first ${MAX_RESULTS} matches]` : ''
+    const note = truncated
+      ? `\n\n[truncated: showing first ${MAX_RESULTS} of ${matches.length} matches]`
+      : ''
     return { output: shown.join('\n') + note, isError: false }
   },
 }

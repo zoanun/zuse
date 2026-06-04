@@ -9,7 +9,12 @@ import { createDefaultRegistry } from '@zuse/tools'
 // 整个会话期间工具集是固定的 —— 在组件外构建一次。
 const registry = createDefaultRegistry()
 
-export function App() {
+interface AppProps {
+  /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
+  cwd: string
+}
+
+export function App({ cwd }: AppProps) {
   // 创建 client（没有 API key 时会抛错 —— 由错误展示处理）
   let client: ReturnType<typeof createAnthropicClientFromEnv> | null = null
   let initError: string | undefined
@@ -24,13 +29,16 @@ export function App() {
     client,
     maxTokens: getDefaultMaxTokens(),
     registry,
+    cwd,
   })
 
   // 如有初始化错误则展示
   if (initError) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="red" bold>Error: {initError}</Text>
+        <Text color="red" bold>
+          Error: {initError}
+        </Text>
         <Text dimColor>Please check your .env configuration.</Text>
       </Box>
     )
@@ -39,7 +47,9 @@ export function App() {
   return (
     <Box flexDirection="column" height="100%">
       <Box padding={1}>
-        <Text bold color="cyan">Zuse Chat</Text>
+        <Text bold color="cyan">
+          Zuse Chat
+        </Text>
         <Text dimColor> (Ctrl+C to exit)</Text>
       </Box>
 
@@ -59,10 +69,7 @@ export function App() {
         isThinking={state.isThinking}
       />
 
-      <InputBox
-        onSubmit={submit}
-        isDisabled={state.isThinking}
-      />
+      <InputBox onSubmit={submit} isDisabled={state.isThinking} />
     </Box>
   )
 }

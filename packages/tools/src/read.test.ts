@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { writeFile, mkdtemp, rm, stat } from 'node:fs/promises'
+import { writeFile, readFile, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ReadTool } from './read.js'
-import { createFileTracker, type ToolContext } from '@zuse/core'
+import { createFileTracker, fingerprintContent, type ToolContext } from '@zuse/core'
 
 const ctx: ToolContext = {
   cwd: process.cwd(),
@@ -57,11 +57,11 @@ describe('ReadTool', () => {
     expect(result.isError).toBe(true)
   })
 
-  it('registers the read file in the tracker with its mtime', async () => {
+  it('registers the read file in the tracker with its content fingerprint', async () => {
     const tracker = createFileTracker()
     const freshCtx: ToolContext = { cwd: process.cwd(), signal: ctx.signal, tracker }
-    const { mtimeMs } = await stat(filePath)
+    const expected = fingerprintContent(await readFile(filePath, 'utf8'))
     await ReadTool.run({ file_path: filePath }, freshCtx)
-    expect(tracker.getReadTime(filePath)).toBe(mtimeMs)
+    expect(tracker.getFingerprint(filePath)).toBe(expected)
   })
 })

@@ -30,7 +30,10 @@ describe('AnthropicClient', () => {
       ]
 
       const events: StreamEvent[] = []
-      for await (const event of client.sendMessages(messages, { model: getDefaultModel(), max_tokens: getDefaultMaxTokens() })) {
+      for await (const event of client.sendMessages(messages, {
+        model: getDefaultModel(),
+        max_tokens: getDefaultMaxTokens(),
+      })) {
         events.push(event)
       }
 

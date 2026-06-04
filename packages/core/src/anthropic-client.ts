@@ -31,7 +31,7 @@ export class AnthropicClient implements ModelClient {
   async *sendMessages(
     messages: Message[],
     config: ModelConfig,
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
   ): AsyncIterable<StreamEvent> {
     // 把我们的 Message 类型转成 Anthropic SDK 格式。text / tool_use /
     // tool_result 块几乎一对一地映射到 SDK 的内容块形状。

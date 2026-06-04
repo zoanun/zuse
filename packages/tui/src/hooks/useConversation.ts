@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from 'react'
-import { cwd, env } from 'node:process'
 import type { UIMessage, ConversationState } from '../types.js'
 import {
   Conversation,
@@ -16,6 +15,8 @@ interface UseConversationOptions {
   client: ModelClient | null
   maxTokens: number
   registry: ToolRegistry
+  /** 工作目录：工具的相对路径据此解析。由入口一次性定好传入。 */
+  cwd: string
 }
 
 interface UseConversationReturn {
@@ -29,7 +30,12 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
-export function useConversation({ client, maxTokens, registry }: UseConversationOptions): UseConversationReturn {
+export function useConversation({
+  client,
+  maxTokens,
+  registry,
+  cwd,
+}: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
   // sendMessage 内部闭包拿到它的陈旧快照。
@@ -65,7 +71,12 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
 
       // 乐观更新：立刻显示用户这一回合。
       const userMessage: UIMessage = { id: generateId(), role: 'user', text, isStreaming: false }
-      setState((prev) => ({ ...prev, messages: [...prev.messages, userMessage], isThinking: true, error: undefined }))
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, userMessage],
+        isThinking: true,
+        error: undefined,
+      }))
 
       const controller = new AbortController()
       abortRef.current = controller
@@ -85,9 +96,7 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
           registry,
           userText: text,
           config: { model: client.getModel(), max_tokens: maxTokens },
-          // pnpm -F 会把进程 cwd 切到包目录（packages/tui），INIT_CWD 才记着
-          // 用户真正敲命令的目录。dev 时优先用它；装成 CLI 直接跑时回落 process.cwd()。
-          cwd: env.INIT_CWD ?? cwd(),
+          cwd,
           signal: controller.signal,
           tracker: trackerRef.current,
         })) {
@@ -135,7 +144,10 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
           } else if (event.type === 'warning') {
             setState((prev) => ({
               ...prev,
-              messages: [...prev.messages, { id: generateId(), role: 'system', text: event.message, isStreaming: false }],
+              messages: [
+                ...prev.messages,
+                { id: generateId(), role: 'system', text: event.message, isStreaming: false },
+              ],
             }))
           } else if (event.type === 'error') {
             const aid = currentAssistantId
@@ -143,8 +155,18 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
             setState((prev) => ({
               ...prev,
               messages: aid
-                ? prev.messages.map((m) => (m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m))
-                : [...prev.messages, { id: generateId(), role: 'assistant', text: `Error: ${msg}`, isStreaming: false }],
+                ? prev.messages.map((m) =>
+                    m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m,
+                  )
+                : [
+                    ...prev.messages,
+                    {
+                      id: generateId(),
+                      role: 'assistant',
+                      text: `Error: ${msg}`,
+                      isStreaming: false,
+                    },
+                  ],
               error: msg,
             }))
           }
@@ -165,7 +187,7 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
         abortRef.current = null
       }
     },
-    [client, maxTokens, registry, patch],
+    [client, maxTokens, registry, patch, cwd],
   )
 
   const clear = useCallback(() => {

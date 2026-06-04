@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto'
+import { isAbsolute, resolve } from 'node:path'
+
 /**
  * 对一个工具输入的极简 JSON Schema 描述。模型读它来决定如何调用该工具。
  * 我们故意保持松散类型 —— 它会被原样传给厂商的 `tools` 参数。
@@ -10,27 +13,48 @@ export interface JSONSchema {
 }
 
 /**
+ * 把工具传入的路径解析成绝对路径：绝对路径原样返回，相对路径对着 cwd 解析。
+ * 所有读写文件的工具共用这一处 —— Phase 5 的工作区边界/权限校验只需改这里，
+ * 不必在每个工具里各自维护一份（否则漏掉一处就是一个越界漏洞）。
+ */
+export function resolvePath(cwd: string, p: string): string {
+  return isAbsolute(p) ? p : resolve(cwd, p)
+}
+
+/**
+ * 文件内容指纹 —— read-before-edit 乐观锁的版本标识。
+ * 用内容哈希而非 mtime：mtime 在粗粒度文件系统（FAT/部分网络盘/容器挂载）上
+ * 分辨率可达 1~2 秒，同一时刻的外部改动 mtime 不变，会骗过相等比较的乐观锁；
+ * 浮点 mtimeMs 的表示误差又会造成误判。内容哈希直接比"读的字节是不是这些"，
+ * 既挡住 TOCTOU 同刻改动，也不会因时间精度误伤。代码文件不大，哈希成本可忽略。
+ */
+export function fingerprintContent(content: string): string {
+  return createHash('sha1').update(content, 'utf8').digest('hex')
+}
+
+/**
  * 文件读取追踪器 —— read-before-edit 校验的状态载体（Phase 4）。
  * 记的不是"读过没"这个布尔位，而是"读的是哪个版本"：登记读取那一刻的
- * mtimeMs。Edit 执行前重新 stat 比对，挡住两种危险：① 没读就改（盲改）；
- * ② 读完文件被外部改动、却基于过期快照改（TOCTOU）。这是一种乐观锁。
+ * 内容指纹。Edit/Write 执行前重读文件、重算指纹比对，挡住两种危险：
+ * ① 没读就改（盲改）；② 读完文件被外部改动、却基于过期快照改（TOCTOU）。
+ * 这是一种乐观锁。
  */
 export interface FileReadTracker {
-  /** Read/Write 成功后登记：绝对路径 -> 当时的 mtimeMs。 */
-  markRead(absPath: string, mtimeMs: number): void
-  /** 返回登记时的 mtimeMs；从未读过返回 undefined。 */
-  getReadTime(absPath: string): number | undefined
+  /** Read/Write/Edit 成功后登记：绝对路径 -> 当时的内容指纹。 */
+  markRead(absPath: string, fingerprint: string): void
+  /** 返回登记时的内容指纹；从未读过返回 undefined。 */
+  getFingerprint(absPath: string): string | undefined
 }
 
 /** 基于 Map 的 FileReadTracker 默认实现。每个会话建一个。 */
 export function createFileTracker(): FileReadTracker {
-  const readTimes = new Map<string, number>()
+  const fingerprints = new Map<string, string>()
   return {
-    markRead(absPath: string, mtimeMs: number): void {
-      readTimes.set(absPath, mtimeMs)
+    markRead(absPath: string, fingerprint: string): void {
+      fingerprints.set(absPath, fingerprint)
     },
-    getReadTime(absPath: string): number | undefined {
-      return readTimes.get(absPath)
+    getFingerprint(absPath: string): string | undefined {
+      return fingerprints.get(absPath)
     },
   }
 }

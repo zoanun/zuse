@@ -25,7 +25,9 @@ const apiKey = process.env.DASHSCOPE_API_KEY
 const baseUrl = process.env.DASHSCOPE_BASE_URL
 
 if (!apiKey || !baseUrl) {
-  console.error('DASHSCOPE_API_KEY or DASHSCOPE_BASE_URL not set. Copy .env.example to .env and fill it in.')
+  console.error(
+    'DASHSCOPE_API_KEY or DASHSCOPE_BASE_URL not set. Copy .env.example to .env and fill it in.',
+  )
   process.exit(1)
 }
 

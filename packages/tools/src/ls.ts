@@ -1,5 +1,5 @@
 import { readdir, stat } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { resolvePath } from '@zuse/core'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
 interface LSInput {
@@ -11,7 +11,8 @@ const inputSchema: JSONSchema = {
   properties: {
     path: {
       type: 'string',
-      description: 'Directory to list. Relative paths resolve against the working directory. Defaults to cwd.',
+      description:
+        'Directory to list. Relative paths resolve against the working directory. Defaults to cwd.',
     },
   },
 }
@@ -30,7 +31,7 @@ export const LSTool: Tool = {
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as LSInput
     const target = input.path ?? '.'
-    const absPath = isAbsolute(target) ? target : resolve(ctx.cwd, target)
+    const absPath = resolvePath(ctx.cwd, target)
 
     let info
     try {

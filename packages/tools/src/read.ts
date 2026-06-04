@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises'
-import { isAbsolute, resolve } from 'node:path'
+import { resolvePath, fingerprintContent } from '@zuse/core'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
 /** 一次 Read 返回行数的默认上限（让输出有界）。 */
@@ -18,7 +18,8 @@ const inputSchema: JSONSchema = {
   properties: {
     file_path: {
       type: 'string',
-      description: 'Path to the file to read. Relative paths resolve against the working directory.',
+      description:
+        'Path to the file to read. Relative paths resolve against the working directory.',
     },
     offset: {
       type: 'number',
@@ -51,9 +52,7 @@ export const ReadTool: Tool = {
       return { output: 'Read requires a file_path.', isError: true }
     }
 
-    const absPath = isAbsolute(input.file_path)
-      ? input.file_path
-      : resolve(ctx.cwd, input.file_path)
+    const absPath = resolvePath(ctx.cwd, input.file_path)
 
     let info
     try {
@@ -66,21 +65,24 @@ export const ReadTool: Tool = {
     }
 
     const raw = await readFile(absPath, 'utf8')
-    // 登记"读的是哪个版本"，供 read-before-edit 校验（Phase 4）。空文件也算读过。
-    ctx.tracker.markRead(absPath, info.mtimeMs)
+    // 登记"读的是哪个版本"（内容指纹），供 read-before-edit 校验（Phase 4）。空文件也算读过。
+    ctx.tracker.markRead(absPath, fingerprintContent(raw))
     if (raw === '') {
       return { output: `(file is empty: ${input.file_path})`, isError: false }
     }
 
     const allLines = raw.split('\n')
     const start = Math.max(0, (input.offset ?? 1) - 1)
-    const limit = input.limit ?? DEFAULT_LIMIT
+    // limit 取正数才生效；0/负数/缺省都回落到默认上限（否则 limit:0 会读到空内容
+    // 却仍把文件标记为已读，给后续 Edit 一个"读过但没看过内容"的假象）。
+    const limit = input.limit && input.limit > 0 ? input.limit : DEFAULT_LIMIT
     const slice = allLines.slice(start, start + limit)
 
     const numbered = slice
       .map((line, i) => {
         const lineNo = start + i + 1
-        const text = line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) + '…[truncated]' : line
+        const text =
+          line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) + '…[truncated]' : line
         return `${lineNo}\t${text}`
       })
       .join('\n')

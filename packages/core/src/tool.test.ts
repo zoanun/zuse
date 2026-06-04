@@ -40,7 +40,11 @@ describe('ToolRegistry', () => {
     const reg = new ToolRegistry()
     reg.register(fakeTool('Read'))
     expect(reg.getDefinitions()).toEqual([
-      { name: 'Read', description: 'desc of Read', input_schema: { type: 'object', properties: {} } },
+      {
+        name: 'Read',
+        description: 'desc of Read',
+        input_schema: { type: 'object', properties: {} },
+      },
     ])
   })
 })

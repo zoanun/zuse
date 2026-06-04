@@ -15,7 +15,7 @@ export interface ModelClient {
   sendMessages(
     messages: Message[],
     config: ModelConfig,
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
   ): AsyncIterable<StreamEvent>
 
   /** 获取模型名称（用于展示） */
