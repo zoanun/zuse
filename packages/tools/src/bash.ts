@@ -1,0 +1,131 @@
+import { spawn } from 'node:child_process'
+import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
+
+/** 默认超时（毫秒）。 */
+const DEFAULT_TIMEOUT = 120_000
+/** 超时上限（毫秒）。 */
+const MAX_TIMEOUT = 600_000
+/** 合并输出的字符上限（让输出有界）。 */
+const MAX_OUTPUT = 30_000
+
+interface BashInput {
+  command: string
+  timeout?: number
+}
+
+const inputSchema: JSONSchema = {
+  type: 'object',
+  properties: {
+    command: {
+      type: 'string',
+      description: 'The shell command to run. Executed via the system shell in the working directory.',
+    },
+    timeout: {
+      type: 'number',
+      description: `Timeout in milliseconds. Defaults to ${DEFAULT_TIMEOUT}, max ${MAX_TIMEOUT}.`,
+    },
+  },
+  required: ['command'],
+}
+
+/** 把合并输出截断到上限，并标注。 */
+function clamp(text: string): string {
+  if (text.length <= MAX_OUTPUT) return text
+  return text.slice(0, MAX_OUTPUT) + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
+}
+
+/**
+ * 杀掉整棵进程树。`shell: true` 下 child 是 shell（Windows 上是 cmd.exe），
+ * 真正干活的命令是它的子进程。只 child.kill() 会留下占着输出管道的孙进程，
+ * 导致 close 事件迟迟不触发。Windows 用 taskkill /T 杀树，POSIX 杀进程组。
+ */
+function killTree(pid: number | undefined): void {
+  if (pid === undefined) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
+  } else {
+    try {
+      process.kill(-pid, 'SIGTERM') // 负 pid = 整个进程组
+    } catch {
+      process.kill(pid, 'SIGTERM')
+    }
+  }
+}
+
+/**
+ * BashTool —— 通过系统 shell 跑一次性命令，仿照 Claude Code 的 BashTool。
+ * 支持 cwd（ctx.cwd）、超时(到点 kill)、长输出截断、以及 ctx.signal 中断
+ * （为 Ctrl+C 铺路）。非零退出/超时以 isError 回喂（故障模式④）。
+ * 注：Windows 下 child.kill() 杀子进程树有局限，超时未必能终结所有孙进程。
+ */
+export const BashTool: Tool = {
+  name: 'Bash',
+  description:
+    'Run a shell command and return its combined stdout/stderr and exit code. ' +
+    'Use for one-off commands (builds, tests, git). Long output is truncated; commands time out.',
+  inputSchema,
+
+  // TODO Phase 5: 执行前做权限校验（Bash 是高危工具）
+  run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+    const input = (rawInput ?? {}) as BashInput
+    if (!input.command || typeof input.command !== 'string') {
+      return Promise.resolve({ output: 'Bash requires a command.', isError: true })
+    }
+
+    const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT)
+
+    return new Promise<ToolResult>((resolvePromise) => {
+      // POSIX 下 detached 让 child 成为进程组组长，killTree 才能用负 pid 杀整组。
+      const child = spawn(input.command, {
+        cwd: ctx.cwd,
+        shell: true,
+        detached: process.platform !== 'win32',
+      })
+
+      let output = ''
+      let timedOut = false
+      let aborted = false
+
+      const onData = (chunk: Buffer): void => {
+        output += chunk.toString('utf8')
+      }
+      child.stdout.on('data', onData)
+      child.stderr.on('data', onData)
+
+      const timer = setTimeout(() => {
+        timedOut = true
+        killTree(child.pid)
+      }, timeout)
+
+      // ctx.signal 中断 -> kill 进程树（Ctrl+C 铺路）。
+      const onAbort = (): void => {
+        aborted = true
+        killTree(child.pid)
+      }
+      ctx.signal.addEventListener('abort', onAbort, { once: true })
+
+      const finish = (result: ToolResult): void => {
+        clearTimeout(timer)
+        ctx.signal.removeEventListener('abort', onAbort)
+        resolvePromise(result)
+      }
+
+      child.on('error', (err) => {
+        finish({ output: `Failed to spawn command: ${err.message}`, isError: true })
+      })
+
+      child.on('close', (code) => {
+        const body = clamp(output)
+        if (timedOut) {
+          finish({ output: `${body}\n[timed out after ${timeout}ms]`, isError: true })
+        } else if (aborted) {
+          finish({ output: `${body}\n[interrupted]`, isError: true })
+        } else if (code !== 0) {
+          finish({ output: `${body}\n[exit code: ${code}]`, isError: true })
+        } else {
+          finish({ output: body === '' ? '(no output)' : body, isError: false })
+        }
+      })
+    })
+  },
+}
