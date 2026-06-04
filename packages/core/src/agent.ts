@@ -2,6 +2,7 @@ import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage } from './t
 import type { ModelClient } from './model-client.js'
 import type { ToolContext, ToolRegistry, FileReadTracker } from './tool.js'
 import { createFileTracker } from './tool.js'
+import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import type { Conversation } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
@@ -48,6 +49,13 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS
   const tracker = opts.tracker ?? createFileTracker()
 
+  // agent 持有自己的身份提示词：调用方没指定 system 时注入通用默认值。
+  // 放在这里（而非某个 client）保证任何厂商的 client 都获得一致的 agent 行为。
+  const effectiveConfig: ModelConfig = {
+    ...config,
+    system: config.system ?? DEFAULT_SYSTEM_PROMPT,
+  }
+
   const base = conversation.getMessages()
   const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
   const turnUsage: Usage = { input_tokens: 0, output_tokens: 0 }
@@ -67,7 +75,11 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     let stopReason = ''
     let errored = false
 
-    for await (const event of client.sendMessages([...base, ...staged], config, toolDefs)) {
+    for await (const event of client.sendMessages(
+      [...base, ...staged],
+      effectiveConfig,
+      toolDefs,
+    )) {
       if (event.type === 'text-delta') {
         text += event.text
         yield event

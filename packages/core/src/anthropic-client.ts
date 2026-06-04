@@ -62,6 +62,8 @@ export class AnthropicClient implements ModelClient {
         model,
         max_tokens: maxTokens,
         messages: sdkMessages,
+        // system prompt 由 agent 层提供（与厂商无关），这里只负责转发。
+        ...(config.system ? { system: config.system } : {}),
         // 只有在确实有工具时才公布 tools —— 让简单回合保持干净。
         ...(tools && tools.length > 0 ? { tools } : {}),
       })

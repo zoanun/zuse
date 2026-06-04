@@ -43,6 +43,8 @@ export interface Usage {
 export interface ModelConfig {
   model: string
   max_tokens: number
+  // 顶层系统提示词。缺省时 runAgent 会注入 DEFAULT_SYSTEM_PROMPT —— 设此字段可覆盖。
+  system?: string
   // temperature?: number  // Phase 2+
 }
 
