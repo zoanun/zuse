@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { writeFile, mkdtemp, rm } from 'node:fs/promises'
+import { writeFile, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ReadTool } from './read.js'
-import type { ToolContext } from '@zuse/core'
+import { createFileTracker, type ToolContext } from '@zuse/core'
 
-const ctx: ToolContext = { cwd: process.cwd(), signal: new AbortController().signal }
+const ctx: ToolContext = {
+  cwd: process.cwd(),
+  signal: new AbortController().signal,
+  tracker: createFileTracker(),
+}
 
 let dir: string
 let filePath: string
@@ -51,5 +55,13 @@ describe('ReadTool', () => {
   it('returns is_error when file_path is missing', async () => {
     const result = await ReadTool.run({}, ctx)
     expect(result.isError).toBe(true)
+  })
+
+  it('registers the read file in the tracker with its mtime', async () => {
+    const tracker = createFileTracker()
+    const freshCtx: ToolContext = { cwd: process.cwd(), signal: ctx.signal, tracker }
+    const { mtimeMs } = await stat(filePath)
+    await ReadTool.run({ file_path: filePath }, freshCtx)
+    expect(tracker.getReadTime(filePath)).toBe(mtimeMs)
   })
 })

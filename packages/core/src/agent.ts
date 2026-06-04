@@ -1,6 +1,7 @@
 import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
-import type { ToolContext, ToolRegistry } from './tool.js'
+import type { ToolContext, ToolRegistry, FileReadTracker } from './tool.js'
+import { createFileTracker } from './tool.js'
 import type { Conversation } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
@@ -16,6 +17,12 @@ export interface RunAgentOptions {
   cwd: string
   signal: AbortSignal
   maxTurns?: number
+  /**
+   * read-before-edit 用的文件追踪器。由调用方（TUI）按会话持有并传入，
+   * 这样跨多次 runAgent 调用（多个用户回合）的读取记录得以保留。
+   * 缺省时每次新建一个 —— 测试与无头调用无需关心。
+   */
+  tracker?: FileReadTracker
 }
 
 interface PendingToolUse {
@@ -39,6 +46,7 @@ interface PendingToolUse {
 export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEvent> {
   const { conversation, client, registry, userText, config, cwd, signal } = opts
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS
+  const tracker = opts.tracker ?? createFileTracker()
 
   const base = conversation.getMessages()
   const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
@@ -97,7 +105,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     // 执行每个被请求的工具，并把结果作为一条 user 消息暂存。
-    const ctx: ToolContext = { cwd, signal }
+    const ctx: ToolContext = { cwd, signal, tracker }
     const resultBlocks: ContentBlock[] = []
     for (const tu of toolUses) {
       const result = await runOneTool(registry, tu, ctx)

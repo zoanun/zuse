@@ -10,13 +10,40 @@ export interface JSONSchema {
 }
 
 /**
- * 交给工具 `run` 的运行时上下文。Phase 3 只携带工作目录和一个 abort 信号
- *（用于 Ctrl+C 中断 —— 后续才接线）。
+ * 文件读取追踪器 —— read-before-edit 校验的状态载体（Phase 4）。
+ * 记的不是"读过没"这个布尔位，而是"读的是哪个版本"：登记读取那一刻的
+ * mtimeMs。Edit 执行前重新 stat 比对，挡住两种危险：① 没读就改（盲改）；
+ * ② 读完文件被外部改动、却基于过期快照改（TOCTOU）。这是一种乐观锁。
+ */
+export interface FileReadTracker {
+  /** Read/Write 成功后登记：绝对路径 -> 当时的 mtimeMs。 */
+  markRead(absPath: string, mtimeMs: number): void
+  /** 返回登记时的 mtimeMs；从未读过返回 undefined。 */
+  getReadTime(absPath: string): number | undefined
+}
+
+/** 基于 Map 的 FileReadTracker 默认实现。每个会话建一个。 */
+export function createFileTracker(): FileReadTracker {
+  const readTimes = new Map<string, number>()
+  return {
+    markRead(absPath: string, mtimeMs: number): void {
+      readTimes.set(absPath, mtimeMs)
+    },
+    getReadTime(absPath: string): number | undefined {
+      return readTimes.get(absPath)
+    },
+  }
+}
+
+/**
+ * 交给工具 `run` 的运行时上下文。携带工作目录、一个 abort 信号
+ *（用于 Ctrl+C 中断 —— 后续才接线），以及 read-before-edit 用的文件追踪器。
  * Phase 5 会在这里加上 PermissionManager。
  */
 export interface ToolContext {
   cwd: string
   signal: AbortSignal
+  tracker: FileReadTracker
 }
 
 /**

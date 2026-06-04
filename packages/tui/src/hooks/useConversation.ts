@@ -1,7 +1,14 @@
 import { useState, useCallback, useRef } from 'react'
 import { cwd } from 'node:process'
 import type { UIMessage, ConversationState } from '../types.js'
-import { Conversation, runAgent, type ModelClient, type ToolRegistry } from '@zuse/core'
+import {
+  Conversation,
+  runAgent,
+  createFileTracker,
+  type ModelClient,
+  type ToolRegistry,
+  type FileReadTracker,
+} from '@zuse/core'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
 
@@ -30,6 +37,9 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
   // 让将来的 Ctrl+C/Esc 处理器能够中断进行中的回合（signal 已经穿过
   // runAgent 接线到了每个工具里）。
   const abortRef = useRef<AbortController | null>(null)
+  // 会话级的 read-before-edit 追踪器。放在 ref 里跨多次 submit 保留：
+  // 在一条消息里 Read、在后续消息里 Edit 也认得这份"已读"记录。
+  const trackerRef = useRef<FileReadTracker>(createFileTracker())
 
   // 渲染视图。镜像会话内容，外加流式期间任何进行中（尚未提交）的气泡。
   const [state, setState] = useState<ConversationState>({
@@ -77,6 +87,7 @@ export function useConversation({ client, maxTokens, registry }: UseConversation
           config: { model: client.getModel(), max_tokens: maxTokens },
           cwd: cwd(),
           signal: controller.signal,
+          tracker: trackerRef.current,
         })) {
           if (event.type === 'message-start') {
             const id = generateId()

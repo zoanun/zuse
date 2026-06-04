@@ -66,6 +66,8 @@ export const ReadTool: Tool = {
     }
 
     const raw = await readFile(absPath, 'utf8')
+    // 登记"读的是哪个版本"，供 read-before-edit 校验（Phase 4）。空文件也算读过。
+    ctx.tracker.markRead(absPath, info.mtimeMs)
     if (raw === '') {
       return { output: `(file is empty: ${input.file_path})`, isError: false }
     }
