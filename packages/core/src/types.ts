@@ -53,3 +53,48 @@ export interface ClientConfig {
   apiKey: string
   baseURL?: string
 }
+
+// ——— Phase 5：设置与权限 ———
+
+/** 权限模式（对齐 CC，本期不含 plan）。 */
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions'
+
+/** 工具暴露开关。enabled 在场 → 只暴露交集；disabled → 黑名单。 */
+export interface ToolsConfig {
+  enabled?: string[]
+  disabled?: string[]
+}
+
+/** permissions 块（合并后，数组与 defaultMode 一定有值）。 */
+export interface PermissionsConfig {
+  defaultMode: PermissionMode
+  allow: string[]
+  ask: string[]
+  deny: string[]
+}
+
+/** 三层合并、补默认值后的最终设置。供 TUI 与 agent 使用。 */
+export interface ResolvedSettings {
+  model?: string
+  maxTokens?: number
+  baseURL?: string
+  apiKey?: string
+  tools: ToolsConfig
+  permissions: PermissionsConfig
+}
+
+/** 判定结果三态。 */
+export type PermissionDecision = 'allow' | 'deny' | 'ask'
+
+/** ask 时交给 canUseTool 的请求载体。rule 是预先算好的待追加规则字符串。 */
+export interface PermissionRequest {
+  toolName: string
+  input: unknown
+  /** 命令（Bash）或路径（文件工具）；无则 null。 */
+  specifier: string | null
+  /** 用于会话覆盖 / 写盘的规则字符串，如 `Bash(git status)` / `Write(./a.ts)`。 */
+  rule: string
+}
+
+/** 用户对一次 ask 的裁决（方案 A 回调返回）。 */
+export type PermissionVerdict = 'allow' | 'deny' | 'allow_session' | 'allow_persist'

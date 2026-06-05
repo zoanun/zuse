@@ -65,3 +65,11 @@ describe('ReadTool', () => {
     expect(tracker.getFingerprint(filePath)).toBe(expected)
   })
 })
+
+describe('ReadTool metadata', () => {
+  it('is read-only and exposes file_path as specifier', () => {
+    expect(ReadTool.readOnly).toBe(true)
+    expect(ReadTool.specifierFor?.({ file_path: 'a.ts' })).toBe('a.ts')
+    expect(ReadTool.specifierFor?.({})).toBeNull()
+  })
+})

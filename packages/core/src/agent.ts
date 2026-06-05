@@ -1,12 +1,20 @@
-import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage } from './types.js'
+import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
 import type { ModelClient } from './model-client.js'
-import type { ToolContext, ToolRegistry, FileReadTracker } from './tool.js'
+import type { ToolContext, ToolRegistry, FileReadTracker, Tool } from './tool.js'
 import { createFileTracker } from './tool.js'
+import { decide } from './permission.js'
+import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import type { Conversation } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
 export const DEFAULT_MAX_TURNS = 50
+
+/** 未提供 settings 时的宽松回退：全部放行（保持 Phase 4 行为，便于旧测试/无头调用）。 */
+const PERMISSIVE_SETTINGS: ResolvedSettings = {
+  tools: {},
+  permissions: { defaultMode: 'bypassPermissions', allow: [], ask: [], deny: [] },
+}
 
 export interface RunAgentOptions {
   conversation: Conversation
@@ -24,6 +32,14 @@ export interface RunAgentOptions {
    * 缺省时每次新建一个 —— 测试与无头调用无需关心。
    */
   tracker?: FileReadTracker
+  /** 解析后的设置；缺省时回退为全允许（保持 Phase 4 行为）。 */
+  settings?: ResolvedSettings
+  /** ask 判定的交互回调；缺省（无头/测试）时 ask 默认 deny。 */
+  canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
+  /** 本会话内存覆盖层（额外 allow 规则）。由调用方持有以跨回合保留。 */
+  sessionAllow?: string[]
+  /** allow_persist 时的写盘动作；缺省调用 settings 的 appendAllowRule。 */
+  onPersistAllow?: (rule: string) => void
 }
 
 interface PendingToolUse {
@@ -48,6 +64,9 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const { conversation, client, registry, userText, config, cwd, signal } = opts
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS
   const tracker = opts.tracker ?? createFileTracker()
+  const settings = opts.settings ?? PERMISSIVE_SETTINGS
+  const sessionAllow = opts.sessionAllow ?? []
+  const onPersistAllow = opts.onPersistAllow ?? ((rule: string): void => appendAllowRule(rule))
 
   // agent 持有自己的身份提示词：调用方没指定 system 时注入通用默认值。
   // 放在这里（而非某个 client）保证任何厂商的 client 都获得一致的 agent 行为。
@@ -60,7 +79,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
   const turnUsage: Usage = { input_tokens: 0, output_tokens: 0 }
 
-  const toolDefs = registry.getDefinitions()
+  const toolDefs = registry.getDefinitions(settings.tools)
 
   let clean = false
 
@@ -116,11 +135,13 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       break
     }
 
-    // 执行每个被请求的工具，并把结果作为一条 user 消息暂存。
+    // 执行每个被请求的工具（先过权限闸门），并把结果作为一条 user 消息暂存。
     const ctx: ToolContext = { cwd, signal, tracker }
     const resultBlocks: ContentBlock[] = []
     for (const tu of toolUses) {
-      const result = await runOneTool(registry, tu, ctx)
+      const result = await gateAndRunTool(registry, tu, ctx, {
+        settings, sessionAllow, cwd, canUseTool: opts.canUseTool, onPersistAllow,
+      })
       yield {
         type: 'tool-result',
         id: tu.id,
@@ -152,6 +173,49 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   // 原子性地提交整个回合。
   for (const m of staged) conversation.append(m)
   conversation.addUsage(turnUsage)
+}
+
+interface GateDeps {
+  settings: ResolvedSettings
+  sessionAllow: string[]
+  cwd: string
+  canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
+  onPersistAllow: (rule: string) => void
+}
+
+/**
+ * 权限闸门 + 执行（spec §7）。未知工具按故障模式④回喂；deny 合成拒绝结果不执行；
+ * ask 走 canUseTool（无回调则默认 deny）；allow_session/allow_persist 推进会话
+ * 覆盖层，后者额外写盘。
+ */
+async function gateAndRunTool(
+  registry: ToolRegistry,
+  tu: PendingToolUse,
+  ctx: ToolContext,
+  deps: GateDeps,
+): Promise<{ output: string; isError: boolean }> {
+  const tool: Tool | undefined = registry.get(tu.name)
+  if (!tool) return { output: `Unknown tool: ${tu.name}`, isError: true }
+
+  const specifier = tool.specifierFor?.(tu.input) ?? null
+  const { decision, rule, matched } = decide(tool, specifier, deps.settings, deps.sessionAllow, deps.cwd)
+
+  if (decision === 'deny') {
+    return { output: `Permission denied by settings (${matched ?? rule}).`, isError: true }
+  }
+
+  if (decision === 'ask') {
+    const verdict = deps.canUseTool
+      ? await deps.canUseTool({ toolName: tu.name, input: tu.input, specifier, rule })
+      : 'deny'
+    if (verdict === 'deny') return { output: `Permission denied by user (${rule}).`, isError: true }
+    if (verdict === 'allow_session' || verdict === 'allow_persist') {
+      if (!deps.sessionAllow.includes(rule)) deps.sessionAllow.push(rule)
+    }
+    if (verdict === 'allow_persist') deps.onPersistAllow(rule)
+  }
+
+  return runOneTool(registry, tu, ctx)
 }
 
 /** 运行单个工具，把"未知工具"和抛出的错误转换成 is_error 结果（故障模式④）。 */

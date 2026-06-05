@@ -98,6 +98,12 @@ export const GlobTool: Tool = {
     'Find files by path/name using a glob pattern (e.g. "**/*.ts"). Returns matching file paths ' +
     'sorted by modification time (most recent first). Use Grep to search file contents instead.',
   inputSchema,
+  readOnly: true,
+  specifierFor: (input: unknown): string | null => {
+    // 返回 glob 模式作为限定符；无则 null。
+    const p = (input as { pattern?: unknown }).pattern
+    return typeof p === 'string' ? p : null
+  },
 
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as GlobInput

@@ -1,0 +1,12 @@
+{
+  "model": "qwen3-coder-plus",
+  "maxTokens": 4096,
+  "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+  "apiKey": "sk-REPLACE_ME",
+  "permissions": {
+    "defaultMode": "default",
+    "allow": ["Read(./**)", "Grep", "Glob"],
+    "ask": ["Bash(*)", "Write(./**)", "Edit(./**)"],
+    "deny": ["Read(./.env)", "Read(./**/.env)", "Bash(rm -rf *)"]
+  }
+}

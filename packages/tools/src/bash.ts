@@ -60,6 +60,11 @@ export const BashTool: Tool = {
     'Run a shell command and return its combined stdout/stderr and exit code. ' +
     'Use for one-off commands (builds, tests, git). Long output is truncated; commands time out.',
   inputSchema,
+  specifierFor: (input: unknown): string | null => {
+    // 返回 shell 命令字符串作为限定符；无则 null。
+    const c = (input as { command?: unknown }).command
+    return typeof c === 'string' ? c : null
+  },
 
   // TODO Phase 5: 执行前做权限校验（Bash 是高危工具）
   run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {

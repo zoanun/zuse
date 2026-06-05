@@ -1,4 +1,4 @@
-import type { Conversation } from '@zuse/core'
+import type { Conversation, ResolvedSettings } from '@zuse/core'
 
 /**
  * 斜杠命令运行时被交予的东西。真正的 state 由 hook 持有；命令只通过这些
@@ -15,6 +15,8 @@ export interface CommandContext {
   conversation: Conversation
   /** 替换实时会话并据此重建 UI（用于 /load）。 */
   load: (conversation: Conversation) => void
+  /** 本会话实际生效的三层合并设置（供 /config 等只读展示用）。 */
+  settings: ResolvedSettings
 }
 
 export interface SlashCommand {

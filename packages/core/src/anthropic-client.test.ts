@@ -1,15 +1,17 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { AnthropicClient } from './anthropic-client.js'
 import { getClientConfig, getDefaultModel, getDefaultMaxTokens } from './env.js'
+import { loadSettings } from './settings.js'
 import type { Message, StreamEvent } from './types.js'
 
 describe('AnthropicClient', () => {
   let client: AnthropicClient
+  const settings = loadSettings()
 
   beforeAll(() => {
     // 若没有配置 API key 则跳过
     try {
-      client = new AnthropicClient(getClientConfig(), getDefaultModel())
+      client = new AnthropicClient(getClientConfig(settings), getDefaultModel(settings))
     } catch {
       console.log('Skipping AnthropicClient tests — no API key')
     }
@@ -30,10 +32,7 @@ describe('AnthropicClient', () => {
       ]
 
       const events: StreamEvent[] = []
-      for await (const event of client.sendMessages(messages, {
-        model: getDefaultModel(),
-        max_tokens: getDefaultMaxTokens(),
-      })) {
+      for await (const event of client.sendMessages(messages, { model: getDefaultModel(settings), max_tokens: getDefaultMaxTokens(settings) })) {
         events.push(event)
       }
 

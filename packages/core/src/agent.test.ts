@@ -4,6 +4,7 @@ import { Conversation } from './conversation.js'
 import { ToolRegistry, type Tool } from './tool.js'
 import type { ModelClient } from './model-client.js'
 import type { Message, StreamEvent, Usage } from './types.js'
+import type { ResolvedSettings, PermissionVerdict } from './types.js'
 
 const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
 
@@ -200,5 +201,110 @@ describe('runAgent', () => {
     const msgs = conv.getMessages()
     // 最后一条必须是 assistant（合成的收尾消息），以保证角色交替合法。
     expect(msgs[msgs.length - 1]!.role).toBe('assistant')
+  })
+
+  const askSettings: ResolvedSettings = {
+    tools: {},
+    permissions: { defaultMode: 'default', allow: [], ask: ['echo'], deny: [] },
+  }
+
+  function askScript(): StreamEvent[][] {
+    return [
+      [
+        { type: 'tool-use', id: 'c1', name: 'echo', input: { value: 'x' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ]
+  }
+
+  it('deny synthesizes an error result and does NOT run the tool', async () => {
+    let ran = false
+    const reg = new ToolRegistry()
+    reg.register({ ...echoTool(), run: async () => { ran = true; return { output: 'should-not' } } })
+    const denySettings: ResolvedSettings = {
+      tools: {}, permissions: { defaultMode: 'default', allow: [], ask: [], deny: ['echo'] },
+    }
+    const { client } = fakeClient(askScript())
+    const events = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: denySettings,
+    }))
+    expect(ran).toBe(false)
+    const tr = events.find((e) => e.type === 'tool-result')
+    expect(tr).toMatchObject({ is_error: true })
+  })
+
+  it('ask → canUseTool deny blocks; allow runs', async () => {
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    const { client } = fakeClient(askScript())
+    const denied = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: askSettings, canUseTool: async () => 'deny',
+    }))
+    expect((denied.find((e) => e.type === 'tool-result') as { is_error?: boolean }).is_error).toBe(true)
+
+    const { client: client2 } = fakeClient(askScript())
+    const allowed = await collect(runAgent({
+      conversation: new Conversation(), client: client2, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: askSettings, canUseTool: async () => 'allow',
+    }))
+    expect((allowed.find((e) => e.type === 'tool-result') as { output?: string }).output).toBe('echoed:x')
+  })
+
+  it('no canUseTool → ask defaults to deny', async () => {
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    const { client } = fakeClient(askScript())
+    const events = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: askSettings,
+    }))
+    expect((events.find((e) => e.type === 'tool-result') as { is_error?: boolean }).is_error).toBe(true)
+  })
+
+  it('allow_session suppresses re-ask in the same session (no disk write)', async () => {
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    const sessionAllow: string[] = []
+    let writes = 0
+    const scripts: StreamEvent[][] = [
+      [{ type: 'tool-use', id: 'a', name: 'echo', input: { value: '1' } }, { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE }],
+      [{ type: 'tool-use', id: 'b', name: 'echo', input: { value: '2' } }, { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE }],
+      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ]
+    const { client } = fakeClient(scripts)
+    let asked = 0
+    const canUseTool = async (): Promise<PermissionVerdict> => { asked++; return 'allow_session' }
+    await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: askSettings, canUseTool, sessionAllow, onPersistAllow: () => { writes++ },
+    }))
+    expect(asked).toBe(1)
+    expect(sessionAllow).toContain('echo')
+    expect(writes).toBe(0)
+  })
+
+  it('allow_persist triggers a disk write', async () => {
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    const sessionAllow: string[] = []
+    const persisted: string[] = []
+    const { client } = fakeClient(askScript())
+    await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: askSettings, canUseTool: async () => 'allow_persist',
+      sessionAllow, onPersistAllow: (rule) => persisted.push(rule),
+    }))
+    expect(persisted).toEqual(['echo'])
+    expect(sessionAllow).toContain('echo')
+  })
+
+  it('disabled tool is denied even if the model calls it', async () => {
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    const s: ResolvedSettings = { tools: { disabled: ['echo'] }, permissions: askSettings.permissions }
+    const { client } = fakeClient(askScript())
+    const events = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      settings: s, canUseTool: async () => 'allow',
+    }))
+    expect((events.find((e) => e.type === 'tool-result') as { is_error?: boolean }).is_error).toBe(true)
   })
 })

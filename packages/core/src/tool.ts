@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
+import type { ToolsConfig } from './types.js'
 
 /**
  * 对一个工具输入的极简 JSON Schema 描述。模型读它来决定如何调用该工具。
@@ -90,6 +91,10 @@ export interface Tool {
   description: string
   inputSchema: JSONSchema
   run(input: unknown, ctx: ToolContext): Promise<ToolResult>
+  /** 只读工具（Read/Glob/Grep 为 true），供 defaultMode 分类。 */
+  readOnly?: boolean
+  /** 返回用于规则限定符匹配的字符串：Bash 返回命令，文件工具返回路径；无则 null。 */
+  specifierFor?(input: unknown): string | null
 }
 
 /** 发送给厂商 API `tools` 参数的形状。 */
@@ -122,9 +127,18 @@ export class ToolRegistry {
     return [...this.tools.values()]
   }
 
-  /** 面向厂商的工具定义（名称 + 描述 + schema）。 */
-  getDefinitions(): ToolDefinition[] {
-    return this.list().map((t) => ({
+  /** 面向厂商的工具定义（名称 + 描述 + schema）。可按 tools 配置过滤暴露。 */
+  getDefinitions(toolsConfig?: ToolsConfig): ToolDefinition[] {
+    let tools = this.list()
+    if (toolsConfig?.enabled) {
+      const set = new Set(toolsConfig.enabled)
+      tools = tools.filter((t) => set.has(t.name))
+    }
+    if (toolsConfig?.disabled) {
+      const set = new Set(toolsConfig.disabled)
+      tools = tools.filter((t) => !set.has(t.name))
+    }
+    return tools.map((t) => ({
       name: t.name,
       description: t.description,
       input_schema: t.inputSchema,

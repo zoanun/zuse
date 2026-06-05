@@ -45,6 +45,12 @@ export const ReadTool: Tool = {
     'Read a text file from the local filesystem. Returns the contents with line numbers ' +
     '(format: "<line>\\t<text>"). Use offset/limit to read a slice of a large file.',
   inputSchema,
+  readOnly: true,
+  specifierFor: (input: unknown): string | null => {
+    // 返回文件路径作为限定符；无则 null。
+    const p = (input as { file_path?: unknown }).file_path
+    return typeof p === 'string' ? p : null
+  },
 
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as ReadInput

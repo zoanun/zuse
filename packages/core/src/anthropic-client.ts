@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { Message, StreamEvent, ModelConfig, ClientConfig, Usage } from './types.js'
+import type { Message, StreamEvent, ModelConfig, ClientConfig, Usage, ResolvedSettings } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
 import { getClientConfig, getDefaultModel } from './env.js'
@@ -17,7 +17,7 @@ export class AnthropicClient implements ModelClient {
       apiKey: config.apiKey,
       baseURL: config.baseURL,
     })
-    this.model = defaultModel || getDefaultModel()
+    this.model = defaultModel || 'claude-sonnet-4-5-20250514'
   }
 
   getModel(): string {
@@ -107,9 +107,7 @@ export class AnthropicClient implements ModelClient {
   }
 }
 
-/**
- * 用环境变量配置创建 AnthropicClient。
- */
-export function createAnthropicClientFromEnv(): AnthropicClient {
-  return new AnthropicClient(getClientConfig())
+/** 用已解析的 settings 创建 AnthropicClient。 */
+export function createAnthropicClient(settings: ResolvedSettings): AnthropicClient {
+  return new AnthropicClient(getClientConfig(settings), getDefaultModel(settings))
 }

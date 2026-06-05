@@ -215,6 +215,18 @@
 - 权限模式: default / acceptEdits / bypassPermissions
 - Bash安全检查（参考23项清单）
 
+### ✅ 已实现（2026-06-04）
+
+实现计划见 [`2026-06-04-phase-5-settings-and-permissions.md`](2026-06-04-phase-5-settings-and-permissions.md)。落地内容：
+
+- **三层 `settings.json` 配置系统**：用户层 `~/.zuse/settings.json` < 项目层 `<repo>/.zuse/settings.json`（入 git）< 本地层 `.zuse/settings.local.json`（gitignore，放 secret）。标量高层覆盖、permission 三数组跨层拼接、`ZUSE_API_KEY` 环境变量兜底覆盖 apiKey。
+- **配置入口收敛到 `settings.json`，`.env` 退役**：`getClientConfig`/`getDefaultModel`/`getDefaultMaxTokens` 改为接收 `ResolvedSettings`；client 工厂改名 `createAnthropicClient(settings)`。
+- **权限模型**：`Tool(specifier)` 规则文法（`Bash(git*)`、`Write(src/**)`）+ `decide()` 判定（禁用 → deny → bypass → allow(+会话覆盖层) → ask → defaultMode 兜底）；**deny 是硬护栏，压过 bypassPermissions**。
+- **`ask` 交互式批准**：TUI 弹框，四档裁决——`y` 本次 / `a` 本会话（内存）/ `A` 写盘持久（追加进本地层 `appendAllowRule`）/ `n`·Esc 拒绝。
+- **工具暴露开关**：`tools.enabled`/`disabled` 在 `getDefinitions` 过滤暴露，并在 `decide` 兜底 deny。
+- 覆盖范围：core 侧全程 TDD（settings / permission / agent 闸门，95 个用例全绿）；TUI 接线按本仓库惯例手工验证。
+- **未做（留待后续）**：CC 的 23 项 Bash 安全检查（`bashSecurity.ts`）本期未实现，v1 只用 `deny` 规则（如 `Bash(rm -rf *)`）做粗粒度护栏。
+
 ---
 
 ## Phase 6: 多Provider

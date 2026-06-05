@@ -41,6 +41,11 @@ export const WriteTool: Tool = {
     'read it first (read-before-edit). Use this to create new files or fully ' +
     'rewrite a file; use Edit to change part of an existing file.',
   inputSchema,
+  specifierFor: (input: unknown): string | null => {
+    // 返回文件路径作为限定符；无则 null。
+    const p = (input as { file_path?: unknown }).file_path
+    return typeof p === 'string' ? p : null
+  },
 
   // TODO Phase 5: 写入前做权限校验
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {

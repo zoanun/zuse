@@ -64,6 +64,12 @@ export const GrepTool: Tool = {
     '"path:line:text". Respects .gitignore. Use the glob option to narrow which files are ' +
     'scanned. Use Glob to find files by name instead.',
   inputSchema,
+  readOnly: true,
+  specifierFor: (input: unknown): string | null => {
+    // 返回搜索目录作为限定符；未指定时返回 '.' 表示当前目录。
+    const p = (input as { path?: unknown }).path
+    return typeof p === 'string' ? p : '.'
+  },
 
   run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as GrepInput

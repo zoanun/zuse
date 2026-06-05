@@ -48,3 +48,22 @@ describe('ToolRegistry', () => {
     ])
   })
 })
+
+describe('ToolRegistry.getDefinitions filtering', () => {
+  function reg3(): ToolRegistry {
+    const reg = new ToolRegistry()
+    reg.register(fakeTool('Read'))
+    reg.register(fakeTool('Write'))
+    reg.register(fakeTool('Bash'))
+    return reg
+  }
+  it('returns all when no config', () => {
+    expect(reg3().getDefinitions().map((d) => d.name)).toEqual(['Read', 'Write', 'Bash'])
+  })
+  it('enabled keeps only the intersection', () => {
+    expect(reg3().getDefinitions({ enabled: ['Read', 'Bash'] }).map((d) => d.name)).toEqual(['Read', 'Bash'])
+  })
+  it('disabled removes blacklisted', () => {
+    expect(reg3().getDefinitions({ disabled: ['Bash'] }).map((d) => d.name)).toEqual(['Read', 'Write'])
+  })
+})

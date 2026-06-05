@@ -40,7 +40,7 @@
 - `packages/core/src/anthropic-client.ts` —— `createAnthropicClientFromEnv` 改为 `createAnthropicClient(settings)`。
 - `packages/core/src/anthropic-client.test.ts` —— 跟随新签名。
 - `packages/core/src/index.ts` —— 导出 settings / permission。
-- `packages/tools/src/{read,write,edit,ls,glob,grep,bash}.ts` —— 各补 `readOnly`/`specifierFor`。
+- `packages/tools/src/{read,write,edit,glob,grep,bash}.ts` —— 各补 `readOnly`/`specifierFor`。（无 LS：已与 CC 对齐删除，列目录走 `Bash(ls)`。）
 - `packages/tui/src/hooks/useConversation.ts` —— 接 `settings`、`canUseTool`、`pendingPermission` 状态。
 - `packages/tui/src/App.tsx` —— 启动加载 settings、渲染对话框。
 - `scripts/ping-api.ts` —— 改用 `loadSettings()` 读 key（`.env` 将被删）。
@@ -667,7 +667,7 @@ export interface Tool {
   description: string
   inputSchema: JSONSchema
   run(input: unknown, ctx: ToolContext): Promise<ToolResult>
-  /** 只读工具（Read/Glob/Grep/LS 为 true），供 defaultMode 分类。 */
+  /** 只读工具（Read/Glob/Grep 为 true），供 defaultMode 分类。 */
   readOnly?: boolean
   /** 返回用于规则限定符匹配的字符串：Bash 返回命令，文件工具返回路径；无则 null。 */
   specifierFor?(input: unknown): string | null
@@ -711,10 +711,10 @@ Expected: PASS
 ## Task 6：各工具补 readOnly / specifierFor
 
 **Files:**
-- Modify: `packages/tools/src/{read,write,edit,ls,glob,grep,bash}.ts`
+- Modify: `packages/tools/src/{read,write,edit,glob,grep,bash}.ts`
 - Modify: `packages/tools/src/read.test.ts`（加一个 specifierFor 断言代表性验证）
 
-只读工具：Read / Glob / Grep / LS。写类/执行类不标 readOnly（默认 falsy）：Write / Edit / Bash。
+只读工具：Read / Glob / Grep。写类/执行类不标 readOnly（默认 falsy）：Write / Edit / Bash。（LS 工具已删除，不在此列。）
 
 - [ ] **Step 1: 在 read.test.ts 追加一个 specifierFor 断言**
 
@@ -763,16 +763,6 @@ Expected: FAIL —— `readOnly`/`specifierFor` 还不存在。
   specifierFor: (input: unknown): string | null => {
     const p = (input as { file_path?: unknown }).file_path
     return typeof p === 'string' ? p : null
-  },
-```
-
-`packages/tools/src/ls.ts` —— `LSTool` 里加：
-
-```ts
-  readOnly: true,
-  specifierFor: (input: unknown): string | null => {
-    const p = (input as { path?: unknown }).path
-    return typeof p === 'string' ? p : '.'
   },
 ```
 
@@ -1499,7 +1489,7 @@ Run: `cat .env` —— 记下 `DASHSCOPE_BASE_URL` 与 `DASHSCOPE_MODEL` 的值�
   "apiKey": "<在此粘贴你重置后的 DashScope key>",
   "permissions": {
     "defaultMode": "default",
-    "allow": ["Read(./**)", "Grep", "Glob", "LS"],
+    "allow": ["Read(./**)", "Grep", "Glob"],
     "ask": ["Bash(*)", "Write(./**)", "Edit(./**)"],
     "deny": ["Read(./.env)", "Read(./**/.env)", "Bash(rm -rf *)"]
   }
@@ -1516,7 +1506,7 @@ Run: `cat .env` —— 记下 `DASHSCOPE_BASE_URL` 与 `DASHSCOPE_MODEL` 的值�
   "apiKey": "sk-REPLACE_ME",
   "permissions": {
     "defaultMode": "default",
-    "allow": ["Read(./**)", "Grep", "Glob", "LS"],
+    "allow": ["Read(./**)", "Grep", "Glob"],
     "ask": ["Bash(*)", "Write(./**)", "Edit(./**)"],
     "deny": ["Read(./.env)", "Read(./**/.env)", "Bash(rm -rf *)"]
   }

@@ -2,8 +2,9 @@ import { Box, Text } from 'ink'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
 import { UsageFooter } from './components/UsageFooter.js'
+import { PermissionDialog } from './components/PermissionDialog.js'
 import { useConversation } from './hooks/useConversation.js'
-import { createAnthropicClientFromEnv, getDefaultMaxTokens } from '@zuse/core'
+import { createAnthropicClient, getDefaultMaxTokens, loadSettings, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry } from '@zuse/tools'
 
 // 整个会话期间工具集是固定的 —— 在组件外构建一次。
@@ -15,31 +16,31 @@ interface AppProps {
 }
 
 export function App({ cwd }: AppProps) {
-  // 创建 client（没有 API key 时会抛错 —— 由错误展示处理）
-  let client: ReturnType<typeof createAnthropicClientFromEnv> | null = null
+  // 启动时加载三层 settings 并据此创建 client（无 key 时抛错，走错误展示）。
+  let client: ReturnType<typeof createAnthropicClient> | null = null
+  let settings: ResolvedSettings | null = null
   let initError: string | undefined
 
   try {
-    client = createAnthropicClientFromEnv()
+    settings = loadSettings()
+    client = createAnthropicClient(settings)
   } catch (err) {
     initError = err instanceof Error ? err.message : 'Failed to initialize client'
   }
 
-  const { state, submit } = useConversation({
+  const { state, submit, pendingPermission, resolvePermission } = useConversation({
     client,
-    maxTokens: getDefaultMaxTokens(),
+    maxTokens: settings ? getDefaultMaxTokens(settings) : 4096,
     registry,
     cwd,
+    settings: settings ?? { tools: {}, permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
   })
 
-  // 如有初始化错误则展示
   if (initError) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text color="red" bold>
-          Error: {initError}
-        </Text>
-        <Text dimColor>Please check your .env configuration.</Text>
+        <Text color="red" bold>Error: {initError}</Text>
+        <Text dimColor>请检查 ~/.zuse/settings.json 或 .zuse/settings.local.json 配置。</Text>
       </Box>
     )
   }
@@ -47,9 +48,7 @@ export function App({ cwd }: AppProps) {
   return (
     <Box flexDirection="column" height="100%">
       <Box padding={1}>
-        <Text bold color="cyan">
-          Zuse Chat
-        </Text>
+        <Text bold color="cyan">Zuse Chat</Text>
         <Text dimColor> (Ctrl+C to exit)</Text>
       </Box>
 
@@ -69,7 +68,11 @@ export function App({ cwd }: AppProps) {
         isThinking={state.isThinking}
       />
 
-      <InputBox onSubmit={submit} isDisabled={state.isThinking} />
+      {pendingPermission ? (
+        <PermissionDialog req={pendingPermission} onDecision={resolvePermission} />
+      ) : (
+        <InputBox onSubmit={submit} isDisabled={state.isThinking} />
+      )}
     </Box>
   )
 }

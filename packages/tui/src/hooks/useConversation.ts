@@ -7,6 +7,9 @@ import {
   type ModelClient,
   type ToolRegistry,
   type FileReadTracker,
+  type ResolvedSettings,
+  type PermissionRequest,
+  type PermissionVerdict,
 } from '@zuse/core'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
@@ -17,6 +20,8 @@ interface UseConversationOptions {
   registry: ToolRegistry
   /** 工作目录：工具的相对路径据此解析。由入口一次性定好传入。 */
   cwd: string
+  /** 解析后的设置，驱动权限闸门。 */
+  settings: ResolvedSettings
 }
 
 interface UseConversationReturn {
@@ -24,6 +29,8 @@ interface UseConversationReturn {
   /** 输入框的入口：分发斜杠命令，或发送一条消息。 */
   submit: (input: string) => Promise<void>
   clear: () => void
+  pendingPermission: PermissionRequest | null
+  resolvePermission: (verdict: PermissionVerdict) => void
 }
 
 function generateId(): string {
@@ -35,6 +42,7 @@ export function useConversation({
   maxTokens,
   registry,
   cwd,
+  settings,
 }: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
@@ -46,6 +54,12 @@ export function useConversation({
   // 会话级的 read-before-edit 追踪器。放在 ref 里跨多次 submit 保留：
   // 在一条消息里 Read、在后续消息里 Edit 也认得这份"已读"记录。
   const trackerRef = useRef<FileReadTracker>(createFileTracker())
+  // 本会话权限覆盖层（allow_session/allow_persist 追加的规则），跨 submit 保留。
+  const sessionAllowRef = useRef<string[]>([])
+  // 等待用户裁决的权限请求；非 null 时渲染对话框、禁用输入框。
+  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
+  // 保存当前 ask 的 resolve，按键后调用它让 agent 循环继续。
+  const permissionResolveRef = useRef<((v: PermissionVerdict) => void) | null>(null)
 
   // 渲染视图。镜像会话内容，外加流式期间任何进行中（尚未提交）的气泡。
   const [state, setState] = useState<ConversationState>({
@@ -99,6 +113,13 @@ export function useConversation({
           cwd,
           signal: controller.signal,
           tracker: trackerRef.current,
+          settings,
+          sessionAllow: sessionAllowRef.current,
+          canUseTool: (req: PermissionRequest) =>
+            new Promise<PermissionVerdict>((resolve) => {
+              permissionResolveRef.current = resolve
+              setPendingPermission(req)
+            }),
         })) {
           if (event.type === 'message-start') {
             const id = generateId()
@@ -187,7 +208,7 @@ export function useConversation({
         abortRef.current = null
       }
     },
-    [client, maxTokens, registry, patch, cwd],
+    [client, maxTokens, registry, patch, cwd, settings],
   )
 
   const clear = useCallback(() => {
@@ -199,6 +220,14 @@ export function useConversation({
       contextTokens: undefined,
       error: undefined,
     })
+  }, [])
+
+  // 用户在对话框按键 → 兑现 agent 正在 await 的 promise，并收起对话框。
+  const resolvePermission = useCallback((verdict: PermissionVerdict) => {
+    const resolve = permissionResolveRef.current
+    permissionResolveRef.current = null
+    setPendingPermission(null)
+    resolve?.(verdict)
   }, [])
 
   // 向对话记录追加一条本地通知（斜杠命令的输出）。
@@ -246,6 +275,7 @@ export function useConversation({
         clear,
         conversation: conversationRef.current,
         load,
+        settings,
       }
       try {
         await cmd.run(ctx)
@@ -253,8 +283,8 @@ export function useConversation({
         print(`Error: ${err instanceof Error ? err.message : String(err)}`)
       }
     },
-    [sendMessage, print, clear, load],
+    [sendMessage, print, clear, load, settings],
   )
 
-  return { state, submit, clear }
+  return { state, submit, clear, pendingPermission, resolvePermission }
 }

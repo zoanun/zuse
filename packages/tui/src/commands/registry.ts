@@ -16,6 +16,41 @@ const help: SlashCommand = {
   },
 }
 
+/** apiKey 打码：仅留首 6 + 末 4，足以辨认是哪把 key 又不泄露全文。 */
+function maskKey(key: string | undefined): string {
+  if (!key) return '(未设置)'
+  if (key.length <= 12) return '*** (已设置)'
+  return `${key.slice(0, 6)}…${key.slice(-4)} (已设置)`
+}
+
+const config: SlashCommand = {
+  name: 'config',
+  description: 'Show the effective settings (merged from all layers)',
+  run: ({ settings, print }) => {
+    const p = settings.permissions
+    const t = settings.tools
+    const fmt = (arr: string[]): string => (arr.length ? arr.join(', ') : '(空)')
+    const tools =
+      t.enabled || t.disabled
+        ? `enabled=${t.enabled?.join(', ') ?? '全部'}; disabled=${t.disabled?.join(', ') ?? '无'}`
+        : '(全部启用)'
+    print(
+      [
+        '当前生效配置（三层合并后）:',
+        `  model:       ${settings.model ?? '(默认)'}`,
+        `  maxTokens:   ${settings.maxTokens ?? '(默认)'}`,
+        `  baseURL:     ${settings.baseURL ?? '(默认)'}`,
+        `  apiKey:      ${maskKey(settings.apiKey)}`,
+        `  defaultMode: ${p.defaultMode}`,
+        `  allow:       ${fmt(p.allow)}`,
+        `  ask:         ${fmt(p.ask)}`,
+        `  deny:        ${fmt(p.deny)}`,
+        `  tools:       ${tools}`,
+      ].join('\n'),
+    )
+  },
+}
+
 const clear: SlashCommand = {
   name: 'clear',
   description: 'Clear the conversation history',
@@ -53,7 +88,7 @@ const load: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-export const COMMANDS: SlashCommand[] = [help, clear, save, load]
+export const COMMANDS: SlashCommand[] = [help, config, clear, save, load]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

@@ -65,6 +65,11 @@ export const EditTool: Tool = {
     'old_string must be unique unless replace_all is true. Use this for local changes; ' +
     'use Write to create or fully rewrite a file.',
   inputSchema,
+  specifierFor: (input: unknown): string | null => {
+    // 返回文件路径作为限定符；无则 null。
+    const p = (input as { file_path?: unknown }).file_path
+    return typeof p === 'string' ? p : null
+  },
 
   // TODO Phase 5: 写入前做权限校验
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {

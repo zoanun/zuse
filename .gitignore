@@ -10,6 +10,10 @@ dist/
 .env.local
 .env.*.local
 
+# zuse 本地设置（含 secret，绝不进 git）；实际用的是 .jsonc 扩展名
+.zuse/settings.local.json
+.zuse/settings.local.jsonc
+
 # logs
 *.log
 npm-debug.log*
