@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { Message, StreamEvent, ModelConfig, ClientConfig, Usage, ResolvedSettings } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
-import { getClientConfig, getDefaultModel } from './env.js'
+import { getClientConfig, getDefaultModel } from './settings.js'
 
 /**
  * AnthropicClient —— 用 @anthropic-ai/sdk 实现 ModelClient。

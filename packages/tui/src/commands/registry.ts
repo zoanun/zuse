@@ -2,7 +2,7 @@ import type { SlashCommand } from './types.js'
 import { saveConversation, loadConversation } from './sessionStore.js'
 
 /** 解析后的斜杠输入。null 表示"不是命令 —— 当作一条聊天消息处理"。 */
-export interface ParsedCommand {
+interface ParsedCommand {
   name: string
   args: string
 }
@@ -88,7 +88,7 @@ const load: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-export const COMMANDS: SlashCommand[] = [help, config, clear, save, load]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

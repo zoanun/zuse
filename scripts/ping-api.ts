@@ -1,6 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { loadSettings } from '../packages/core/src/settings.js'
-import { getClientConfig } from '../packages/core/src/env.js'
+import { loadSettings, getClientConfig } from '../packages/core/src/settings.js'
 
 // 改用三层 settings 读 key（.env 已退役）。loadSettings 会合并
 // 用户层/项目层/本地层，并让 ZUSE_API_KEY 环境变量兜底覆盖。

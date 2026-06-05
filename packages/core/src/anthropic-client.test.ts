@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { AnthropicClient } from './anthropic-client.js'
-import { getClientConfig, getDefaultModel, getDefaultMaxTokens } from './env.js'
-import { loadSettings } from './settings.js'
+import { getClientConfig, getDefaultModel, getDefaultMaxTokens, loadSettings } from './settings.js'
 import type { Message, StreamEvent } from './types.js'
 
 describe('AnthropicClient', () => {

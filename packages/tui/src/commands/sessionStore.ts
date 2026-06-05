@@ -10,7 +10,7 @@ const SESSIONS_DIR = join(homedir(), '.zuse', 'sessions')
  * 把用户提供的名字收缩成单个安全的路径段。剥掉任何可能逃出 sessions 目录的
  * 字符（斜杠、".."），这样 /save 和 /load 就无法被用来做路径穿越。
  */
-export function safeName(name: string): string {
+function safeName(name: string): string {
   const cleaned = name.trim().replace(/[^a-zA-Z0-9_.-]/g, '_')
   if (!cleaned || cleaned === '.' || cleaned === '..') {
     throw new Error(`Invalid session name: "${name}"`)

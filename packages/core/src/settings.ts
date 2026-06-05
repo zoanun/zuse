@@ -9,7 +9,7 @@ import {
   printParseErrorCode,
   type ParseError,
 } from 'jsonc-parser'
-import type { ResolvedSettings, PermissionMode } from './types.js'
+import type { ResolvedSettings, PermissionMode, ClientConfig } from './types.js'
 
 /** 通过查找 pnpm-workspace.yaml 定位项目根（从 env.ts 迁来，统一出口）。 */
 export function findProjectRoot(): string {
@@ -145,4 +145,30 @@ export function appendAllowRule(rule: string, localPath?: string): void {
   const updated = applyEdits(text, edits)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
+}
+
+/**
+ * 从已解析的 settings 读取 API client 配置。
+ * apiKey 由 loadSettings 合并三层后再叠加 ZUSE_API_KEY 覆盖得到（见 mergeLayers），
+ * 这里直接取 settings.apiKey 即可，不再重复读环境变量。
+ */
+export function getClientConfig(settings: ResolvedSettings): ClientConfig {
+  const apiKey = settings.apiKey || ''
+  if (!apiKey) {
+    throw new Error(
+      'API key not found. Set "apiKey" in ~/.zuse/settings.json or <repo>/.zuse/settings.local.json, ' +
+      'or export ZUSE_API_KEY.',
+    )
+  }
+  return { apiKey, baseURL: settings.baseURL }
+}
+
+/** 默认模型：settings.model，否则回退。 */
+export function getDefaultModel(settings: ResolvedSettings): string {
+  return settings.model || 'claude-sonnet-4-5-20250514'
+}
+
+/** max_tokens：settings.maxTokens，否则回退 4096。 */
+export function getDefaultMaxTokens(settings: ResolvedSettings): number {
+  return settings.maxTokens && settings.maxTokens > 0 ? settings.maxTokens : 4096
 }
