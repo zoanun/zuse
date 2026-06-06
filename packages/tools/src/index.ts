@@ -5,8 +5,10 @@ import { EditTool } from './edit.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { BashTool } from './bash.js'
+import { WebFetchTool } from './webfetch.js'
 
-export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool }
+export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
+export { getShellLabel } from './bash.js'
 
 /**
  * 构建一个预装好 v1 工具集的登记表：读/写/改/找文件/搜内容/跑命令。
@@ -20,5 +22,6 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(GlobTool)
   registry.register(GrepTool)
   registry.register(BashTool)
+  registry.register(WebFetchTool)
   return registry
 }
