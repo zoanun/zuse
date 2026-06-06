@@ -1,26 +1,35 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import os from 'node:os'
 import type { UIMessage, ConversationState } from '../types.js'
 import {
   Conversation,
   runAgent,
   createFileTracker,
+  createClientFromSettings,
+  createModelClient,
+  getProviderConfig,
+  setModelInSettings,
+  resolveModelSelection,
+  buildSystemPrompt,
+  DEFAULT_PROVIDER_ID,
   type ModelClient,
   type ToolRegistry,
   type FileReadTracker,
   type ResolvedSettings,
   type PermissionRequest,
   type PermissionVerdict,
+  type ModelSelection,
 } from '@zuse/core'
+import { getShellLabel } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
 
 interface UseConversationOptions {
-  client: ModelClient | null
   maxTokens: number
   registry: ToolRegistry
   /** 工作目录：工具的相对路径据此解析。由入口一次性定好传入。 */
   cwd: string
-  /** 解析后的设置，驱动权限闸门。 */
+  /** 解析后的设置，驱动权限闸门与 client 初始化。 */
   settings: ResolvedSettings
 }
 
@@ -31,6 +40,14 @@ interface UseConversationReturn {
   clear: () => void
   pendingPermission: PermissionRequest | null
   resolvePermission: (verdict: PermissionVerdict) => void
+  /** 当前选中的模型名（用于 footer 展示与 /model 标星）。 */
+  currentModel: string
+  /** 当前选中的 provider id（与 currentModel 配对，用于 footer 展示 provider/model）。 */
+  currentProviderId: string
+  /** client 初始化失败时的错误信息。 */
+  clientError: string | undefined
+  /** 运行时切换 model；persist=true 时写盘。 */
+  switchModel: (sel: ModelSelection, persist: boolean) => string
 }
 
 function generateId(): string {
@@ -38,7 +55,6 @@ function generateId(): string {
 }
 
 export function useConversation({
-  client,
   maxTokens,
   registry,
   cwd,
@@ -61,13 +77,49 @@ export function useConversation({
   // 保存当前 ask 的 resolve，按键后调用它让 agent 循环继续。
   const permissionResolveRef = useRef<((v: PermissionVerdict) => void) | null>(null)
 
+  // client ref —— 持有当前激活的 ModelClient，支持运行时热替换。
+  // 用 ref 而非 state：client 本身是外部可变对象，不需要触发重渲染。
+  const clientRef = useRef<ModelClient | null>(null)
+  // 当前选中的模型名，用于 footer 与 /model 列表。
+  const [currentModel, setCurrentModel] = useState<string>('unknown')
+  // 当前选中的 provider id，与 currentModel 配对，供 /model 列表精确标星（重名模型不误标）。
+  const [currentProviderId, setCurrentProviderId] = useState<string>('unknown')
+  // client 初始化失败时的错误信息（首次 effect 里设置）。
+  const [clientError, setClientError] = useState<string | undefined>(undefined)
+
+  // 系统提示词在挂载时拼一次：身份提示词 + 真实运行环境（平台/shell/目录/日期）。
+  // 没有环境块时模型只能凭训练惯性假设 Unix，在 Windows 上张口就 pwd/ls 而报错。
+  // cwd 整个会话不变，故只随它记忆；环境随机器而变，所以不同系统拼出的内容不同。
+  const systemPrompt = useMemo(
+    () =>
+      buildSystemPrompt({
+        platform: process.platform,
+        osVersion: os.release(),
+        shell: getShellLabel(),
+        cwd,
+        date: new Date().toISOString().slice(0, 10),
+      }),
+    [cwd],
+  )
+
+  // 首次挂载时按 settings 创建 client。settings 在整个会话生命周期内不变，
+  // 所以空依赖数组即可（不用随 settings 重建）。
+  useEffect(() => {
+    try {
+      clientRef.current = createClientFromSettings(settings)
+      setCurrentModel(clientRef.current.getModel())
+      setCurrentProviderId(resolveModelSelection(settings).providerId)
+    } catch (err) {
+      setClientError(err instanceof Error ? err.message : 'Failed to init client')
+    }
+  }, []) // 空依赖：settings 在整个会话生命周期内不变，仅首次挂载运行一次
+
   // 渲染视图。镜像会话内容，外加流式期间任何进行中（尚未提交）的气泡。
   const [state, setState] = useState<ConversationState>({
     messages: [],
     isThinking: false,
     totalUsage: undefined,
     contextTokens: undefined,
-    error: undefined,
   })
 
   // 小辅助函数：按 id 不可变地更新某一条消息。
@@ -77,7 +129,8 @@ export function useConversation({
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!client) {
+      // client 尚未初始化（effect 还未运行或初始化失败）。
+      if (!clientRef.current) {
         setState((prev) => ({ ...prev, error: 'Client not initialized' }))
         return
       }
@@ -89,7 +142,6 @@ export function useConversation({
         ...prev,
         messages: [...prev.messages, userMessage],
         isThinking: true,
-        error: undefined,
       }))
 
       const controller = new AbortController()
@@ -103,13 +155,30 @@ export function useConversation({
       const toolBubbleId: Record<string, string> = {}
       let lastInputTokens: number | undefined
 
+      // 把错误渲染成行内消息气泡：能接到当前助手气泡就替换其文本，否则新开一条。
+      // 错误属于本回合的 scrollback，不再用会跨轮残留的粘性 state.error。
+      const showError = (msg: string): void => {
+        const aid = currentAssistantId
+        setState((prev) => ({
+          ...prev,
+          messages: aid
+            ? prev.messages.map((m) =>
+                m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m,
+              )
+            : [
+                ...prev.messages,
+                { id: generateId(), role: 'assistant', text: `Error: ${msg}`, isStreaming: false },
+              ],
+        }))
+      }
+
       try {
         for await (const event of runAgent({
           conversation,
-          client,
+          client: clientRef.current,
           registry,
           userText: text,
-          config: { model: client.getModel(), max_tokens: maxTokens },
+          config: { model: clientRef.current.getModel(), max_tokens: maxTokens, system: systemPrompt },
           cwd,
           signal: controller.signal,
           tracker: trackerRef.current,
@@ -158,7 +227,9 @@ export function useConversation({
               }))
             }
           } else if (event.type === 'message-stop') {
-            lastInputTokens = event.usage.input_tokens
+            // 完整上下文规模 = 新输入 + 缓存命中读取。两家 client 的 input_tokens 已归一为「不含缓存」，
+            // 这里加回 cache_read 才是真实窗口占用，否则开缓存的 Anthropic 会显著偏低、软上限永不触发。
+            lastInputTokens = event.usage.input_tokens + (event.usage.cache_read_input_tokens ?? 0)
             const id = currentAssistantId
             const usage = event.usage
             if (id) patch(id, (m) => ({ ...m, isStreaming: false, usage }))
@@ -171,25 +242,7 @@ export function useConversation({
               ],
             }))
           } else if (event.type === 'error') {
-            const aid = currentAssistantId
-            const msg = event.message
-            setState((prev) => ({
-              ...prev,
-              messages: aid
-                ? prev.messages.map((m) =>
-                    m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m,
-                  )
-                : [
-                    ...prev.messages,
-                    {
-                      id: generateId(),
-                      role: 'assistant',
-                      text: `Error: ${msg}`,
-                      isStreaming: false,
-                    },
-                  ],
-              error: msg,
-            }))
+            showError(event.message)
           }
         }
 
@@ -203,12 +256,13 @@ export function useConversation({
         }))
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
-        setState((prev) => ({ ...prev, isThinking: false, error: message }))
+        showError(message)
+        setState((prev) => ({ ...prev, isThinking: false }))
       } finally {
         abortRef.current = null
       }
     },
-    [client, maxTokens, registry, patch, cwd, settings],
+    [maxTokens, registry, patch, cwd, settings, systemPrompt],
   )
 
   const clear = useCallback(() => {
@@ -218,7 +272,6 @@ export function useConversation({
       isThinking: false,
       totalUsage: undefined,
       contextTokens: undefined,
-      error: undefined,
     })
   }, [])
 
@@ -252,9 +305,31 @@ export function useConversation({
       isThinking: false,
       totalUsage: conv.totalUsage,
       contextTokens: undefined,
-      error: undefined,
     })
   }, [])
+
+  // 运行时热替换 client，支持不清空对话历史地切换模型。
+  // persist=true 时同步写入本地层 settings.local.json。
+  const switchModel = useCallback(
+    (sel: ModelSelection, persist: boolean): string => {
+      try {
+        const provider = getProviderConfig(settings, sel.providerId)
+        clientRef.current = createModelClient(provider, sel.model)
+        setCurrentModel(sel.model)
+        setCurrentProviderId(sel.providerId)
+        if (persist) {
+          // 扁平默认 provider（registry 里没有 'default' 条目）只存裸模型名：
+          // 回读时 resolveModelSelection 仍映射回同一选择，避免写成 "default/x" 污染合成的 models 列表。
+          const isFlatDefault = sel.providerId === DEFAULT_PROVIDER_ID && !settings.providers[sel.providerId]
+          setModelInSettings(isFlatDefault ? sel.model : `${sel.providerId}/${sel.model}`)
+        }
+        return `已切换到 ${sel.providerId}/${sel.model}${persist ? '（已写盘）' : ''}`
+      } catch (err) {
+        return `切换失败：${err instanceof Error ? err.message : String(err)}`
+      }
+    },
+    [settings],
+  )
 
   // 输入框唯一的入口：一条斜杠命令，或一条聊天消息。
   const submit = useCallback(
@@ -276,6 +351,9 @@ export function useConversation({
         conversation: conversationRef.current,
         load,
         settings,
+        currentModel,
+        currentProviderId,
+        switchModel,
       }
       try {
         await cmd.run(ctx)
@@ -283,8 +361,8 @@ export function useConversation({
         print(`Error: ${err instanceof Error ? err.message : String(err)}`)
       }
     },
-    [sendMessage, print, clear, load, settings],
+    [sendMessage, print, clear, load, settings, currentModel, currentProviderId, switchModel],
   )
 
-  return { state, submit, clear, pendingPermission, resolvePermission }
+  return { state, submit, clear, pendingPermission, resolvePermission, currentModel, currentProviderId, clientError, switchModel }
 }

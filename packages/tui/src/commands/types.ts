@@ -1,4 +1,4 @@
-import type { Conversation, ResolvedSettings } from '@zuse/core'
+import type { Conversation, ResolvedSettings, ModelSelection } from '@zuse/core'
 
 /**
  * 斜杠命令运行时被交予的东西。真正的 state 由 hook 持有；命令只通过这些
@@ -17,6 +17,12 @@ export interface CommandContext {
   load: (conversation: Conversation) => void
   /** 本会话实际生效的三层合并设置（供 /config 等只读展示用）。 */
   settings: ResolvedSettings
+  /** 当前选中的 model 名（用于 /model 列表标星）。 */
+  currentModel: string
+  /** 当前选中的 provider id —— 与 currentModel 配对，避免重名模型在不同 provider 下被同时标星。 */
+  currentProviderId: string
+  /** 切换 model；persist=true 时写盘。返回给用户看的提示串。 */
+  switchModel: (sel: ModelSelection, persist: boolean) => string
 }
 
 export interface SlashCommand {

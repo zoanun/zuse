@@ -26,5 +26,4 @@ export interface ConversationState {
   isThinking: boolean // 正在等待模型响应时为 true
   totalUsage?: Usage // 整个会话的累计用量
   contextTokens?: number // 上一回合的 input_tokens —— 实时上下文大小（故障模式②）
-  error?: string // 错误信息（如果有）
 }
