@@ -8,15 +8,21 @@ import { GrepTool } from './grep.js'
 import { BashTool } from './bash.js'
 import { WebFetchTool } from './webfetch.js'
 import { createWebSearchTool } from './websearch.js'
+import { createLspTool } from './lsp/index.js'
+import { LspManager } from './lsp/manager.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel } from './bash.js'
 export { createWebSearchTool } from './websearch.js'
+export { createLspTool } from './lsp/index.js'
+export { LspManager } from './lsp/manager.js'
 
 /** createDefaultRegistry 的可选项。 */
 export interface DefaultRegistryOptions {
   /** WebSearch 配置；非 null 时才注册 WebSearch 工具（没 key 就不暴露给模型）。 */
   webSearch?: WebSearchConfig | null
+  /** LSP 进程池；传入时注册 Lsp 工具（无条件可注册，没装服务器是运行时错误）。 */
+  lsp?: LspManager
 }
 
 /**
@@ -34,5 +40,6 @@ export function createDefaultRegistry(opts: DefaultRegistryOptions = {}): ToolRe
   registry.register(BashTool)
   registry.register(WebFetchTool)
   if (opts.webSearch) registry.register(createWebSearchTool(opts.webSearch))
+  if (opts.lsp) registry.register(createLspTool(opts.lsp))
   return registry
 }

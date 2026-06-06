@@ -70,6 +70,9 @@ export function useConversation({
   // 会话级的 read-before-edit 追踪器。放在 ref 里跨多次 submit 保留：
   // 在一条消息里 Read、在后续消息里 Edit 也认得这份"已读"记录。
   const trackerRef = useRef<FileReadTracker>(createFileTracker())
+  // 会话当前工作目录。初值为入口定下的 cwd；Bash 的 cd 经 runAgent 的 onCwdChange
+  // 回写到这里,使下一个回合接续上一回合结束时的目录（跨 submit 保留）。
+  const cwdRef = useRef<string>(cwd)
   // 本会话权限覆盖层（allow_session/allow_persist 追加的规则），跨 submit 保留。
   const sessionAllowRef = useRef<string[]>([])
   // 等待用户裁决的权限请求；非 null 时渲染对话框、禁用输入框。
@@ -179,11 +182,14 @@ export function useConversation({
           registry,
           userText: text,
           config: { model: clientRef.current.getModel(), max_tokens: maxTokens, system: systemPrompt },
-          cwd,
+          cwd: cwdRef.current,
           signal: controller.signal,
           tracker: trackerRef.current,
           settings,
           sessionAllow: sessionAllowRef.current,
+          onCwdChange: (next: string) => {
+            cwdRef.current = next
+          },
           canUseTool: (req: PermissionRequest) =>
             new Promise<PermissionVerdict>((resolve) => {
               permissionResolveRef.current = resolve

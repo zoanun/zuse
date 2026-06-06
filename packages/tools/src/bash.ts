@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
+import { findOnPath, killTree } from './util.js'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
@@ -10,16 +12,6 @@ const DEFAULT_TIMEOUT = 120_000
 const MAX_TIMEOUT = 600_000
 /** 合并输出的字符上限（让输出有界）。 */
 const MAX_OUTPUT = 30_000
-
-/** 在 PATH 列出的目录里找一个可执行文件，返回首个命中的绝对路径。 */
-function findOnPath(exe: string): string | undefined {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
-    if (!dir) continue
-    const full = path.join(dir, exe)
-    if (existsSync(full)) return full
-  }
-  return undefined
-}
 
 /** git-bash 相对 Git 安装根目录的两种固定布局。 */
 function gitBashUnder(root: string): string | undefined {
@@ -90,6 +82,50 @@ export function getShellLabel(): string {
   return SHELL
 }
 
+/** cwd 捕获临时文件名的去重序号（同进程内多次调用不撞名）。 */
+let cwdCaptureSeq = 0
+
+/**
+ * 为命令构造"执行后把工作目录写入临时文件"的包装,实现 cd 跨命令持久化。
+ * 仅 bash/sh 支持（POSIX 全平台,以及 Windows 上的 git-bash）——这些 shell 才有
+ * 稳定的 `pwd`/`$?`/`exit` 语义。pwsh / cmd 返回 null：这些 shell 下 cd 不跨命令
+ * 保留（v1 取舍,绝大多数开发机要么是 POSIX,要么装了 git）。
+ *
+ * 末尾用 `;` 无条件捕获 pwd（即便命令失败也记录最终目录,如 `cd a && false` 仍保留
+ * cd）,并 `exit $?` 透传原命令退出码 —— 否则退出码会被 pwd 的 0 覆盖,掩盖失败。
+ *
+ * Windows git-bash 用 `pwd -W` 输出 `C:/...` 形式（Node 可直接当 cwd 用）,而非
+ * `pwd -P` 的 cygwin `/c/...`（Node 不认）。
+ */
+function buildCwdCapture(command: string): { exec: string; file: string } | null {
+  const label = getShellLabel()
+  if (label !== 'bash' && label !== 'sh') return null
+  const file = path.join(tmpdir(), `zuse-cwd-${process.pid}-${cwdCaptureSeq++}`)
+  // git-bash 重定向用正斜杠路径最稳；POSIX 上 replace 无副作用。
+  const redirect = file.replace(/\\/g, '/')
+  const pwdCmd = process.platform === 'win32' ? 'pwd -W' : 'pwd -P'
+  const exec = `${command}\n__zuse_ec=$?; ${pwdCmd} 1>'${redirect}' 2>/dev/null; exit $__zuse_ec`
+  return { exec, file }
+}
+
+/** 读取捕获文件里的新 cwd 并回写 ctx；无论成败都清理临时文件。 */
+function applyCapturedCwd(file: string, setCwd: ((p: string) => void) | undefined): void {
+  try {
+    if (setCwd && existsSync(file)) {
+      const captured = readFileSync(file, 'utf8').trim()
+      if (captured && path.isAbsolute(captured)) setCwd(captured)
+    }
+  } catch {
+    // 捕获失败不影响命令结果 —— cwd 维持原值即可。
+  } finally {
+    try {
+      unlinkSync(file)
+    } catch {
+      // 临时文件可能从未创建（命令在写入前就退出）；忽略。
+    }
+  }
+}
+
 interface BashInput {
   command: string
   timeout?: number
@@ -112,24 +148,6 @@ const inputSchema: JSONSchema = {
 }
 
 /**
- * 杀掉整棵进程树。child 是 shell（Windows 上是 git-bash 或回退的 cmd.exe），
- * 真正干活的命令是它的子进程。只 child.kill() 会留下占着输出管道的孙进程，
- * 导致 close 事件迟迟不触发。Windows 用 taskkill /T 杀树，POSIX 杀进程组。
- */
-function killTree(pid: number | undefined): void {
-  if (pid === undefined) return
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
-  } else {
-    try {
-      process.kill(-pid, 'SIGTERM') // 负 pid = 整个进程组
-    } catch {
-      process.kill(pid, 'SIGTERM')
-    }
-  }
-}
-
-/**
  * BashTool —— 通过系统 shell 跑一次性命令，仿照 Claude Code 的 BashTool。
  * 支持 cwd（ctx.cwd）、超时(到点 kill)、长输出截断、以及 ctx.signal 中断
  * （为 Ctrl+C 铺路）。非零退出/超时以 isError 回喂（故障模式④）。
@@ -147,7 +165,8 @@ export const BashTool: Tool = {
     return typeof c === 'string' ? c : null
   },
 
-  // TODO Phase 5: 执行前做权限校验（Bash 是高危工具）
+  // 权限校验由 agent 循环在调用 run 之前统一过闸（见 core 的 gateAndRunTool /
+  // permission.decide,Bash 复合命令会逐子命令校验）,本工具只管执行。
   run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as BashInput
     if (!input.command || typeof input.command !== 'string') {
@@ -157,8 +176,10 @@ export const BashTool: Tool = {
     const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT)
 
     return new Promise<ToolResult>((resolvePromise) => {
+      // 命令执行后捕获工作目录,让 cd 跨命令持久化（仅 bash/sh；其余 shell 为 null）。
+      const capture = buildCwdCapture(input.command)
       // POSIX 下 detached 让 child 成为进程组组长，killTree 才能用负 pid 杀整组。
-      const child = spawn(input.command, {
+      const child = spawn(capture ? capture.exec : input.command, {
         cwd: ctx.cwd,
         shell: SHELL,
         detached: process.platform !== 'win32',
@@ -214,6 +235,9 @@ export const BashTool: Tool = {
         // 冲刷 decoder 里可能缓着的尾字节（已封顶则丢弃）。
         append(outDecoder.end())
         append(errDecoder.end())
+        // 回写命令执行后的工作目录（cd 持久化）。即便超时/中断也读一次：进程被杀前
+        // 可能已写入,读到就用,读不到自然跳过。
+        if (capture) applyCapturedCwd(capture.file, ctx.setCwd)
         const body = outputTruncated
           ? output + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
           : output

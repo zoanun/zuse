@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRule, parseRule, matchesRule, decide } from './permission.js'
+import { buildRule, parseRule, matchesRule, decide, splitBashCommand } from './permission.js'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionMode } from './types.js'
 
@@ -85,5 +85,58 @@ describe('decide', () => {
   it('disabled tool denies', () => {
     const s: ResolvedSettings = { tools: { disabled: ['Bash'] }, permissions: settings().permissions, providers: {} }
     expect(decide(Bash, 'ls', s, [], cwd).decision).toBe('deny')
+  })
+})
+
+describe('splitBashCommand', () => {
+  it('splits on top-level control operators', () => {
+    expect(splitBashCommand('git status && rm -rf x')).toEqual(['git status', 'rm -rf x'])
+    expect(splitBashCommand('a; b | c || d')).toEqual(['a', 'b', 'c', 'd'])
+  })
+  it('does not split inside quotes', () => {
+    expect(splitBashCommand('echo "a | b" && ls')).toEqual(['echo "a | b"', 'ls'])
+  })
+  it('splits on a bare & (background) — it is a top-level separator too', () => {
+    expect(splitBashCommand('sleep 10 & rm -rf /')).toEqual(['sleep 10', 'rm -rf /'])
+    expect(splitBashCommand('npm run dev &')).toEqual(['npm run dev'])
+  })
+  it('does not split & inside redirections (2>&1 / >&2 / &>file)', () => {
+    expect(splitBashCommand('cmd 2>&1')).toEqual(['cmd 2>&1'])
+    expect(splitBashCommand('cmd >&2')).toEqual(['cmd >&2'])
+    expect(splitBashCommand('cmd &>out.log')).toEqual(['cmd &>out.log'])
+  })
+})
+
+describe('decide — Bash compound commands', () => {
+  it('a prefix allow rule does NOT let a compound smuggle an extra command', () => {
+    const s = settings({ allow: ['Bash(git status*)'] })
+    expect(decide(Bash, 'git status', s, [], cwd).decision).toBe('allow')
+    // 整条以 "git status" 开头,但第二段 rm 没有 allow 覆盖 → 不自动放行
+    expect(decide(Bash, 'git status && rm -rf x', s, [], cwd).decision).toBe('ask')
+  })
+  it('a compound is allowed only when every sub-command is covered', () => {
+    const s = settings({ allow: ['Bash(cd *)', 'Bash(npm test*)'] })
+    expect(decide(Bash, 'cd src && npm test', s, [], cwd).decision).toBe('allow')
+    expect(decide(Bash, 'cd src && npm publish', s, [], cwd).decision).toBe('ask')
+  })
+  it('deny matches any sub-command of a compound', () => {
+    const s = settings({ allow: ['Bash(*)'], deny: ['Bash(rm -rf *)'] })
+    expect(decide(Bash, 'ls && rm -rf /', s, [], cwd).decision).toBe('deny')
+  })
+  it('a bare & (background) cannot smuggle past deny or a prefix allow', () => {
+    // 裸 & 也是分隔符：deny 必须命中后台串里的 rm,而非被整条前缀放行
+    const denyS = settings({ allow: ['Bash(*)'], deny: ['Bash(rm -rf *)'] })
+    expect(decide(Bash, 'sleep 10 & rm -rf /', denyS, [], cwd).decision).toBe('deny')
+    // 前缀 allow 只覆盖第一段,后台串里的 rm 未覆盖 → 不自动放行
+    const allowS = settings({ allow: ['Bash(git status*)'] })
+    expect(decide(Bash, 'git status & rm -rf ~', allowS, [], cwd).decision).toBe('ask')
+  })
+  it('command substitution disables auto-allow decomposition', () => {
+    const s = settings({ allow: ['Bash(echo*)'] })
+    expect(decide(Bash, 'echo $(rm -rf x)', s, [], cwd).decision).toBe('ask')
+  })
+  it('a session-allowed exact compound command is re-allowed verbatim', () => {
+    const s = settings({ ask: ['Bash(*)'] })
+    expect(decide(Bash, 'cd src && npm test', s, ['Bash(cd src && npm test)'], cwd).decision).toBe('allow')
   })
 })

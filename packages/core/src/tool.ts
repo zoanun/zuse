@@ -62,13 +62,22 @@ export function createFileTracker(): FileReadTracker {
 
 /**
  * 交给工具 `run` 的运行时上下文。携带工作目录、一个 abort 信号
- *（用于 Ctrl+C 中断 —— 后续才接线），以及 read-before-edit 用的文件追踪器。
- * Phase 5 会在这里加上 PermissionManager。
+ *（用于 Ctrl+C 中断），以及 read-before-edit 用的文件追踪器。
+ * 权限校验不在这里 —— 由 agent 循环在调用 `run` 之前统一过闸（见 agent.ts 的
+ * gateAndRunTool）,工具自身无需关心。
+ *
+ * `cwd` 是本次调用的工作目录快照；agent 每次工具调用都按会话当前 cwd 重建 ctx,
+ * 所以 Bash 里的 `cd` 通过 `setCwd` 回写后,后续工具就能看到新目录。
  */
 export interface ToolContext {
   cwd: string
   signal: AbortSignal
   tracker: FileReadTracker
+  /**
+   * 由 Bash 工具回写"命令执行后的工作目录",让 `cd` 跨命令、跨工具持久化。
+   * 可选：无头/测试场景构造的 ctx 可不提供（此时 cd 不持久,但命令照常执行）。
+   */
+  setCwd?(absPath: string): void
 }
 
 /**

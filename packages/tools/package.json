@@ -15,10 +15,13 @@
     "@zuse/core": "workspace:*",
     "jsdom": "^29.1.1",
     "turndown": "^7.2.4",
-    "turndown-plugin-gfm": "^1.0.2"
+    "turndown-plugin-gfm": "^1.0.2",
+    "vscode-jsonrpc": "9.0.0",
+    "vscode-languageserver-protocol": "3.18.0"
   },
   "devDependencies": {
     "@types/jsdom": "^28.0.3",
-    "@types/turndown": "^5.0.6"
+    "@types/turndown": "^5.0.6",
+    "typescript-language-server": "4.3.3"
   }
 }

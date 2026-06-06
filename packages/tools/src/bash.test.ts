@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { BashTool } from './bash.js'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { BashTool, getShellLabel } from './bash.js'
 import { createFileTracker, type ToolContext } from '@zuse/core'
 
 function makeCtx(signal?: AbortSignal): ToolContext {
@@ -9,6 +12,9 @@ function makeCtx(signal?: AbortSignal): ToolContext {
     tracker: createFileTracker(),
   }
 }
+
+// cwd 持久化只在 bash/sh 下实现（POSIX 全平台 + Windows git-bash）；pwsh/cmd 跳过。
+const cwdPersists = getShellLabel() === 'bash' || getShellLabel() === 'sh'
 
 // 用 `node -e` 写命令，跨 shell（cmd.exe / bash）都可移植 —— spawn({shell:true})
 // 在 Windows 上走 cmd.exe，echo/sleep 行为不一致，node 是唯一稳的公分母。
@@ -57,5 +63,31 @@ describe('BashTool', () => {
   it('returns is_error when command is missing', async () => {
     const result = await BashTool.run({}, makeCtx())
     expect(result.isError).toBe(true)
+  })
+
+  // cd 改变工作目录后，经 ctx.setCwd 回写，下一条命令在新目录里执行。
+  it.runIf(cwdPersists)('persists cwd across calls via setCwd', async () => {
+    let sessionCwd = process.cwd()
+    const mkctx = (): ToolContext => ({
+      cwd: sessionCwd,
+      signal: new AbortController().signal,
+      tracker: createFileTracker(),
+      setCwd: (p: string): void => {
+        sessionCwd = p
+      },
+    })
+    const dir = mkdtempSync(path.join(tmpdir(), 'zuse-cwdtest-'))
+    try {
+      const cd = await BashTool.run({ command: `cd '${dir.replace(/\\/g, '/')}'` }, mkctx())
+      expect(cd.isError).toBeFalsy()
+      // 第二条命令用新的 ctx（cwd 已接续到 dir）：打印实际工作目录。
+      const pwd = await BashTool.run(
+        { command: `node -e "process.stdout.write(process.cwd())"` },
+        mkctx(),
+      )
+      expect(pwd.output).toContain(path.basename(dir))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

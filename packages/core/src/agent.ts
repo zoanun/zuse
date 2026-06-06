@@ -42,6 +42,12 @@ export interface RunAgentOptions {
   sessionAllow?: string[]
   /** allow_persist 时的写盘动作；缺省调用 settings 的 appendAllowRule。 */
   onPersistAllow?: (rule: string) => void
+  /**
+   * Bash 的 `cd` 改变工作目录时回调（传入新的绝对 cwd）。调用方（TUI）据此更新
+   * 自己持有的会话 cwd,使下一个用户回合的 `opts.cwd` 接续本回合结束时的目录。
+   * 缺省时 cd 仅在本回合内的后续工具间生效,回合结束后不保留。
+   */
+  onCwdChange?: (cwd: string) => void
 }
 
 interface PendingToolUse {
@@ -82,6 +88,10 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const turnUsage: Usage = emptyUsage()
 
   const toolDefs = registry.getDefinitions(settings.tools)
+
+  // 会话当前工作目录。Bash 的 cd 通过 ctx.setCwd 回写到这里,既让本回合后续工具
+  // 看到新目录,也通过 onCwdChange 透出给调用方以跨回合接续。
+  let sessionCwd = cwd
 
   let clean = false
 
@@ -148,11 +158,20 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     // 执行每个被请求的工具（先过权限闸门），并把结果作为一条 user 消息暂存。
-    const ctx: ToolContext = { cwd, signal, tracker }
     const resultBlocks: ContentBlock[] = []
     for (const tu of toolUses) {
+      // 每个工具调用按会话当前 cwd 重建 ctx —— 上一条 Bash 的 cd 才能被下一条看到。
+      const ctx: ToolContext = {
+        cwd: sessionCwd,
+        signal,
+        tracker,
+        setCwd: (p: string): void => {
+          sessionCwd = p
+          opts.onCwdChange?.(p)
+        },
+      }
       const result = await gateAndRunTool(registry, tu, ctx, {
-        settings, sessionAllow, cwd, canUseTool: opts.canUseTool, onPersistAllow,
+        settings, sessionAllow, cwd: sessionCwd, canUseTool: opts.canUseTool, onPersistAllow,
       })
       yield {
         type: 'tool-result',

@@ -16,6 +16,7 @@
 | 3     | Tool系统    | 二（Agent Loop）+ 三（Cache）+ 一（①④故障） | 【专题课】Harness Engineering驾驭工程实战/Part 1+2/            | tools/ + query.ts |
 | 4     | 工具集补全  | 一（④工具错误吞）                           | 【专题课】Harness Engineering驾驭工程实战/Part 2/              | BashTool/         |
 | 5     | 权限模型    | 一（⑥缺权限闸）+ 11.3（23项安全检查）       | 【专题课】Harness Engineering驾驭工程实战/Part 1/              | bashSecurity.ts   |
+| 5.5   | Bash执行环境与隔离 | —（CC 行为对齐，无对应课程）           | —                                                              | ShellSnapshot.ts / shouldUseSandbox.ts / tmuxSocket.ts |
 | 6     | 多Provider  | 三（Cache优化）                             | 【专题课】Harness Engineering驾驭工程实战/Part 4/              | —                 |
 | 6.5   | 联网工具    | —                                           | —                                                              | WebFetch✅/WebSearch✅ |
 | 6.6   | 代码智能LSP | —                                           | —                                                              | tools/LSP         |
@@ -223,6 +224,90 @@
 ### ✅ 已实现（2026-06-04）
 
 三层 `settings.json` 配置（用户 < 项目 < 本地，标量覆盖 / permission 数组拼接 / env 兜底），`.env` 退役；权限模型 `Tool(specifier)` 文法 + `decide()` 判定（禁用 → deny → bypass → allow+会话层 → ask → defaultMode），**deny 硬护栏压过 bypass**；`ask` 交互弹框四档裁决（本次 / 本会话 / 写盘 / 拒绝）；工具暴露开关。**未做**：CC 的 23 项 Bash 安全检查，v1 只用 `deny` 规则做粗护栏。设计与全部细节见 spec [→](../specs/2026-06-04-zuse-settings-and-permissions-design.md)。
+
+### ✅ 已增强（2026-06-06）—— Bash 复合命令权限拆分 + cwd 持久化
+
+权限闸补上复合命令拆分：`splitBashCommand` 按顶层 `&& || ; |`/换行（引号内不拆）拆子命令，`decide()` 对 Bash 改为「deny 任一子命令命中即拒 / allow 需整条被完整覆盖 / ask 任一子命令命中即问」，堵住 `Bash(git status*)` 放行 `git status && rm -rf ~` 的提权洞；命令含 `$(...)`/反引号时禁用逐子命令自动放行、强制 ask。另：Bash 的 `cd` 经临时文件 `pwd` 回捕 + `ctx.setCwd` 回写，跨命令/跨回合持久化工作目录（仅 bash/sh；pwsh/cmd 不持久）。详见下方 Phase 5.5 把这块归位到「执行环境」专题。
+
+---
+
+## Phase 5.5: Bash 执行环境与隔离（环境快照 / sandbox / tmux）
+
+> **为什么单列一个 Phase**：这三项都不是「再加一个工具」，而是改 Bash 的**执行模型**——命令在什么环境里跑、被关在多大的盒子里、会不会踩到用户自己的会话。它们紧贴 Phase 4（Bash 工具）与 Phase 5（权限闸），但都比一条工具重得多，且**强平台相关**，故从 Phase 5 拆出来单独排期。
+>
+> **现实约束（务必先认清，别白做）**：zuse 主力开发机是 **Windows**。三项里只有「环境快照」在 Windows（git-bash）下有完整意义；**sandbox 与 tmux 在 Windows 上没有原生实现**（CC 也是 sandbox 仅 macOS/Linux/WSL2、tmux 仅经 `wsl -e tmux`）。所以本 Phase 的落地顺序与优先级按「确定性收益 × 当前平台可用性」排：**环境快照 ≫ tmux 套接字隔离 > sandbox**。
+>
+> **课程对应**：无直接课程，全部对齐 Claude Code 行为（源码见各小节）。
+
+### 5.5.1 登录 shell 环境快照（login-shell snapshot）—— 优先级最高 ⭐
+
+**要解决的痛点**：zuse 现在用 `spawn(shell, ...)` 跑命令，子 shell **不读** `.bashrc`/`.zshrc`/`.profile`，于是用户在交互终端里有的 alias、shell 函数、以及 nvm/volta/mise/pyenv/homebrew 往 PATH 注入的工具，在 zuse 跑的命令里**全看不到**——典型表现：用户终端里 `node`/`pnpm` 能跑，zuse 里 `command not found`。
+
+**CC 怎么做的**（`src/utils/bash/ShellSnapshot.ts`，已读）：
+
+- 启动时执行一次 `binShell -c -l <脚本>`（`-l` 走 login shell），脚本 `source` 用户的 rc 文件，然后把结果**dump 成一个快照 `.sh`**：用户函数（`declare -f`，base64 编码避免特殊字符破坏）、shell 选项（`shopt -p` / `setopt`）、alias（`alias` 列表，Windows 下过滤掉 `winpty` alias 防 "stdin is not a tty"）、以及 `source` 后的 `PATH`（`printf 'export PATH=%q'`）。
+- 快照存到 `~/.claude/shell-snapshots/snapshot-<shell>-<ts>-<rand>.sh`，进程退出时 cleanup 删除。
+- **此后每条 Bash 命令开头 `source` 这个快照**——等于「一次性付 login shell 的钱，之后每条命令复用」，不必每条都开 login shell（慢）。
+- 创建失败（超时 10s / 权限问题）**优雅降级**：照常跑命令，只是没有用户的 alias/函数。
+
+**选型（zuse 落地）**：
+
+| 环节         | 方案                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------- |
+| 触发时机     | 会话启动时异步建一次快照，缓存路径；Bash 工具首次用前 await 就绪（失败则降级）         |
+| 快照内容     | v1 先做**最高收益的 PATH + alias + 函数**三样；shell options 可后置                    |
+| 落盘位置     | `~/.zuse/shell-snapshots/`（沿用 zuse 配置目录约定），cleanup 注册删除                 |
+| shell 适配   | 复用现有 `getShellLabel()`：bash/zsh/sh 各自的 rc 文件名与 `declare -f`/`typeset -f` 差异 |
+| Windows      | git-bash 走 `.bashrc`；过滤 `winpty` alias；`ARGV0`/`exec -a` 差异照搬 CC 的分支       |
+
+**开发要点**：
+
+- 与已做的 **cwd 持久化**（Phase 5.5 归位的那块）协同：命令实际执行串 = `source 快照; cd 到 sessionCwd; <用户命令>; 回捕 pwd`。注意 `source` 与 cwd 回捕的先后、退出码透传（`exit $?`）不能被 `source`/`pwd` 的 0 掩盖。
+- 安全：快照是「把用户 rc 的副作用固化」，本身不扩大权限面，但要确保快照文件落在用户私有目录、权限收紧。
+- 降级路径必须测：rc 不存在、`source` 报错、超时——都不能让 Bash 工具挂掉。
+- **不做**：CC 那套把 `find`/`grep`/`rg` 用 bun 内嵌二进制 `ARGV0` 派发的把戏（zuse 没有内嵌搜索二进制，直接用系统 rg / 自带 Grep 工具即可）。
+
+### 5.5.2 tmux 套接字隔离 —— 中优先级（依赖是否引入 tmux 执行后端）
+
+**两个层面，别混为一谈**：
+
+1. **套接字隔离（轻、该做）**：只要 zuse 允许模型跑 `tmux ...`（哪怕只是普通 Bash 里），就有「误杀用户自己 tmux 会话」的风险（`tmux kill-server` 之类）。CC 的解法（`src/utils/tmuxSocket.ts`，已读）：给 Claude 开**自己的 tmux 套接字** `claude-<PID>`，所有 tmux 命令带 `-L claude-<PID>`，并给所有 Bash 子进程注入指向该套接字的 `TMUX` env，**屏蔽用户原本的 `TMUX`**。这样模型怎么折腾都只动 Claude 自己的 server，碰不到用户的会话。Windows 上 tmux 只存在于 WSL，经 `wsl -e tmux` 调用。
+2. **tmux 作为执行后端（重、归 Phase 11）**：CC 用 tmux pane 跑后台/异步命令、以及多 agent（swarm/teammate）的 pane 后端（`src/utils/swarm/backends/TmuxBackend.ts`）。这是**真正的隔离执行模型**，与多 Agent 编排强耦合——**这部分挪到 Phase 11（多Agent与编排）**去做，不在 5.5。
+
+**选型 / 开发要点（仅做第 1 层）**：
+
+- 仅当探测到 `tmux` 可用（或 Windows 上 WSL 内可用）时启用；否则空操作，不影响普通 Bash。
+- 启动期创建 `zuse-<PID>` 套接字，注入 `TMUX`/`-L` 到 Bash 执行环境（可并入 5.5.1 的快照/env 注入管线）；退出 cleanup 杀掉该 server。
+- **优先级判断**：只有当 zuse 真的鼓励模型用 tmux（如做后台长任务）时才有收益。当前 v1 没有后台任务能力，故**排在环境快照之后**；可与 Phase 11 的 tmux 后端一并立项。
+
+### 5.5.3 OS 级 sandbox —— 低优先级 / Windows 暂不可做
+
+**CC 怎么做的**（`shouldUseSandbox.ts` + `src/utils/sandbox/sandbox-adapter.ts`，已读）：
+
+- 底座是**外部包** `@anthropic-ai/sandbox-runtime`——macOS 用 Seatbelt（`sandbox-exec`），Linux 用 bubblewrap + seccomp + 网络代理（socat）。**支持平台：macOS / Linux / WSL2；Windows 原生不支持**（`isSupportedPlatform()`）。
+- adapter 把 CC 的 settings/permission 规则翻译成 sandbox 配置：`allowWrite`/`denyWrite`/`denyRead`（cwd 与临时目录可写、settings.json 与 `.claude/skills` 强制只读防逃逸）、网络 `allowedDomains`/`deniedDomains`（从 WebFetch 规则抽取）。
+- 关键价值有二：① **限制副作用面**（命令只能写白名单路径、只能连白名单域名）；② **`autoAllowBashIfSandboxed`**——一旦命令在 sandbox 里跑，就可以**免确认自动放行**只读类命令（因为越权被 OS 挡住了），大幅减少打扰。
+- 还有一堆硬化细节：bare-repo 文件投毒防护（`git` 逃逸）、worktree 主仓可写、依赖缺失（bubblewrap/socat 未装）时的显式告警而非静默失效。
+
+**选型（zuse 落地评估）**：
+
+| 维度       | 评估                                                                                          |
+| ---------- | --------------------------------------------------------------------------------------------- |
+| OSS 可用   | macOS：系统自带 `sandbox-exec`（已弃用但可用）；Linux：`bubblewrap`(LGPL)+`socat`。可直接评估复用 `@anthropic-ai/sandbox-runtime`（若其 license/可用），否则自写薄封装 |
+| Windows    | **无对等机制**。Windows 上要隔离只能走 WSL2（即在 WSL 里跑 Linux sandbox）或容器；纯 Win32 无解 |
+| 与权限闸关系 | sandbox 是 Phase 5 权限闸的**OS 级补强**：权限闸是「问不问」，sandbox 是「就算放行也关在盒子里」。两者叠加才有 `autoAllowBashIfSandboxed` 的体验红利 |
+
+**开发要点 / 排期**：
+
+- **明确推迟**：当前主力平台 Windows 无原生 sandbox，且 zuse v1 已用「deny 硬护栏 + 复合命令拆分」做了粗护栏，sandbox 的边际收益在 Windows 上≈0。**等有 macOS/Linux 部署需求时再立项**。
+- 真要做时的最小切口：先做**只读命令检测 + 沙箱内自动放行**（对齐 `autoAllowBashIfSandboxed`），平台限定 macOS/Linux/WSL2，Windows 直接走原有权限闸；依赖缺失要像 CC 那样**显式告警**（避免用户以为开了 sandbox 实际没生效的安全 footgun）。
+- 阻塞项：先定「自研薄封装 vs 复用现成 sandbox-runtime」——取决于该包是否独立可用及 license。
+
+### 本 Phase 推进建议（小结）
+
+1. **先做 5.5.1 环境快照**（跨平台、确定性收益、解决 `command not found` 类真痛点，且与已做的 cwd 持久化天然同管线）。
+2. **再评估 5.5.2 tmux 套接字隔离**（只在引入 tmux/后台任务时才有收益，可与 Phase 11 合并）。
+3. **5.5.3 sandbox 挂起**，等非 Windows 部署场景出现再启动；在那之前以现有权限护栏兜底。
 
 ---
 
@@ -558,6 +643,7 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 - team 注册表 + SendMessage 通信通道
 - Workflow：确定性编排（parallel / pipeline 原语），子 Agent 并发上限 + 总数兜底
 - 自研为主——无现成 OSS 二进制可换（与 CC 一致，多 Agent 编排是手搓）
+- **tmux pane 执行后端**（从 Phase 5.5.2 引来）：CC 用 tmux pane 跑 teammate（`swarm/backends/TmuxBackend.ts`）。若 zuse 的多 Agent 要做「每个 teammate 一个可见 pane / 后台持久执行」，在此实现 pane 后端；与 5.5.2 的 tmux 套接字隔离（`zuse-<PID>` 专属 socket）共用同一套 tmux 基建。Windows 经 `wsl -e tmux`。
 
 ---
 
