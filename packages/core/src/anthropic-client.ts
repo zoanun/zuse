@@ -1,23 +1,79 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { Message, StreamEvent, ModelConfig, ClientConfig, Usage, ResolvedSettings } from './types.js'
+import type { Message, StreamEvent, ModelConfig, ProviderConfig, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
-import { getClientConfig, getDefaultModel } from './settings.js'
+
+// 缓存控制标记：ephemeral 表示"本断点之前的内容写入缓存"。
+const CACHE: Anthropic.CacheControlEphemeral = { type: 'ephemeral' }
+
+/**
+ * 组装 messages.stream() 的入参（纯函数，便于测试缓存打标）。
+ * 缓存断点：system、最后一个 tool 定义、最后一条消息的最后一个块（滚动）。
+ */
+export function buildAnthropicRequest(
+  messages: Message[],
+  config: ModelConfig,
+  tools?: ToolDefinition[],
+): Anthropic.MessageStreamParams {
+  // 把内部 Message 类型映射到 SDK 的 MessageParam 形状。
+  const sdkMessages: Anthropic.MessageParam[] = messages.map((m) => ({
+    role: m.role,
+    content: m.content.map((block): Anthropic.ContentBlockParam => {
+      if (block.type === 'text') return { type: 'text', text: block.text }
+      if (block.type === 'tool_use')
+        return { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+      // tool_result 块
+      return {
+        type: 'tool_result',
+        tool_use_id: block.tool_use_id,
+        content: block.content,
+        is_error: block.is_error,
+      }
+    }),
+  }))
+
+  // 滚动断点：给最后一条消息的最后一个内容块挂 cache_control。
+  // 每轮对话追加新消息后，旧断点随着消息前移，仍然有效；新断点锚定当前轮次末尾。
+  const last = sdkMessages[sdkMessages.length - 1]
+  if (last && Array.isArray(last.content) && last.content.length > 0) {
+    const idx = last.content.length - 1
+    // 给最后一条消息的最后一个内容块挂滚动缓存断点（spread 重建，不就地改）。
+    last.content[idx] = { ...last.content[idx], cache_control: CACHE } as Anthropic.ContentBlockParam
+  }
+
+  // 工具列表断点：最后一个工具定义挂 cache_control，把整个 tools 块纳入缓存。
+  const sdkTools: Anthropic.Tool[] | undefined =
+    tools && tools.length > 0
+      ? tools.map((t, i) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.input_schema as Anthropic.Tool.InputSchema,
+          // 最后一个工具定义挂断点 → 整个 tools 块进缓存。
+          ...(i === tools.length - 1 ? { cache_control: CACHE } : {}),
+        }))
+      : undefined
+
+  return {
+    model: config.model,
+    max_tokens: config.max_tokens,
+    messages: sdkMessages,
+    // system 断点：有系统提示时包成数组并打标，无则完全省略该字段。
+    ...(config.system ? { system: [{ type: 'text', text: config.system, cache_control: CACHE }] } : {}),
+    ...(sdkTools ? { tools: sdkTools } : {}),
+  }
+}
 
 /**
  * AnthropicClient —— 用 @anthropic-ai/sdk 实现 ModelClient。
- * 适用于 Anthropic 原生 API 以及兼容 Anthropic 协议的端点（DashScope 等）。
+ * 适用于 Anthropic 原生 API 及兼容 Anthropic 协议的端点（DashScope 等）。
  */
 export class AnthropicClient implements ModelClient {
   private client: Anthropic
   private model: string
 
-  constructor(config: ClientConfig, defaultModel?: string) {
-    this.client = new Anthropic({
-      apiKey: config.apiKey,
-      baseURL: config.baseURL,
-    })
-    this.model = defaultModel || 'claude-sonnet-4-5-20250514'
+  constructor(provider: ProviderConfig, model: string) {
+    this.client = new Anthropic({ apiKey: provider.apiKey, baseURL: provider.baseURL })
+    this.model = model
   }
 
   getModel(): string {
@@ -33,68 +89,33 @@ export class AnthropicClient implements ModelClient {
     config: ModelConfig,
     tools?: ToolDefinition[],
   ): AsyncIterable<StreamEvent> {
-    // 把我们的 Message 类型转成 Anthropic SDK 格式。text / tool_use /
-    // tool_result 块几乎一对一地映射到 SDK 的内容块形状。
-    const sdkMessages: Anthropic.MessageParam[] = messages.map((m) => ({
-      role: m.role,
-      content: m.content.map((block): Anthropic.ContentBlockParam => {
-        if (block.type === 'text') {
-          return { type: 'text', text: block.text }
-        }
-        if (block.type === 'tool_use') {
-          return { type: 'tool_use', id: block.id, name: block.name, input: block.input }
-        }
-        // tool_result
-        return {
-          type: 'tool_result',
-          tool_use_id: block.tool_use_id,
-          content: block.content,
-          is_error: block.is_error,
-        }
-      }),
-    }))
-
-    const model = config.model || this.model
-    const maxTokens = config.max_tokens
-
+    // 组装请求参数，model 优先取 config.model，其次回退到构造时的 this.model。
+    const params = buildAnthropicRequest(messages, { ...config, model: config.model || this.model }, tools)
     try {
-      const stream = this.client.messages.stream({
-        model,
-        max_tokens: maxTokens,
-        messages: sdkMessages,
-        // system prompt 由 agent 层提供（与厂商无关），这里只负责转发。
-        ...(config.system ? { system: config.system } : {}),
-        // 只有在确实有工具时才公布 tools —— 让简单回合保持干净。
-        ...(tools && tools.length > 0 ? { tools } : {}),
-      })
-
+      const stream = this.client.messages.stream(params)
       for await (const event of stream) {
         if (event.type === 'message_start') {
-          yield {
-            type: 'message-start',
-            id: event.message.id,
-            model: event.message.model,
-          }
+          yield { type: 'message-start', id: event.message.id, model: event.message.model }
         } else if (event.type === 'content_block_delta') {
-          if (event.delta.type === 'text_delta') {
-            yield { type: 'text-delta', text: event.delta.text }
-          }
-          // 这里忽略 input_json_delta（tool_use 的参数）—— 我们改为从下面的
-          // finalMessage() 读取已完整拼装好的 tool_use 块，而不是去重建
-          // 残缺的 JSON。
+          // text_delta 直接转发；input_json_delta（工具参数流）从 finalMessage 整体读取。
+          if (event.delta.type === 'text_delta') yield { type: 'text-delta', text: event.delta.text }
         } else if (event.type === 'message_delta') {
+          // message_delta 会多次到达，stop_reason 仅在最后一个非空——以此为界，拿 finalMessage 统一收尾。
           if (event.delta.stop_reason) {
             const finalMessage = await stream.finalMessage()
-            // 在 message-stop 之前，为模型产生的每个 tool_use 块发一个
-            // tool-use 事件，这样 Agent 先收集它们，再看到 stop。
+            // 在 message-stop 之前，先为每个 tool_use 块发事件，Agent 借此收集工具调用。
             for (const block of finalMessage.content) {
               if (block.type === 'tool_use') {
                 yield { type: 'tool-use', id: block.id, name: block.name, input: block.input }
               }
             }
+            // 带上 cache 读写字段，供 TUI 统计展示。
+            const u = finalMessage.usage
             const usage: Usage = {
-              input_tokens: finalMessage.usage.input_tokens,
-              output_tokens: finalMessage.usage.output_tokens,
+              input_tokens: u.input_tokens,
+              output_tokens: u.output_tokens,
+              cache_read_input_tokens: u.cache_read_input_tokens ?? undefined,
+              cache_creation_input_tokens: u.cache_creation_input_tokens ?? undefined,
             }
             yield { type: 'message-stop', stop_reason: event.delta.stop_reason, usage }
           }
@@ -105,9 +126,4 @@ export class AnthropicClient implements ModelClient {
       yield { type: 'error', message }
     }
   }
-}
-
-/** 用已解析的 settings 创建 AnthropicClient。 */
-export function createAnthropicClient(settings: ResolvedSettings): AnthropicClient {
-  return new AnthropicClient(getClientConfig(settings), getDefaultModel(settings))
 }

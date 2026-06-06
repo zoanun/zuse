@@ -22,6 +22,7 @@ function settings(over: Partial<ResolvedSettings['permissions']> & { mode?: Perm
       defaultMode: over.mode ?? 'default',
       allow: over.allow ?? [], ask: over.ask ?? [], deny: over.deny ?? [],
     },
+    providers: {},
   }
 }
 
@@ -82,7 +83,7 @@ describe('decide', () => {
     expect(decide(Bash, 'git status', s, ['Bash(git status)'], cwd).decision).toBe('allow')
   })
   it('disabled tool denies', () => {
-    const s: ResolvedSettings = { tools: { disabled: ['Bash'] }, permissions: settings().permissions }
+    const s: ResolvedSettings = { tools: { disabled: ['Bash'] }, permissions: settings().permissions, providers: {} }
     expect(decide(Bash, 'ls', s, [], cwd).decision).toBe('deny')
   })
 })

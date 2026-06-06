@@ -1,4 +1,5 @@
 import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
+import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolContext, ToolRegistry, FileReadTracker, Tool } from './tool.js'
 import { createFileTracker } from './tool.js'
@@ -14,6 +15,7 @@ export const DEFAULT_MAX_TURNS = 50
 const PERMISSIVE_SETTINGS: ResolvedSettings = {
   tools: {},
   permissions: { defaultMode: 'bypassPermissions', allow: [], ask: [], deny: [] },
+  providers: {},
 }
 
 export interface RunAgentOptions {
@@ -77,7 +79,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
 
   const base = conversation.getMessages()
   const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
-  const turnUsage: Usage = { input_tokens: 0, output_tokens: 0 }
+  const turnUsage: Usage = emptyUsage()
 
   const toolDefs = registry.getDefinitions(settings.tools)
 
@@ -111,6 +113,11 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
         stopReason = event.stop_reason
         turnUsage.input_tokens += event.usage.input_tokens
         turnUsage.output_tokens += event.usage.output_tokens
+        // 缓存读写也要累加进回合总计，否则 totalUsage 的缓存统计恒为 0，footer 永远显示 0k。
+        turnUsage.cache_read_input_tokens =
+          (turnUsage.cache_read_input_tokens ?? 0) + (event.usage.cache_read_input_tokens ?? 0)
+        turnUsage.cache_creation_input_tokens =
+          (turnUsage.cache_creation_input_tokens ?? 0) + (event.usage.cache_creation_input_tokens ?? 0)
         yield event
       } else if (event.type === 'error') {
         yield event
@@ -131,6 +138,11 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
 
     // 没有请求工具 -> 模型完事了。提交并结束。
     if (stopReason !== 'tool_use' || toolUses.length === 0) {
+      // 'max_tokens'（Anthropic 原生 / OpenAI 'length' 归一而来）= 回复被 max_tokens 截断，
+      // 而非自然结束。告警提示本回合可能不完整，免得静默把半截回复当成最终答案。
+      if (stopReason === 'max_tokens') {
+        yield { type: 'warning', message: `模型输出在 max_tokens 处被截断，本回合可能不完整。` }
+      }
       clean = true
       break
     }

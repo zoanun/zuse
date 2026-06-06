@@ -24,7 +24,8 @@ describe('Conversation', () => {
     const c = new Conversation()
     c.addUsage({ input_tokens: 10, output_tokens: 5 })
     c.addUsage({ input_tokens: 20, output_tokens: 7 })
-    expect(c.totalUsage).toEqual({ input_tokens: 30, output_tokens: 12 })
+    // Phase 6 起 totalUsage 始终含 cache 字段（值为 0 时也会出现）。
+    expect(c.totalUsage).toEqual({ input_tokens: 30, output_tokens: 12, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
   })
 
   it('clear() resets messages and usage', () => {
@@ -33,7 +34,8 @@ describe('Conversation', () => {
     c.addUsage({ input_tokens: 10, output_tokens: 5 })
     c.clear()
     expect(c.length).toBe(0)
-    expect(c.totalUsage).toEqual({ input_tokens: 0, output_tokens: 0 })
+    // Phase 6 起 totalUsage 始终含 cache 字段。
+    expect(c.totalUsage).toEqual({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
   })
 
   it('round-trips through toJSON/fromJSON', () => {
@@ -55,5 +57,25 @@ describe('Conversation', () => {
         totalUsage: { input_tokens: 0, output_tokens: 0 },
       }),
     ).toThrow()
+  })
+})
+
+describe('addUsage cache fields', () => {
+  it('accumulates cache_read and cache_creation across turns', () => {
+    const conv = new Conversation()
+    conv.addUsage({ input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 20 })
+    conv.addUsage({ input_tokens: 3, output_tokens: 2, cache_read_input_tokens: 50 })
+    const u = conv.totalUsage
+    expect(u.input_tokens).toBe(13)
+    expect(u.output_tokens).toBe(7)
+    expect(u.cache_read_input_tokens).toBe(150)
+    expect(u.cache_creation_input_tokens).toBe(20)
+  })
+
+  it('treats missing cache fields as zero', () => {
+    const conv = new Conversation()
+    conv.addUsage({ input_tokens: 1, output_tokens: 1 })
+    expect(conv.totalUsage.cache_read_input_tokens).toBe(0)
+    expect(conv.totalUsage.cache_creation_input_tokens).toBe(0)
   })
 })

@@ -1,5 +1,7 @@
-import type { Message, StreamEvent, ModelConfig, ClientConfig } from './types.js'
+import type { Message, StreamEvent, ModelConfig, ProviderConfig } from './types.js'
 import type { ToolDefinition } from './tool.js'
+import { AnthropicClient } from './anthropic-client.js'
+import { OpenAIClient } from './openai-client.js'
 
 /**
  * ModelClient 接口 —— 与具体厂商无关的发送消息 API。
@@ -22,8 +24,16 @@ export interface ModelClient {
   getModel(): string
 }
 
-/**
- * 创建 client 的工厂函数签名。
- * 由 TUI 用来根据配置拿到合适的 client。
- */
-export type ModelClientFactory = (config: ClientConfig) => ModelClient
+/** 按 provider 协议选具体实现。clients 仅 type-only 依赖本文件，无运行时环。 */
+export function createModelClient(provider: ProviderConfig, model: string): ModelClient {
+  switch (provider.protocol) {
+    case 'anthropic':
+      return new AnthropicClient(provider, model)
+    case 'openai':
+      return new OpenAIClient(provider, model)
+    default: {
+      const _exhaustive: never = provider.protocol
+      throw new Error(`Unknown provider protocol: ${String(_exhaustive)}`)
+    }
+  }
+}

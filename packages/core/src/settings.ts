@@ -9,7 +9,14 @@ import {
   printParseErrorCode,
   type ParseError,
 } from 'jsonc-parser'
-import type { ResolvedSettings, PermissionMode, ClientConfig } from './types.js'
+import type { ResolvedSettings, PermissionMode, RawProviderConfig, ProviderConfig, ModelSelection } from './types.js'
+import { createModelClient } from './model-client.js'
+import type { ModelClient } from './model-client.js'
+
+// 默认 provider 标识符与默认模型（未配置 model 时的回退）。
+const DEFAULT_MODEL = 'claude-sonnet-4-5-20250514'
+/** 扁平配置合成出的 provider id。导出供 TUI 判断「是否扁平默认」以决定写盘格式。 */
+export const DEFAULT_PROVIDER_ID = 'default'
 
 /** 通过查找 pnpm-workspace.yaml 定位项目根（从 env.ts 迁来，统一出口）。 */
 export function findProjectRoot(): string {
@@ -34,6 +41,7 @@ interface RawSettings {
     ask?: string[]
     deny?: string[]
   }
+  providers?: Record<string, RawProviderConfig>
 }
 
 export interface LoadSettingsOptions {
@@ -82,6 +90,7 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   const out: ResolvedSettings = {
     tools: {},
     permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+    providers: {},
   }
   for (const layer of layers) {
     if (layer.model !== undefined) out.model = layer.model
@@ -89,6 +98,12 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey
     if (layer.tools) out.tools = { ...out.tools, ...layer.tools }
+    // 按 provider id 深合并：高层标量覆盖，字段级合并。
+    if (layer.providers) {
+      for (const [id, p] of Object.entries(layer.providers)) {
+        out.providers[id] = { ...(out.providers[id] ?? {}), ...p }
+      }
+    }
     const pm = layer.permissions
     if (pm) {
       if (pm.defaultMode !== undefined) out.permissions.defaultMode = pm.defaultMode
@@ -147,28 +162,105 @@ export function appendAllowRule(rule: string, localPath?: string): void {
   writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
 }
 
-/**
- * 从已解析的 settings 读取 API client 配置。
- * apiKey 由 loadSettings 合并三层后再叠加 ZUSE_API_KEY 覆盖得到（见 mergeLayers），
- * 这里直接取 settings.apiKey 即可，不再重复读环境变量。
- */
-export function getClientConfig(settings: ResolvedSettings): ClientConfig {
-  const apiKey = settings.apiKey || ''
-  if (!apiKey) {
-    throw new Error(
-      'API key not found. Set "apiKey" in ~/.zuse/settings.json or <repo>/.zuse/settings.local.json, ' +
-      'or export ZUSE_API_KEY.',
-    )
-  }
-  return { apiKey, baseURL: settings.baseURL }
-}
-
-/** 默认模型：settings.model，否则回退。 */
-export function getDefaultModel(settings: ResolvedSettings): string {
-  return settings.model || 'claude-sonnet-4-5-20250514'
-}
-
 /** max_tokens：settings.maxTokens，否则回退 4096。 */
 export function getDefaultMaxTokens(settings: ResolvedSettings): number {
   return settings.maxTokens && settings.maxTokens > 0 ? settings.maxTokens : 4096
+}
+
+/** 把 settings.model（`<id>/<model>` 或裸字符串）解析成选中项。 */
+export function resolveModelSelection(settings: ResolvedSettings): ModelSelection {
+  const raw = settings.model
+  if (!raw) return { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL }
+  const slash = raw.indexOf('/')
+  if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
+  return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }
+}
+
+/** key 来源：ZUSE_API_KEY_<ID>（id 大写）优先，其次字面量。 */
+function resolveApiKey(providerId: string, literal: string | undefined): string {
+  const envKey = process.env[`ZUSE_API_KEY_${providerId.toUpperCase()}`]
+  return envKey || literal || ''
+}
+
+/**
+ * 取某个 provider 的完整配置。
+ * - 'default' 且 registry 无该 id：从扁平 model/baseURL/apiKey 合成一个 anthropic provider（向后兼容）。
+ * - 否则查 registry；protocol 缺省 anthropic。
+ * 缺 key 抛出指明 provider 的错误（占位 key 因非空而合法）。
+ */
+export function getProviderConfig(settings: ResolvedSettings, providerId: string): ProviderConfig {
+  const raw = settings.providers[providerId]
+
+  if (!raw) {
+    if (providerId === DEFAULT_PROVIDER_ID) {
+      // default 的 key 既可由 mergeLayers 注入的 ZUSE_API_KEY 经 settings.apiKey 提供，
+      // 也接受 ZUSE_API_KEY_DEFAULT（resolveApiKey 的通用规则）；错误信息只提示更常用的 ZUSE_API_KEY。
+      const apiKey = resolveApiKey(providerId, settings.apiKey)
+      if (!apiKey) {
+        throw new Error(
+          'API key not found for provider "default". Set "apiKey" in settings.local.json, ' +
+          'define a "providers" entry, or export ZUSE_API_KEY.',
+        )
+      }
+      return {
+        id: DEFAULT_PROVIDER_ID,
+        protocol: 'anthropic',
+        baseURL: settings.baseURL,
+        apiKey,
+        // 用 resolveModelSelection 取「裸模型名」：即便 settings.model 误写成 "default/xxx"
+        // （旧版 --save 的遗留），也只把 xxx 放进列表，避免 /model 列出 "default/default/xxx"。
+        models: settings.model ? [resolveModelSelection(settings).model] : [],
+      }
+    }
+    throw new Error(`Provider "${providerId}" is not configured in settings.providers.`)
+  }
+
+  const apiKey = resolveApiKey(providerId, raw.apiKey)
+  if (!apiKey) {
+    throw new Error(
+      `API key not found for provider "${providerId}". Set its "apiKey" in settings.local.json ` +
+      `or export ZUSE_API_KEY_${providerId.toUpperCase()}.`,
+    )
+  }
+  return {
+    id: providerId,
+    protocol: raw.protocol ?? 'anthropic',
+    baseURL: raw.baseURL,
+    apiKey,
+    models: raw.models ?? [],
+  }
+}
+
+/**
+ * 把顶层 `model` 写入本地层 settings.local.json，保留注释与格式（jsonc）。
+ * 文件/目录不存在则创建。只改 model 一处。
+ * @param localPath 省略时取 <项目根>/.zuse/settings.local.json
+ */
+export function setModelInSettings(model: string, localPath?: string): void {
+  const basePath = localPath ?? join(findProjectRoot(), '.zuse', 'settings.local.json')
+  // 已存在 .jsonc 版本就地写它，避免出现两个配置文件。
+  const path = resolveLayerPath(basePath)
+  // 以原文为基底（缺失/空/读不动都退回 "{}"），保留用户的注释和格式。
+  let text = '{}'
+  if (existsSync(path)) {
+    try {
+      const raw = readFileSync(path, 'utf8')
+      if (raw.trim()) text = raw
+    } catch {
+      text = '{}' // 读不动就当空对象重建
+    }
+  }
+  // 只改 model 这一处，applyEdits 保留其余字段、注释与缩进。
+  const edits = modify(text, ['model'], model, {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  })
+  const updated = applyEdits(text, edits)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
+}
+
+/** 从 settings 解析选中项 + provider 配置，造出对应 client。TUI 启动入口。 */
+export function createClientFromSettings(settings: ResolvedSettings): ModelClient {
+  const sel = resolveModelSelection(settings)
+  return createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
 }

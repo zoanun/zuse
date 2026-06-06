@@ -70,7 +70,7 @@ describe('runAgent', () => {
     expect(msgs).toHaveLength(2)
     expect(msgs[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'hi' }] })
     expect(msgs[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'hello' }] })
-    expect(conv.totalUsage).toEqual(USAGE)
+    expect(conv.totalUsage).toEqual({ ...USAGE, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
   })
 
   it('runs a tool, feeds the result back, and loops to a final answer', async () => {
@@ -127,7 +127,7 @@ describe('runAgent', () => {
     // 账本：user、assistant(tool_use)、user(tool_result)、assistant(text) = 4 条
     expect(conv.getMessages()).toHaveLength(4)
     // 用量在两个回合间累加
-    expect(conv.totalUsage).toEqual({ input_tokens: 20, output_tokens: 10 })
+    expect(conv.totalUsage).toEqual({ input_tokens: 20, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
   })
 
   it('marks unknown tools as errors (fault mode ④) and still feeds them back', async () => {
@@ -206,6 +206,7 @@ describe('runAgent', () => {
   const askSettings: ResolvedSettings = {
     tools: {},
     permissions: { defaultMode: 'default', allow: [], ask: ['echo'], deny: [] },
+    providers: {},
   }
 
   function askScript(): StreamEvent[][] {
@@ -223,7 +224,7 @@ describe('runAgent', () => {
     const reg = new ToolRegistry()
     reg.register({ ...echoTool(), run: async () => { ran = true; return { output: 'should-not' } } })
     const denySettings: ResolvedSettings = {
-      tools: {}, permissions: { defaultMode: 'default', allow: [], ask: [], deny: ['echo'] },
+      tools: {}, permissions: { defaultMode: 'default', allow: [], ask: [], deny: ['echo'] }, providers: {},
     }
     const { client } = fakeClient(askScript())
     const events = await collect(runAgent({
@@ -299,7 +300,7 @@ describe('runAgent', () => {
 
   it('disabled tool is denied even if the model calls it', async () => {
     const reg = new ToolRegistry(); reg.register(echoTool())
-    const s: ResolvedSettings = { tools: { disabled: ['echo'] }, permissions: askSettings.permissions }
+    const s: ResolvedSettings = { tools: { disabled: ['echo'] }, permissions: askSettings.permissions, providers: {} }
     const { client } = fakeClient(askScript())
     const events = await collect(runAgent({
       conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,

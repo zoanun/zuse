@@ -31,12 +31,22 @@ export type StreamEvent =
   | { type: 'warning'; message: string }
   | { type: 'error'; message: string }
 
-// Token 用量追踪（故障模式⑧的防御）
+// Token 用量追踪（故障模式⑧的防御）。Phase 6 起含缓存命中统计。
 export interface Usage {
+  // 未命中缓存的「新」输入 token，不含缓存读取部分。各 client 统一归一到此口径：
+  // Anthropic 的 input_tokens 本就排除 cache_read；OpenAI 的 prompt_tokens 含缓存，
+  // 由 OpenAIClient 减去 cached_tokens 后填入。完整上下文规模 = input_tokens + cache_read_input_tokens。
   input_tokens: number
   output_tokens: number
-  // cache_read_input_tokens?: number  // Phase 6
-  // cache_write_input_tokens?: number // Phase 6
+  // 缓存命中读取的输入 token（Anthropic: cache_read_input_tokens；OpenAI: cached_tokens）。
+  cache_read_input_tokens?: number
+  // 首次写入缓存的输入 token（Anthropic 专有；OpenAI 无对应，留空）。
+  cache_creation_input_tokens?: number
+}
+
+/** 全零 Usage 的工厂（含 cache 字段）。会话总计/回合累加/流初始化共用，避免字面量散落。 */
+export function emptyUsage(): Usage {
+  return { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 }
 
 // 模型配置
@@ -46,12 +56,6 @@ export interface ModelConfig {
   // 顶层系统提示词。缺省时 runAgent 会注入 DEFAULT_SYSTEM_PROMPT —— 设此字段可覆盖。
   system?: string
   // temperature?: number  // Phase 2+
-}
-
-// 客户端配置（API key、base URL 等）
-export interface ClientConfig {
-  apiKey: string
-  baseURL?: string
 }
 
 // ——— Phase 5：设置与权限 ———
@@ -73,6 +77,32 @@ export interface PermissionsConfig {
   deny: string[]
 }
 
+/** provider 的 wire 协议。 */
+export type ProviderProtocol = 'anthropic' | 'openai'
+
+/** settings 文件里单个 provider 的原始（未解析）形状，全部可选。 */
+export interface RawProviderConfig {
+  protocol?: ProviderProtocol
+  baseURL?: string
+  apiKey?: string
+  models?: string[]
+}
+
+/** 解析后、可直接交给 client 工厂的完整 provider 配置。 */
+export interface ProviderConfig {
+  id: string
+  protocol: ProviderProtocol
+  baseURL?: string
+  apiKey: string
+  models: string[]
+}
+
+/** 当前选中：哪个 provider 的哪个 model。 */
+export interface ModelSelection {
+  providerId: string
+  model: string
+}
+
 /** 三层合并、补默认值后的最终设置。供 TUI 与 agent 使用。 */
 export interface ResolvedSettings {
   model?: string
@@ -81,6 +111,7 @@ export interface ResolvedSettings {
   apiKey?: string
   tools: ToolsConfig
   permissions: PermissionsConfig
+  providers: Record<string, RawProviderConfig>
 }
 
 /** 判定结果三态。 */

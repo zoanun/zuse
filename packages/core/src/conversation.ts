@@ -1,4 +1,5 @@
 import type { Message, Usage } from './types.js'
+import { emptyUsage } from './types.js'
 
 /** 用于 /save 和 /load 的序列化形式（Phase 2.7）。version 为将来的迁移留出闸门。 */
 export interface ConversationSnapshot {
@@ -16,7 +17,7 @@ export interface ConversationSnapshot {
  */
 export class Conversation {
   private messages: Message[] = []
-  private _totalUsage: Usage = { input_tokens: 0, output_tokens: 0 }
+  private _totalUsage: Usage = emptyUsage()
 
   append(message: Message): void {
     this.messages.push(message)
@@ -39,11 +40,15 @@ export class Conversation {
     return this.messages.length
   }
 
-  /** 把一个回合的用量累加进运行总计（故障模式⑧）。 */
+  /** 把一个回合的用量累加进运行总计（故障模式⑧）。缺省 cache 字段按 0 计。 */
   addUsage(usage: Usage): void {
     this._totalUsage = {
       input_tokens: this._totalUsage.input_tokens + usage.input_tokens,
       output_tokens: this._totalUsage.output_tokens + usage.output_tokens,
+      cache_read_input_tokens:
+        (this._totalUsage.cache_read_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0),
+      cache_creation_input_tokens:
+        (this._totalUsage.cache_creation_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0),
     }
   }
 
@@ -53,7 +58,7 @@ export class Conversation {
 
   clear(): void {
     this.messages = []
-    this._totalUsage = { input_tokens: 0, output_tokens: 0 }
+    this._totalUsage = emptyUsage()
   }
 
   toJSON(): ConversationSnapshot {
