@@ -6,6 +6,12 @@ import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 const DEFAULT_LIMIT = 2000
 /** 超过此长度的单行将被截断（避免吐出压缩成一行的大块内容）。 */
 const MAX_LINE_LENGTH = 2000
+/**
+ * 单次 Read 输出的字符上限（对齐 CC 的 ~25k token 上限：按约 4 字符/token 粗估）。
+ * 行数上限挡不住"行少但每行很宽"的文件，这道字符上限给真正喂给模型的总文本兜底。
+ * 触顶即在行边界处停下并提示用 offset 续读，而非把超大内容整段塞进上下文。
+ */
+const MAX_OUTPUT_CHARS = 100_000
 
 interface ReadInput {
   file_path: string
@@ -84,20 +90,37 @@ export const ReadTool: Tool = {
     const limit = input.limit && input.limit > 0 ? input.limit : DEFAULT_LIMIT
     const slice = allLines.slice(start, start + limit)
 
-    const numbered = slice
-      .map((line, i) => {
-        const lineNo = start + i + 1
-        const text =
-          line.length > MAX_LINE_LENGTH ? line.slice(0, MAX_LINE_LENGTH) + '…[truncated]' : line
-        return `${lineNo}\t${text}`
-      })
-      .join('\n')
+    // 逐行拼装并累计字符数：先撞行数窗口、再撞字符上限，任一触顶都在行边界停下。
+    const rendered: string[] = []
+    let used = 0
+    let charCapped = false
+    for (let i = 0; i < slice.length; i++) {
+      const lineNo = start + i + 1
+      const text =
+        slice[i]!.length > MAX_LINE_LENGTH
+          ? slice[i]!.slice(0, MAX_LINE_LENGTH) + '…[truncated]'
+          : slice[i]!
+      const piece = `${lineNo}\t${text}`
+      // 至少给出一行；之后若再加这行会超字符上限就停下（保证行完整、不腰斩一行）。
+      if (rendered.length > 0 && used + piece.length + 1 > MAX_OUTPUT_CHARS) {
+        charCapped = true
+        break
+      }
+      rendered.push(piece)
+      used += piece.length + 1
+    }
 
-    const truncatedNote =
-      allLines.length > start + limit
-        ? `\n\n[truncated: showing lines ${start + 1}-${start + slice.length} of ${allLines.length}]`
-        : ''
+    const lastLine = start + rendered.length // 已展示到的（1-based 之后一行的）边界
+    // 两种截断（撞字符上限 / 撞行数窗口）共用同一截断尾：标出范围并给出续读 offset，
+    // 以免两条路径给模型的续读引导不一致（行数截断旧时不提示 offset）。
+    let note = ''
+    if (charCapped || allLines.length > start + limit) {
+      const reason = charCapped ? `output reached ~${MAX_OUTPUT_CHARS} chars (token budget); ` : ''
+      note =
+        `\n\n[truncated: ${reason}showing lines ${start + 1}-${lastLine} of ${allLines.length}; ` +
+        `pass offset: ${lastLine + 1} to continue]`
+    }
 
-    return { output: numbered + truncatedNote, isError: false }
+    return { output: rendered.join('\n') + note, isError: false }
   },
 }
