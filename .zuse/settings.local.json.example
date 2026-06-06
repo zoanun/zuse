@@ -1,8 +1,26 @@
 {
-  "model": "qwen3-coder-plus",
+  "model": "qwen/qwen3-coder-plus",
   "maxTokens": 4096,
-  "baseURL": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
-  "apiKey": "sk-REPLACE_ME",
+  "providers": {
+    "qwen": {
+      "protocol": "anthropic",
+      "baseURL": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "apiKey": "sk-REPLACE_ME",
+      "models": ["qwen3-coder-plus", "qwen3-max"]
+    },
+    "deepseek": {
+      "protocol": "openai",
+      "baseURL": "https://api.deepseek.com/v1",
+      "apiKey": "sk-REPLACE_ME",
+      "models": ["deepseek-chat"]
+    },
+    "ollama": {
+      "protocol": "openai",
+      "baseURL": "http://localhost:11434/v1",
+      "apiKey": "ollama",
+      "models": ["qwen2.5-coder"]
+    }
+  },
   "permissions": {
     "defaultMode": "default",
     "allow": ["Read(./**)", "Grep", "Glob"],

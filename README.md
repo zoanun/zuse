@@ -6,6 +6,17 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 6: Done. 多 provider。`ModelClient` 接口下两套手搓实现——`AnthropicClient`
+（Anthropic 原生 + DashScope 等兼容端点，含 prompt 缓存 cache_control 三断点）与
+`OpenAIClient`（OpenAI 协议：DeepSeek / 本地 Ollama / vLLM，手写 tool_call 分片累积
+与 usage 抽取）。数据驱动的 `providers` registry：加 provider = 一条配置 + 一个
+env var。`/model` 运行时切换（session 生效，`--save` 写盘），切换不清空历史。footer
+显示缓存命中。下一步：Phase 6.5 联网工具 / Phase 7 UI 打磨。
+
+Phase 5: Done. 三层配置系统（用户层 / 项目层 / 本地层），权限模型（`Tool(specifier)`
+规则文法 + `decide()` 四档裁决），`ask` 交互式批准弹框，工具暴露开关。deny 是硬护栏，
+压过 bypassPermissions。
+
 Phase 4: Done. Full v1 toolset. `Write` (whole-file, creates parent dirs),
 `Edit` (exact-string replace, `replace_all`), `Glob` (readdir walk +
 `path.matchesGlob`, includes dotfiles, sorted by mtime), `Grep` (ripgrep via
@@ -16,7 +27,7 @@ through `Bash(ls)`. The headline is
 **read-before-edit**: `Edit` refuses to touch a file that hasn't been `Read`,
 and refuses if the file's mtime changed since it was read (optimistic lock
 against TOCTOU). Read state lives in a session `FileReadTracker` carried on
-`ToolContext`. Next: Phase 5 — permissions.
+`ToolContext`. Next: Phase 5 — permissions (done); Phase 6 — multi-provider (done).
 
 Phase 3: Done. The agent can now use tools. A `Tool` interface + `ToolRegistry`
 in core, the Agent loop (`runAgent`: ask model → run requested tools → feed

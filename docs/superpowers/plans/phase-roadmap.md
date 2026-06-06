@@ -18,7 +18,7 @@
 | 4     | 工具集补全  | 一（④工具错误吞）                           | 【专题课】Harness Engineering驾驭工程实战/Part 2/              | BashTool/         |
 | 5     | 权限模型    | 一（⑥缺权限闸）+ 11.3（23项安全检查）       | 【专题课】Harness Engineering驾驭工程实战/Part 1/              | bashSecurity.ts   |
 | 6     | 多Provider  | 三（Cache优化）                             | 【专题课】Harness Engineering驾驭工程实战/Part 4/              | —                 |
-| 6.5   | 联网工具    | —                                           | —                                                              | WebFetch/WebSearch|
+| 6.5   | 联网工具    | —                                           | —                                                              | WebFetch✅/WebSearch待定|
 | 6.6   | 代码智能LSP | —                                           | —                                                              | tools/LSP         |
 | 7     | UI打磨      | —                                           | —                                                              | ink/ components/  |
 | 8     | 会话管理    | 四（Token Budget）+ 11.6（压缩策略）        | 【Part 7】+【Part 8】+【专题课】Claude Code架构/Part 3/        | services/compact/ |
@@ -180,6 +180,20 @@
 - spawn + cwd + timeout
 - 长输出截断
 
+### ✅ 已实现增强（2026-06-06）—— 与 CC 工具能力对齐
+
+逐一比对 zuse 的 Read/Write/Edit/Glob/Grep 与 CC 同名工具后，按「能力差距 + 高频 + 确定性收益」筛出该补的项（沿用 WebFetch §8.2 的准入思路，不照搬全部 CC API）。结论：Write/Edit 机制已比 CC 更严（指纹乐观锁 vs 时间戳），Glob 已对齐；差距集中在 Grep，外加 Read 一处兜底。本次落地：
+
+- **Grep `output_mode`**：新增 `files_with_matches`（**设为默认**，最省 token）/ `content`（`path:line:text`）/ `count`（`path:count`）三模式，对齐 CC。此前只有 content 一种，模型问「哪些文件含 X / 命中几次」只能拉回全部命中行自己数，白烧 token。
+- **Grep 上下文行**：content 模式新增 `before_context` / `after_context` / `context`（= rg `-B`/`-A`/`-C`，`context` 覆盖前两者），定位代码时不必命中后再 Read 一跳。
+- **Grep `type` 过滤**：透传 rg `--type`（如 `ts`/`py`/`go`），比手写 glob 省事。
+- **Grep `head_limit` + `offset` 分页**：缺省 250 防上下文膨胀、`0` 解除（仍受 1 万行安全上限约束）；`offset` 跳过前 N 条。取代此前写死的 200 条硬截。
+- **命名取舍**：新参数沿用 zuse 既有可读 snake_case（`ignore_case`/`replace_all` 一脉），**不照搬** CC 的 `-A`/`-B`/`-C` 字面 JSON key——对齐的是能力，键名服从本仓库一致性（模型只见 zuse schema，无外部兼容需求）。
+- **Read 输出字符上限**：新增 `MAX_OUTPUT_CHARS = 100_000`（≈CC 的 25k token 上限，按 ~4 字符/token 粗估）。原「行数 2000 + 单行 2000 字符」挡不住「行少但每行极宽」的文件，这道上限在**行边界**处兜底并提示用 `offset` 续读。
+- 覆盖范围：TDD，grep 16（原 9，+7）、read 8（原 6，+2）；全量 174 个用例全绿，三包 typecheck 零错误。
+
+**推迟到后续 phase 的项**：Read 多模态（图片/PDF/Jupyter）——见 Phase 6.6 开发要点。当前 provider 多为文本模型，YAGNI，留待需要视觉模型时再做。
+
 ---
 
 ## Phase 5: 权限模型
@@ -255,6 +269,18 @@
 - /model切换
 - Cache: cache_control参数
 
+### ✅ 已实现（2026-06-05）
+
+实现计划见 [`2026-06-05-phase-6-multi-provider.md`](2026-06-05-phase-6-multi-provider.md)，设计规格见 [`../specs/2026-06-05-zuse-multi-provider-design.md`](../specs/2026-06-05-zuse-multi-provider-design.md)。落地内容：
+
+- **数据驱动的 `providers` registry**：`settings.json` 中 `providers` 对象，加 provider = 一条配置（`protocol` / `baseURL` / `apiKey` / `models`）+ 一个 env var（`ZUSE_API_KEY_<ID>`）；零业务逻辑改动。
+- **`AnthropicClient`**：Anthropic 原生协议 + DashScope 等兼容端点；prompt 缓存 `cache_control` 三断点（system / 最后一个 tool 定义 / 最后一条消息最后一个块滚动）；手写流式事件解析。
+- **`OpenAIClient`**：OpenAI 协议（DeepSeek / 本地 Ollama / vLLM）；手写 `tool_call` 分片按 index 累积 + `usage` 抽取；统一映射到 `ModelClient` 事件流。
+- **`createModelClient(provider, model)` 工厂**：按 `protocol` 字段分发到对应 client 实现；`createClientFromSettings(settings)` 作为统一入口。
+- **`/model` 运行时切换**：session 内生效，`--save` 写盘到本地层，切换不清空历史。
+- **footer 显示缓存命中**：`cache_read_input_tokens` 非零时在 UsageFooter 显示缓存命中信息。
+- 覆盖范围：全程 TDD，126 个用例全绿；typecheck / lint 零错误。
+
 ---
 
 ## Phase 6.5: 联网工具（WebFetch / WebSearch）
@@ -293,6 +319,20 @@
 - provider 配置沿用数据驱动思路：加搜索源 = 一条配置 + 一个 env var
 - **阻塞项**：先定搜索 provider（SearXNG 自托管 vs Tavily/Brave 托管）再动 WebSearch
 
+### ✅ 已实现（2026-06-06）—— 仅 WebFetch
+
+实现计划见 [`2026-06-06-webfetch.md`](2026-06-06-webfetch.md)，设计规格见 [`../specs/2026-06-06-zuse-webfetch-design.md`](../specs/2026-06-06-zuse-webfetch-design.md)。落地内容：
+
+- **`WebFetchTool`**：抓 URL → jsdom + `@mozilla/readability` 抽正文 → turndown（挂 GFM）转 Markdown，交主模型自行阅读。**不在工具内调 LLM**（方案 B，区别于 CC 的小模型抽取）——`ToolContext` 无需 ModelClient。
+- **流水线**：url 校验（仅 http/https）→ 去 fragment 的缓存 key → `fetch` + 拟真 UA + 30s 超时（`AbortSignal.any([ctx.signal, timeout])`，兼顾 Ctrl+C）→ 非 2xx/content-type 分流（html 抽取 / text·json·md 原样 / 其余报错）→ **Cloudflare 邮箱混淆还原** → readability 抽取（失败回退 body）→ SPA 空正文提示 → 50000 字符截断 → 写缓存。
+- **缓存**：进程内 15 分钟 TTL 内存缓存，惰性过期。
+- **权限**：非 `readOnly`（网络出口有副作用），`specifierFor` 返回 hostname，支持 `WebFetch(github.com)` / `WebFetch(*.dev)` 规则收窄。
+- **Cloudflare 邮箱混淆还原**（2026-06-06 增）：`deobfuscateCfEmails` 在 turndown 前把 `data-cfemail` 属性与 `email-protection#hex` 片段 XOR 解码回明文（CF 每次轮换 key，按首字节取，免疫轮换）。否则形如 `python@3.12` 的文本被 CF 抹成占位符 `[email protected]`，**实测连 deepseek 旗舰也只能幻觉**——信息不在模型可见文本里，只能确定性解码。准入依据见 spec §8.2「三条件准入线」。
+- **已知限制**：不执行 JS，抓不到 SPA 客户端渲染正文（与 `curl` 同短板），此时返回提示而非空白。其余网页混淆（非 CF）按 spec §8.2 准入原则一律记为已知限制、不追。
+- 覆盖范围：TDD，webfetch 20（含 cf-email 3）+ 注册 1 共 21 个新用例全绿；typecheck 零错误。
+
+**WebSearch 仍未实现**，阻塞于搜索 provider 决策（SearXNG 自托管 vs Tavily/Brave 托管），见上文阻塞项。
+
 ---
 
 ## Phase 6.6: 代码智能（LSP）
@@ -319,6 +359,14 @@
 - 暴露 定义跳转 / 找引用 / 悬停类型 三个高频能力
 - 按 cwd 探测项目语言，懒启动对应 server，复用同一进程
 - 只读、无副作用 → 不进权限闸
+
+#### ⏳ Read 多模态（从 Phase 4 对齐工作推迟过来）
+
+CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`pages` 参数）、Jupyter notebook（`.ipynb`，含 cell 输出）；zuse 当前的 Read 仅文本。推迟而非现做的理由：当前 provider 多为纯文本模型，多模态 Read 需要先有视觉模型接入才有意义（YAGNI）。真要做时的要点：
+
+- 按扩展名/MIME 分流：图片 → base64 走多模态 content block；PDF → 取指定页转图或抽文本；`.ipynb` → 解析 cell + 输出。
+- 依赖能力探测：仅当当前 provider/模型声明支持视觉时才启用图片路径，否则回退报错提示。
+- 与现有文本 Read 同流水线（路径解析、tracker 登记、错误归一）共存，只是 content 形态不同。
 
 ---
 
@@ -347,6 +395,25 @@
 - /history滚动
 - Ctrl+C/Esc处理
 - footer显示
+- **`/model` 交互式选择器**（设计已定，2026-06-06）
+
+#### `/model` 交互式选择器（已敲定的设计决策）
+
+把现在 `/model` 无参时的 40+ 行纯文本 dump 换成一个交互式覆盖层。**形态：键盘驱动 + 输入即模糊过滤 + 滚动视口**：
+
+- 方向键 / `j k` 移动，输入字符即时过滤候选（输 `mimo` → 直接筛到一条），`Enter` 选中切换，`Esc` 取消。
+- 超出高度用滚动视口 + 位置指示（`↑更多 / ↓更多`）。
+- 当前模型高亮（复用现有 `currentProviderId` + `currentModel` 配对判定）。
+
+**明确不做鼠标点击**，理由（避免 Phase 7 时重新纠结）：
+
+1. Ink 不原生支持鼠标，得手开终端鼠标追踪（SGR 1006）+ 自解析 stdin 原始事件，脆且重。
+2. 一旦开 app 鼠标捕获，就抢了终端自身的拖选复制；且 tmux / SSH / 部分终端鼠标事件传不进来。
+3. 非 TUI 惯用法（fzf / lazygit / gh / Claude Code 全是键盘驱动）。
+
+**与已有校验逻辑的关系**：选择器从过滤后的列表里选，天然选不到不存在的模型，`mino→mimo` 那类拼错从源头消除。Phase 6 收尾时给 `/model <ref>` 直输路径加的「不在清单 → 警告 / 相近候选则拒绝切换 / 否则切换但不写盘」逻辑（见 [`packages/tui/src/commands/registry.ts`](../../../packages/tui/src/commands/registry.ts)）**保留**，退化为非交互直输路径与脚本/自动化的兜底。
+
+**待定点**：用 `ink-select-input`（已在依赖友好范围）还是自写一个带 filter 的小组件——开发前再定。
 
 ---
 
