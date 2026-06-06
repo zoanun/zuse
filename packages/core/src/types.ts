@@ -103,15 +103,44 @@ export interface ModelSelection {
   model: string
 }
 
+/** settings 文件里单个搜索后端的原始形状,全部可选。 */
+export interface RawWebSearchBackendConfig {
+  apiKey?: string
+}
+
+/** WebSearch 的原始(未解析)配置,三层合并前的形状。 */
+export interface RawWebSearchConfig {
+  /** 主后端名(如 "tavily")。缺省取 backends 里第一个有 key 的。 */
+  backend?: string
+  /** 主后端硬失败时按序回退的后端名列表;缺省 = 不回退。 */
+  fallback?: string[]
+  /** 每次返回条数上限;缺省 5。 */
+  maxResults?: number
+  /** 各后端各存各的 key,按后端名索引。 */
+  backends?: Record<string, RawWebSearchBackendConfig>
+}
+
+/** 解析后的 WebSearch 配置:backends 只含已解析出 key 的后端。供工具使用。 */
+export interface WebSearchConfig {
+  backend: string
+  fallback: string[]
+  maxResults: number
+  backends: Record<string, { apiKey: string }>
+}
+
 /** 三层合并、补默认值后的最终设置。供 TUI 与 agent 使用。 */
 export interface ResolvedSettings {
   model?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string
+  /** HTTP(S) 代理地址（如 http://host:port）。配置后所有出站请求都经此代理，见 installProxy。 */
+  proxy?: string
   tools: ToolsConfig
   permissions: PermissionsConfig
   providers: Record<string, RawProviderConfig>
+  /** WebSearch 原始配置;由 getWebSearchConfig 按需解析(同 providers 的处理方式)。 */
+  webSearch?: RawWebSearchConfig
 }
 
 /** 判定结果三态。 */

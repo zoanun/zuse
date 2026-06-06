@@ -5,11 +5,8 @@ import { MessageList } from './components/MessageList.js'
 import { UsageFooter } from './components/UsageFooter.js'
 import { PermissionDialog } from './components/PermissionDialog.js'
 import { useConversation } from './hooks/useConversation.js'
-import { getDefaultMaxTokens, loadSettings, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
+import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry } from '@zuse/tools'
-
-// 整个会话期间工具集是固定的 —— 在组件外构建一次。
-const registry = createDefaultRegistry()
 
 interface AppProps {
   /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
@@ -33,6 +30,10 @@ export function App({ cwd }: AppProps) {
     () => settings ?? { tools: {}, permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] }, providers: {} },
     [settings],
   )
+
+  // 工具集随 settings 构建：WebSearch 需要配置（key），故在拿到 settings 后再建 registry。
+  // 用 useMemo 锁定引用，避免流式期间每个 token 重渲染都重建工具集。
+  const registry = useMemo(() => createDefaultRegistry({ webSearch: getWebSearchConfig(resolved) }), [resolved])
 
   const { state, submit, pendingPermission, resolvePermission, currentModel, currentProviderId, clientError } =
     useConversation({

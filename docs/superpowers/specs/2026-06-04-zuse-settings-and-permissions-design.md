@@ -59,6 +59,12 @@
   // 只允许放在 gitignored 的本地层 / 用户层文件，绝不写进会提交的项目层。
   "apiKey": "sk-...",
 
+  // —— 出站代理（可选）。配置后所有联网请求（大模型 API / WebFetch / WebSearch）都经此代理。——
+  // 实现见 packages/core/src/proxy.ts 的 installProxy：在 bin 入口装 undici 全局 dispatcher。
+  // 之所以需要：Node 自带 fetch 既不读系统代理也不读 HTTP_PROXY，只认 undici 全局 dispatcher。
+  // 缺省（不填）= 直连。可被环境变量 ZUSE_PROXY 覆盖（同 apiKey 的 ZUSE_API_KEY 机制）。
+  "proxy": "http://127.0.0.1:7890",
+
   // —— 工具暴露开关（两个字段都可选）——
   // enabled 存在 → 只暴露交集；disabled → 黑名单。都不填 → 全部暴露。
   "tools": {
@@ -94,6 +100,7 @@
   - `permissions.allow` / `ask` / `deny`：三个数组**跨层拼接**（累加规则）。
   - `tools`：高层覆盖（对象浅合并）。
   - `apiKey`：标量，高层覆盖；`process.env.ZUSE_API_KEY` 再覆盖在最上层。
+  - `proxy`：标量，高层覆盖；`process.env.ZUSE_PROXY` 再覆盖在最上层（同 `apiKey`）。生效见 `installProxy`。
 - 校验：未知顶层字段 → 警告（不致命）；类型不符 → 抛错。
 - 产出带类型的 `ResolvedSettings`，导出供 TUI 与 agent 使用。
 - **写回（settings writer）**：导出 `appendAllowRule(rule: string): void`（或等价 API），把一条 allow 规则追加进**本地层** `settings.local.json` 的 `permissions.allow` 数组并落盘（文件不存在则创建、目录不存在则建目录；已存在同规则则跳过去重）。只写本地层，绝不动用户层 / 项目层。供 `allow_persist` 调用。

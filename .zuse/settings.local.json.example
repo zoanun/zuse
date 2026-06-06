@@ -26,5 +26,14 @@
     "allow": ["Read(./**)", "Grep", "Glob"],
     "ask": ["Bash(*)", "Write(./**)", "Edit(./**)"],
     "deny": ["Read(./.env)", "Read(./**/.env)", "Bash(rm -rf *)"]
+  },
+  "webSearch": {
+    "backend": "tavily",
+    "fallback": ["brave"],
+    "maxResults": 5,
+    "backends": {
+      "tavily": { "apiKey": "tvly-REPLACE_ME" },
+      "brave": { "apiKey": "BSA-REPLACE_ME" }
+    }
   }
 }

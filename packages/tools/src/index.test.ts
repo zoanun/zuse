@@ -1,9 +1,32 @@
 import { describe, it, expect } from 'vitest'
+import type { WebSearchConfig } from '@zuse/core'
 import { createDefaultRegistry, WebFetchTool } from './index.js'
+
+const WS: WebSearchConfig = {
+  backend: 'tavily',
+  fallback: [],
+  maxResults: 5,
+  backends: { tavily: { apiKey: 'tvly-x' } },
+}
 
 describe('createDefaultRegistry', () => {
   it('registers WebFetch', () => {
     const registry = createDefaultRegistry()
     expect(registry.get('WebFetch')).toBe(WebFetchTool)
+  })
+
+  it('does NOT register WebSearch without config', () => {
+    const registry = createDefaultRegistry()
+    expect(registry.get('WebSearch')).toBeUndefined()
+  })
+
+  it('registers WebSearch when given a config', () => {
+    const registry = createDefaultRegistry({ webSearch: WS })
+    expect(registry.get('WebSearch')?.name).toBe('WebSearch')
+  })
+
+  it('does NOT register WebSearch when config is null', () => {
+    const registry = createDefaultRegistry({ webSearch: null })
+    expect(registry.get('WebSearch')).toBeUndefined()
   })
 })

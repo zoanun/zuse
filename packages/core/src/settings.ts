@@ -9,7 +9,15 @@ import {
   printParseErrorCode,
   type ParseError,
 } from 'jsonc-parser'
-import type { ResolvedSettings, PermissionMode, RawProviderConfig, ProviderConfig, ModelSelection } from './types.js'
+import type {
+  ResolvedSettings,
+  PermissionMode,
+  RawProviderConfig,
+  ProviderConfig,
+  ModelSelection,
+  RawWebSearchConfig,
+  WebSearchConfig,
+} from './types.js'
 import { createModelClient } from './model-client.js'
 import type { ModelClient } from './model-client.js'
 
@@ -34,6 +42,7 @@ interface RawSettings {
   maxTokens?: number
   baseURL?: string
   apiKey?: string
+  proxy?: string
   tools?: { enabled?: string[]; disabled?: string[] }
   permissions?: {
     defaultMode?: PermissionMode
@@ -42,6 +51,7 @@ interface RawSettings {
     deny?: string[]
   }
   providers?: Record<string, RawProviderConfig>
+  webSearch?: RawWebSearchConfig
 }
 
 export interface LoadSettingsOptions {
@@ -97,11 +107,23 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
     if (layer.maxTokens !== undefined) out.maxTokens = layer.maxTokens
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey
+    if (layer.proxy !== undefined) out.proxy = layer.proxy
     if (layer.tools) out.tools = { ...out.tools, ...layer.tools }
     // 按 provider id 深合并：高层标量覆盖，字段级合并。
     if (layer.providers) {
       for (const [id, p] of Object.entries(layer.providers)) {
         out.providers[id] = { ...(out.providers[id] ?? {}), ...p }
+      }
+    }
+    // webSearch 深合并：标量（backend/maxResults/fallback）由高层覆盖，
+    // backends 按后端名合并（与 providers 同款），让各层各补各的 key。
+    // fallback 用覆盖而非拼接：回退顺序应可被高层整体改写，而非追加。
+    if (layer.webSearch) {
+      const prev = out.webSearch ?? {}
+      out.webSearch = {
+        ...prev,
+        ...layer.webSearch,
+        backends: { ...(prev.backends ?? {}), ...(layer.webSearch.backends ?? {}) },
       }
     }
     const pm = layer.permissions
@@ -114,6 +136,9 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   }
   const envKey = process.env.ZUSE_API_KEY
   if (envKey) out.apiKey = envKey
+  // 代理也支持环境变量覆盖（与 apiKey 同款）：ZUSE_PROXY 优先于任意层的字面量。
+  const envProxy = process.env.ZUSE_PROXY
+  if (envProxy) out.proxy = envProxy
   return out
 }
 
@@ -263,4 +288,29 @@ export function setModelInSettings(model: string, localPath?: string): void {
 export function createClientFromSettings(settings: ResolvedSettings): ModelClient {
   const sel = resolveModelSelection(settings)
   return createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
+}
+
+/** WebSearch 每次返回条数的默认上限。 */
+const DEFAULT_MAX_RESULTS = 5
+
+/**
+ * 解析 webSearch 配置：逐后端取字面量 key，只保留有 key 的后端。
+ * key 只来自 settings（settings.local.jsonc 等三层），不读环境变量。
+ * 无 webSearch 块、或没有任何可用 key → 返回 null（调用方据此不注册 WebSearch 工具，
+ * 避免把一个一定失败的工具暴露给模型）。
+ * backend 缺省取第一个有 key 的后端；若显式 backend 没 key，也回落到第一个有 key 的。
+ */
+export function getWebSearchConfig(settings: ResolvedSettings): WebSearchConfig | null {
+  const raw = settings.webSearch
+  if (!raw) return null
+  const backends: Record<string, { apiKey: string }> = {}
+  for (const [name, cfg] of Object.entries(raw.backends ?? {})) {
+    const apiKey = cfg?.apiKey ?? ''
+    if (apiKey) backends[name] = { apiKey }
+  }
+  const names = Object.keys(backends)
+  if (names.length === 0) return null
+  const backend = raw.backend && backends[raw.backend] ? raw.backend : names[0]!
+  const maxResults = raw.maxResults && raw.maxResults > 0 ? raw.maxResults : DEFAULT_MAX_RESULTS
+  return { backend, fallback: raw.fallback ?? [], maxResults, backends }
 }

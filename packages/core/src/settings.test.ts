@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -11,10 +11,12 @@ const p = (name: string): string => join(dir, name)
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-settings-'))
   delete process.env.ZUSE_API_KEY
+  delete process.env.ZUSE_PROXY
 })
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
   delete process.env.ZUSE_API_KEY
+  delete process.env.ZUSE_PROXY
 })
 
 describe('loadSettings', () => {
@@ -48,6 +50,22 @@ describe('loadSettings', () => {
     process.env.ZUSE_API_KEY = 'env-key'
     const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
     expect(s.apiKey).toBe('env-key')
+  })
+
+  it('proxy: local 层覆盖 user 层；无配置时为 undefined', () => {
+    writeFileSync(p('u.json'), JSON.stringify({ proxy: 'http://user:1111' }))
+    writeFileSync(p('l.json'), JSON.stringify({ proxy: 'http://local:2222' }))
+    const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
+    expect(s.proxy).toBe('http://local:2222')
+    const none = loadSettings({ userPath: p('x.json'), projectPath: p('y.json'), localPath: p('z.json') })
+    expect(none.proxy).toBeUndefined()
+  })
+
+  it('ZUSE_PROXY env overrides file proxy', () => {
+    writeFileSync(p('l.json'), JSON.stringify({ proxy: 'http://file:3333' }))
+    process.env.ZUSE_PROXY = 'http://env:4444'
+    const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
+    expect(s.proxy).toBe('http://env:4444')
   })
 
   it('throws a file-identifying error on bad JSON', () => {
@@ -180,6 +198,33 @@ describe('getProviderConfig', () => {
   })
   it('throws when provider id is not in the registry', () => {
     expect(() => getProviderConfig(base({}), 'nope')).toThrow(/nope/)
+  })
+})
+
+describe('getWebSearchConfig', () => {
+  it('returns null when no webSearch block', () => {
+    expect(getWebSearchConfig(base({}))).toBeNull()
+  })
+  it('returns null when no backend has a usable key', () => {
+    const s = base({ webSearch: { backend: 'tavily', backends: { tavily: {} } } })
+    expect(getWebSearchConfig(s)).toBeNull()
+  })
+  it('keeps only backends with a key, defaults maxResults to 5 and fallback to []', () => {
+    const s = base({ webSearch: { backend: 'tavily', backends: { tavily: { apiKey: 'tvly-x' }, brave: {} } } })
+    const cfg = getWebSearchConfig(s)
+    expect(cfg).toEqual({ backend: 'tavily', fallback: [], maxResults: 5, backends: { tavily: { apiKey: 'tvly-x' } } })
+  })
+  it('falls back to the first keyed backend when the named backend has no key', () => {
+    const s = base({ webSearch: { backend: 'tavily', backends: { tavily: {}, brave: { apiKey: 'BSA-x' } } } })
+    expect(getWebSearchConfig(s)!.backend).toBe('brave')
+  })
+  it('carries fallback and maxResults through', () => {
+    const s = base({
+      webSearch: { backend: 'tavily', fallback: ['brave'], maxResults: 8, backends: { tavily: { apiKey: 'k' }, brave: { apiKey: 'k2' } } },
+    })
+    const cfg = getWebSearchConfig(s)!
+    expect(cfg.fallback).toEqual(['brave'])
+    expect(cfg.maxResults).toBe(8)
   })
 })
 

@@ -1,4 +1,5 @@
 import { ToolRegistry } from '@zuse/core'
+import type { WebSearchConfig } from '@zuse/core'
 import { ReadTool } from './read.js'
 import { WriteTool } from './write.js'
 import { EditTool } from './edit.js'
@@ -6,15 +7,24 @@ import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { BashTool } from './bash.js'
 import { WebFetchTool } from './webfetch.js'
+import { createWebSearchTool } from './websearch.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel } from './bash.js'
+export { createWebSearchTool } from './websearch.js'
+
+/** createDefaultRegistry 的可选项。 */
+export interface DefaultRegistryOptions {
+  /** WebSearch 配置；非 null 时才注册 WebSearch 工具（没 key 就不暴露给模型）。 */
+  webSearch?: WebSearchConfig | null
+}
 
 /**
- * 构建一个预装好 v1 工具集的登记表：读/写/改/找文件/搜内容/跑命令。
+ * 构建一个预装好 v1 工具集的登记表：读/写/改/找文件/搜内容/跑命令/抓网页。
  * 不含独立的 LS 工具 —— 与 Claude Code 对齐：CC 没有 LS 工具，列目录走 `Bash(ls)`。
+ * WebSearch 需要 apiKey，故只在传入 webSearch 配置时按需注册（见 DefaultRegistryOptions）。
  */
-export function createDefaultRegistry(): ToolRegistry {
+export function createDefaultRegistry(opts: DefaultRegistryOptions = {}): ToolRegistry {
   const registry = new ToolRegistry()
   registry.register(ReadTool)
   registry.register(WriteTool)
@@ -23,5 +33,6 @@ export function createDefaultRegistry(): ToolRegistry {
   registry.register(GrepTool)
   registry.register(BashTool)
   registry.register(WebFetchTool)
+  if (opts.webSearch) registry.register(createWebSearchTool(opts.webSearch))
   return registry
 }

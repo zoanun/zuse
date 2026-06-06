@@ -1,5 +1,7 @@
 // turndown-plugin-gfm 无类型，其 ambient 声明在同目录 .d.ts。本仓库各包直接编译源码
 // （不预构建），故用 triple-slash 引用让任何编译到本文件的 program（含 @zuse/tui）都加载它。
+// 这是该机制的必要用法，故对此行豁免 triple-slash-reference 规则。
+// eslint-disable-next-line @typescript-eslint/triple-slash-reference
 /// <reference path="./turndown-plugin-gfm.d.ts" />
 import { TextDecoder } from 'node:util'
 import { JSDOM, VirtualConsole } from 'jsdom'
