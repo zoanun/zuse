@@ -2,7 +2,7 @@
 
 > 状态：已定稿，待写实现计划。
 > 上游：[phase-roadmap.md](../plans/phase-roadmap.md) Phase 6；主设计文档 §4（架构）、§5（Phase 6 路线）。
-> 关联补充：[2026-05-23-zuse-design-supplement.md](2026-05-23-zuse-design-supplement.md) 三（Cache 优化）。
+> Cache 优化策略的早期笔记原在已删除的补充文档；落地细节见本文与 roadmap Phase 6。
 
 ## 1. 目标与范围
 

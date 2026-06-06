@@ -70,7 +70,6 @@ zuse/
 │   └── tui/           # Ink 应用 —— 渲染、输入、键位
 ├── docs/
 │   └── superpowers/specs/  # 本设计文档所在位置
-├── BACKLOG.md         # 路上想到的新点子记在这里，不立即做
 └── package.json
 ```
 
@@ -251,7 +250,7 @@ UI 不直接调 Anthropic SDK，而是订阅 `Agent` 暴露的事件流：
 
 1. **一个小步骤一个 commit**。commit 信息格式：`phase X.Y: <做了什么>`。
 2. **Phase 之间打 git tag**：`v0.1-phase0`、`v0.2-phase1` 等。
-3. **想法不立即做**：路上冒出的新功能记到根目录 `BACKLOG.md`，跑完当前 phase 再回顾。
+3. **想法不立即做**：路上冒出的新功能记到 `phase-roadmap.md` 对应 phase 段（原 `BACKLOG.md` 已并入 roadmap），跑完当前 phase 再回顾。
 4. **遇到不懂的概念停下来读文档**，必要时翻 Claude Code 源码（npm 上有），不硬抄。
 5. **不写注释解释 "做了什么"**——代码自解释；只写"为什么"（非显然的约束/取舍）。
 
@@ -264,10 +263,9 @@ UI 不直接调 Anthropic SDK，而是订阅 `Agent` 暴露的事件流：
 | Bash 工具的安全性                                              | Phase 5 强制权限询问；提供 `bypassPermissions` 但默认关 |
 | 会话/记忆设计可能要返工                                        | 接受。Phase 8-9 时再优化结构，初版怎么简单怎么来        |
 
-### 8.1 故障模式防御矩阵（参见补充文档）
+### 8.1 故障模式防御矩阵
 
-详细的故障模式防御矩阵见 [2026-05-23-zuse-design-supplement.md](./2026-05-23-zuse-design-supplement.md) 第一章。
-该矩阵定义了8个故障模式及其对应的Zuse应对措施和实现Phase。
+早期的 8 个故障模式防御矩阵原在 `2026-05-23-zuse-design-supplement.md`；该补充文档已删除（内容多与 roadmap 各 phase 重叠），需要时查 git 历史。
 
 ## 9. 后续步骤
 

@@ -2,7 +2,6 @@
 
 > **用途**: 开发每个Phase前，参考此文档找到对应的补充内容、课程具体文件和知识点位置。
 
-**补充文档位置**: `docs/superpowers/specs/2026-05-23-zuse-design-supplement.md`
 **课程根目录**: `E:\Harness Engineering 强化班_大模型Agent智能体开发实战\【2026正课】Harness Engineering 强化班\`
 
 ---
@@ -182,17 +181,9 @@
 
 ### ✅ 已实现增强（2026-06-06）—— 与 CC 工具能力对齐
 
-逐一比对 zuse 的 Read/Write/Edit/Glob/Grep 与 CC 同名工具后，按「能力差距 + 高频 + 确定性收益」筛出该补的项（沿用 WebFetch §8.2 的准入思路，不照搬全部 CC API）。结论：Write/Edit 机制已比 CC 更严（指纹乐观锁 vs 时间戳），Glob 已对齐；差距集中在 Grep，外加 Read 一处兜底。本次落地：
+按「能力差距 + 高频 + 确定性收益」补齐与 CC 的差距（集中在 Grep）：Grep 加 `output_mode`（`files_with_matches` 默认 / `content` / `count`）、上下文行（rg `-B/-A/-C`）、`type` 过滤、`head_limit`+`offset` 分页；Read 加 `MAX_OUTPUT_CHARS = 100_000` 在行边界兜底。命名沿用本仓 snake_case，对齐能力而非照搬 JSON key。TDD，174 用例全绿。
 
-- **Grep `output_mode`**：新增 `files_with_matches`（**设为默认**，最省 token）/ `content`（`path:line:text`）/ `count`（`path:count`）三模式，对齐 CC。此前只有 content 一种，模型问「哪些文件含 X / 命中几次」只能拉回全部命中行自己数，白烧 token。
-- **Grep 上下文行**：content 模式新增 `before_context` / `after_context` / `context`（= rg `-B`/`-A`/`-C`，`context` 覆盖前两者），定位代码时不必命中后再 Read 一跳。
-- **Grep `type` 过滤**：透传 rg `--type`（如 `ts`/`py`/`go`），比手写 glob 省事。
-- **Grep `head_limit` + `offset` 分页**：缺省 250 防上下文膨胀、`0` 解除（仍受 1 万行安全上限约束）；`offset` 跳过前 N 条。取代此前写死的 200 条硬截。
-- **命名取舍**：新参数沿用 zuse 既有可读 snake_case（`ignore_case`/`replace_all` 一脉），**不照搬** CC 的 `-A`/`-B`/`-C` 字面 JSON key——对齐的是能力，键名服从本仓库一致性（模型只见 zuse schema，无外部兼容需求）。
-- **Read 输出字符上限**：新增 `MAX_OUTPUT_CHARS = 100_000`（≈CC 的 25k token 上限，按 ~4 字符/token 粗估）。原「行数 2000 + 单行 2000 字符」挡不住「行少但每行极宽」的文件，这道上限在**行边界**处兜底并提示用 `offset` 续读。
-- 覆盖范围：TDD，grep 16（原 9，+7）、read 8（原 6，+2）；全量 174 个用例全绿，三包 typecheck 零错误。
-
-**推迟到后续 phase 的项**：Read 多模态（图片/PDF/Jupyter）——见 Phase 6.6 开发要点。当前 provider 多为文本模型，YAGNI，留待需要视觉模型时再做。
+**推迟到后续 phase**：Read 多模态（图片/PDF/Jupyter）——见 Phase 6.6 开发要点；当前多为文本模型，YAGNI。
 
 ---
 
@@ -231,15 +222,7 @@
 
 ### ✅ 已实现（2026-06-04）
 
-实现计划见 [`2026-06-04-phase-5-settings-and-permissions.md`](2026-06-04-phase-5-settings-and-permissions.md)。落地内容：
-
-- **三层 `settings.json` 配置系统**：用户层 `~/.zuse/settings.json` < 项目层 `<repo>/.zuse/settings.json`（入 git）< 本地层 `.zuse/settings.local.json`（gitignore，放 secret）。标量高层覆盖、permission 三数组跨层拼接、`ZUSE_API_KEY` 环境变量兜底覆盖 apiKey。
-- **配置入口收敛到 `settings.json`，`.env` 退役**：`getClientConfig`/`getDefaultModel`/`getDefaultMaxTokens` 改为接收 `ResolvedSettings`；client 工厂改名 `createAnthropicClient(settings)`。
-- **权限模型**：`Tool(specifier)` 规则文法（`Bash(git*)`、`Write(src/**)`）+ `decide()` 判定（禁用 → deny → bypass → allow(+会话覆盖层) → ask → defaultMode 兜底）；**deny 是硬护栏，压过 bypassPermissions**。
-- **`ask` 交互式批准**：TUI 弹框，四档裁决——`y` 本次 / `a` 本会话（内存）/ `A` 写盘持久（追加进本地层 `appendAllowRule`）/ `n`·Esc 拒绝。
-- **工具暴露开关**：`tools.enabled`/`disabled` 在 `getDefinitions` 过滤暴露，并在 `decide` 兜底 deny。
-- 覆盖范围：core 侧全程 TDD（settings / permission / agent 闸门，95 个用例全绿）；TUI 接线按本仓库惯例手工验证。
-- **未做（留待后续）**：CC 的 23 项 Bash 安全检查（`bashSecurity.ts`）本期未实现，v1 只用 `deny` 规则（如 `Bash(rm -rf *)`）做粗粒度护栏。
+三层 `settings.json` 配置（用户 < 项目 < 本地，标量覆盖 / permission 数组拼接 / env 兜底），`.env` 退役；权限模型 `Tool(specifier)` 文法 + `decide()` 判定（禁用 → deny → bypass → allow+会话层 → ask → defaultMode），**deny 硬护栏压过 bypass**；`ask` 交互弹框四档裁决（本次 / 本会话 / 写盘 / 拒绝）；工具暴露开关。**未做**：CC 的 23 项 Bash 安全检查，v1 只用 `deny` 规则做粗护栏。设计与全部细节见 spec [→](../specs/2026-06-04-zuse-settings-and-permissions-design.md)。
 
 ---
 
@@ -271,15 +254,7 @@
 
 ### ✅ 已实现（2026-06-05）
 
-实现计划见 [`2026-06-05-phase-6-multi-provider.md`](2026-06-05-phase-6-multi-provider.md)，设计规格见 [`../specs/2026-06-05-zuse-multi-provider-design.md`](../specs/2026-06-05-zuse-multi-provider-design.md)。落地内容：
-
-- **数据驱动的 `providers` registry**：`settings.json` 中 `providers` 对象，加 provider = 一条配置（`protocol` / `baseURL` / `apiKey` / `models`）+ 一个 env var（`ZUSE_API_KEY_<ID>`）；零业务逻辑改动。
-- **`AnthropicClient`**：Anthropic 原生协议 + DashScope 等兼容端点；prompt 缓存 `cache_control` 三断点（system / 最后一个 tool 定义 / 最后一条消息最后一个块滚动）；手写流式事件解析。
-- **`OpenAIClient`**：OpenAI 协议（DeepSeek / 本地 Ollama / vLLM）；手写 `tool_call` 分片按 index 累积 + `usage` 抽取；统一映射到 `ModelClient` 事件流。
-- **`createModelClient(provider, model)` 工厂**：按 `protocol` 字段分发到对应 client 实现；`createClientFromSettings(settings)` 作为统一入口。
-- **`/model` 运行时切换**：session 内生效，`--save` 写盘到本地层，切换不清空历史。
-- **footer 显示缓存命中**：`cache_read_input_tokens` 非零时在 UsageFooter 显示缓存命中信息。
-- 覆盖范围：全程 TDD，126 个用例全绿；typecheck / lint 零错误。
+数据驱动 `providers` registry（加 provider = 一条配置 + 一个 env var）；手搓 `AnthropicClient`（原生 + DashScope 兼容，`cache_control` 三断点）与 `OpenAIClient`（`tool_call` 分片累积 + usage 抽取）；`createModelClient` 按 `protocol` 分发；`/model` 运行时切换（`--save` 写盘，不清历史）；footer 显示缓存命中。TDD，126 用例全绿。设计与全部细节见 spec [→](../specs/2026-06-05-zuse-multi-provider-design.md)。
 
 ---
 
@@ -321,27 +296,11 @@
 
 ### ✅ 已实现（2026-06-06）—— WebFetch
 
-实现计划见 [`2026-06-06-webfetch.md`](2026-06-06-webfetch.md)，设计规格见 [`../specs/2026-06-06-zuse-webfetch-design.md`](../specs/2026-06-06-zuse-webfetch-design.md)。落地内容：
-
-- **`WebFetchTool`**：抓 URL → jsdom + `@mozilla/readability` 抽正文 → turndown（挂 GFM）转 Markdown，交主模型自行阅读。**不在工具内调 LLM**（方案 B，区别于 CC 的小模型抽取）——`ToolContext` 无需 ModelClient。
-- **流水线**：url 校验（仅 http/https）→ 去 fragment 的缓存 key → `fetch` + 拟真 UA + 30s 超时（`AbortSignal.any([ctx.signal, timeout])`，兼顾 Ctrl+C）→ 非 2xx/content-type 分流（html 抽取 / text·json·md 原样 / 其余报错）→ **Cloudflare 邮箱混淆还原** → readability 抽取（失败回退 body）→ SPA 空正文提示 → 50000 字符截断 → 写缓存。
-- **缓存**：进程内 15 分钟 TTL 内存缓存，惰性过期。
-- **权限**：非 `readOnly`（网络出口有副作用），`specifierFor` 返回 hostname，支持 `WebFetch(github.com)` / `WebFetch(*.dev)` 规则收窄。
-- **Cloudflare 邮箱混淆还原**（2026-06-06 增）：`deobfuscateCfEmails` 在 turndown 前把 `data-cfemail` 属性与 `email-protection#hex` 片段 XOR 解码回明文（CF 每次轮换 key，按首字节取，免疫轮换）。否则形如 `python@3.12` 的文本被 CF 抹成占位符 `[email protected]`，**实测连 deepseek 旗舰也只能幻觉**——信息不在模型可见文本里，只能确定性解码。准入依据见 spec §8.2「三条件准入线」。
-- **已知限制**：不执行 JS，抓不到 SPA 客户端渲染正文（与 `curl` 同短板），此时返回提示而非空白。其余网页混淆（非 CF）按 spec §8.2 准入原则一律记为已知限制、不追。
-- 覆盖范围：TDD，webfetch 20（含 cf-email 3）+ 注册 1 共 21 个新用例全绿；typecheck 零错误。
+抓 URL → jsdom+readability 抽正文 → turndown 转 Markdown 交主模型（不在工具内调 LLM）；进程内 15min 缓存；非 `readOnly`，`specifierFor` 按 hostname 收窄；**Cloudflare 邮箱混淆确定性解码**（否则 `python@3.12` 被抹成占位符 `[email protected]`，模型只能幻觉）；不执行 JS、抓不到 SPA 正文时返回提示而非空白。TDD，21 新用例全绿。设计与全部细节见 spec [→](../specs/2026-06-06-zuse-webfetch-design.md)。
 
 ### ✅ 已实现（2026-06-06）—— WebSearch + 全局出站代理
 
-设计规格见 [`../specs/2026-06-06-zuse-websearch-design.md`](../specs/2026-06-06-zuse-websearch-design.md)。WebSearch 的 provider 决策（原阻塞项）落定为**托管 API + 数据驱动多后端**：选 Tavily（主）/ Brave（回退），不自托管 SearXNG。落地内容：
-
-- **`createWebSearchTool` 工厂**：数据驱动后端注册表 `BACKENDS`（`tavily` / `brave`），加后端 = 一条注册 + 一个 `SearchBackend` 函数。配置 `webSearch.backend`（主）+ `webSearch.fallback`（回退链），key 各存各的 `backends.<name>.apiKey`，也支持 `ZUSE_WEBSEARCH_API_KEY_<BACKEND>` 环境变量覆盖。只回 标题/URL/摘要，**不抓正文**（正文交 WebFetch，与 CC 分工一致）。
-- **回退链**：主后端**可回退**失败（401/403 坏 key、429 限流、5xx、网络/超时）时按 `fallback` 顺序换下一个；**不可回退**（400/422）立即返回；空结果是有效答案、不回退。回退发生时在输出抬头带 `[note: ... used <backend>]`。
-- **会话内拉黑（2026-06-06 增）**：后端因 **401/403** 失败时，在工具实例（进程）生命周期内将其拉黑，后续调用直接跳过、不再每次白吃一次 401 再回退；**仅永久性鉴权失败**入此集合，429/5xx/超时/网络是临时抖动仍每次重试；不持久化，重启后重新评估。
-- **权限**：非 `readOnly`（网络出口有副作用），不设 `specifierFor` → 裸 `WebSearch` 授权，一次授权覆盖后续所有搜索。
-
-- **全局出站代理**（`installProxy` @ `packages/core/src/proxy.ts`）：配 `settings.proxy`（或 `ZUSE_PROXY` 环境变量覆盖）后，在 bin 入口装 undici 全局 dispatcher，使**所有经 `globalThis.fetch` 的出站请求**——大模型 API（`@anthropic-ai/sdk`/`openai`）、WebFetch、WebSearch——统一走代理。动因：Node 自带 fetch 既不读系统代理也不读 `HTTP_PROXY`，但读 undici 全局 dispatcher，故一处安装、全部生效。地址非法（漏写 scheme / 非 http(s)）在入口显式告警并降级直连，不静默吞。解决了 Brave 等端点直连不通的问题。
-- 覆盖范围：TDD，websearch 18（含回退 + 会话拉黑）、proxy 5、settings 的 proxy 解析 2；全量 208 个用例全绿，三包 typecheck / lint 零错误。
+WebSearch 落定为托管 API + 数据驱动多后端（Tavily 主 / Brave 回退，加后端 = 一条注册）：只回标题/URL/摘要，正文交 WebFetch；回退链区分可回退（401/403/429/5xx/网络）与不可回退（400/422）；**会话内拉黑**仅对 401/403 永久鉴权失败、不持久化。**全局出站代理** `installProxy` 在 bin 入口装 undici 全局 dispatcher，使所有 `globalThis.fetch`（大模型 API / WebFetch / WebSearch）走代理——Node fetch 不读系统/`HTTP_PROXY` 但读 undici dispatcher。TDD，208 用例全绿。设计与全部细节见 spec [→](../specs/2026-06-06-zuse-websearch-design.md)。
 
 **Phase 6.5 至此完成**（WebFetch + WebSearch + 全局代理全部落地）。
 
@@ -408,6 +367,7 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 - Ctrl+C/Esc处理
 - footer显示
 - **`/model` 交互式选择器**（设计已定，2026-06-06）
+- 权限批准框改 CC 风格可选列表 / 输入框多行编辑 / 工具执行展示对齐 CC / TUI 文案全中文化 / Markdown 富渲染（详见下方各小节，2026-06-06 从 BACKLOG 折叠进来）
 
 #### `/model` 交互式选择器（已敲定的设计决策）
 
@@ -426,6 +386,34 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 **与已有校验逻辑的关系**：选择器从过滤后的列表里选，天然选不到不存在的模型，`mino→mimo` 那类拼错从源头消除。Phase 6 收尾时给 `/model <ref>` 直输路径加的「不在清单 → 警告 / 相近候选则拒绝切换 / 否则切换但不写盘」逻辑（见 [`packages/tui/src/commands/registry.ts`](../../../packages/tui/src/commands/registry.ts)）**保留**，退化为非交互直输路径与脚本/自动化的兜底。
 
 **待定点**：用 `ink-select-input`（已在依赖友好范围）还是自写一个带 filter 的小组件——开发前再定。
+
+#### 权限批准框改成 CC 风格可选列表
+
+现状：[`packages/tui/src/components/PermissionDialog.tsx`](../../../packages/tui/src/components/PermissionDialog.tsx) 用单键裁决（`y` 本次 / `a` 本会话 / `A` 写盘 / `n`·Esc 拒绝），靠用户记快捷键。期望：像 CC 那样弹一个可上下方向键移动、回车选中的下拉选项列表（默认单选；以后需要再扩展多选）。纯交互呈现层打磨——**不动 Phase 5 的权限判定逻辑**（`permission.ts` 的 `decide` 与 `PermissionVerdict` 四档裁决不变），只把呈现从"按键提示"换成"选项列表"，文案保持全中文。
+
+#### 输入框多行编辑 + Alt+Enter 换行
+
+现状：[`packages/tui/src/components/InputBox.tsx`](../../../packages/tui/src/components/InputBox.tsx) 用 `ink-text-input` 单行输入，回车即提交。期望：Alt+Enter 插入换行、输入框随行数增高，回车仍提交。`ink-text-input` 是单行组件做不了，需换方案——自写 `useInput` 维护行缓冲，或换一个多行输入组件。纯 UI，不涉及 core。
+
+#### 工具执行展示对齐 CC 风格
+
+现状：[`packages/tui/src/components/StreamRenderer.tsx`](../../../packages/tui/src/components/StreamRenderer.tsx) 的 `ToolBlock`——运行时一个 spinner、完成后 `✓`/`✗`，旁边一行青色 `Name(args)`，下面只有一行暗色输出首行预览（截 80 字符），看不到"为什么调"和完整 IN/OUT。期望对齐 CC，每次工具调用渲染成一个**带框**的块，含三段：
+
+- **为什么执行**：模型在该工具调用前后的意图说明（助手文本里"我来读一下 X / 接着跑测试"那类前导句）。当前 `StreamRenderer` 把助手文本和工具块分开渲染，需把工具调用和它的前导理由关联起来展示（可能要在 `useConversation` 里把前导文本与紧随的 tool_use 关联，记下这点依赖）。
+- **IN**：本次调用的完整入参（不只是单行摘要）。
+- **OUT**：工具返回内容，带按工具类型定制的摘要——`Read` 在标题旁直接显示文件名，参照 CC 去掉括号、只写工具名 + 参数（如 `Read src/index.ts` 配 `Read 120 lines`，不要 `Read(src/index.ts)`），`Glob` 报命中文件数（`Found 8 files`），`Grep` 报输出行数（`49 lines of output`），`Edit`/`Write` 显示行变更数（`+2 -3`）；多行折叠可展开，错误态明显标识。
+- 整块用边框（类似 CC 的 `●` 标题 + `⎿` 缩进引导）框起来。纯呈现层，不动工具执行逻辑。
+
+#### TUI 文案全中文化
+
+现状散落英文：`App.tsx` 的 `Zuse Chat (Ctrl+C to exit)` / `Error:`；`InputBox.tsx` 的占位符 `Type your message...` / `Waiting for response...`；`UsageFooter.tsx` 的 `Model:` / `Total:` / `No tokens yet` / `Thinking...`；`StreamRenderer.tsx` 的 `Tokens: ... in / ... out` / `error:`。统一改中文。纯文案、零逻辑，顺手在 Phase 7 一起做。
+
+#### Markdown 富渲染
+
+现状：助手回复走 `StreamRenderer.tsx` 的 `<Text>{text}</Text>`，Ink 不解析 markdown，`## 标题`、`**加粗**`、代码块都显示成字面量。
+
+- 选型 A：`marked` + `marked-terminal` 或 `ink-markdown`，省事。
+- 选型 B（更贴合"手搓"学习目标）：自渲染。难点是流式——文本由 `text-delta` 逐段拼接，某一刻可能只拿到半个代码围栏，边解析边渲染会闪烁。参考 CC 双态策略：流式期间按纯文本走，`message-stop` 定稿后再重渲染成富文本。这个"流式 vs 定稿"双态值得专门学。
 
 ---
 

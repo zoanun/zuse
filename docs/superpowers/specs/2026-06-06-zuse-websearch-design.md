@@ -1,6 +1,7 @@
 # zuse WebSearch 工具设计
 
 > 状态:设计稿(待评审)。日期:2026-06-06。
+> 上游:[phase-roadmap.md](../plans/phase-roadmap.md) Phase 6.5(已实现,roadmap 处留状态摘要 + 本链接)。
 > 关联:[WebFetch 设计](./2026-06-06-zuse-webfetch-design.md)、[多 provider 设计](./2026-06-05-zuse-multi-provider-design.md)、[设置与权限设计](./2026-06-04-zuse-settings-and-permissions-design.md)。
 
 ## 1. 目标与非目标

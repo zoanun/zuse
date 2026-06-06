@@ -1,6 +1,7 @@
 # Zuse 设置系统与权限模型设计（Phase 5）
 
 - **日期**：2026-06-04
+- **上游**：[phase-roadmap.md](../plans/phase-roadmap.md) Phase 5（已实现，roadmap 处留状态摘要 + 本链接）
 - **状态**：设计待评审
 - **范围**：Phase 5 —— 一个对齐 Claude Code 的 `settings.json` 配置系统，以及基于它的 CC 式权限模型（allow / ask / deny + defaultMode + 规则匹配器），含 `ask` 交互式批准流程。
 

@@ -1,6 +1,7 @@
 # WebFetch 工具设计（Phase 6.5）
 
 > 状态：设计已批准，待落实现计划。
+> 上游：[phase-roadmap.md](../plans/phase-roadmap.md) Phase 6.5（已实现，roadmap 处留状态摘要 + 本链接）。
 > 范围：仅 **WebFetch**。WebSearch 仍阻塞于搜索源决策（SearXNG 自建 vs Tavily/Brave），本 spec 不涉及。
 
 ## 1. 目标与动机
