@@ -18,7 +18,7 @@
 | 4     | 工具集补全  | 一（④工具错误吞）                           | 【专题课】Harness Engineering驾驭工程实战/Part 2/              | BashTool/         |
 | 5     | 权限模型    | 一（⑥缺权限闸）+ 11.3（23项安全检查）       | 【专题课】Harness Engineering驾驭工程实战/Part 1/              | bashSecurity.ts   |
 | 6     | 多Provider  | 三（Cache优化）                             | 【专题课】Harness Engineering驾驭工程实战/Part 4/              | —                 |
-| 6.5   | 联网工具    | —                                           | —                                                              | WebFetch✅/WebSearch待定|
+| 6.5   | 联网工具    | —                                           | —                                                              | WebFetch✅/WebSearch✅ |
 | 6.6   | 代码智能LSP | —                                           | —                                                              | tools/LSP         |
 | 7     | UI打磨      | —                                           | —                                                              | ink/ components/  |
 | 8     | 会话管理    | 四（Token Budget）+ 11.6（压缩策略）        | 【Part 7】+【Part 8】+【专题课】Claude Code架构/Part 3/        | services/compact/ |
@@ -319,7 +319,7 @@
 - provider 配置沿用数据驱动思路：加搜索源 = 一条配置 + 一个 env var
 - **阻塞项**：先定搜索 provider（SearXNG 自托管 vs Tavily/Brave 托管）再动 WebSearch
 
-### ✅ 已实现（2026-06-06）—— 仅 WebFetch
+### ✅ 已实现（2026-06-06）—— WebFetch
 
 实现计划见 [`2026-06-06-webfetch.md`](2026-06-06-webfetch.md)，设计规格见 [`../specs/2026-06-06-zuse-webfetch-design.md`](../specs/2026-06-06-zuse-webfetch-design.md)。落地内容：
 
@@ -331,7 +331,19 @@
 - **已知限制**：不执行 JS，抓不到 SPA 客户端渲染正文（与 `curl` 同短板），此时返回提示而非空白。其余网页混淆（非 CF）按 spec §8.2 准入原则一律记为已知限制、不追。
 - 覆盖范围：TDD，webfetch 20（含 cf-email 3）+ 注册 1 共 21 个新用例全绿；typecheck 零错误。
 
-**WebSearch 仍未实现**，阻塞于搜索 provider 决策（SearXNG 自托管 vs Tavily/Brave 托管），见上文阻塞项。
+### ✅ 已实现（2026-06-06）—— WebSearch + 全局出站代理
+
+设计规格见 [`../specs/2026-06-06-zuse-websearch-design.md`](../specs/2026-06-06-zuse-websearch-design.md)。WebSearch 的 provider 决策（原阻塞项）落定为**托管 API + 数据驱动多后端**：选 Tavily（主）/ Brave（回退），不自托管 SearXNG。落地内容：
+
+- **`createWebSearchTool` 工厂**：数据驱动后端注册表 `BACKENDS`（`tavily` / `brave`），加后端 = 一条注册 + 一个 `SearchBackend` 函数。配置 `webSearch.backend`（主）+ `webSearch.fallback`（回退链），key 各存各的 `backends.<name>.apiKey`，也支持 `ZUSE_WEBSEARCH_API_KEY_<BACKEND>` 环境变量覆盖。只回 标题/URL/摘要，**不抓正文**（正文交 WebFetch，与 CC 分工一致）。
+- **回退链**：主后端**可回退**失败（401/403 坏 key、429 限流、5xx、网络/超时）时按 `fallback` 顺序换下一个；**不可回退**（400/422）立即返回；空结果是有效答案、不回退。回退发生时在输出抬头带 `[note: ... used <backend>]`。
+- **会话内拉黑（2026-06-06 增）**：后端因 **401/403** 失败时，在工具实例（进程）生命周期内将其拉黑，后续调用直接跳过、不再每次白吃一次 401 再回退；**仅永久性鉴权失败**入此集合，429/5xx/超时/网络是临时抖动仍每次重试；不持久化，重启后重新评估。
+- **权限**：非 `readOnly`（网络出口有副作用），不设 `specifierFor` → 裸 `WebSearch` 授权，一次授权覆盖后续所有搜索。
+
+- **全局出站代理**（`installProxy` @ `packages/core/src/proxy.ts`）：配 `settings.proxy`（或 `ZUSE_PROXY` 环境变量覆盖）后，在 bin 入口装 undici 全局 dispatcher，使**所有经 `globalThis.fetch` 的出站请求**——大模型 API（`@anthropic-ai/sdk`/`openai`）、WebFetch、WebSearch——统一走代理。动因：Node 自带 fetch 既不读系统代理也不读 `HTTP_PROXY`，但读 undici 全局 dispatcher，故一处安装、全部生效。地址非法（漏写 scheme / 非 http(s)）在入口显式告警并降级直连，不静默吞。解决了 Brave 等端点直连不通的问题。
+- 覆盖范围：TDD，websearch 18（含回退 + 会话拉黑）、proxy 5、settings 的 proxy 解析 2；全量 208 个用例全绿，三包 typecheck / lint 零错误。
+
+**Phase 6.5 至此完成**（WebFetch + WebSearch + 全局代理全部落地）。
 
 ---
 
