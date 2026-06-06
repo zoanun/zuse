@@ -303,6 +303,18 @@
 - 真要做时的最小切口：先做**只读命令检测 + 沙箱内自动放行**（对齐 `autoAllowBashIfSandboxed`），平台限定 macOS/Linux/WSL2，Windows 直接走原有权限闸；依赖缺失要像 CC 那样**显式告警**（避免用户以为开了 sandbox 实际没生效的安全 footgun）。
 - 阻塞项：先定「自研薄封装 vs 复用现成 sandbox-runtime」——取决于该包是否独立可用及 license。
 
+**Windows + WSL2 究竟能不能用 sandbox（已核源码，2026-06-06）**：
+
+先厘清平台判定（`src/utils/platform.ts`，已读）：`getPlatform()` 看 `process.platform`——`win32` 直接判 `windows`（不支持）；`'wsl'` 只在 `process.platform === 'linux'` 且 `/proc/version` 含 `microsoft`/`wsl` 时返回。**关键含义：CC 必须是「跑在 WSL2 里的 Linux 进程」才会被认成 `wsl`；从 Windows 侧调 `wsl.exe` 的原生 CC 仍是 `win32`，不算数。** 据此，"在 Windows 机器上用沙箱"有三种形态，收益天差地别：
+
+| 形态                                | 平台判定 | sandbox  | 代价 / 问题                                                                                                      |
+| ----------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------- |
+| ① 原生 Windows CC 调 `wsl.exe`       | `win32`  | ❌ 无    | 进程仍是 Win32，`isSupportedPlatform()` 直接 false；显式开 `sandbox.enabled` 会报 "win32 not supported" 告警       |
+| ② 在 WSL2 里跑 CC，但代码在 `/mnt/e/...` | `wsl`    | ⚠️ 半残  | 9P/drvfs **性能断崖**（git/node_modules/构建慢数倍）；bubblewrap **不支持 glob 路径规则**（`getLinuxGlobPatternWarnings`）；敏感路径 deny 按 Linux home 算，与 Windows 侧 `~/.ssh` **方向错位**，等于没保护到 |
+| ③ 在 WSL2 里跑 CC，代码在 Linux fs（`~/projects/...`） | `wsl`    | ✅ 正解  | sandbox 按设计生效（bubblewrap+seccomp+socat 全在原生 Linux fs 上）；性能正常；deny 路径方向对得上。**代价：等于开第二套开发环境**——Node/pnpm/Volta/工具链全要在 WSL2 Linux 里重装，本质是"在这台 Windows 上做 Linux 开发" |
+
+结论：`/mnt` 挂载路径（形态②）是**最差折中**——性能最差、沙箱半残、保护错位；不要走。要 sandbox 只有形态③一条正路，而它是一次实打实的**开发环境迁移决策**，不是顺手挂一下能带过的。这进一步印证 5.5.3 推迟的判断：对主力 Windows 原生的 zuse，sandbox 要么不做，要么等于承诺"以后在 Linux/WSL2 里开发"。WSL2 前提清单（将来真做时）：必须 WSL2 非 WSL1（WSL1 报 "requires WSL2"）→ 在发行版内 `apt install bubblewrap socat` → 代码置于 Linux fs → 避免 glob 路径规则。
+
 ### 本 Phase 推进建议（小结）
 
 1. **先做 5.5.1 环境快照**（跨平台、确定性收益、解决 `command not found` 类真痛点，且与已做的 cwd 持久化天然同管线）。
