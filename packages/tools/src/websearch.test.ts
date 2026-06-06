@@ -165,6 +165,65 @@ describe('WebSearch — 回退', () => {
   })
 })
 
+describe('WebSearch — 会话内拉黑（401/403 不再重试）', () => {
+  it('401 后端在同一工具实例的后续调用中被跳过，不再发请求', async () => {
+    let tavilyCalls = 0
+    let braveCalls = 0
+    routeFetch({
+      tavily: () => {
+        tavilyCalls++
+        return new Response('nope', { status: 401, statusText: 'Unauthorized' })
+      },
+      brave: () => {
+        braveCalls++
+        return braveResponse([{ title: 'B', url: 'https://b.test', description: 'from brave' }])
+      },
+    })
+    const tool = createWebSearchTool(WITH_FALLBACK)
+
+    // 第 1 次：tavily 吃 401 → 回退 brave，且带回退 note
+    const r1 = await tool.run({ query: 'q1' }, ctx())
+    expect(r1.isError).toBeFalsy()
+    expect(r1.output).toContain('from brave')
+    expect(r1.output).toContain('tavily failed (401)')
+
+    // 第 2 次：tavily 已被拉黑 → 直接走 brave，不再请求 tavily，也不再有回退 note
+    const r2 = await tool.run({ query: 'q2' }, ctx())
+    expect(r2.isError).toBeFalsy()
+    expect(r2.output).toContain('from brave')
+    expect(r2.output).not.toContain('[note:')
+
+    expect(tavilyCalls).toBe(1) // 只在第 1 次试过一次
+    expect(braveCalls).toBe(2)
+  })
+
+  it('唯一后端 401 被拉黑后，后续调用返回“本会话已禁用”错误', async () => {
+    __setFetchImpl(async () => new Response('nope', { status: 401, statusText: 'Unauthorized' }))
+    const tool = createWebSearchTool(SINGLE)
+    const r1 = await tool.run({ query: 'q1' }, ctx())
+    expect(r1.isError).toBe(true)
+    expect(r1.output).toContain('401')
+    const r2 = await tool.run({ query: 'q2' }, ctx())
+    expect(r2.isError).toBe(true)
+    expect(r2.output).toContain('disabled this session')
+  })
+
+  it('临时失败（503）不拉黑：后续调用仍会重试该后端', async () => {
+    let tavilyCalls = 0
+    routeFetch({
+      tavily: () => {
+        tavilyCalls++
+        return new Response('down', { status: 503, statusText: 'Unavailable' })
+      },
+      brave: () => braveResponse([{ title: 'B', url: 'https://b.test', description: 'from brave' }]),
+    })
+    const tool = createWebSearchTool(WITH_FALLBACK)
+    await tool.run({ query: 'q1' }, ctx())
+    await tool.run({ query: 'q2' }, ctx())
+    expect(tavilyCalls).toBe(2) // 503 是临时的，每次都重试，不拉黑
+  })
+})
+
 describe('WebSearch — 取消与缺后端', () => {
   it('ctx.signal 已 abort → 返回 cancelled，不发请求', async () => {
     let called = false

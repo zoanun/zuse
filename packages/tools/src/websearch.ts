@@ -251,6 +251,10 @@ const inputSchema: JSONSchema = {
  * 工具内不调用任何 LLM、不抓正文（正文交 WebFetch）。
  */
 export function createWebSearchTool(config: WebSearchConfig): Tool {
+  // 本会话(本进程)内因鉴权失败(401/403)被拉黑的后端。key 坏了不会自愈,拉黑后
+  // 后续调用直接跳过,不再每次都白吃一次 401。闭包于工厂、随进程消亡 —— 不持久化,
+  // 下次重启(可能已改对 key)重新来过。仅永久性失败入此集合:429/5xx/网络是临时的,不拉黑。
+  const disabledBackends = new Set<string>()
   return {
     name: 'WebSearch',
     description:
@@ -273,16 +277,24 @@ export function createWebSearchTool(config: WebSearchConfig): Tool {
         blockedDomains: Array.isArray(input.blocked_domains) ? input.blocked_domains : undefined,
       }
 
-      // 候选链：主后端 + fallback，去重，剔除没 key / 没实现的后端。
+      // 候选链：主后端 + fallback，去重，剔除没 key / 没实现 / 本会话已拉黑的后端。
       const chain: string[] = []
+      let skippedDisabled = false
       for (const name of [config.backend, ...config.fallback]) {
         if (chain.includes(name)) continue
+        if (disabledBackends.has(name)) { skippedDisabled = true; continue } // 本会话已因 401/403 拉黑
         if (!config.backends[name]) continue // 没 key
         if (!BACKENDS[name]) continue // 没实现（如占位的 brave）
         chain.push(name)
       }
       if (chain.length === 0) {
-        return { output: 'WebSearch: no usable backend configured.', isError: true }
+        // 区分两种空链：全被本会话拉黑（key 坏了）vs 压根没配可用后端。
+        return {
+          output: skippedDisabled
+            ? 'WebSearch: all backends disabled this session after auth failure (401/403); fix the API key and restart.'
+            : 'WebSearch: no usable backend configured.',
+          isError: true,
+        }
       }
 
       const failures: string[] = []
@@ -308,6 +320,8 @@ export function createWebSearchTool(config: WebSearchConfig): Tool {
               ? err
               : new WebSearchBackendError(err instanceof Error ? err.message : String(err), true)
           lastError = be
+          // 鉴权失败本进程内不会自愈：拉黑该后端，本会话后续调用直接跳过，不再白吃 401/403。
+          if (be.status === 401 || be.status === 403) disabledBackends.add(name)
           if (be.retryable) {
             failures.push(be.status ? `${name} failed (${be.status})` : `${name} failed (${be.message})`)
             continue // 试下一个后端
