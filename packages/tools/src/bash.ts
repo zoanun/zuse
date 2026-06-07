@@ -5,6 +5,7 @@ import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 import { findOnPath, killTree } from './util.js'
+import { ensureShellSnapshot } from './shell-snapshot.js'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
@@ -25,7 +26,13 @@ function gitBashUnder(root: string): string | undefined {
 /**
  * 解析 Bash 工具实际使用的 shell。
  *
- * POSIX 直接交给系统默认 shell（spawn 的 shell:true → /bin/sh）。
+ * POSIX：优先用户登录 shell（$SHELL，通常 /bin/bash 或 /bin/zsh）。不直接用
+ * spawn 的 shell:true（那会落到 /bin/sh，多为 dash）—— 用户的 alias、shell 函数、
+ * rc 注入的 PATH 都只存在于其登录 shell 里；/bin/sh 既看不到这些、也没有
+ * declare -f / 别名展开能力，登录 shell 快照（见 shell-snapshot.ts）就无从建立。
+ * $SHELL 须是 bash/zsh 才取（这两类快照已支持）；否则按序探测常见安装路径，
+ * 都不可用才回退 shell:true（/bin/sh），此时快照优雅降级、命令仍照常执行。
+ *
  * Windows 上 shell:true 会落到 cmd.exe —— 没有 pwd/ls，而模型几乎总按 Unix 习惯
  * 出命令，于是频繁 "'pwd' is not recognized"。所以优先找 git-bash，让 Unix 命令
  * （含 && / ; / | 等分隔符）跨平台一致可用；没有 git-bash 退到 pwsh7，再不行才回退 cmd.exe。
@@ -40,11 +47,21 @@ function gitBashUnder(root: string): string | undefined {
  * （5.1 会解析报错），回退到它反而会弄坏模型最常出的 `a && b` 命令链，还不如 cmd。
  * 两者都没有才回退 cmd.exe（始终存在、支持 &&、且 Node spawn 对它有特殊处理最稳）。
  *
- * 可用 ZUSE_SHELL 环境变量显式覆盖。路径在进程生命周期内不变，模块加载时解析一次即可。
+ * 可用 ZUSE_SHELL 环境变量显式覆盖（两平台通用）。路径在进程生命周期内不变，
+ * 模块加载时解析一次即可。
  */
 function resolveShell(): string | true {
-  if (process.platform !== 'win32') return true
   if (process.env.ZUSE_SHELL && existsSync(process.env.ZUSE_SHELL)) return process.env.ZUSE_SHELL
+  if (process.platform !== 'win32') {
+    // 用户登录 shell 优先（仅取 bash/zsh，快照已支持这两类）。
+    const login = process.env.SHELL
+    if (login && /(?:bash|zsh)$/.test(login) && existsSync(login)) return login
+    // $SHELL 缺失/不是 bash/zsh 时，按序探测常见安装路径。
+    for (const p of ['/bin/bash', '/usr/bin/bash', '/bin/zsh', '/usr/bin/zsh']) {
+      if (existsSync(p)) return p
+    }
+    return true // 回退 /bin/sh，快照随之降级
+  }
   const git = findOnPath('git.exe')
   if (git) {
     // git 可能在 <root>\cmd\git.exe、<root>\bin\git.exe 或 <root>\mingw64\bin\git.exe，
@@ -77,9 +94,21 @@ const SHELL: string | true = resolveShell()
  */
 export function getShellLabel(): string {
   if (SHELL === true) return process.platform === 'win32' ? 'cmd.exe' : 'sh'
+  // zsh 在 bash 之前判：避免 "/usr/bin/zsh" 这类路径里万一含子串时误判（且语义独立）。
+  if (/zsh/i.test(SHELL)) return 'zsh'
   if (/bash/i.test(SHELL)) return 'bash'
   if (/pwsh/i.test(SHELL)) return 'pwsh'
   return SHELL
+}
+
+/**
+ * 预热登录 shell 环境快照（记忆化,进程内仅首次真正构建）。TUI 启动时调用一次,
+ * 把 ≤10s 的首次构建挪离首条命令路径；BashTool.run 也会 await 它确保就绪。
+ * label 为 bash/zsh（Windows git-bash 或 POSIX 用户 $SHELL）时真正建快照,
+ * 其余（/bin/sh、pwsh、cmd）返回 null（降级,见 shell-snapshot.ts）。
+ */
+export function primeShellSnapshot(): Promise<string | null> {
+  return ensureShellSnapshot(SHELL, getShellLabel())
 }
 
 /** cwd 捕获临时文件名的去重序号（同进程内多次调用不撞名）。 */
@@ -87,24 +116,28 @@ let cwdCaptureSeq = 0
 
 /**
  * 为命令构造"执行后把工作目录写入临时文件"的包装,实现 cd 跨命令持久化。
- * 仅 bash/sh 支持（POSIX 全平台,以及 Windows 上的 git-bash）——这些 shell 才有
- * 稳定的 `pwd`/`$?`/`exit` 语义。pwsh / cmd 返回 null：这些 shell 下 cd 不跨命令
- * 保留（v1 取舍,绝大多数开发机要么是 POSIX,要么装了 git）。
+ * 仅 bash/zsh/sh 支持（POSIX 的 bash/zsh/sh,以及 Windows 上的 git-bash）——这些
+ * shell 才有稳定的 `pwd`/`$?`/`exit` 语义和反斜杠转义别名。pwsh / cmd 返回 null：
+ * 这些 shell 下 cd 不跨命令保留（v1 取舍,绝大多数开发机要么是 POSIX,要么装了 git）。
  *
  * 末尾用 `;` 无条件捕获 pwd（即便命令失败也记录最终目录,如 `cd a && false` 仍保留
  * cd）,并 `exit $?` 透传原命令退出码 —— 否则退出码会被 pwd 的 0 覆盖,掩盖失败。
  *
  * Windows git-bash 用 `pwd -W` 输出 `C:/...` 形式（Node 可直接当 cwd 用）,而非
- * `pwd -P` 的 cygwin `/c/...`（Node 不认）。
+ * `pwd -P` 的 cygwin `/c/...`（Node 不认）。POSIX 一律 `pwd -P`。
  */
-function buildCwdCapture(command: string): { exec: string; file: string } | null {
+function buildCwdCapture(command: string, snapshot: string | null): { exec: string; file: string } | null {
   const label = getShellLabel()
-  if (label !== 'bash' && label !== 'sh') return null
+  if (label !== 'bash' && label !== 'zsh' && label !== 'sh') return null
   const file = path.join(tmpdir(), `zuse-cwd-${process.pid}-${cwdCaptureSeq++}`)
   // git-bash 重定向用正斜杠路径最稳；POSIX 上 replace 无副作用。
   const redirect = file.replace(/\\/g, '/')
-  const pwdCmd = process.platform === 'win32' ? 'pwd -W' : 'pwd -P'
-  const exec = `${command}\n__zuse_ec=$?; ${pwdCmd} 1>'${redirect}' 2>/dev/null; exit $__zuse_ec`
+  // 反斜杠前缀绕过用户经快照 source 进来的 pwd alias —— 否则 `\pwd -W` 可能被改写,破坏 cwd 捕获。
+  const pwdCmd = process.platform === 'win32' ? '\\pwd -W' : '\\pwd -P'
+  // 命令前先 source 登录 shell 快照（仅 bash 有,sh/降级时为 null）。2>/dev/null 吞掉
+  // 快照内部噪音,不污染用户命令输出。source 不含 cd,不影响 cwd。
+  const prefix = snapshot ? `source '${snapshot}' 2>/dev/null\n` : ''
+  const exec = `${prefix}${command}\n__zuse_ec=$?; ${pwdCmd} 1>'${redirect}' 2>/dev/null; exit $__zuse_ec`
   return { exec, file }
 }
 
@@ -167,17 +200,19 @@ export const BashTool: Tool = {
 
   // 权限校验由 agent 循环在调用 run 之前统一过闸（见 core 的 gateAndRunTool /
   // permission.decide,Bash 复合命令会逐子命令校验）,本工具只管执行。
-  run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
+  async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as BashInput
     if (!input.command || typeof input.command !== 'string') {
-      return Promise.resolve({ output: 'Bash requires a command.', isError: true })
+      return { output: 'Bash requires a command.', isError: true }
     }
 
     const timeout = Math.min(input.timeout ?? DEFAULT_TIMEOUT, MAX_TIMEOUT)
+    // 取登录 shell 快照（记忆化,仅首次构建；非 bash/失败时为 null,命令照旧）。
+    const snapshot = await primeShellSnapshot()
 
     return new Promise<ToolResult>((resolvePromise) => {
       // 命令执行后捕获工作目录,让 cd 跨命令持久化（仅 bash/sh；其余 shell 为 null）。
-      const capture = buildCwdCapture(input.command)
+      const capture = buildCwdCapture(input.command, snapshot)
       // POSIX 下 detached 让 child 成为进程组组长，killTree 才能用负 pid 杀整组。
       const child = spawn(capture ? capture.exec : input.command, {
         cwd: ctx.cwd,

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Box, Text } from 'ink'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
@@ -6,7 +6,7 @@ import { UsageFooter } from './components/UsageFooter.js'
 import { PermissionDialog } from './components/PermissionDialog.js'
 import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
-import { createDefaultRegistry, LspManager } from '@zuse/tools'
+import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
 
 interface AppProps {
   /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
@@ -14,6 +14,13 @@ interface AppProps {
 }
 
 export function App({ cwd }: AppProps) {
+  // 启动即预热登录 shell 快照,把 ≤10s 的首次构建挪离首条 Bash 命令路径。
+  // bash/zsh（Windows git-bash 或 POSIX 用户 $SHELL）下真正构建,其余降级无影响
+  // （见 @zuse/tools 的 primeShellSnapshot）。
+  useEffect(() => {
+    void primeShellSnapshot()
+  }, [])
+
   // 启动时加载三层 settings（无 client 构建；client 由 hook 内部持有）。
   // 用 useMemo 只在挂载时读一次盘：流式期间每个 token 都会触发 App 重渲染，
   // 不缓存的话会反复读盘并新建 settings 对象，导致 hook 的 settings prop 引用每轮都变。

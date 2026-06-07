@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { BashTool, getShellLabel } from './bash.js'
+import { BashTool, getShellLabel, primeShellSnapshot } from './bash.js'
 import { createFileTracker, type ToolContext } from '@zuse/core'
 
 function makeCtx(signal?: AbortSignal): ToolContext {
@@ -89,5 +89,19 @@ describe('BashTool', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  // 接入登录 shell 快照后,命令仍应正常执行（快照前缀不破坏输出/退出码）。
+  // bash（Windows git-bash 或 POSIX bash）与 zsh 下真正建快照；其余 primeShellSnapshot
+  // 返回 null,此测退化为普通执行。
+  it.runIf(getShellLabel() === 'bash' || getShellLabel() === 'zsh')('still runs commands correctly with the shell snapshot', async () => {
+    const p = await primeShellSnapshot()
+    expect(p === null || p.endsWith('.sh')).toBe(true)
+    const result = await BashTool.run(
+      { command: `node -e "console.log('after-snapshot')"` },
+      makeCtx(),
+    )
+    expect(result.isError).toBeFalsy()
+    expect(result.output).toContain('after-snapshot')
   })
 })

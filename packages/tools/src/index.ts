@@ -12,7 +12,7 @@ import { createLspTool } from './lsp/index.js'
 import { LspManager } from './lsp/manager.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
-export { getShellLabel } from './bash.js'
+export { getShellLabel, primeShellSnapshot } from './bash.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { LspManager } from './lsp/manager.js'

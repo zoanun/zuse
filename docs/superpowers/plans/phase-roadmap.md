@@ -239,7 +239,24 @@
 >
 > **课程对应**：无直接课程，全部对齐 Claude Code 行为（源码见各小节）。
 
-### 5.5.1 登录 shell 环境快照（login-shell snapshot）—— 优先级最高 ⭐
+### 5.5.1 登录 shell 环境快照（login-shell snapshot）—— ✅ 已完成（2026-06-06，2026-06-07 扩展跨平台）
+
+> **落地状态**：已实现并通过全部检查（259 测试 / typecheck / lint 全绿，**未提交，待评审**）。
+> 设计 [specs/2026-06-06-zuse-shell-snapshot-design.md](../specs/2026-06-06-zuse-shell-snapshot-design.md)、
+> 计划 [plans/2026-06-06-zuse-shell-snapshot.md](2026-06-06-zuse-shell-snapshot.md)。
+>
+> **2026-06-07 扩展**：原 v1"仅 Windows git-bash"取舍已撤销，现覆盖 **Windows git-bash + POSIX bash + POSIX zsh**。
+> - `resolveShell()` 在 POSIX 上改为优先解析用户登录 shell（`$SHELL`，仅取 bash/zsh，否则按序探测 `/bin/bash`、`/bin/zsh` 等），而非写死 `shell:true`(`/bin/sh`)。`getShellLabel()` 增 `zsh` 识别。仅当 POSIX 上找不到任何 bash/zsh、落到 `/bin/sh`(dash) 时才优雅降级。
+> - `buildCwdCapture` 的 cwd 持久化放开到 `bash/zsh/sh`。
+>
+> **2026-06-07 对齐 Claude Code 真实实现并重写**（参考 `cc-haha/src/utils/bash/ShellSnapshot.ts`）：
+> - **采集架构改为脚本内 `>>` 写文件**(不再抓 stdout + MARKER 切 banner)：`dumpScript`/`extractSnapshotBody`/`filterWinptyAliases` 三个导出删除，新增 `snapshotBuilderScript(opts)`(生成交给 `shell -i -l -c` 执行、把 unalias→选项→函数→别名→PATH 依次追加进文件的构建脚本)。`ensureShellSnapshot` 契约不变，`bash.ts` 未动。
+> - **`unalias -a` 置顶 + 别名放最后**：统一解掉早前两个解析 bug——bash extglob(仍靠 `shopt -p` 前置 + 过滤补全函数) 与 zsh run-help 碰撞(`unalias -a` 取代旧 `unsetopt/setopt aliases` hack)。
+> - **函数过滤** `grep -vE '^_[^_]'`：快照从约 95KB 缩到约 22KB(真机实测)。
+> - **有意偏离 CC**：不照搬 bash 逐函数 base64(Windows 逐函数 spawn 致构建 6–8s)，改内建 `declare -f` 循环；不导出 `set -o`/全量 `setopt` 行为开关(errexit/pipefail 会破坏命令包装)；仍用 `-i -l`(非纯 `-l`)以放行 `.bashrc` 非交互守卫。
+> - **真机端到端验证(WSL bash 5.2.21 / zsh 5.9)**：func+PATH 两 shell 均通;带系统 bash-completion(extglob) source 无解析错误;带非交互守卫的 `.bashrc` + 不串联的 `.bash_profile` 也能拿到别名(验证 `-i`+显式 source);zsh 别名不展开仍为 §11 已知限制。`shell-snapshot` 单测重写为对 `snapshotBuilderScript` 的结构+顺序断言(9 条)，与 `bash.test` 共 17 测试全绿。
+>
+> 其余落点：`bash.ts` 导出 `primeShellSnapshot`、`buildCwdCapture` 增 `snapshot` 参拼 `source` 前缀、`pwd`→`\pwd` 绕开用户 alias；`App.tsx` 挂载预热。
 
 **要解决的痛点**：zuse 现在用 `spawn(shell, ...)` 跑命令，子 shell **不读** `.bashrc`/`.zshrc`/`.profile`，于是用户在交互终端里有的 alias、shell 函数、以及 nvm/volta/mise/pyenv/homebrew 往 PATH 注入的工具，在 zuse 跑的命令里**全看不到**——典型表现：用户终端里 `node`/`pnpm` 能跑，zuse 里 `command not found`。
 
@@ -255,7 +272,7 @@
 | 环节         | 方案                                                                                  |
 | ------------ | ------------------------------------------------------------------------------------- |
 | 触发时机     | 会话启动时异步建一次快照，缓存路径；Bash 工具首次用前 await 就绪（失败则降级）         |
-| 快照内容     | v1 先做**最高收益的 PATH + alias + 函数**三样；shell options 可后置                    |
+| 快照内容     | v1 做**最高收益的 PATH + alias + 函数**三样;另需 emit `shopt -p`(bash)/转储窗口内 `unsetopt aliases`(zsh)——这是函数体能 re-source 的**必需**前提,非可选(见设计 §2.1) |
 | 落盘位置     | `~/.zuse/shell-snapshots/`（沿用 zuse 配置目录约定），cleanup 注册删除                 |
 | shell 适配   | 复用现有 `getShellLabel()`：bash/zsh/sh 各自的 rc 文件名与 `declare -f`/`typeset -f` 差异 |
 | Windows      | git-bash 走 `.bashrc`；过滤 `winpty` alias；`ARGV0`/`exec -a` 差异照搬 CC 的分支       |
