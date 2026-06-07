@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { stripTrailingNotes, countLines, previewLines } from './toolSummary.js'
+import {
+  stripTrailingNotes,
+  countLines,
+  previewLines,
+  toolSpecifier,
+} from './toolSummary.js'
 
 describe('stripTrailingNotes', () => {
   it('剥掉 Read 的 \\n\\n[truncated: …] 尾注', () => {
@@ -45,5 +50,39 @@ describe('previewLines', () => {
   })
   it('空串给空数组', () => {
     expect(previewLines('', 5)).toEqual({ lines: [], moreCount: 0 })
+  })
+})
+
+describe('toolSpecifier', () => {
+  it('Read/Edit/Write 取 file_path', () => {
+    expect(toolSpecifier('Read', { file_path: 'src/a.ts' })).toBe('src/a.ts')
+    expect(toolSpecifier('Edit', { file_path: 'src/b.ts' })).toBe('src/b.ts')
+    expect(toolSpecifier('Write', { file_path: 'src/c.ts' })).toBe('src/c.ts')
+  })
+  it('Glob/Grep 取 pattern', () => {
+    expect(toolSpecifier('Glob', { pattern: '**/*.ts' })).toBe('**/*.ts')
+    expect(toolSpecifier('Grep', { pattern: 'foo' })).toBe('foo')
+  })
+  it('Bash 取 command,超长截断到 60 + …', () => {
+    expect(toolSpecifier('Bash', { command: 'pnpm test' })).toBe('pnpm test')
+    const long = 'echo ' + 'x'.repeat(80)
+    expect(toolSpecifier('Bash', { command: long })).toBe(long.slice(0, 60) + '…')
+  })
+  it('WebFetch 取 url、WebSearch 取 query', () => {
+    expect(toolSpecifier('WebFetch', { url: 'http://x.y' })).toBe('http://x.y')
+    expect(toolSpecifier('WebSearch', { query: 'ink ui' })).toBe('ink ui')
+  })
+  it('LSP 取 "operation symbol"', () => {
+    expect(toolSpecifier('LSP', { operation: 'definition', symbol: 'foo' })).toBe('definition foo')
+  })
+  it('未知工具回落到压缩 JSON(≤60)', () => {
+    expect(toolSpecifier('Mystery', { a: 1 })).toBe('{"a":1}')
+  })
+  it('取不到主参数时回落 JSON', () => {
+    expect(toolSpecifier('Read', { x: 1 })).toBe('{"x":1}')
+  })
+  it('input 非对象时返回空串', () => {
+    expect(toolSpecifier('Read', null)).toBe('')
+    expect(toolSpecifier('Read', 'nope')).toBe('')
   })
 })
