@@ -9,12 +9,14 @@ import { BashTool } from './bash.js'
 import { WebFetchTool } from './webfetch.js'
 import { createWebSearchTool } from './websearch.js'
 import { createLspTool } from './lsp/index.js'
+import { createLspInstallTool } from './lsp/install.js'
 import { LspManager } from './lsp/manager.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel, primeShellSnapshot } from './bash.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
+export { createLspInstallTool } from './lsp/install.js'
 export { LspManager } from './lsp/manager.js'
 
 /** createDefaultRegistry 的可选项。 */
@@ -40,6 +42,10 @@ export function createDefaultRegistry(opts: DefaultRegistryOptions = {}): ToolRe
   registry.register(BashTool)
   registry.register(WebFetchTool)
   if (opts.webSearch) registry.register(createWebSearchTool(opts.webSearch))
-  if (opts.lsp) registry.register(createLspTool(opts.lsp))
+  if (opts.lsp) {
+    registry.register(createLspTool(opts.lsp))
+    // LspInstall 与 Lsp 同生命周期:Lsp 报「server 没装」时,模型可调它(经用户确认)安装。
+    registry.register(createLspInstallTool())
+  }
   return registry
 }

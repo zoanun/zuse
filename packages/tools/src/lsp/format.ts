@@ -1,6 +1,13 @@
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import type { Location, Hover, MarkupContent } from 'vscode-languageserver-protocol'
+import { SymbolKind } from 'vscode-languageserver-protocol'
+import type {
+  Location,
+  Hover,
+  MarkupContent,
+  SymbolInformation,
+  WorkspaceSymbol,
+} from 'vscode-languageserver-protocol'
 
 /** 读某绝对路径某 0-based 行的源码(注入以便测试,不打真实 fs)。 */
 export type LineReader = (absPath: string, line0: number) => string
@@ -89,6 +96,64 @@ export function formatReferences(
   if (locs.length > limit) {
     out += `\n\n… and ${locs.length - limit} more references`
   }
+  return out
+}
+
+/** SymbolKind(数字枚举)→ 可读标签;未列出的回落到 'symbol'。 */
+const KIND_LABEL: Record<number, string> = {
+  [SymbolKind.File]: 'file',
+  [SymbolKind.Module]: 'module',
+  [SymbolKind.Namespace]: 'namespace',
+  [SymbolKind.Class]: 'class',
+  [SymbolKind.Method]: 'method',
+  [SymbolKind.Property]: 'property',
+  [SymbolKind.Field]: 'field',
+  [SymbolKind.Constructor]: 'constructor',
+  [SymbolKind.Enum]: 'enum',
+  [SymbolKind.Interface]: 'interface',
+  [SymbolKind.Function]: 'function',
+  [SymbolKind.Variable]: 'variable',
+  [SymbolKind.Constant]: 'constant',
+  [SymbolKind.Struct]: 'struct',
+  [SymbolKind.EnumMember]: 'enum-member',
+  [SymbolKind.TypeParameter]: 'type',
+}
+
+/** workspace/symbol 的返回元素:SymbolInformation(必带完整 location)或 WorkspaceSymbol(location 可能只含 uri)。 */
+type AnySymbol = SymbolInformation | WorkspaceSymbol
+
+/**
+ * 格式化 workspace/symbol(按符号名全工程搜索)结果。
+ * workspace/symbol 是模糊匹配,会带回一堆近似名;用户问的是某个确切符号,
+ * 故命中精确名(name === query)时只展示精确的,无精确命中才回退展示全部(模糊也有参考价值)。
+ * 每条显示「路径:行:列  [kind] 名」+ 源码行;WorkspaceSymbol 的 location 无 range 时只给路径。
+ */
+export function formatSymbols(
+  symbols: AnySymbol[],
+  cwd: string,
+  readLine: LineReader,
+  limit: number,
+  query: string,
+): string {
+  if (symbols.length === 0) return `No symbol found for: ${query}`
+  const exact = symbols.filter((s) => s.name === query)
+  const list = exact.length > 0 ? exact : symbols
+  const shown = list.slice(0, limit)
+  const blocks = shown.map((s) => {
+    const loc = s.location
+    const rel = uriToRelPath(loc.uri, cwd)
+    const kind = KIND_LABEL[s.kind] ?? 'symbol'
+    // WorkspaceSymbol 延迟解析时 location 可能只有 uri、无 range,此时不给行列与源码
+    if ('range' in loc && loc.range) {
+      const ln = loc.range.start.line // 0-based
+      const col = loc.range.start.character // 0-based
+      const src = readLine(fileURLToPath(loc.uri), ln).trim()
+      return `${rel}:${ln + 1}:${col + 1}  [${kind}] ${s.name}\n  ${src}`
+    }
+    return `${rel}  [${kind}] ${s.name}`
+  })
+  let out = `Found ${list.length} symbol(s) for ${query}:\n\n${blocks.join('\n\n')}`
+  if (list.length > limit) out += `\n\n… and ${list.length - limit} more`
   return out
 }
 

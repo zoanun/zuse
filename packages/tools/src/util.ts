@@ -6,12 +6,24 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 
-/** 在 PATH 列出的目录里找一个可执行文件，返回首个命中的绝对路径。 */
+/**
+ * 在 PATH 列出的目录里找一个可执行文件，返回首个命中的绝对路径。
+ * Windows 上按 PATHEXT 依次补扩展名再试（.COM/.EXE/.BAT/.CMD…）——npm 全局装的命令
+ * 多是 .CMD 启动器，裸名 existsSync 找不到。不补这一层，「命令在不在」的判断在 Windows
+ * 上会漏报（LSP 据此误判 server 没装、Bash 据此选 shell，都会出错）。
+ */
 export function findOnPath(exe: string): string | undefined {
+  // 先试裸名（已带扩展名的如 git.exe 直接命中）；win32 再按 PATHEXT 逐个补扩展名。
+  const exts =
+    process.platform === 'win32'
+      ? ['', ...(process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
+      : ['']
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir) continue
-    const full = path.join(dir, exe)
-    if (existsSync(full)) return full
+    for (const ext of exts) {
+      const full = path.join(dir, exe + ext)
+      if (existsSync(full)) return full
+    }
   }
   return undefined
 }

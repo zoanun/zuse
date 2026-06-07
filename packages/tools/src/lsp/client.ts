@@ -13,6 +13,7 @@ import {
   DefinitionRequest,
   ReferencesRequest,
   HoverRequest,
+  WorkspaceSymbolRequest,
   ShutdownRequest,
   ExitNotification,
   type Position,
@@ -20,8 +21,11 @@ import {
   type LocationLink,
   type Hover,
   type InitializeParams,
+  type SymbolInformation,
+  type WorkspaceSymbol,
 } from 'vscode-languageserver-protocol'
-import { killTree } from '../util.js'
+import { findOnPath, killTree } from '../util.js'
+import { queryWithWarmup } from './warmup.js'
 import type { LanguageServerConfig } from './servers.js'
 
 /** 就绪等待与 initialize 握手的总超时（毫秒）。超时不算致命，降级放行。 */
@@ -32,6 +36,10 @@ const REQUEST_TIMEOUT = 20_000
 const SHUTDOWN_GRACE = 2_000
 /** shutdown/exit 之后到 killTree 兜底的延时（毫秒）。 */
 const KILL_DELAY = 500
+/** 冷启动暖场重试的退避时延（毫秒）：tsserver 后台加载工程期间 navto 会空，等它就绪。 */
+const WARMUP_DELAYS = [500, 1000, 2000, 3000]
+/** 普通定时睡眠。 */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * $/progress 通知的 value 形态（只关心 kind，用来判断索引是否结束）。
@@ -84,6 +92,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 export class LspClient {
   /** 已 didOpen 过的文件 uri 集合，避免重复 open。 */
   private opened = new Set<string>()
+  /** workspace/symbol 暖场状态：拿到过非空结果后置真，之后空结果不再重试。 */
+  private readonly warm = { warmed: false }
 
   private constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -98,6 +108,16 @@ export class LspClient {
     dataDir: string | undefined,
     signal: AbortSignal,
   ): Promise<LspClient> {
+    // spawn 前先确认命令存在。Windows 走 shell:true（cmd.exe）时，命令不存在不会触发
+    // child 的 'error'(ENOENT)——cmd.exe 自身正常启动并退出，于是「没装」不会快速失败，
+    // 而要死等到 initialize 超时（30s）才抛个不带 installHint 的泛化错误。故按 PATHEXT
+    // 预解析一次（findOnPath 已识别 .CMD 等启动器），找不到立即抛带 installHint 的 LspError。
+    if (!findOnPath(config.command)) {
+      throw new LspError(
+        `Language server '${config.command}' not found. Install: ${config.installHint}`,
+        config.installHint,
+      )
+    }
     const rawArgs = [...config.args, ...(config.dataDirArg && dataDir ? config.dataDirArg(dataDir) : [])]
     // Windows 上语言服务器多为 npm 全局安装的 .CMD 启动器（typescript-language-server.CMD 等），
     // 而 spawn 不开 shell 时不套用 PATHEXT，按裸名 spawn 会 ENOENT。故 win32 走 shell（cmd.exe），
@@ -233,6 +253,26 @@ export class LspClient {
       'references',
     )
     return r ?? []
+  }
+
+  /**
+   * 按符号名全工程搜索（workspace/symbol）：不需要文件，适合「还不知道符号在哪」的冷查询。
+   * 服务器侧是模糊匹配，返回 SymbolInformation[] 或 WorkspaceSymbol[]；null 归一为空数组。
+   */
+  async workspaceSymbol(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<(SymbolInformation | WorkspaceSymbol)[]> {
+    const navto = async (): Promise<(SymbolInformation | WorkspaceSymbol)[]> => {
+      const r = await withTimeout(
+        this.conn.sendRequest(WorkspaceSymbolRequest.type, { query }),
+        REQUEST_TIMEOUT,
+        'workspace/symbol',
+      )
+      return r ?? []
+    }
+    // 冷启动时 tsserver 还在加载工程，navto 先空后有；暖场后空即真空，不再重试。
+    return queryWithWarmup(navto, this.warm, WARMUP_DELAYS, sleep, () => signal?.aborted ?? false)
   }
 
   /** 看类型/悬停信息：无 hover 时返回 null。 */

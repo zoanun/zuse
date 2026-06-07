@@ -12,6 +12,13 @@ export interface LanguageServerConfig {
   readyNotification?: string
   dataDirArg?: (tmpDir: string) => string[]
   installHint: string
+  /**
+   * 可被 LspInstall 自动执行的安装命令(argv 形式)。仅给「能用一条干净命令装好」的语言填——
+   * v1 只填 npm 系(npm 几乎必然在,不假定 rustup/go/JDK 等其它工具链)。
+   * 未填的语言(java/lua/rust/go)LspInstall 一律婉拒,只回显 installHint 让用户手动装,
+   * 绝不递归去装 JDK/Maven 这类系统级前置依赖。
+   */
+  installCommand?: string[]
 }
 
 /** v1 预置 8 门语言。加一门 = 往这个数组加一条,无需改其它代码。 */
@@ -23,6 +30,7 @@ export const LANGUAGE_SERVERS: LanguageServerConfig[] = [
     args: ['--stdio'],
     ready: 'immediate',
     installHint: 'npm i -g typescript-language-server typescript',
+    installCommand: ['npm', 'i', '-g', 'typescript-language-server', 'typescript'],
   },
   {
     id: 'python',
@@ -31,6 +39,7 @@ export const LANGUAGE_SERVERS: LanguageServerConfig[] = [
     args: ['--stdio'],
     ready: 'immediate',
     installHint: 'npm i -g pyright',
+    installCommand: ['npm', 'i', '-g', 'pyright'],
   },
   {
     id: 'vue',
@@ -39,6 +48,7 @@ export const LANGUAGE_SERVERS: LanguageServerConfig[] = [
     args: ['--stdio'],
     ready: 'immediate',
     installHint: 'npm i -g @vue/language-server（Volar 需 initializationOptions.typescript.tsdk 指向本机 typescript lib 目录）',
+    installCommand: ['npm', 'i', '-g', '@vue/language-server'],
   },
   {
     id: 'java',
@@ -81,6 +91,7 @@ export const LANGUAGE_SERVERS: LanguageServerConfig[] = [
     args: ['start'],
     ready: 'immediate',
     installHint: 'npm i -g bash-language-server',
+    installCommand: ['npm', 'i', '-g', 'bash-language-server'],
   },
 ]
 

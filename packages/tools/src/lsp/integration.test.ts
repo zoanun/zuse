@@ -81,4 +81,12 @@ describe.skipIf(!binDir)('Lsp tool — TS integration（真起 typescript-langua
     expect(r.isError).toBeFalsy()
     expect(r.output).toMatch(/greet|string/)
   }, 60_000)
+
+  it('finds greet by name via workspace symbol — no file given', async () => {
+    // 冷查询：只给符号名，不给文件。workspace/symbol 应在全工程里定位到 sample.ts 的 greet。
+    const r = await tool.run({ operation: 'symbol', symbol: 'greet' }, makeCtx())
+    expect(r.isError).toBeFalsy()
+    expect(r.output).toMatch(/sample\.ts/)
+    expect(r.output).toMatch(/greet/)
+  }, 60_000)
 })
