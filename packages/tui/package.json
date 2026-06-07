@@ -4,19 +4,35 @@
   "private": true,
   "type": "module",
   "bin": {
-    "zuse": "./src/index.tsx"
+    "zuse": "./dist/index.js"
   },
   "scripts": {
     "dev": "tsx src/index.tsx",
+    "build": "tsup",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@zuse/core": "workspace:*",
     "@zuse/tools": "workspace:*",
     "ink": "^5.0.1",
-    "react": "^18.3.1"
+    "jsonc-parser": "^3.3.1",
+    "marked": "^18.0.5",
+    "react": "^18.3.1",
+    "string-width": "^8.2.1",
+    "@anthropic-ai/sdk": "^0.98.0",
+    "@mozilla/readability": "^0.6.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "jsdom": "^29.1.1",
+    "openai": "^6.42.0",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
+    "undici": "^6.21.0",
+    "vscode-jsonrpc": "9.0.0",
+    "vscode-languageserver-protocol": "3.18.0"
   },
   "devDependencies": {
-    "@types/react": "^18.3.0"
+    "@types/react": "^18.3.0",
+    "ink-testing-library": "^4.0.0"
   }
 }

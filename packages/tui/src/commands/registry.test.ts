@@ -52,7 +52,6 @@ function runModel(args: string, settings: ResolvedSettings, current: { providerI
       selectorOpened = true
     },
     registry: makeRegistry([]),
-    showHistory: () => {},
   }
   const cmd = findCommand('model')
   if (!cmd) throw new Error('model command not found')
@@ -185,14 +184,13 @@ describe('/model 切换校验', () => {
   })
 })
 
-// 跑某个命令，注入指定 registry/settings，捕获打印行与 showHistory 是否被调用。
+// 跑某个命令，注入指定 registry/settings，捕获打印行。
 function runCommand(
   name: string,
   args: string,
   opts: { registry?: ToolRegistry; settings?: ResolvedSettings } = {},
 ) {
   const printed: string[] = []
-  let historyShown = false
   const ctx: CommandContext = {
     args,
     print: (t) => printed.push(t),
@@ -205,14 +203,11 @@ function runCommand(
     switchModel: () => '',
     openModelSelector: () => {},
     registry: opts.registry ?? makeRegistry([]),
-    showHistory: () => {
-      historyShown = true
-    },
   }
   const cmd = findCommand(name)
   if (!cmd) throw new Error(`${name} command not found`)
   void cmd.run(ctx)
-  return { printed, historyShown }
+  return { printed }
 }
 
 describe('/tools', () => {
@@ -246,10 +241,9 @@ describe('/tools', () => {
 })
 
 describe('/history', () => {
-  it('触发 showHistory 并打印滚动提示', () => {
-    const { printed, historyShown } = runCommand('history', '')
-    expect(historyShown).toBe(true)
-    expect(printed.join('\n')).toContain('PageUp/PageDown')
+  it('提示用终端滚动区查看历史（cc 式渲染下不再有应用内滚动）', () => {
+    const { printed } = runCommand('history', '')
+    expect(printed.join('\n')).toContain('终端')
   })
 })
 

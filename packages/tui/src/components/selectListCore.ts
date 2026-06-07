@@ -11,6 +11,11 @@ export interface SelectListItem {
   label: string
   /** 过滤匹配用的文本；缺省回落到 label。中文 label 配英文 filterText 时尤为有用。 */
   filterText?: string
+  /**
+   * 行类型。缺省 'option'(可选项)；'header' 为分组标题：不可选、导航跳过、不参与过滤匹配，
+   * 但占一行随列表滚动。仅 /model 选择器用到分组；权限框等普通列表不传 → 全是 option。
+   */
+  kind?: 'header' | 'option'
 }
 
 /**
@@ -32,6 +37,60 @@ export function matchesFilter(text: string, query: string): boolean {
 export function filterItems(items: SelectListItem[], query: string): SelectListItem[] {
   if (query === '') return items
   return items.filter((it) => matchesFilter(it.filterText ?? it.label, query))
+}
+
+/**
+ * 分组过滤：只对 option 行做模糊过滤；某组 header 之后若无任一命中 option，连 header 一并隐藏。
+ * 列表无 header(普通列表)时退化为 filterItems，行为与之完全一致。
+ */
+export function filterGroupedItems(items: SelectListItem[], query: string): SelectListItem[] {
+  const hasHeader = items.some((it) => it.kind === 'header')
+  if (!hasHeader) return filterItems(items, query)
+  const kept = new Set(
+    filterItems(
+      items.filter((it) => it.kind !== 'header'),
+      query,
+    ).map((it) => it.value),
+  )
+  const result: SelectListItem[] = []
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!
+    if (it.kind === 'header') {
+      // 向后看到下一个 header 为止，本组内是否还有被保留的 option。
+      let hasVisible = false
+      for (let j = i + 1; j < items.length && items[j]!.kind !== 'header'; j++) {
+        if (kept.has(items[j]!.value)) {
+          hasVisible = true
+          break
+        }
+      }
+      if (hasVisible) result.push(it)
+    } else if (kept.has(it.value)) {
+      result.push(it)
+    }
+  }
+  return result
+}
+
+/** 列表里第一个可选(非 header)项的下标；无可选项 / 空列表返回 0。 */
+export function firstSelectableIndex(items: SelectListItem[]): number {
+  for (let i = 0; i < items.length; i++) {
+    if (items[i]?.kind !== 'header') return i
+  }
+  return 0
+}
+
+/**
+ * 从 from 沿 dir(+1 向下 / -1 向上)找下一个可选(非 header)项的下标，跳过 header。
+ * 该方向再无可选项时停在原地(from 自身是 header 时回退到首个可选项，保证光标永不停在 header 上)。
+ */
+export function nextSelectableIndex(items: SelectListItem[], from: number, dir: number): number {
+  let i = from + dir
+  while (i >= 0 && i < items.length) {
+    if (items[i]?.kind !== 'header') return i
+    i += dir
+  }
+  return items[from]?.kind === 'header' ? firstSelectableIndex(items) : from
 }
 
 /** 把下标夹到 [0, length-1]；空列表返回 0。 */

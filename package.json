@@ -12,6 +12,8 @@
   },
   "scripts": {
     "dev": "pnpm -F @zuse/tui dev",
+    "build": "pnpm -F @zuse/tui build",
+    "start": "pnpm -F @zuse/tui start",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -25,6 +27,7 @@
     "@types/node": "^22.10.0",
     "eslint": "^9.15.0",
     "prettier": "^3.4.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.15.0",

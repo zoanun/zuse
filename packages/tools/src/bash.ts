@@ -162,6 +162,7 @@ function applyCapturedCwd(file: string, setCwd: ((p: string) => void) | undefine
 interface BashInput {
   command: string
   timeout?: number
+  description?: string
 }
 
 const inputSchema: JSONSchema = {
@@ -175,6 +176,13 @@ const inputSchema: JSONSchema = {
     timeout: {
       type: 'number',
       description: `Timeout in milliseconds. Defaults to ${DEFAULT_TIMEOUT}, max ${MAX_TIMEOUT}.`,
+    },
+    // 对齐 cc-haha：让模型给出一句简短描述，UI 在标题行展示(无则回落到命令本身)。
+    description: {
+      type: 'string',
+      description:
+        'Clear, concise description of what this command does in active voice, in 5-10 words. ' +
+        "Never use words like \"complex\" or \"risk\" — just describe what it does.",
     },
   },
   required: ['command'],

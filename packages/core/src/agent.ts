@@ -110,6 +110,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       [...base, ...staged],
       effectiveConfig,
       toolDefs,
+      signal, // 接到底层 SDK：流卡死时 Esc 能真正取消（否则 for-await 永久阻塞）。
     )) {
       if (event.type === 'text-delta') {
         text += event.text

@@ -87,9 +87,8 @@
 | Grep · count | `Found N matches in M files` | 解析 `path:count` 行,求和 + 文件数 |
 | Edit | `Updated <file> (N replacement(s))` | 直接取工具 output(`Edited X (N replacement(s)).`)改写为中性短语 |
 | Write | `Wrote N lines` | 数 `input.content` 行数 |
-| Bash | 见 §6(最多 5 行真实输出 + 溢出提示) | output |
-| WebFetch / WebSearch / LSP | `N lines of output`(通用兜底) | 数 output 行 |
-| 其它/兜底 | `N lines of output` | 数 output 行 |
+| Bash / WebFetch / WebSearch / LSP | 见 §6(最多 5 行真实输出 + 溢出提示) | output |
+| 其它/兜底 | `N lines of output`(单行计数) | 数 output 行 |
 
 **行数计数辅助**:工具输出常带 `\n\n[truncated: …]` / `[safety cap: …]` / `[offset …]` 尾注,或 `(no output)`、`No matches for: …`、`No files match: …` 这类哨兵串。计数前先剥掉匹配 `/\n\n\[[^\]]*\]\s*$/` 的尾注;哨兵串各工具单独识别(返回「无匹配/空」文案而非行数)。
 

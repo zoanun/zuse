@@ -13,11 +13,15 @@ export interface ModelClient {
   /**
    * 发送消息并接收流式事件。`tools`（Phase 3）向模型公布可调用的工具；
    * 当它存在时，模型可能产生 `tool-use` 事件。
+   *
+   * `signal`（可选）：外部中断信号（用户 Esc）。实现须把它接到底层 SDK 请求，
+   * 这样流卡死时按 Esc 能真正取消；缺省时退化为不可中断（旧行为）。
    */
   sendMessages(
     messages: Message[],
     config: ModelConfig,
     tools?: ToolDefinition[],
+    signal?: AbortSignal,
   ): AsyncIterable<StreamEvent>
 
   /** 获取模型名称（用于展示） */

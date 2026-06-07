@@ -134,8 +134,10 @@ function writeSummary(tool: UIToolCall): OutputSummary {
   return { kind: 'line', text: `Wrote ${plural(n, 'line')}` }
 }
 
-/** Bash 类工具的 `⎿` 下预览:最多 5 行真实输出。 */
-const PREVIEW_MAX = 5
+// Bash 类工具的 OUT 行内只展示前若干行,保持帧紧凑、不刷屏。超出部分不再硬塞进终端:
+// 完整输出由 hook 落盘到临时文件,UI 给出可 ctrl+点击的路径(见 useConversation 的 tool-result
+// 处理与 StreamRenderer 的 OutputCell)。模型侧拿到的始终是完整输出,截断只发生在展示层。
+const PREVIEW_MAX = 10
 
 function bashPreview(output: string, isError: boolean): OutputSummary {
   if (output === '(no output)') return { kind: 'line', text: '(no output)' }

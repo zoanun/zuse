@@ -490,8 +490,8 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 设计就绪度（三块设计均已就绪，2026-06-07）：
 
 - **Markdown 富渲染**：设计 + spec + plan 已完成（spec [`2026-06-07-zuse-markdown-rendering-design.md`](../specs/2026-06-07-zuse-markdown-rendering-design.md)、plan [`2026-06-07-zuse-markdown-rendering.md`](2026-06-07-zuse-markdown-rendering.md)），选型已定为**自渲染**（marked 词法器 + 手写 Ink 组件）。
-- **工具块 CC 风格**：spec 已完成 [`2026-06-07-zuse-tool-block-rendering-design.md`](../specs/2026-06-07-zuse-tool-block-rendering-design.md)。骨架 `●`+`⎿`、渲染层零分组、按工具 OUT 摘要映射、Bash 类预览 5 行;纯逻辑抽到 `toolSummary.ts`。
-- **Edit diff 渲染**：spec 已完成 [`2026-06-07-zuse-edit-diff-rendering-design.md`](../specs/2026-06-07-zuse-edit-diff-rendering-design.md)。建立在 #1 之上;行级 LCS 内部 diff（红删/绿增/暗上下文）、全上下文总限 10 行、从 `input.old_string`/`new_string` 渲染期计算;纯逻辑抽到 `editDiff.ts`。仅 Edit,Write 不做。
+- **工具块 CC 风格**：spec + plan 已完成（spec [`2026-06-07-zuse-tool-block-rendering-design.md`](../specs/2026-06-07-zuse-tool-block-rendering-design.md)、plan [`2026-06-07-zuse-tool-block-rendering.md`](2026-06-07-zuse-tool-block-rendering.md)）。骨架 `●`+`⎿`、渲染层零分组、按工具 OUT 摘要映射、Bash 类预览 5 行;纯逻辑抽到 `toolSummary.ts` + 平台圆点 `figures.ts`。**实现顺序排最前**(#2 依赖它)。
+- **Edit diff 渲染**：spec + plan 已完成（spec [`2026-06-07-zuse-edit-diff-rendering-design.md`](../specs/2026-06-07-zuse-edit-diff-rendering-design.md)、plan [`2026-06-07-zuse-edit-diff-rendering.md`](2026-06-07-zuse-edit-diff-rendering.md)）。建立在 #1 之上;行级 LCS 内部 diff（红删/绿增/暗上下文）、全上下文总限 10 行、从 `input.old_string`/`new_string` 渲染期计算;纯逻辑抽到 `editDiff.ts`。仅 Edit,Write 不做。
 
 #### `/model` 交互式选择器（已敲定的设计决策）
 

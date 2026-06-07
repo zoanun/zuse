@@ -46,17 +46,19 @@ export function renderBlocks(tokens: Token[]): ReactNode[] {
       }
       case 'code': {
         const c = tok as Tokens.Code
+        // 不用 borderStyle 圆角盒子:四边边框一旦随消息打进 <Static> 冻结,终端缩放重排时
+        // 会把上下左右四条边错位拆碎(与横幅/输入框同病)。改用逐行左侧竖条 —— 与下方
+        // blockquote 同一手法:每行自带 │ 前缀,各行独立,缩放时至多换行不会拆框。
+        const codeLines = c.text.split('\n')
         return (
-          <Box
-            key={key}
-            flexDirection="column"
-            marginBottom={1}
-            borderStyle="round"
-            borderColor="gray"
-            paddingX={1}
-          >
+          <Box key={key} flexDirection="column" marginBottom={1}>
             {c.lang ? <Text dimColor>{c.lang}</Text> : null}
-            <Text>{c.text}</Text>
+            {codeLines.map((line, i) => (
+              <Box key={i} flexDirection="row">
+                <Text color="gray">│ </Text>
+                <Text>{line}</Text>
+              </Box>
+            ))}
           </Box>
         )
       }

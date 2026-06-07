@@ -23,18 +23,6 @@ export function listPrefix(ordered: boolean, index: number, start: number): stri
 /** 单元格对齐方式。 */
 export type CellAlign = 'left' | 'center' | 'right'
 
-/** 把文本按显示宽度补齐到 width;文本本身更宽则原样返回。 */
-export function padCell(text: string, width: number, align: CellAlign): string {
-  const pad = width - displayWidth(text)
-  if (pad <= 0) return text
-  if (align === 'right') return ' '.repeat(pad) + text
-  if (align === 'center') {
-    const left = Math.floor(pad / 2)
-    return ' '.repeat(left) + text + ' '.repeat(pad - left)
-  }
-  return text + ' '.repeat(pad)
-}
-
 /** 按显示宽度折行;不从全角字符中间劈开(按 Unicode 码点遍历)。 */
 export function wrapCell(text: string, width: number): string[] {
   const lines: string[] = []
@@ -90,23 +78,4 @@ export function buildBorderLine(widths: number[], kind: BorderKind): string {
   const [left, mid, right] = corners[kind]
   const segments = widths.map((w) => '─'.repeat(w + 2))
   return left + segments.join(mid) + right
-}
-
-/** 拼一行数据(可能折成多物理行):'│' + 每列 (' ' + 对齐填充 + ' ') + '│'。 */
-export function buildRowLines(
-  cells: string[],
-  widths: number[],
-  aligns: CellAlign[],
-): string[] {
-  const wrapped = cells.map((cell, i) => wrapCell(cell, widths[i] ?? 0))
-  const height = Math.max(1, ...wrapped.map((w) => w.length))
-  const lines: string[] = []
-  for (let r = 0; r < height; r++) {
-    const parts = widths.map((w, i) => {
-      const fragment = wrapped[i]?.[r] ?? ''
-      return ' ' + padCell(fragment, w, aligns[i] ?? 'left') + ' '
-    })
-    lines.push('│' + parts.join('│') + '│')
-  }
-  return lines
 }

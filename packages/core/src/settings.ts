@@ -134,12 +134,23 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
       if (pm.deny) out.permissions.deny.push(...pm.deny)
     }
   }
+  // 跨层拼接后去重：多层常携带相同规则（如 user 默认 + local 又抄了一份），
+  // 拼接会留下重复项——功能上无害（命中判断只看是否包含），但 /config 读起来啰嗦、
+  // 匹配也做无用功。保留首次出现顺序（低层在前），顺序对权限语义无影响。
+  out.permissions.allow = dedupe(out.permissions.allow)
+  out.permissions.ask = dedupe(out.permissions.ask)
+  out.permissions.deny = dedupe(out.permissions.deny)
   const envKey = process.env.ZUSE_API_KEY
   if (envKey) out.apiKey = envKey
   // 代理也支持环境变量覆盖（与 apiKey 同款）：ZUSE_PROXY 优先于任意层的字面量。
   const envProxy = process.env.ZUSE_PROXY
   if (envProxy) out.proxy = envProxy
   return out
+}
+
+/** 保留首次出现顺序的字符串去重。 */
+function dedupe(items: string[]): string[] {
+  return [...new Set(items)]
 }
 
 /** 三层加载 + 合并。优先级 用户 < 项目 < 本地。 */

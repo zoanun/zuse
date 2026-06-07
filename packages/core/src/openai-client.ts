@@ -1,8 +1,13 @@
-import OpenAI from 'openai'
+// 仅作类型用途导入 SDK（verbatimModuleSyntax 下 import type 会被完全擦除，
+// 不会在模块求值时拉起 openai）。运行时实例改由 getClient() 懒加载。
+import type OpenAI from 'openai'
 import type { Message, ContentBlock, StreamEvent, ModelConfig, ProviderConfig, Usage } from './types.js'
 import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
+import { debugLog, debugEnabled } from './debug-log.js'
+import { StreamIdleGuard, resolveStreamIdleMs } from './stream-idle.js'
+import { resolveMaxRetries, isRetryableError, retryAfterMs, backoffMs, sleep } from './retry.js'
 
 /** zuse Message[] → OpenAI chat messages。system 置顶；tool_result 提升为顶层 tool 消息。 */
 export function toOpenAIMessages(
@@ -57,6 +62,23 @@ export function toOpenAITools(defs: ToolDefinition[]): OpenAI.Chat.ChatCompletio
   }))
 }
 
+/**
+ * 把发往模型的消息压成一行诊断摘要：只留 role、字符数、以及 tool 调用/结果的配对关系，
+ * 不打 system prompt 全文与工具输出全文（那些每轮重复、淹没日志）。
+ */
+function summarizeMessages(messages: OpenAI.Chat.ChatCompletionMessageParam[]): unknown[] {
+  return messages.map((m) => {
+    const chars = typeof m.content === 'string' ? m.content.length : 0
+    if (m.role === 'assistant') {
+      // tool_calls 是 function/custom 联合类型，只有 function 变体带 .function（我们只生成 function 类型）。
+      const calls = m.tool_calls?.map((t) => (t.type === 'function' ? `${t.function.name}#${t.id}` : t.id)) ?? []
+      return { role: 'assistant', chars, tool_calls: calls }
+    }
+    if (m.role === 'tool') return { role: 'tool', tool_call_id: m.tool_call_id, chars }
+    return { role: m.role, chars }
+  })
+}
+
 /** finish_reason → zuse stop_reason。 */
 function mapStopReason(reason: string | null | undefined): string {
   if (reason === 'tool_calls') return 'tool_use'
@@ -85,6 +107,10 @@ export async function* streamToEvents(stream: AsyncIterable<unknown>): AsyncIter
   let stopReason = 'end_turn'
   const tools = new Map<number, AccTool>()
   let usage: Usage = emptyUsage()
+  // 仅用于诊断：累计可见文本与思维链字段长度，回合结束时汇总落盘，
+  // 用来分辨「模型真返回空」与「内容跑进了 reasoning_content 被丢弃」。
+  let textLen = 0
+  let reasoningLen = 0
 
   for await (const raw of stream) {
     // 将 unknown chunk 断言为 OpenAI SDK 的完整 chunk 形状，在单测中由 mock 数据满足。
@@ -101,9 +127,25 @@ export async function* streamToEvents(stream: AsyncIterable<unknown>): AsyncIter
 
     const choice = chunk.choices[0]
     if (choice) {
-      const delta = choice.delta
+      // OpenRouter / kimi 等推理模型可能把内容放进 reasoning / reasoning_content，
+      // 这两个字段不在 SDK 的 delta 类型里，手动扩展形状以便诊断时读取。
+      const delta = choice.delta as (typeof choice.delta & { reasoning?: string; reasoning_content?: string }) | undefined
+      const reasoning = delta?.reasoning ?? delta?.reasoning_content
+      // 诊断：只记真正带内容的 chunk（content/reasoning/tool_calls），跳过空 chunk 刷屏；
+      // 聚合长度由本回合末尾的 turn-summary 承担。
+      if (debugEnabled() && (delta?.content || reasoning || delta?.tool_calls)) {
+        debugLog('openai.delta', {
+          content: delta?.content || undefined,
+          reasoning: reasoning || undefined,
+          tool_calls: delta?.tool_calls,
+        })
+      }
+      if (reasoning) reasoningLen += reasoning.length
       // 文本增量即时产出。
-      if (delta?.content) yield { type: 'text-delta', text: delta.content }
+      if (delta?.content) {
+        textLen += delta.content.length
+        yield { type: 'text-delta', text: delta.content }
+      }
       // tool_calls 片段按 index 累积：id/name 只在首片出现，arguments 可能分多片。
       if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
@@ -153,6 +195,12 @@ export async function* streamToEvents(stream: AsyncIterable<unknown>): AsyncIter
     }
     yield { type: 'tool-use', id: t.id, name: t.name, input }
   }
+  // 诊断汇总：本回合到底产出了什么。textLen=0 且 toolCount=0 即「空回合」——
+  // 若此时 reasoningLen>0，说明内容跑进了未渲染的 reasoning 字段（候选 B）；
+  // 若 reasoningLen 也为 0、stopReason=end_turn，则是端点真返回了空（候选 A）。
+  if (debugEnabled()) {
+    debugLog('openai.turn-summary', { stopReason, textLen, reasoningLen, toolCount: tools.size, usage })
+  }
   yield { type: 'message-stop', stop_reason: stopReason, usage }
 }
 
@@ -161,38 +209,129 @@ export async function* streamToEvents(stream: AsyncIterable<unknown>): AsyncIter
  * 覆盖 OpenAI 原生及一切 OpenAI 兼容端点（DeepSeek / Ollama / vLLM …）。
  */
 export class OpenAIClient implements ModelClient {
-  private client: OpenAI
+  private clientPromise?: Promise<OpenAI>
   private model: string
+  private provider: ProviderConfig
+  /** 单测注入的 sdk；存在时直接用，跳过懒加载。 */
+  private injectedClient?: OpenAI
 
-  /** sdk 可注入，便于单测；省略时按 provider 配置 new 一个。 */
+  /** sdk 可注入，便于单测；省略时首次发请求时按 provider 配置懒加载并 new 一个。 */
   constructor(provider: ProviderConfig, model: string, sdk?: OpenAI) {
-    this.client = sdk ?? new OpenAI({ apiKey: provider.apiKey, baseURL: provider.baseURL })
+    this.provider = provider
     this.model = model
+    this.injectedClient = sdk
   }
 
   getModel(): string {
     return this.model
   }
 
+  /**
+   * 懒加载 SDK：把 `openai` 的导入推迟到首次真正发请求时。
+   * 这样启动期（仅 new client + 读 getModel）完全不触碰 SDK 模块，首帧更快。
+   * 注入了 sdk（单测）则直接复用；否则 import() 结果记忆化，只构建一次实例。
+   */
+  private getClient(): Promise<OpenAI> {
+    if (this.injectedClient) return Promise.resolve(this.injectedClient)
+    if (!this.clientPromise) {
+      this.clientPromise = import('openai').then(
+        ({ default: OpenAISDK }) =>
+          new OpenAISDK({ apiKey: this.provider.apiKey, baseURL: this.provider.baseURL }),
+      )
+    }
+    return this.clientPromise
+  }
+
   async *sendMessages(
     messages: Message[],
     config: ModelConfig,
     tools?: ToolDefinition[],
+    signal?: AbortSignal,
   ): AsyncIterable<StreamEvent> {
     const model = config.model || this.model
-    try {
-      const stream = await this.client.chat.completions.create({
-        model,
-        max_tokens: config.max_tokens,
-        messages: toOpenAIMessages(messages, config.system),
-        ...(tools && tools.length > 0 ? { tools: toOpenAITools(tools) } : {}),
-        stream: true,
-        stream_options: { include_usage: true },
-      })
-      yield* streamToEvents(stream)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      yield { type: 'error', message }
+    const oaiMessages = toOpenAIMessages(messages, config.system)
+    const maxRetries = resolveMaxRetries()
+
+    // 瞬时错误自动重试：仅当失败发生在「向下游产出任何事件之前」（开流/首块前的 429/5xx/网络抖动）才退避重来。
+    // 每次尝试新建一个 StreamIdleGuard（独立的空闲计时 + signal 接线），并在各自的 finally 中 dispose。
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      // 空闲守卫：把用户 Esc 与「流卡死」合并到一个信号传给 SDK，并用 tap 监视数据间隔。
+      const guard = new StreamIdleGuard(resolveStreamIdleMs(), signal)
+      let emitted = false // 是否已向下游发出过任何事件（发过就绝不重试，避免重复 message-start/文本）。
+      try {
+        // 诊断：记下本次发出去的请求（每个用户回合内可能调用多次，第二次即工具结果回喂）。
+        if (debugEnabled()) {
+          debugLog('openai.request', { model, toolCount: tools?.length ?? 0, messages: summarizeMessages(oaiMessages) })
+        }
+        const client = await this.getClient()
+        const stream = await client.chat.completions.create(
+          {
+            model,
+            max_tokens: config.max_tokens,
+            messages: oaiMessages,
+            ...(tools && tools.length > 0 ? { tools: toOpenAITools(tools) } : {}),
+            stream: true,
+            stream_options: { include_usage: true },
+          },
+          { signal: guard.signal },
+        )
+        // 诊断：流已开启。若日志里有 request 却没有这条，说明卡在 create()（端点挂死/超时）；
+        // 有这条却没有后续 delta，说明流开启后中途卡死。
+        if (debugEnabled()) debugLog('openai.stream-open', { model })
+        for await (const ev of streamToEvents(guard.tap(stream))) {
+          emitted = true
+          yield ev
+        }
+        return // 正常结束
+      } catch (err) {
+        // 用户 Esc / 空闲超时：绝不重试，按原有逻辑产出 error 文案。
+        if (signal?.aborted || guard.timedOut) {
+          // 空闲超时：给出明确的「卡死已中断、可重试」文案；外部 Esc 中断由 TUI 侧渲染成「已中断」。
+          const message = guard.timedOut
+            ? `模型流空闲超过 ${Math.round(resolveStreamIdleMs() / 1000)}s 无响应，已中断（可重试）。`
+            : err instanceof Error
+              ? err.message
+              : 'Unknown error'
+          // 诊断：把异常也记下来，区分「端点报错」「请求挂死（空闲超时）」与「用户中断」。
+          if (debugEnabled()) {
+            debugLog('openai.error', {
+              message,
+              timedOut: guard.timedOut,
+              aborted: signal?.aborted ?? false,
+              name: err instanceof Error ? err.name : undefined,
+            })
+          }
+          yield { type: 'error', message }
+          return
+        }
+
+        const message = err instanceof Error ? err.message : 'Unknown error'
+
+        // 已经向下游发过事件：流到中途才断，重试会重复 message-start/文本 → 不重试。
+        if (emitted) {
+          if (debugEnabled()) {
+            debugLog('openai.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
+          }
+          yield { type: 'error', message }
+          return
+        }
+
+        // 还没发过事件、错误可重试、还有重试次数：退避后重来。
+        if (attempt < maxRetries && isRetryableError(err)) {
+          debugLog('openai.retry', { attempt: attempt + 1, max: maxRetries, message })
+          await sleep(backoffMs(attempt, { retryAfter: retryAfterMs(err) }), signal)
+          continue
+        }
+
+        // 不可重试或重试用尽。
+        if (debugEnabled()) {
+          debugLog('openai.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
+        }
+        yield { type: 'error', message }
+        return
+      } finally {
+        guard.dispose()
+      }
     }
   }
 }

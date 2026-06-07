@@ -3,11 +3,9 @@ import {
   displayWidth,
   decodeEntities,
   listPrefix,
-  padCell,
   wrapCell,
   computeColumnWidths,
   buildBorderLine,
-  buildRowLines,
 } from './layout.js'
 
 describe('displayWidth', () => {
@@ -39,25 +37,6 @@ describe('listPrefix', () => {
     expect(listPrefix(true, 0, 1)).toBe('1. ')
     expect(listPrefix(true, 2, 1)).toBe('3. ')
     expect(listPrefix(true, 0, 5)).toBe('5. ')
-  })
-})
-
-describe('padCell', () => {
-  it('left 在右侧补空格到定宽', () => {
-    expect(padCell('ab', 5, 'left')).toBe('ab   ')
-  })
-  it('right 在左侧补空格', () => {
-    expect(padCell('ab', 5, 'right')).toBe('   ab')
-  })
-  it('center 两侧补空格,余数偏右', () => {
-    expect(padCell('ab', 6, 'center')).toBe('  ab  ')
-    expect(padCell('ab', 5, 'center')).toBe(' ab  ')
-  })
-  it('按显示宽度补齐(中文算 2 列)', () => {
-    expect(padCell('中', 5, 'left')).toBe('中   ')
-  })
-  it('文本宽于目标宽度时原样返回', () => {
-    expect(padCell('abcd', 2, 'left')).toBe('abcd')
   })
 })
 
@@ -98,17 +77,5 @@ describe('buildBorderLine', () => {
   })
   it('bottom 用 └┴┘', () => {
     expect(buildBorderLine([3, 2], 'bottom')).toBe('└─────┴────┘')
-  })
-})
-
-describe('buildRowLines', () => {
-  it('单行:竖线包裹、每格两侧留空格', () => {
-    expect(buildRowLines(['a', 'bb'], [3, 2], ['left', 'left'])).toEqual(['│ a   │ bb │'])
-  })
-  it('单元格超宽时折成多物理行,空缺补空白', () => {
-    expect(buildRowLines(['abcdef', 'x'], [3, 1], ['left', 'left'])).toEqual([
-      '│ abc │ x │',
-      '│ def │   │',
-    ])
   })
 })

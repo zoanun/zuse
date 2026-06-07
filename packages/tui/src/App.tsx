@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Box, Text, useApp, useInput, useStdout } from 'ink'
+import { useCallback, useEffect, useMemo } from 'react'
+import { Box, Text, Static, useApp, useInput } from 'ink'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
+import { StreamRenderer } from './components/StreamRenderer.js'
 import { UsageFooter } from './components/UsageFooter.js'
+import { Banner } from './components/Banner.js'
+import { detectEditor, EDITOR_LABEL } from './commands/terminalSetup.js'
 import { PermissionDialog } from './components/PermissionDialog.js'
 import { ModelSelect } from './components/ModelSelect.js'
-import { estimateMessageRows, computeHistoryWindow, clampOffsetRows } from './components/historyScroll.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
-
-/**
- * 头部 + footer + 输入框等固定占用的终端行数估算。视口高度 = 终端行数 - 此值，
- * 用于历史滚动按行开窗，让渲染高度稳定贴住屏幕（顺带规避 Ink 输出超高时的重绘问题）。
- * 略给宽松：宁可视口小一点，也别让 UI 撑过终端高度。
- */
-const CHROME_ROWS = 9
+import type { UIMessage } from './types.js'
 
 interface AppProps {
   /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
   cwd: string
 }
+
+/** 顶部一次性横幅（仿 Claude Code）：随首批 <Static> 内容打进终端滚动区,只渲染一次。 */
+type StaticRow = { kind: 'banner' } | { kind: 'msg'; msg: UIMessage }
 
 export function App({ cwd }: AppProps) {
   // 启动即预热登录 shell 快照,把 ≤10s 的首次构建挪离首条 Bash 命令路径。
@@ -56,13 +55,6 @@ export function App({ cwd }: AppProps) {
     return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp })
   }, [resolved])
 
-  // 历史滚动位置：从底部往上量的「行数」，0 = 贴底看最新。滚动是纯视图关注点，
-  // 故 state 归 App 持有；/history 命令经注入回调 onScrollToTop 触发跳到最早处。
-  const [offsetRows, setOffsetRows] = useState(0)
-  // 每帧渲染时回写当前最大可滚行数，供按键处理器与 /history 在闭包外读取最新值夹取。
-  const maxOffsetRef = useRef(0)
-  const scrollToTop = useCallback(() => setOffsetRows(maxOffsetRef.current), [])
-
   const {
     state,
     submit,
@@ -80,31 +72,13 @@ export function App({ cwd }: AppProps) {
     registry,
     cwd,
     settings: resolved,
-    onScrollToTop: scrollToTop,
   })
-
-  // 终端尺寸：视口行数（开窗）与列宽（估算消息折行）都据此。非 TTY 给兜底值。
-  const { stdout } = useStdout()
-  const termRows = stdout?.rows ?? 24
-  const termCols = stdout?.columns ?? 80
-  const viewportRows = Math.max(4, termRows - CHROME_ROWS)
-  const pageStep = Math.max(1, viewportRows - 1)
-
-  // 估算每条消息的行数并开窗。messages/列宽变化时重算（流式逐 token 也会触发，但这是
-  // O(条数) 的轻量计算）。窗口内部会把 offset 夹到 [0, maxOffsetRows]。
-  const rowHeights = useMemo(
-    () => state.messages.map((m) => estimateMessageRows(m, termCols)),
-    [state.messages, termCols],
-  )
-  const win = computeHistoryWindow(rowHeights, viewportRows, offsetRows)
-  maxOffsetRef.current = win.maxOffsetRows
-  const visibleMessages = state.messages.slice(win.start, win.end)
 
   // 应用退出：Ink 的默认 Ctrl+C 退出已在入口关掉（exitOnCtrlC:false），改由这里双击退出。
   const { exit } = useApp()
   const { pending: exitPending, press: pressCtrlC } = useDoublePress(() => exit())
 
-  // 对话框 / 选择器打开时，把滚动与 Esc 交给它们自己处理，避免双重响应。
+  // 对话框 / 选择器打开时，把 Esc 交给它们自己处理，避免双重响应。
   const dialogOpen = pendingPermission !== null || modelSelectorOpen
 
   useInput((input, key) => {
@@ -114,27 +88,15 @@ export function App({ cwd }: AppProps) {
       return
     }
     if (dialogOpen) return
-    // Esc：流式中则中断；否则把视口拉回底部（退出滚动浏览）。
+    // Esc：流式中则中断；非流式时无操作（历史滚动已交给终端原生 scrollback）。
     if (key.escape) {
-      if (!interrupt()) setOffsetRows(0)
-      return
-    }
-    // 翻页滚动：用 PageUp/PageDown——多行输入框的 keymap 不消费它们，故不与打字冲突
-    //（↑/↓/←/→ 已被输入框用作光标移动，不能挪用）。
-    if (key.pageUp) {
-      setOffsetRows((o) => clampOffsetRows(o + pageStep, maxOffsetRef.current))
-      return
-    }
-    if (key.pageDown) {
-      setOffsetRows((o) => clampOffsetRows(o - pageStep, maxOffsetRef.current))
+      interrupt()
       return
     }
   })
 
-  // 发送消息时回到底部：用户多半想看自己刚发的内容与即将到来的回复。
   const handleSubmit = useCallback(
     (text: string) => {
-      setOffsetRows(0)
       void submit(text)
     },
     [submit],
@@ -147,6 +109,15 @@ export function App({ cwd }: AppProps) {
       ? currentModel
       : `${currentProviderId}/${currentModel}`
 
+  // 检测 VSCode 系集成终端（VSCode/Cursor/Windsurf）。检测到才在横幅里给出 /terminal-setup 引导，
+  // 普通终端 Ctrl+Enter 本就能换行、无需提示。env 整个会话不变，memo 一次即可。
+  const terminalTip = useMemo<string | undefined>(() => {
+    const editor = detectEditor(process.env)
+    return editor
+      ? `${EDITOR_LABEL[editor]} 集成终端需先跑 /terminal-setup 才能用 Ctrl+Enter 换行`
+      : undefined
+  }, [])
+
   // settings 加载失败或 client 初始化失败，都在此统一展示错误页。
   if (initError || clientError) {
     return (
@@ -157,29 +128,42 @@ export function App({ cwd }: AppProps) {
     )
   }
 
+  // 仿 Claude Code：已完成的消息（非流式）打进 <Static> —— Ink 把它们一次性写入终端
+  // 滚动区且永不重绘，从根上规避「输出超过终端高度时的重绘错位」。实时帧只剩仍在流式的
+  // 那条消息 + footer + 输入框，因此输入框可随内容自由增高而不再钉死终端高度。
+  const committed = state.messages.filter((m) => !m.isStreaming)
+  const live = state.messages.filter((m) => m.isStreaming)
+  // 横幅要展示模型，而模型在挂载后的 effect 里才解析（初值 'unknown'）。<Static> 渲染一次即冻结，
+  // 故必须等模型就绪后再把横幅放进首行，否则会永久定格成 unknown。模型几乎在首帧后立即就绪，
+  // 此前用户也无从产出已提交消息，因此横幅仍稳居第一行。
+  const bannerReady = currentProviderId !== 'unknown'
+  const rows: StaticRow[] = [
+    ...(bannerReady ? [{ kind: 'banner' } as StaticRow] : []),
+    ...committed.map((m): StaticRow => ({ kind: 'msg', msg: m })),
+  ]
+
   return (
-    <Box flexDirection="column" height="100%">
-      <Box padding={1}>
-        <Text bold color="cyan">Zuse 对话</Text>
-        <Text dimColor> (Ctrl+C 退出 · Esc 中断 · PageUp/PageDown 滚动)</Text>
-      </Box>
+    // width="100%" 让根框占满终端宽度（Ink 只给内部 rootNode 设了终端列宽，这里显式撑满，
+    // 子级 InputBox 的 width="100%" 才有满宽的基准）。仅横向，无关此前 height 的重绘问题。
+    <Box flexDirection="column" width="100%">
+      {/* key=generation：clear/load 整体替换会话时自增，强制 <Static> remount 重置其
+          append-only 高水位，否则换入的历史会被上一会话的水位从头截断。 */}
+      <Static key={state.generation} items={rows}>
+        {(row) =>
+          row.kind === 'banner' ? (
+            <Box key="banner" paddingTop={1}>
+              <Banner model={modelLabel} proxy={resolved.proxy} cwd={cwd} tip={terminalTip} />
+            </Box>
+          ) : (
+            <Box key={row.msg.id} paddingX={1}>
+              <StreamRenderer message={row.msg} />
+            </Box>
+          )
+        }
+      </Static>
 
-      <Box flexGrow={1} flexDirection="column">
-        {win.hiddenAbove > 0 && (
-          <Text dimColor>  ↑ 还有 {win.hiddenAbove} 条更早（PageUp 上滚）</Text>
-        )}
-        <MessageList messages={visibleMessages} />
-        {win.hiddenBelow > 0 && (
-          <Text dimColor>  ↓ 还有 {win.hiddenBelow} 条更新（PageDown 下滚 · Esc 回到底部）</Text>
-        )}
-      </Box>
-
-      <UsageFooter
-        model={modelLabel}
-        totalUsage={state.totalUsage}
-        contextTokens={state.contextTokens}
-        isThinking={state.isThinking}
-      />
+      {/* 实时帧：仍在流式的消息 + 输入框/对话框 + 页脚。 */}
+      {live.length > 0 && <MessageList messages={live} />}
 
       {exitPending && <Text color="yellow">再按一次 Ctrl+C 退出</Text>}
 
@@ -196,6 +180,13 @@ export function App({ cwd }: AppProps) {
       ) : (
         <InputBox onSubmit={handleSubmit} isDisabled={state.isThinking} />
       )}
+
+      {/* 页脚紧贴输入框下方、靠右显示（见 UsageFooter）。 */}
+      <UsageFooter
+        totalUsage={state.totalUsage}
+        contextTokens={state.contextTokens}
+        isThinking={state.isThinking}
+      />
     </Box>
   )
 }

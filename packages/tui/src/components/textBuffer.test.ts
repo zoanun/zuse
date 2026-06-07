@@ -11,7 +11,6 @@ import {
   moveEnd,
   reduce,
   splitForRender,
-  viewport,
 } from './textBuffer.js'
 
 describe('insert', () => {
@@ -149,52 +148,5 @@ describe('splitForRender', () => {
 
   it('空缓冲渲染为单行、光标为空格块', () => {
     expect(splitForRender(emptyBuffer)).toEqual([{ before: '', cursor: ' ', after: '', hasCursor: true }])
-  })
-})
-
-// 五行文本，便于测开窗：'l0\nl1\nl2\nl3\nl4'，每行长 2，行起点偏移 0/3/6/9/12，总长 14。
-describe('viewport', () => {
-  const five = 'l0\nl1\nl2\nl3\nl4'
-  // 光标所在行的 before 被切开，需拼回整行再比对前两字符。
-  const tags = (vp: ReturnType<typeof viewport>): string[] =>
-    vp.lines.map((l) => (l.before + l.cursor + l.after).slice(0, 2))
-
-  it('行数不超过 maxRows 时整窗返回、无裁剪', () => {
-    const vp = viewport({ text: 'a\nb', cursor: 3 }, 5)
-    expect(vp.hiddenAbove).toBe(0)
-    expect(vp.hiddenBelow).toBe(0)
-    expect(vp.lines).toHaveLength(2)
-  })
-
-  it('maxRows<=0 视为不开窗，整窗返回', () => {
-    const vp = viewport({ text: five, cursor: 0 }, 0)
-    expect(vp.lines).toHaveLength(5)
-    expect(vp.hiddenAbove).toBe(0)
-    expect(vp.hiddenBelow).toBe(0)
-  })
-
-  it('光标在末行时以光标为窗口底，向上开窗', () => {
-    // 光标 14 = 末行 l4 行尾；窗口取末 3 行 l2/l3/l4。
-    const vp = viewport({ text: five, cursor: 14 }, 3)
-    expect(tags(vp)).toEqual(['l2', 'l3', 'l4'])
-    expect(vp.hiddenAbove).toBe(2)
-    expect(vp.hiddenBelow).toBe(0)
-    expect(vp.lines.at(-1)?.hasCursor).toBe(true)
-  })
-
-  it('光标在首行时从顶部开窗，下方有裁剪', () => {
-    const vp = viewport({ text: five, cursor: 0 }, 3)
-    expect(tags(vp)).toEqual(['l0', 'l1', 'l2'])
-    expect(vp.hiddenAbove).toBe(0)
-    expect(vp.hiddenBelow).toBe(2)
-    expect(vp.lines[0]?.hasCursor).toBe(true)
-  })
-
-  it('光标在中间行时，光标始终落在窗口内', () => {
-    // 光标 9 = 第 4 行 l3 行首（row=3）。
-    const vp = viewport({ text: five, cursor: 9 }, 3)
-    expect(vp.hiddenAbove).toBe(1)
-    expect(vp.hiddenBelow).toBe(1)
-    expect(vp.lines.some((l) => l.hasCursor)).toBe(true)
   })
 })

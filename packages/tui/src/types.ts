@@ -7,6 +7,8 @@ export interface UIToolCall {
   status: 'running' | 'done'
   isError?: boolean
   output?: string // 工具结果，在 status === 'done' 时填入
+  // 输出超出行内展示上限时，完整内容落盘的临时文件绝对路径；UI 给出可 ctrl+点击打开的链接。
+  outputFile?: string
 }
 
 /** 会话中单条消息的 UI 状态 */
@@ -26,4 +28,8 @@ export interface ConversationState {
   isThinking: boolean // 正在等待模型响应时为 true
   totalUsage?: Usage // 整个会话的累计用量
   contextTokens?: number // 上一回合的 input_tokens —— 实时上下文大小（故障模式②）
+  // 会话代际：仅在 clear/load 这种「整体替换消息」时自增。App 把它作为 <Static> 的 key，
+  // 强制其 remount —— 否则 <Static> append-only 的内部高水位会沿用上一会话，导致换入的
+  // 历史被从头截断（甚至整段不渲染）。日常追加（流式、命令通知）不动它，保持 Static 增量特性。
+  generation: number
 }

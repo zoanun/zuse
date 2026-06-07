@@ -1,4 +1,3 @@
-#!/usr/bin/env tsx
 import { render } from 'ink'
 import { cwd as processCwd, env, stderr } from 'node:process'
 import { loadSettings, installProxy } from '@zuse/core'
@@ -19,8 +18,8 @@ const cwd = env.INIT_CWD ?? processCwd()
 try {
   const settings = loadSettings()
   try {
-    const proxy = installProxy(settings)
-    if (proxy) stderr.write(`[zuse] 出站请求经代理: ${proxy}\n`)
+    // 成功安装代理时不再向 stderr 打印——代理地址已在启动横幅的「代理」行展示，避免重复。
+    installProxy(settings)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     stderr.write(`[zuse] 代理配置无效，已降级为直连：${msg}\n`)

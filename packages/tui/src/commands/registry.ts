@@ -1,5 +1,7 @@
+import { homedir } from 'node:os'
 import type { SlashCommand } from './types.js'
 import { saveConversation, loadConversation } from './sessionStore.js'
+import { installTerminalSetup } from './terminalSetup.js'
 import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
 
 /** /model 交互式选择器的一个候选：provider+model 配对，外加是否为当前激活项。 */
@@ -237,15 +239,26 @@ const tools: SlashCommand = {
 
 const history: SlashCommand = {
   name: 'history',
-  description: '跳到对话最早处（PageUp/PageDown 滚动，Esc 回到底部）',
-  run: ({ showHistory, print }) => {
-    showHistory()
-    print('已跳到对话最早处。PageUp/PageDown 滚动，Esc 回到底部。')
+  description: '说明如何查看历史对话',
+  run: ({ print }) => {
+    // cc 式渲染：已完成的消息全部打进终端滚动区，没有应用内滚动，
+    // 直接用终端自带的滚动条 / 鼠标滚轮向上翻即可。
+    print('完整对话历史都在终端滚动区里，直接用终端的滚动条或鼠标滚轮向上查看即可。')
+  },
+}
+
+const terminalSetup: SlashCommand = {
+  name: 'terminal-setup',
+  description: '为 VSCode/Cursor/Windsurf 集成终端启用 Ctrl+Enter 换行',
+  run: async ({ print }) => {
+    // 在当前进程的真实环境上执行；纯逻辑（识别/路径/合并）已在 terminalSetup.test 覆盖。
+    const res = await installTerminalSetup({ env: process.env, platform: process.platform, home: homedir() })
+    print(res.message)
   },
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, model, tools, history]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, model, tools, history, terminalSetup]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

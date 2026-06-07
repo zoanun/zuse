@@ -45,6 +45,18 @@ describe('loadSettings', () => {
     expect(s.permissions.deny).toEqual(['Read(./.env)'])
   })
 
+  it('dedupes permission rules repeated across layers, preserving first-seen order', () => {
+    writeFileSync(p('u.json'), JSON.stringify({
+      permissions: { allow: ['Read(./**)', 'Grep', 'Glob'], ask: ['Bash(*)', 'Write(./**)'] },
+    }))
+    writeFileSync(p('l.json'), JSON.stringify({
+      permissions: { allow: ['Read(./**)', 'Grep', 'Glob', 'Bash(ls)'], ask: ['Bash(*)', 'Write(./**)'] },
+    }))
+    const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
+    expect(s.permissions.allow).toEqual(['Read(./**)', 'Grep', 'Glob', 'Bash(ls)'])
+    expect(s.permissions.ask).toEqual(['Bash(*)', 'Write(./**)'])
+  })
+
   it('ZUSE_API_KEY env overrides file apiKey', () => {
     writeFileSync(p('l.json'), JSON.stringify({ apiKey: 'file-key' }))
     process.env.ZUSE_API_KEY = 'env-key'

@@ -144,34 +144,6 @@ export function reduce(buf: TextBuffer, ev: InputEvent): TextBuffer {
   }
 }
 
-/** 输入框的可视窗口：行数超过上限时按光标行开窗，保证光标始终可见。 */
-export interface InputViewport {
-  /** 可视行切片（长度 = min(总行数, maxRows)）。 */
-  lines: RenderLine[]
-  /** 窗口上方被裁掉的行数（>0 时提示「还有 N 行」）。 */
-  hiddenAbove: number
-  /** 窗口下方被裁掉的行数。 */
-  hiddenBelow: number
-}
-
-/**
- * 把渲染行裁剪到至多 maxRows 行，避免输入框无限增高把整屏输出顶过终端高度
- *（那会触发 Ink 的重绘错位，表现为「上面一行不见了」）。
- * 以光标行作为窗口底向上开窗（编辑通常在末尾）；光标上移到窗口之上时，
- * start 自然回落到 0 一侧，保证光标行恒在可视窗口内。maxRows<=0 视为不开窗。
- */
-export function viewport(buf: TextBuffer, maxRows: number): InputViewport {
-  const all = splitForRender(buf)
-  if (maxRows <= 0 || all.length <= maxRows) {
-    return { lines: all, hiddenAbove: 0, hiddenBelow: 0 }
-  }
-  const cursorRow = all.findIndex((l) => l.hasCursor)
-  const row = cursorRow < 0 ? all.length - 1 : cursorRow
-  const start = Math.max(0, Math.min(row - maxRows + 1, all.length - maxRows))
-  const end = start + maxRows
-  return { lines: all.slice(start, end), hiddenAbove: start, hiddenBelow: all.length - end }
-}
-
 /** 按行切分文本，并在光标所在行标出三段，供组件用反显渲染光标。 */
 export function splitForRender(buf: TextBuffer): RenderLine[] {
   const { row, col } = cursorToRowCol(buf.text, buf.cursor)

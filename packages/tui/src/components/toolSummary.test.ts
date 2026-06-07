@@ -196,20 +196,22 @@ describe('summarizeOutput · 通用兜底', () => {
 })
 
 describe('summarizeOutput · Bash 类预览', () => {
-  it('正文 ≤5 行原样预览', () => {
-    expect(summarizeOutput(done({ name: 'Bash', output: 'a\nb\nc' }))).toEqual({
-      kind: 'preview',
-      lines: ['a', 'b', 'c'],
-      moreCount: 0,
-    })
-  })
-  it('正文 >5 行截前 5,余下记 moreCount', () => {
+  it('正文未触行内上限时原样全展示', () => {
     const out = '1\n2\n3\n4\n5\n6\n7'
     expect(summarizeOutput(done({ name: 'Bash', output: out }))).toEqual({
       kind: 'preview',
-      lines: ['1', '2', '3', '4', '5'],
-      moreCount: 2,
+      lines: ['1', '2', '3', '4', '5', '6', '7'],
+      moreCount: 0,
     })
+  })
+  it('正文超 10 行行内上限时截前 10,余下记 moreCount(完整输出由 hook 落盘)', () => {
+    const lines = Array.from({ length: 15 }, (_, i) => String(i + 1))
+    const result = summarizeOutput(done({ name: 'Bash', output: lines.join('\n') }))
+    expect(result.kind).toBe('preview')
+    if (result.kind !== 'preview') throw new Error('expected preview')
+    expect(result.lines).toHaveLength(10)
+    expect(result.lines[9]).toBe('10')
+    expect(result.moreCount).toBe(5)
   })
   it('剥掉 [exit code] 尾注后再切预览', () => {
     const out = 'line1\nline2\n[exit code: 1]'

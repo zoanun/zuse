@@ -11,12 +11,24 @@ describe('keyToEvent', () => {
     expect(keyToEvent('a', k())).toEqual({ type: 'insert', text: 'a' })
   })
 
-  it('Enter → submit', () => {
-    expect(keyToEvent('', k({ return: true }))).toEqual({ type: 'submit' })
+  it('Enter → submit（普通回车,Ink 给 input=\\r 且置 return 标志）', () => {
+    expect(keyToEvent('\r', k({ return: true }))).toEqual({ type: 'submit' })
   })
 
-  it('Alt+Enter → newline（meta + return）', () => {
-    expect(keyToEvent('', k({ return: true, meta: true }))).toEqual({ type: 'newline' })
+  it('Ctrl+Enter（VSCode 集成终端）→ newline（经 keybindings 发 ESC+CR,Ink 剥 ESC 后为 input=\\r 且无 return）', () => {
+    expect(keyToEvent('\r', k())).toEqual({ type: 'newline' })
+  })
+
+  it('Ctrl+J → newline（裸 LF,任何终端都能原生发出,无需 VSCode 配置；Ink 解析为 input=\\n 且无 return）', () => {
+    expect(keyToEvent('\n', k())).toEqual({ type: 'newline' })
+  })
+
+  it('Ctrl+Enter → submit（ctrl 在 return 上被忽略）', () => {
+    expect(keyToEvent('\r', k({ return: true, ctrl: true }))).toEqual({ type: 'submit' })
+  })
+
+  it('Alt+Enter → submit（meta 在 return 上被忽略）', () => {
+    expect(keyToEvent('\r', k({ return: true, meta: true }))).toEqual({ type: 'submit' })
   })
 
   it('Backspace → backspace', () => {

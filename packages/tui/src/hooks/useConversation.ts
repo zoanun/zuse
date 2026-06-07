@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import os from 'node:os'
-import type { UIMessage, ConversationState } from '../types.js'
+import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
+import { summarizeOutput } from '../components/toolSummary.js'
+import { writeToolOutputFile } from '../toolOutputFile.js'
 import {
   Conversation,
   runAgent,
@@ -31,12 +33,6 @@ interface UseConversationOptions {
   cwd: string
   /** 解析后的设置，驱动权限闸门与 client 初始化。 */
   settings: ResolvedSettings
-  /**
-   * 把历史视口滚到最早处（供 /history）。滚动 state 是纯视图关注点，归 App 持有
-   *（依赖终端尺寸与逐帧窗口计算），命令经此注入的回调触发——与 /model 选择器把状态
-   * 放进 hook 不同：那个牵涉 client 热替换，是 hook 的职责。
-   */
-  onScrollToTop?: () => void
 }
 
 interface UseConversationReturn {
@@ -57,7 +53,7 @@ interface UseConversationReturn {
   /** /model 交互式选择器是否打开（打开时 App 渲染选择器、收起输入框）。 */
   modelSelectorOpen: boolean
   /** 选择器里回车确认：切换到目标模型（不写盘）并收起选择器。 */
-  confirmModelSelection: (providerId: string, model: string) => void
+  confirmModelSelection: (providerId: string, model: string, persist: boolean) => void
   /** 选择器里 Esc 取消：仅收起，不切换。 */
   closeModelSelector: () => void
   /** 中断进行中的流式回合（Esc）。当前有回合在跑则 abort 并返回 true，否则 false。 */
@@ -73,7 +69,6 @@ export function useConversation({
   registry,
   cwd,
   settings,
-  onScrollToTop,
 }: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
@@ -140,6 +135,7 @@ export function useConversation({
     isThinking: false,
     totalUsage: undefined,
     contextTokens: undefined,
+    generation: 0,
   })
 
   // 小辅助函数：按 id 不可变地更新某一条消息。
@@ -173,6 +169,8 @@ export function useConversation({
       let currentAssistantId: string | null = null
       let accumulated = ''
       const toolBubbleId: Record<string, string> = {}
+      // 记下每个工具调用的名字,tool-result 时据此判定是否需要把超长输出落盘(见下)。
+      const toolName: Record<string, string> = {}
       let lastInputTokens: number | undefined
 
       // 把错误渲染成行内消息气泡：能接到当前助手气泡就替换其文本，否则新开一条。
@@ -210,7 +208,11 @@ export function useConversation({
           client: clientRef.current,
           registry,
           userText: text,
-          config: { model: clientRef.current.getModel(), max_tokens: maxTokens, system: systemPrompt },
+          config: {
+            model: clientRef.current.getModel(),
+            max_tokens: maxTokens,
+            system: systemPrompt,
+          },
           cwd: cwdRef.current,
           signal: controller.signal,
           tracker: trackerRef.current,
@@ -242,6 +244,7 @@ export function useConversation({
             const aid = currentAssistantId
             const tid = generateId()
             toolBubbleId[event.id] = tid
+            toolName[event.id] = event.name
             const tool = { name: event.name, input: event.input, status: 'running' as const }
             setState((prev) => ({
               ...prev,
@@ -253,11 +256,27 @@ export function useConversation({
           } else if (event.type === 'tool-result') {
             const tid = toolBubbleId[event.id]
             if (tid) {
+              // 输出超出行内展示上限(summarizeOutput 给出 moreCount>0)时,把完整输出落盘,
+              // UI 渲染可 ctrl+点击的文件路径。判定用纯函数、落盘在 setState 外完成,
+              // 避免 React 重复调用 updater 时重复写盘。
+              const name = toolName[event.id] ?? ''
+              const probe: UIToolCall = {
+                name,
+                input: {},
+                status: 'done',
+                isError: event.is_error,
+                output: event.output,
+              }
+              const summary = summarizeOutput(probe)
+              const outputFile =
+                summary.kind === 'preview' && summary.moreCount > 0
+                  ? writeToolOutputFile(name, event.output)
+                  : undefined
               patch(tid, (m) => ({
                 ...m,
                 isStreaming: false,
                 tool: m.tool
-                  ? { ...m.tool, status: 'done', isError: event.is_error, output: event.output }
+                  ? { ...m.tool, status: 'done', isError: event.is_error, output: event.output, outputFile }
                   : m.tool,
               }))
             }
@@ -308,12 +327,14 @@ export function useConversation({
 
   const clear = useCallback(() => {
     conversationRef.current.clear()
-    setState({
+    // 整体替换消息 → 自增 generation 令 <Static> remount，不再沿用旧会话的高水位。
+    setState((prev) => ({
       messages: [],
       isThinking: false,
       totalUsage: undefined,
       contextTokens: undefined,
-    })
+      generation: prev.generation + 1,
+    }))
   }, [])
 
   // 用户在对话框按键 → 兑现 agent 正在 await 的 promise，并收起对话框。
@@ -341,12 +362,15 @@ export function useConversation({
       text: m.content.map((b) => (b.type === 'text' ? b.text : '')).join(''),
       isStreaming: false,
     }))
-    setState({
+    // 同 clear：换入新会话属于整体替换，自增 generation 强制 <Static> remount，
+    // 否则换入的历史会被旧高水位从头截断。
+    setState((prev) => ({
       messages,
       isThinking: false,
       totalUsage: conv.totalUsage,
       contextTokens: undefined,
-    })
+      generation: prev.generation + 1,
+    }))
   }, [])
 
   // 运行时热替换 client，支持不清空对话历史地切换模型。
@@ -361,7 +385,8 @@ export function useConversation({
         if (persist) {
           // 扁平默认 provider（registry 里没有 'default' 条目）只存裸模型名：
           // 回读时 resolveModelSelection 仍映射回同一选择，避免写成 "default/x" 污染合成的 models 列表。
-          const isFlatDefault = sel.providerId === DEFAULT_PROVIDER_ID && !settings.providers[sel.providerId]
+          const isFlatDefault =
+            sel.providerId === DEFAULT_PROVIDER_ID && !settings.providers[sel.providerId]
           setModelInSettings(isFlatDefault ? sel.model : `${sel.providerId}/${sel.model}`)
         }
         return `已切换到 ${sel.providerId}/${sel.model}${persist ? '（已写盘）' : ''}`
@@ -372,12 +397,13 @@ export function useConversation({
     [settings],
   )
 
-  // 选择器里回车确认：切换到目标模型（不写盘，--save 仍走 /model <ref> 直输路径），并收起选择器、
-  // 把切换结果作为一条系统通知打印出来（与直输路径输出一致）。
+  // 选择器里回车确认：切换到目标模型，persist 由选项栏的 --save 复选框带过来(勾选则写盘)；
+  // 收起选择器，并把切换结果作为一条系统通知打印出来（与直输路径输出一致）。
+  // 选择器候选只来自已声明模型，选中即合法，无需复刻直输路径那套未知模型校验。
   const confirmModelSelection = useCallback(
-    (providerId: string, model: string) => {
+    (providerId: string, model: string, persist: boolean) => {
       setModelSelectorOpen(false)
-      print(switchModel({ providerId, model }, false))
+      print(switchModel({ providerId, model }, persist))
     },
     [switchModel, print],
   )
@@ -422,7 +448,6 @@ export function useConversation({
         switchModel,
         openModelSelector: () => setModelSelectorOpen(true),
         registry,
-        showHistory: () => onScrollToTop?.(),
       }
       try {
         await cmd.run(ctx)
@@ -430,7 +455,17 @@ export function useConversation({
         print(`错误：${err instanceof Error ? err.message : String(err)}`)
       }
     },
-    [sendMessage, print, clear, load, settings, currentModel, currentProviderId, switchModel, registry, onScrollToTop],
+    [
+      sendMessage,
+      print,
+      clear,
+      load,
+      settings,
+      currentModel,
+      currentProviderId,
+      switchModel,
+      registry,
+    ],
   )
 
   return {

@@ -27,8 +27,6 @@ export interface CommandContext {
   openModelSelector: () => void
   /** 工具登记表（供 /tools 列出暴露给模型的工具，按 settings.tools 过滤后）。 */
   registry: ToolRegistry
-  /** 把历史视口滚到最早处（供 /history）。滚动 state 由 App 持有，命令经此回调触发。 */
-  showHistory: () => void
 }
 
 export interface SlashCommand {
