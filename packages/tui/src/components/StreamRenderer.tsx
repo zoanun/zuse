@@ -1,32 +1,22 @@
 import { Box, Text } from 'ink'
 import { Spinner } from './Spinner.js'
+import { BLACK_CIRCLE } from './figures.js'
+import { summarizeOutput, toolSpecifier } from './toolSummary.js'
 import type { UIMessage, UIToolCall } from '../types.js'
 
 interface StreamRendererProps {
   message: UIMessage
 }
 
-/** 把一个工具的参数压成一行摘要，例如 Read(src/index.ts)。 */
-function summarizeInput(input: unknown): string {
-  if (input && typeof input === 'object') {
-    const obj = input as Record<string, unknown>
-    if (typeof obj.file_path === 'string') return obj.file_path
-    const json = JSON.stringify(obj)
-    return json.length > 60 ? json.slice(0, 60) + '…' : json
-  }
-  return ''
-}
 
 function ToolBlock({ tool }: { tool: UIToolCall }) {
+  // 标记列:运行中 spinner(青);完成 ●(绿);出错 ●(红)。独占一列,悬挂缩进。
   const marker =
     tool.status === 'running' ? (
       <Spinner />
     ) : (
-      <Text color={tool.isError ? 'red' : 'green'}>{tool.isError ? '✗' : '✓'}</Text>
+      <Text color={tool.isError ? 'red' : 'green'}>{BLACK_CIRCLE}</Text>
     )
-
-  // 取输出的第一行作为紧凑的预览。
-  const preview = tool.output ? (tool.output.split('\n')[0]?.slice(0, 80) ?? '') : ''
 
   return (
     <Box flexDirection="row" marginBottom={1}>
@@ -34,15 +24,34 @@ function ToolBlock({ tool }: { tool: UIToolCall }) {
       <Box flexDirection="column">
         <Text color="cyan">
           {tool.name}
-          <Text dimColor>({summarizeInput(tool.input)})</Text>
+          <Text dimColor>({toolSpecifier(tool.name, tool.input)})</Text>
         </Text>
-        {tool.status === 'done' && preview && (
-          <Text dimColor>
-            {tool.isError ? '错误：' : ''}
-            {preview}
-          </Text>
-        )}
+        {tool.status === 'done' && <ToolResultLine tool={tool} />}
       </Box>
+    </Box>
+  )
+}
+
+/** `⎿` 结果区:按 summarizeOutput 的判别联合渲染单行 / 多行预览 / 错误行。 */
+function ToolResultLine({ tool }: { tool: UIToolCall }) {
+  const summary = summarizeOutput(tool)
+  if (summary.kind === 'error') {
+    return <Text color="red">{`  ⎿ ${summary.text}`}</Text>
+  }
+  if (summary.kind === 'line') {
+    // line 类不会来自错误(错误走 error/preview),恒为暗色。
+    return <Text dimColor>{`  ⎿ ${summary.text}`}</Text>
+  }
+  // preview:首行带 ⎿,续行对齐到内容列(5 空格);Bash 类错误时整体着红,否则暗色。
+  const color = tool.isError ? 'red' : undefined
+  return (
+    <Box flexDirection="column">
+      {summary.lines.map((line, i) => (
+        <Text key={i} color={color} dimColor={!tool.isError}>
+          {i === 0 ? `  ⎿ ${line}` : `     ${line}`}
+        </Text>
+      ))}
+      {summary.moreCount > 0 && <Text dimColor>{`     … +${summary.moreCount} 行`}</Text>}
     </Box>
   )
 }
