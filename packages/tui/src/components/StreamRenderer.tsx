@@ -5,6 +5,7 @@ import { summarizeOutput, toolSpecifier } from './toolSummary.js'
 import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
 import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
+import { Markdown } from './markdown/Markdown.js'
 
 interface StreamRendererProps {
   message: UIMessage
@@ -149,7 +150,8 @@ export function StreamRenderer({ message }: StreamRendererProps) {
     <Box flexDirection="row" marginBottom={1}>
       <Box marginRight={1}>{message.isStreaming ? <Spinner /> : <Text color="yellow">●</Text>}</Box>
       <Box flexDirection="column">
-        <Text>{message.text}</Text>
+        {/* 流式期间走纯文本(快、稳、不抖);定稿后重渲染成富 Markdown。 */}
+        {message.isStreaming ? <Text>{message.text}</Text> : <Markdown source={message.text} />}
         {message.usage && (
           <Text dimColor>
             输入 {message.usage.input_tokens} · 输出 {message.usage.output_tokens} tokens
