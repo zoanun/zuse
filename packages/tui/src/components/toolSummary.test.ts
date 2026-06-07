@@ -194,3 +194,48 @@ describe('summarizeOutput · 通用兜底', () => {
     })
   })
 })
+
+describe('summarizeOutput · Bash 类预览', () => {
+  it('正文 ≤5 行原样预览', () => {
+    expect(summarizeOutput(done({ name: 'Bash', output: 'a\nb\nc' }))).toEqual({
+      kind: 'preview',
+      lines: ['a', 'b', 'c'],
+      moreCount: 0,
+    })
+  })
+  it('正文 >5 行截前 5,余下记 moreCount', () => {
+    const out = '1\n2\n3\n4\n5\n6\n7'
+    expect(summarizeOutput(done({ name: 'Bash', output: out }))).toEqual({
+      kind: 'preview',
+      lines: ['1', '2', '3', '4', '5'],
+      moreCount: 2,
+    })
+  })
+  it('剥掉 [exit code] 尾注后再切预览', () => {
+    const out = 'line1\nline2\n[exit code: 1]'
+    expect(summarizeOutput(done({ name: 'Bash', isError: true, output: out }))).toEqual({
+      kind: 'preview',
+      lines: ['line1', 'line2'],
+      moreCount: 0,
+    })
+  })
+  it('(no output) 哨兵 → 单行', () => {
+    expect(summarizeOutput(done({ name: 'Bash', output: '(no output)' }))).toEqual({
+      kind: 'line',
+      text: '(no output)',
+    })
+  })
+  it('WebFetch/WebSearch/LSP 同走预览', () => {
+    expect(summarizeOutput(done({ name: 'WebFetch', output: 'x\ny' }))).toEqual({
+      kind: 'preview',
+      lines: ['x', 'y'],
+      moreCount: 0,
+    })
+  })
+  it('出错且无正文(仅退出码)→ error 单行', () => {
+    expect(summarizeOutput(done({ name: 'Bash', isError: true, output: '\n[exit code: 1]' }))).toEqual({
+      kind: 'error',
+      text: '',
+    })
+  })
+})

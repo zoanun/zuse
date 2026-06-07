@@ -134,6 +134,22 @@ function writeSummary(tool: UIToolCall): OutputSummary {
   return { kind: 'line', text: `Wrote ${plural(n, 'line')}` }
 }
 
+/** Bash 类工具的 `⎿` 下预览:最多 5 行真实输出。 */
+const PREVIEW_MAX = 5
+
+function bashPreview(output: string, isError: boolean): OutputSummary {
+  if (output === '(no output)') return { kind: 'line', text: '(no output)' }
+  const body = stripTrailingNotes(output)
+  if (body === '') {
+    // 仅有状态尾注、无正文:出错取首行(渲染层着红),否则视作无输出。
+    return isError
+      ? { kind: 'error', text: output.split('\n')[0] ?? '' }
+      : { kind: 'line', text: '(no output)' }
+  }
+  const { lines, moreCount } = previewLines(body, PREVIEW_MAX)
+  return { kind: 'preview', lines, moreCount }
+}
+
 /** 渲染期从 name + input + output 推导 `⎿` 行摘要(纯函数,不调用工具)。 */
 export function summarizeOutput(tool: UIToolCall): OutputSummary {
   const output = tool.output ?? ''
@@ -155,9 +171,12 @@ export function summarizeOutput(tool: UIToolCall): OutputSummary {
       return editSummary(tool)
     case 'Write':
       return writeSummary(tool)
+    case 'Bash':
+    case 'WebFetch':
+    case 'WebSearch':
+    case 'LSP':
+      return bashPreview(output, tool.isError ?? false)
     default:
-      // Bash / WebFetch / WebSearch / LSP 的预览在 Task 5 替换此处;
-      // 现在与未知工具一并走单行计数兜底("N lines of output")。
       return { kind: 'line', text: `${plural(countLines(stripTrailingNotes(output)), 'line')} of output` }
   }
 }
