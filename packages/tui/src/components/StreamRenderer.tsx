@@ -2,6 +2,8 @@ import { Box, Text } from 'ink'
 import { Spinner } from './Spinner.js'
 import { BLACK_CIRCLE } from './figures.js'
 import { summarizeOutput, toolSpecifier } from './toolSummary.js'
+import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
+import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
 
 interface StreamRendererProps {
@@ -34,6 +36,11 @@ function ToolBlock({ tool }: { tool: UIToolCall }) {
 
 /** `⎿` 结果区:按 summarizeOutput 的判别联合渲染单行 / 多行预览 / 错误行。 */
 function ToolResultLine({ tool }: { tool: UIToolCall }) {
+  // Edit:有可用 old/new 时渲染彩色行级 diff(#2);否则回落到通用摘要。
+  if (tool.name === 'Edit' && !tool.isError) {
+    const diff = renderEditDiff(tool)
+    if (diff) return diff
+  }
   const summary = summarizeOutput(tool)
   if (summary.kind === 'error') {
     return <Text color="red">{`  ⎿ ${summary.text}`}</Text>
@@ -52,6 +59,56 @@ function ToolResultLine({ tool }: { tool: UIToolCall }) {
         </Text>
       ))}
       {summary.moreCount > 0 && <Text dimColor>{`     … +${summary.moreCount} 行`}</Text>}
+    </Box>
+  )
+}
+
+/** Edit 一次替换的处数:从工具 output "Edited X (N replacement(s))." 解析;取不到记 1。 */
+function countReplacements(output: string | undefined): number {
+  const m = (output ?? '').match(/\((\d+) replacement/)
+  return m?.[1] ? Number(m[1]) : 1
+}
+
+/**
+ * 渲染 Edit 的彩色行级 diff。数据(字符串 old/new)不可用时返回 null,
+ * 让 ToolResultLine 回落到 #1 的通用摘要。
+ */
+function renderEditDiff(tool: UIToolCall): ReactElement | null {
+  const input = tool.input as {
+    old_string?: unknown
+    new_string?: unknown
+    file_path?: unknown
+    replace_all?: unknown
+  }
+  if (typeof input.old_string !== 'string' || typeof input.new_string !== 'string') return null
+
+  const file = typeof input.file_path === 'string' ? input.file_path : ''
+  const rows = computeLineDiff(input.old_string, input.new_string)
+  const { added, removed } = diffStats(rows)
+  const { rows: shown, more } = capDiff(rows, 10)
+  // replace_all 多处替换:标题行追加 (×N);+A -R 仍按单 hunk 计。
+  const times = countReplacements(tool.output)
+  const suffix = input.replace_all === true && times > 1 ? ` (×${times})` : ''
+
+  return (
+    <Box flexDirection="column">
+      <Text dimColor>
+        {`  ⎿ Updated ${file}  `}
+        <Text color="green">{`+${added}`}</Text>
+        {' '}
+        <Text color="red">{`-${removed}`}</Text>
+        {suffix}
+      </Text>
+      {shown.map((r, i) => {
+        const prefix = r.kind === 'add' ? '+ ' : r.kind === 'del' ? '- ' : '  '
+        const color = r.kind === 'add' ? 'green' : r.kind === 'del' ? 'red' : undefined
+        return (
+          <Text key={i} color={color} dimColor={r.kind === 'context'}>
+            {`    ${prefix}${r.text}`}
+          </Text>
+        )
+      })}
+      {more > 0 && <Text dimColor>{`    … +${more} 行`}</Text>}
     </Box>
   )
 }
