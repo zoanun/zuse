@@ -1,0 +1,34 @@
+import { describe, it, expect } from 'vitest'
+import { displayWidth, decodeEntities, listPrefix } from './layout.js'
+
+describe('displayWidth', () => {
+  it('半角字符每个算 1 列', () => {
+    expect(displayWidth('abc')).toBe(3)
+  })
+  it('全角/中文字符每个算 2 列', () => {
+    expect(displayWidth('中文')).toBe(4)
+  })
+  it('混合宽度累加正确', () => {
+    expect(displayWidth('a中')).toBe(3)
+  })
+})
+
+describe('decodeEntities', () => {
+  it('还原 marked 转义的 5 个 HTML 实体', () => {
+    expect(decodeEntities('&lt;a&gt; &amp; &quot;x&quot; &#39;y&#39;')).toBe(`<a> & "x" 'y'`)
+  })
+  it('先解码其它实体、最后解码 &amp; 避免二次解码', () => {
+    expect(decodeEntities('&amp;lt;')).toBe('&lt;')
+  })
+})
+
+describe('listPrefix', () => {
+  it('无序列表用圆点', () => {
+    expect(listPrefix(false, 0, 1)).toBe('• ')
+  })
+  it('有序列表用序号,从 start 起算', () => {
+    expect(listPrefix(true, 0, 1)).toBe('1. ')
+    expect(listPrefix(true, 2, 1)).toBe('3. ')
+    expect(listPrefix(true, 0, 5)).toBe('5. ')
+  })
+})
