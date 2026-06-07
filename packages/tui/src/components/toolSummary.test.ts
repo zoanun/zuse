@@ -4,7 +4,9 @@ import {
   countLines,
   previewLines,
   toolSpecifier,
+  summarizeOutput,
 } from './toolSummary.js'
+import type { UIToolCall } from '../types.js'
 
 describe('stripTrailingNotes', () => {
   it('剥掉 Read 的 \\n\\n[truncated: …] 尾注', () => {
@@ -84,5 +86,111 @@ describe('toolSpecifier', () => {
   it('input 非对象时返回空串', () => {
     expect(toolSpecifier('Read', null)).toBe('')
     expect(toolSpecifier('Read', 'nope')).toBe('')
+  })
+})
+
+// 构造一个已完成的工具调用,便于测试 summarizeOutput。
+function done(partial: Partial<UIToolCall> & { name: string }): UIToolCall {
+  return { status: 'done', input: {}, ...partial }
+}
+
+describe('summarizeOutput · 错误分支', () => {
+  it('非输出价值类工具出错 → kind:error,取首行', () => {
+    const s = summarizeOutput(done({ name: 'Read', isError: true, output: 'File not found: x\n更多' }))
+    expect(s).toEqual({ kind: 'error', text: 'File not found: x' })
+  })
+})
+
+describe('summarizeOutput · Read', () => {
+  it('正常计行', () => {
+    expect(summarizeOutput(done({ name: 'Read', output: '1\tfoo\n2\tbar' }))).toEqual({
+      kind: 'line',
+      text: 'Read 2 lines',
+    })
+  })
+  it('单行用单数', () => {
+    expect(summarizeOutput(done({ name: 'Read', output: '1\tfoo' }))).toEqual({
+      kind: 'line',
+      text: 'Read 1 line',
+    })
+  })
+  it('带 truncated 尾注时只数正文行', () => {
+    const out = '1\ta\n2\tb\n\n[truncated: showing lines 1-2 of 9; pass offset: 3 to continue]'
+    expect(summarizeOutput(done({ name: 'Read', output: out }))).toEqual({
+      kind: 'line',
+      text: 'Read 2 lines',
+    })
+  })
+  it('空文件哨兵 → (empty file)', () => {
+    expect(summarizeOutput(done({ name: 'Read', output: '(file is empty: src/x.ts)' }))).toEqual({
+      kind: 'line',
+      text: '(empty file)',
+    })
+  })
+})
+
+describe('summarizeOutput · Glob', () => {
+  it('命中计文件数', () => {
+    expect(summarizeOutput(done({ name: 'Glob', output: 'a.ts\nb.ts\nc.ts' }))).toEqual({
+      kind: 'line',
+      text: 'Found 3 files',
+    })
+  })
+  it('无匹配哨兵 → No files matched', () => {
+    expect(summarizeOutput(done({ name: 'Glob', output: 'No files match: *.zzz' }))).toEqual({
+      kind: 'line',
+      text: 'No files matched',
+    })
+  })
+})
+
+describe('summarizeOutput · Grep', () => {
+  it('files_with_matches(默认)计文件数', () => {
+    expect(summarizeOutput(done({ name: 'Grep', output: 'a.ts\nb.ts' }))).toEqual({
+      kind: 'line',
+      text: 'Found 2 files',
+    })
+  })
+  it('content 模式计命中行数', () => {
+    const t = done({ name: 'Grep', input: { output_mode: 'content' }, output: 'a.ts:1:x\na.ts:2:y' })
+    expect(summarizeOutput(t)).toEqual({ kind: 'line', text: 'Found 2 lines' })
+  })
+  it('count 模式求和匹配数与文件数', () => {
+    const t = done({ name: 'Grep', input: { output_mode: 'count' }, output: 'a.ts:3\nb.ts:2' })
+    expect(summarizeOutput(t)).toEqual({ kind: 'line', text: 'Found 5 matches in 2 files' })
+  })
+  it('count 模式容忍 Windows 盘符路径(按最后一个冒号切)', () => {
+    const t = done({ name: 'Grep', input: { output_mode: 'count' }, output: 'C:\\src\\a.ts:4' })
+    expect(summarizeOutput(t)).toEqual({ kind: 'line', text: 'Found 4 matches in 1 file' })
+  })
+  it('无匹配哨兵 → No matches found', () => {
+    expect(summarizeOutput(done({ name: 'Grep', output: 'No matches for: zzz' }))).toEqual({
+      kind: 'line',
+      text: 'No matches found',
+    })
+  })
+})
+
+describe('summarizeOutput · Edit/Write', () => {
+  it('Edit 复用 output 的替换数,改写为 Updated <file>', () => {
+    const t = done({
+      name: 'Edit',
+      input: { file_path: 'src/x.ts' },
+      output: 'Edited src/x.ts (2 replacement(s)).',
+    })
+    expect(summarizeOutput(t)).toEqual({ kind: 'line', text: 'Updated src/x.ts (2 replacement(s))' })
+  })
+  it('Write 数 input.content 行数', () => {
+    const t = done({ name: 'Write', input: { content: 'a\nb\nc' }, output: 'Wrote 5 bytes to x' })
+    expect(summarizeOutput(t)).toEqual({ kind: 'line', text: 'Wrote 3 lines' })
+  })
+})
+
+describe('summarizeOutput · 通用兜底', () => {
+  it('未知工具数行数', () => {
+    expect(summarizeOutput(done({ name: 'Mystery', output: 'a\nb\nc\nd' }))).toEqual({
+      kind: 'line',
+      text: '4 lines of output',
+    })
   })
 })

@@ -74,3 +74,90 @@ export function toolSpecifier(name: string, input: unknown): string {
       return fallbackJson(obj)
   }
 }
+
+/** Bash 类「输出即价值」工具:输出本身就是要看的内容(Task 5 给多行预览)。 */
+function isOutputValueTool(name: string): boolean {
+  return name === 'Bash' || name === 'WebFetch' || name === 'WebSearch' || name === 'LSP'
+}
+
+/** "1 line" / "N lines" 之类的单复数;不规则复数(match→matches)传第三参。 */
+function plural(n: number, singular: string, pluralForm?: string): string {
+  return `${n} ${n === 1 ? singular : (pluralForm ?? singular + 's')}`
+}
+
+function readSummary(output: string): OutputSummary {
+  if (output.startsWith('(file is empty:')) return { kind: 'line', text: '(empty file)' }
+  return { kind: 'line', text: `Read ${plural(countLines(stripTrailingNotes(output)), 'line')}` }
+}
+
+function globSummary(output: string): OutputSummary {
+  if (output.startsWith('No files match:')) return { kind: 'line', text: 'No files matched' }
+  return { kind: 'line', text: `Found ${plural(countLines(stripTrailingNotes(output)), 'file')}` }
+}
+
+function grepSummary(tool: UIToolCall): OutputSummary {
+  const output = tool.output ?? ''
+  if (output.startsWith('No matches for:') || output.startsWith('[offset ')) {
+    return { kind: 'line', text: 'No matches found' }
+  }
+  const body = stripTrailingNotes(output)
+  const mode = (tool.input as { output_mode?: unknown }).output_mode
+  if (mode === 'count') {
+    let matches = 0
+    let files = 0
+    for (const line of body.split('\n')) {
+      const idx = line.lastIndexOf(':') // 路径可能含 ':'(Windows 盘符),取最后一个
+      if (idx === -1) continue
+      const n = Number(line.slice(idx + 1))
+      if (Number.isFinite(n)) {
+        matches += n
+        files += 1
+      }
+    }
+    return { kind: 'line', text: `Found ${plural(matches, 'match', 'matches')} in ${plural(files, 'file')}` }
+  }
+  const n = countLines(body)
+  if (mode === 'content') return { kind: 'line', text: `Found ${plural(n, 'line')}` }
+  return { kind: 'line', text: `Found ${plural(n, 'file')}` }
+}
+
+function editSummary(tool: UIToolCall): OutputSummary {
+  const file = strField(tool.input as Record<string, unknown>, 'file_path') ?? ''
+  const m = (tool.output ?? '').match(/\((\d+) replacement/)
+  const n = m?.[1] ?? '1'
+  return { kind: 'line', text: `Updated ${file} (${n} replacement(s))` }
+}
+
+function writeSummary(tool: UIToolCall): OutputSummary {
+  const content = (tool.input as { content?: unknown }).content
+  const n = typeof content === 'string' ? countLines(content) : 0
+  return { kind: 'line', text: `Wrote ${plural(n, 'line')}` }
+}
+
+/** 渲染期从 name + input + output 推导 `⎿` 行摘要(纯函数,不调用工具)。 */
+export function summarizeOutput(tool: UIToolCall): OutputSummary {
+  const output = tool.output ?? ''
+  if (tool.isError) {
+    // Bash 类即便出错也保留多行预览(报错/测试正文常多行,Task 5 实现);
+    // 其余工具错误取首行,渲染层据 tool.isError 着红。
+    if (!isOutputValueTool(tool.name)) {
+      return { kind: 'error', text: output.split('\n')[0] ?? '' }
+    }
+  }
+  switch (tool.name) {
+    case 'Read':
+      return readSummary(output)
+    case 'Glob':
+      return globSummary(output)
+    case 'Grep':
+      return grepSummary(tool)
+    case 'Edit':
+      return editSummary(tool)
+    case 'Write':
+      return writeSummary(tool)
+    default:
+      // Bash / WebFetch / WebSearch / LSP 的预览在 Task 5 替换此处;
+      // 现在与未知工具一并走单行计数兜底("N lines of output")。
+      return { kind: 'line', text: `${plural(countLines(stripTrailingNotes(output)), 'line')} of output` }
+  }
+}
