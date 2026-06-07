@@ -54,3 +54,59 @@ export function wrapCell(text: string, width: number): string[] {
   if (line !== '' || lines.length === 0) lines.push(line)
   return lines
 }
+
+/** 边框线种类:顶 / 中分隔 / 底。 */
+export type BorderKind = 'top' | 'mid' | 'bottom'
+
+/**
+ * 计算各列宽度。rows 含表头,每行是各列文本。
+ * 总宽(Σ列宽 + 3×列数 + 1)超过 maxWidth 时,按自然宽度比例压缩内容预算。
+ */
+export function computeColumnWidths(rows: string[][], maxWidth: number): number[] {
+  const cols = rows[0]?.length ?? 0
+  if (cols === 0) return []
+  const natural: number[] = []
+  for (let c = 0; c < cols; c++) {
+    let w = 0
+    for (const row of rows) w = Math.max(w, displayWidth(row[c] ?? ''))
+    natural[c] = w
+  }
+  const overhead = cols * 3 + 1
+  const naturalSum = natural.reduce((a, b) => a + b, 0)
+  if (naturalSum + overhead <= maxWidth) return natural
+  // 超宽:把可用内容预算按自然宽度比例分给各列,每列至少 1。
+  const contentBudget = Math.max(cols, maxWidth - overhead)
+  const denom = naturalSum || 1
+  return natural.map((w) => Math.max(1, Math.floor((w / denom) * contentBudget)))
+}
+
+/** 拼一条边框线,段宽 = 列宽 + 2(覆盖左右各 1 空格)。 */
+export function buildBorderLine(widths: number[], kind: BorderKind): string {
+  const corners: Record<BorderKind, [string, string, string]> = {
+    top: ['┌', '┬', '┐'],
+    mid: ['├', '┼', '┤'],
+    bottom: ['└', '┴', '┘'],
+  }
+  const [left, mid, right] = corners[kind]
+  const segments = widths.map((w) => '─'.repeat(w + 2))
+  return left + segments.join(mid) + right
+}
+
+/** 拼一行数据(可能折成多物理行):'│' + 每列 (' ' + 对齐填充 + ' ') + '│'。 */
+export function buildRowLines(
+  cells: string[],
+  widths: number[],
+  aligns: CellAlign[],
+): string[] {
+  const wrapped = cells.map((cell, i) => wrapCell(cell, widths[i] ?? 0))
+  const height = Math.max(1, ...wrapped.map((w) => w.length))
+  const lines: string[] = []
+  for (let r = 0; r < height; r++) {
+    const parts = widths.map((w, i) => {
+      const fragment = wrapped[i]?.[r] ?? ''
+      return ' ' + padCell(fragment, w, aligns[i] ?? 'left') + ' '
+    })
+    lines.push('│' + parts.join('│') + '│')
+  }
+  return lines
+}
