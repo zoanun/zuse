@@ -20,12 +20,12 @@ export function UsageFooter({ model, totalUsage, contextTokens, isThinking }: Us
 
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1}>
-      <Text dimColor>Model: {model}</Text>
+      <Text dimColor>模型 {model}</Text>
       <Text dimColor> | </Text>
       {totalUsage ? (
         <Text dimColor>
-          {/* input_tokens 已归一为「不含缓存」，故 Total 显式加回缓存读写，否则开缓存时会少计。 */}
-          Total:{' '}
+          {/* input_tokens 已归一为「不含缓存」，故累计显式加回缓存读写，否则开缓存时会少计。 */}
+          累计{' '}
           {totalUsage.input_tokens +
             totalUsage.output_tokens +
             (totalUsage.cache_read_input_tokens ?? 0) +
@@ -33,25 +33,25 @@ export function UsageFooter({ model, totalUsage, contextTokens, isThinking }: Us
           tokens
         </Text>
       ) : (
-        <Text dimColor>No tokens yet</Text>
+        <Text dimColor>暂无用量</Text>
       )}
       {contextTokens !== undefined && (
         <>
           <Text dimColor> | </Text>
           <Text dimColor color={ctxColor}>
-            ctx: {contextTokens}
+            上下文 {contextTokens}
           </Text>
         </>
       )}
       {totalUsage && (totalUsage.cache_read_input_tokens ?? 0) > 0 && (
         <Text dimColor>
-          {' · cache '}
-          {((totalUsage.cache_read_input_tokens ?? 0) / 1000).toFixed(1)}k read
+          {' · 缓存命中 '}
+          {((totalUsage.cache_read_input_tokens ?? 0) / 1000).toFixed(1)}k
         </Text>
       )}
       {isThinking && (
         <Text dimColor color="yellow">
-          {' | '}Thinking...
+          {' | '}思考中…
         </Text>
       )}
     </Box>

@@ -38,7 +38,7 @@ function ToolBlock({ tool }: { tool: UIToolCall }) {
         </Text>
         {tool.status === 'done' && preview && (
           <Text dimColor>
-            {tool.isError ? 'error: ' : ''}
+            {tool.isError ? '错误：' : ''}
             {preview}
           </Text>
         )}
@@ -86,7 +86,7 @@ export function StreamRenderer({ message }: StreamRendererProps) {
         <Text>{message.text}</Text>
         {message.usage && (
           <Text dimColor>
-            Tokens: {message.usage.input_tokens} in / {message.usage.output_tokens} out
+            输入 {message.usage.input_tokens} · 输出 {message.usage.output_tokens} tokens
           </Text>
         )}
       </Box>

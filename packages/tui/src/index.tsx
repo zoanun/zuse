@@ -29,4 +29,6 @@ try {
   // loadSettings 失败：交由 App 统一处理配置错误。
 }
 
-render(<App cwd={cwd} />)
+// exitOnCtrlC:false 关掉 Ink 默认的「单击 Ctrl+C 立即退出」，改由 App 实现双击退出，
+// 避免误触一次就丢掉会话（单击 Esc 才是中断流式）。
+render(<App cwd={cwd} />, { exitOnCtrlC: false })

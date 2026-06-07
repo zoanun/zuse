@@ -25,7 +25,7 @@
     "defaultMode": "default",
     "allow": ["Read(./**)", "Grep", "Glob"],
     "ask": ["Bash(*)", "Write(./**)", "Edit(./**)"],
-    "deny": ["Read(./.env)", "Read(./**/.env)", "Bash(rm -rf *)"]
+    "deny": ["Bash(rm -rf *)"]
   },
   "webSearch": {
     "backend": "tavily",

@@ -1,6 +1,40 @@
 import type { SlashCommand } from './types.js'
 import { saveConversation, loadConversation } from './sessionStore.js'
-import { resolveModelSelection, DEFAULT_PROVIDER_ID } from '@zuse/core'
+import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
+
+/** /model 交互式选择器的一个候选：provider+model 配对，外加是否为当前激活项。 */
+export interface ModelOption {
+  providerId: string
+  model: string
+  /** 是否当前激活的 provider+model 配对（供选择器高亮）。 */
+  isCurrent: boolean
+}
+
+/**
+ * 把 settings 里各 provider 的 models 清单展开成选择器候选。
+ * 当前项按 provider+model 同时匹配才标记（重名模型不误标）。
+ * 当前模型不在任何已声明清单中（扁平默认配置 / 未列 models 的 provider / 离群配置）时，
+ * 补一条当前项并高亮——否则选择器里看不到「现在用的是什么」。
+ */
+export function buildModelOptions(
+  settings: ResolvedSettings,
+  currentProviderId: string,
+  currentModel: string,
+): ModelOption[] {
+  const options: ModelOption[] = []
+  let currentSeen = false
+  for (const [id, p] of Object.entries(settings.providers)) {
+    for (const m of p.models ?? []) {
+      const isCurrent = id === currentProviderId && m === currentModel
+      if (isCurrent) currentSeen = true
+      options.push({ providerId: id, model: m, isCurrent })
+    }
+  }
+  if (!currentSeen) {
+    options.push({ providerId: currentProviderId, model: currentModel, isCurrent: true })
+  }
+  return options
+}
 
 /** 解析后的斜杠输入。null 表示"不是命令 —— 当作一条聊天消息处理"。 */
 interface ParsedCommand {
@@ -10,10 +44,10 @@ interface ParsedCommand {
 
 const help: SlashCommand = {
   name: 'help',
-  description: 'List available commands',
+  description: '列出所有可用命令',
   run: ({ print }) => {
-    const lines = COMMANDS.map((c) => `  /${c.name.padEnd(6)} ${c.description}`)
-    print(['Available commands:', ...lines].join('\n'))
+    const lines = COMMANDS.map((c) => `  /${c.name.padEnd(8)} ${c.description}`)
+    print(['可用命令:', ...lines].join('\n'))
   },
 }
 
@@ -60,7 +94,7 @@ function maskKey(key: string | undefined): string {
 
 const config: SlashCommand = {
   name: 'config',
-  description: 'Show the effective settings (merged from all layers)',
+  description: '显示当前生效配置（三层合并后）',
   run: ({ settings, print }) => {
     const p = settings.permissions
     const t = settings.tools
@@ -88,67 +122,48 @@ const config: SlashCommand = {
 
 const clear: SlashCommand = {
   name: 'clear',
-  description: 'Clear the conversation history',
+  description: '清空对话历史',
   run: ({ clear, print }) => {
     clear()
-    print('Conversation cleared.')
+    print('已清空对话。')
   },
 }
 
 const save: SlashCommand = {
   name: 'save',
-  description: 'Save the conversation: /save <name>',
+  description: '保存当前对话：/save <名称>',
   run: async ({ args, conversation, print }) => {
     if (!args) {
-      print('Usage: /save <name>')
+      print('用法：/save <名称>')
       return
     }
     const path = await saveConversation(args, conversation)
-    print(`Saved to ${path}`)
+    print(`已保存到 ${path}`)
   },
 }
 
 const load: SlashCommand = {
   name: 'load',
-  description: 'Load a saved conversation: /load <name>',
+  description: '加载已保存的对话：/load <名称>',
   run: async ({ args, load: replaceConversation, print }) => {
     if (!args) {
-      print('Usage: /load <name>')
+      print('用法：/load <名称>')
       return
     }
     const conv = await loadConversation(args)
     replaceConversation(conv)
-    print(`Loaded "${args}" (${conv.length} messages).`)
+    print(`已加载 "${args}"（${conv.length} 条消息）。`)
   },
 }
 
 const model: SlashCommand = {
   name: 'model',
-  description: 'List or switch model: /model [<provider/model>] [--save]',
-  run: ({ args, settings, currentModel, currentProviderId, switchModel, print }) => {
+  description: '查看或切换模型：/model [<provider/model>] [--save]',
+  run: ({ args, settings, switchModel, print, openModelSelector }) => {
     if (!args) {
-      // 无参：列出所有可用模型，当前模型标星。
-      const lines: string[] = ['可用模型（* = 当前）:']
-      let starred = false
-      for (const [id, p] of Object.entries(settings.providers)) {
-        const models = p.models && p.models.length ? p.models : ['(未列出，可自由输入)']
-        for (const m of models) {
-          // provider + model 同时匹配才标星：重名模型（如多个 provider 都有 deepseek-v4-flash）
-          // 下，只比模型名会把每个同名条目都标成当前，造成多个 *。
-          const isCurrent = id === currentProviderId && m === currentModel
-          if (isCurrent) starred = true
-          lines.push(`  ${isCurrent ? '*' : ' '} ${id}/${m}`)
-        }
-      }
-      if (Object.keys(settings.providers).length === 0) {
-        lines.push(`  * default/${currentModel}`)
-        lines.push('  (未配置 providers；当前用扁平配置的 default provider，可 /model <model> 换模型)')
-      } else if (!starred) {
-        // 当前模型不在任何已声明清单里（清单未收录的合法模型，或历史遗留的离群配置）。
-        // 仍显式标出来，否则列表头写着「* = 当前」却一个星都没有，看不出当前用的是什么。
-        lines.push(`  * ${currentProviderId}/${currentModel}  (当前；不在已声明列表中)`)
-      }
-      print(lines.join('\n'))
+      // 无参：打开交互式选择器（方向键 + 输入过滤 + 滚动视口）。候选清单与当前项高亮
+      // 由 App 用 buildModelOptions 计算；选中即切换（不写盘），--save 走下方直输路径。
+      openModelSelector()
       return
     }
     // 有参：切换模型，可选 --save 写盘。
@@ -158,7 +173,7 @@ const model: SlashCommand = {
     // join(' ') 会把多余词拼进名字（如 "/model a/b note" → "b note"）造成切换失败。
     const ref = parts.find((x) => x !== '--save') ?? ''
     if (!ref) {
-      print('Usage: /model <provider/model> [--save]')
+      print('用法：/model <provider/model> [--save]')
       return
     }
     // 含斜杠：按 provider/model 解析；否则只换 model，保留当前 provider。
@@ -198,8 +213,39 @@ const model: SlashCommand = {
   },
 }
 
+const tools: SlashCommand = {
+  name: 'tools',
+  description: '列出暴露给模型的工具',
+  run: ({ registry, settings, print }) => {
+    // 用 getDefinitions（而非 list）：它按 settings.tools 的 enabled/disabled 过滤，
+    // 列出的正是模型这一会话真正能看到/调用的工具，而非全部已注册的。
+    const defs = registry.getDefinitions(settings.tools)
+    if (defs.length === 0) {
+      print('（当前没有暴露给模型的工具——检查 settings.tools 的 enabled/disabled。）')
+      return
+    }
+    const lines = [`可用工具（${defs.length} 个，已暴露给模型）:`]
+    for (const d of defs) {
+      // 工具描述常是多行长文，这里只取首行并截断，保证一行一个工具、列表清爽。
+      const summary = (d.description.split('\n')[0] ?? '').trim()
+      const short = summary.length > 60 ? summary.slice(0, 59) + '…' : summary
+      lines.push(`  ${d.name.padEnd(10)} ${short}`)
+    }
+    print(lines.join('\n'))
+  },
+}
+
+const history: SlashCommand = {
+  name: 'history',
+  description: '跳到对话最早处（PageUp/PageDown 滚动，Esc 回到底部）',
+  run: ({ showHistory, print }) => {
+    showHistory()
+    print('已跳到对话最早处。PageUp/PageDown 滚动，Esc 回到底部。')
+  },
+}
+
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, model]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, model, tools, history]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

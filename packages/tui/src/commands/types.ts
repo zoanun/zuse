@@ -1,4 +1,4 @@
-import type { Conversation, ResolvedSettings, ModelSelection } from '@zuse/core'
+import type { Conversation, ResolvedSettings, ModelSelection, ToolRegistry } from '@zuse/core'
 
 /**
  * 斜杠命令运行时被交予的东西。真正的 state 由 hook 持有；命令只通过这些
@@ -23,6 +23,12 @@ export interface CommandContext {
   currentProviderId: string
   /** 切换 model；persist=true 时写盘。返回给用户看的提示串。 */
   switchModel: (sel: ModelSelection, persist: boolean) => string
+  /** 打开 /model 交互式选择器（无参 /model 调用）。呈现层在 App 里渲染。 */
+  openModelSelector: () => void
+  /** 工具登记表（供 /tools 列出暴露给模型的工具，按 settings.tools 过滤后）。 */
+  registry: ToolRegistry
+  /** 把历史视口滚到最早处（供 /history）。滚动 state 由 App 持有，命令经此回调触发。 */
+  showHistory: () => void
 }
 
 export interface SlashCommand {

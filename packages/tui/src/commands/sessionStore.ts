@@ -13,7 +13,7 @@ const SESSIONS_DIR = join(homedir(), '.zuse', 'sessions')
 function safeName(name: string): string {
   const cleaned = name.trim().replace(/[^a-zA-Z0-9_.-]/g, '_')
   if (!cleaned || cleaned === '.' || cleaned === '..') {
-    throw new Error(`Invalid session name: "${name}"`)
+    throw new Error(`无效的会话名："${name}"`)
   }
   return cleaned
 }
@@ -37,7 +37,7 @@ export async function loadConversation(name: string): Promise<Conversation> {
   try {
     raw = await readFile(path, 'utf8')
   } catch {
-    throw new Error(`No saved session named "${safeName(name)}"`)
+    throw new Error(`找不到名为 "${safeName(name)}" 的已保存会话`)
   }
   const data = JSON.parse(raw) as ConversationSnapshot
   return Conversation.fromJSON(data)

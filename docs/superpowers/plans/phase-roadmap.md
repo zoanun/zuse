@@ -483,6 +483,16 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 - **`/model` 交互式选择器**（设计已定，2026-06-06）
 - 权限批准框改 CC 风格可选列表 / 输入框多行编辑 / 工具执行展示对齐 CC / TUI 文案全中文化 / Markdown 富渲染（详见下方各小节，2026-06-06 从 BACKLOG 折叠进来）
 
+#### Session 1：StreamRenderer 渲染层重构（协调说明，2026-06-07）
+
+下面的 **工具执行展示对齐 CC** + **Edit diff 渲染** + **Markdown 富渲染** 三块都落在同一个文件 [`StreamRenderer.tsx`](../../../packages/tui/src/components/StreamRenderer.tsx)，并行做会互相冲突，故合并为一个工作会话「Session 1：渲染层重构」，内部按 commit 拆分（至少：工具块 / Edit diff / Markdown），逐块各自 spec→plan。三块均**不改 `useConversation`**（前导理由↔tool_use 是纯数组相邻、渲染层即可处理；详见 #1 spec §3）。
+
+设计就绪度（三块设计均已就绪，2026-06-07）：
+
+- **Markdown 富渲染**：设计 + spec + plan 已完成（spec [`2026-06-07-zuse-markdown-rendering-design.md`](../specs/2026-06-07-zuse-markdown-rendering-design.md)、plan [`2026-06-07-zuse-markdown-rendering.md`](2026-06-07-zuse-markdown-rendering.md)），选型已定为**自渲染**（marked 词法器 + 手写 Ink 组件）。
+- **工具块 CC 风格**：spec 已完成 [`2026-06-07-zuse-tool-block-rendering-design.md`](../specs/2026-06-07-zuse-tool-block-rendering-design.md)。骨架 `●`+`⎿`、渲染层零分组、按工具 OUT 摘要映射、Bash 类预览 5 行;纯逻辑抽到 `toolSummary.ts`。
+- **Edit diff 渲染**：spec 已完成 [`2026-06-07-zuse-edit-diff-rendering-design.md`](../specs/2026-06-07-zuse-edit-diff-rendering-design.md)。建立在 #1 之上;行级 LCS 内部 diff（红删/绿增/暗上下文）、全上下文总限 10 行、从 `input.old_string`/`new_string` 渲染期计算;纯逻辑抽到 `editDiff.ts`。仅 Edit,Write 不做。
+
 #### `/model` 交互式选择器（已敲定的设计决策）
 
 把现在 `/model` 无参时的 40+ 行纯文本 dump 换成一个交互式覆盖层。**形态：键盘驱动 + 输入即模糊过滤 + 滚动视口**：
@@ -511,12 +521,14 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 #### 工具执行展示对齐 CC 风格
 
-现状：[`packages/tui/src/components/StreamRenderer.tsx`](../../../packages/tui/src/components/StreamRenderer.tsx) 的 `ToolBlock`——运行时一个 spinner、完成后 `✓`/`✗`，旁边一行青色 `Name(args)`，下面只有一行暗色输出首行预览（截 80 字符），看不到"为什么调"和完整 IN/OUT。期望对齐 CC，每次工具调用渲染成一个**带框**的块，含三段：
+现状：[`packages/tui/src/components/StreamRenderer.tsx`](../../../packages/tui/src/components/StreamRenderer.tsx) 的 `ToolBlock`——运行时一个 spinner、完成后 `✓`/`✗`，旁边一行青色 `Name(args)`，下面只有一行暗色输出首行预览（截 80 字符），看不到"为什么调"和完整 IN/OUT。期望对齐 CC，每次工具调用渲染成一个块。
 
-- **为什么执行**：模型在该工具调用前后的意图说明（助手文本里"我来读一下 X / 接着跑测试"那类前导句）。当前 `StreamRenderer` 把助手文本和工具块分开渲染，需把工具调用和它的前导理由关联起来展示（可能要在 `useConversation` 里把前导文本与紧随的 tool_use 关联，记下这点依赖）。
-- **IN**：本次调用的完整入参（不只是单行摘要）。
-- **OUT**：工具返回内容，带按工具类型定制的摘要——`Read` 在标题旁直接显示文件名，参照 CC 去掉括号、只写工具名 + 参数（如 `Read src/index.ts` 配 `Read 120 lines`，不要 `Read(src/index.ts)`），`Glob` 报命中文件数（`Found 8 files`），`Grep` 报输出行数（`49 lines of output`），`Edit`/`Write` 显示行变更数（`+2 -3`）；多行折叠可展开，错误态明显标识。
-- 整块用边框（类似 CC 的 `●` 标题 + `⎿` 缩进引导）框起来。纯呈现层，不动工具执行逻辑。
+**已敲定设计决策（2026-06-07，brainstorm 中）：**
+
+1. **显示密度 = 固定紧凑、对齐 CC、不做交互式展开**（滚动日志里历史块无法再聚焦交互）。每块固定为：前导理由（若有）+ 一行标题 `Tool args` + 按工具定制的结果摘要行；超长 OUT 截断成「+N lines」。
+2. **前导理由↔工具的关联放在渲染层,不改 `useConversation`。** 数据流是 `[assistant 文本气泡]→[tool 气泡]…` 交替,前导理由就是紧挨 tool 气泡前面那个 assistant 气泡。设计细化后确认:这种关联是纯「数组相邻」,**无需任何分组遍历** —— 每个气泡各自独立渲染,只要 assistant 与 tool 标记都用 `●`、落同一左槽、内容从 col 2 起,前导+工具+结果就自然读成一组。故 `MessageList` 也不改。hook 维持无状态。
+
+**设计已定（2026-06-07）= spec [`2026-06-07-zuse-tool-block-rendering-design.md`](../specs/2026-06-07-zuse-tool-block-rendering-design.md)。** 骨架 `●`+`⎿`(`●` 平台适配:darwin `⏺`);specifier 按工具取主参数;OUT 摘要按工具映射(Read `Read N lines` / Glob·Grep `Found N …` / Write `Wrote N lines` / Edit `Updated <file> (N replacement(s))`,`+A -R` 彩色 diff 归 #2);Bash 等「输出即价值」类工具在 `⎿` 下固定预览最多 5 行 + 暗色 `… +K 行`;错误态取首行红色;无前导时工具块独立成行、不放占位。纯逻辑抽到 `toolSummary.ts` 单测覆盖。待 Session 1 统一实现。
 
 #### TUI 文案全中文化
 
@@ -526,8 +538,7 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 现状：助手回复走 `StreamRenderer.tsx` 的 `<Text>{text}</Text>`，Ink 不解析 markdown，`## 标题`、`**加粗**`、代码块都显示成字面量。
 
-- 选型 A：`marked` + `marked-terminal` 或 `ink-markdown`，省事。
-- 选型 B（更贴合"手搓"学习目标）：自渲染。难点是流式——文本由 `text-delta` 逐段拼接，某一刻可能只拿到半个代码围栏，边解析边渲染会闪烁。参考 CC 双态策略：流式期间按纯文本走，`message-stop` 定稿后再重渲染成富文本。这个"流式 vs 定稿"双态值得专门学。
+**选型已定（2026-06-07）= 自渲染（Route A）**：用 `marked.lexer()` 仅做词法分析，手写映射到原生 Ink 组件（而非 `marked-terminal`/`ink-markdown` 的预渲染定宽 ANSI 串——后者不随终端宽度 reflow）。范围 = 第二档元素集 + GFM 表格，**不做语法高亮**。流式用双态策略（流式期纯文本，`message-stop` 定稿后重渲染富文本），契合现有 `isStreaming` 字段、无需改 hook。详见 spec [`2026-06-07-zuse-markdown-rendering-design.md`](../specs/2026-06-07-zuse-markdown-rendering-design.md) 与 plan [`2026-06-07-zuse-markdown-rendering.md`](2026-06-07-zuse-markdown-rendering.md)。
 
 ---
 

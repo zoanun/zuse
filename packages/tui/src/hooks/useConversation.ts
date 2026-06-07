@@ -31,6 +31,12 @@ interface UseConversationOptions {
   cwd: string
   /** 解析后的设置，驱动权限闸门与 client 初始化。 */
   settings: ResolvedSettings
+  /**
+   * 把历史视口滚到最早处（供 /history）。滚动 state 是纯视图关注点，归 App 持有
+   *（依赖终端尺寸与逐帧窗口计算），命令经此注入的回调触发——与 /model 选择器把状态
+   * 放进 hook 不同：那个牵涉 client 热替换，是 hook 的职责。
+   */
+  onScrollToTop?: () => void
 }
 
 interface UseConversationReturn {
@@ -48,6 +54,14 @@ interface UseConversationReturn {
   clientError: string | undefined
   /** 运行时切换 model；persist=true 时写盘。 */
   switchModel: (sel: ModelSelection, persist: boolean) => string
+  /** /model 交互式选择器是否打开（打开时 App 渲染选择器、收起输入框）。 */
+  modelSelectorOpen: boolean
+  /** 选择器里回车确认：切换到目标模型（不写盘）并收起选择器。 */
+  confirmModelSelection: (providerId: string, model: string) => void
+  /** 选择器里 Esc 取消：仅收起，不切换。 */
+  closeModelSelector: () => void
+  /** 中断进行中的流式回合（Esc）。当前有回合在跑则 abort 并返回 true，否则 false。 */
+  interrupt: () => boolean
 }
 
 function generateId(): string {
@@ -59,6 +73,7 @@ export function useConversation({
   registry,
   cwd,
   settings,
+  onScrollToTop,
 }: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
@@ -89,6 +104,8 @@ export function useConversation({
   const [currentProviderId, setCurrentProviderId] = useState<string>('unknown')
   // client 初始化失败时的错误信息（首次 effect 里设置）。
   const [clientError, setClientError] = useState<string | undefined>(undefined)
+  // /model 交互式选择器是否打开；打开时 App 渲染选择器、收起输入框。
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
 
   // 系统提示词在挂载时拼一次：身份提示词 + 真实运行环境（平台/shell/目录/日期）。
   // 没有环境块时模型只能凭训练惯性假设 Unix，在 Windows 上张口就 pwd/ls 而报错。
@@ -113,7 +130,7 @@ export function useConversation({
       setCurrentModel(clientRef.current.getModel())
       setCurrentProviderId(resolveModelSelection(settings).providerId)
     } catch (err) {
-      setClientError(err instanceof Error ? err.message : 'Failed to init client')
+      setClientError(err instanceof Error ? err.message : '初始化客户端失败')
     }
   }, []) // 空依赖：settings 在整个会话生命周期内不变，仅首次挂载运行一次
 
@@ -134,7 +151,7 @@ export function useConversation({
     async (text: string) => {
       // client 尚未初始化（effect 还未运行或初始化失败）。
       if (!clientRef.current) {
-        setState((prev) => ({ ...prev, error: 'Client not initialized' }))
+        setState((prev) => ({ ...prev, error: '客户端未初始化' }))
         return
       }
       const conversation = conversationRef.current
@@ -166,12 +183,24 @@ export function useConversation({
           ...prev,
           messages: aid
             ? prev.messages.map((m) =>
-                m.id === aid ? { ...m, isStreaming: false, text: `Error: ${msg}` } : m,
+                m.id === aid ? { ...m, isStreaming: false, text: `错误：${msg}` } : m,
               )
             : [
                 ...prev.messages,
-                { id: generateId(), role: 'assistant', text: `Error: ${msg}`, isStreaming: false },
+                { id: generateId(), role: 'assistant', text: `错误：${msg}`, isStreaming: false },
               ],
+        }))
+      }
+
+      // Esc 中断：把任何进行中的气泡定格（停掉 spinner），追加一行暗色「已中断」通知。
+      // 与 showError 分开——中断是用户主动行为，不该渲染成红色错误。
+      const showAborted = (): void => {
+        setState((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages.map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
+            { id: generateId(), role: 'system', text: '⏹ 已中断', isStreaming: false },
+          ],
         }))
       }
 
@@ -248,7 +277,9 @@ export function useConversation({
               ],
             }))
           } else if (event.type === 'error') {
-            showError(event.message)
+            // 中断引发的错误（abort 经 runAgent 以 error 事件透出时）不渲染成错误。
+            if (controller.signal.aborted) showAborted()
+            else showError(event.message)
           }
         }
 
@@ -261,8 +292,12 @@ export function useConversation({
           contextTokens: lastInputTokens ?? prev.contextTokens,
         }))
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error'
-        showError(message)
+        // abort 多半以抛出 AbortError 的形式中断循环；按中断而非错误处理。
+        if (controller.signal.aborted) {
+          showAborted()
+        } else {
+          showError(err instanceof Error ? err.message : '未知错误')
+        }
         setState((prev) => ({ ...prev, isThinking: false }))
       } finally {
         abortRef.current = null
@@ -337,6 +372,31 @@ export function useConversation({
     [settings],
   )
 
+  // 选择器里回车确认：切换到目标模型（不写盘，--save 仍走 /model <ref> 直输路径），并收起选择器、
+  // 把切换结果作为一条系统通知打印出来（与直输路径输出一致）。
+  const confirmModelSelection = useCallback(
+    (providerId: string, model: string) => {
+      setModelSelectorOpen(false)
+      print(switchModel({ providerId, model }, false))
+    },
+    [switchModel, print],
+  )
+
+  // 选择器里 Esc 取消：仅收起，不切换、不打印。
+  const closeModelSelector = useCallback(() => {
+    setModelSelectorOpen(false)
+  }, [])
+
+  // 中断进行中的流式回合（Esc）。signal 早已穿过 runAgent 接到每个工具，abort 后
+  // 循环会以抛出 / error 事件结束，并由上面的 showAborted 收尾。无回合在跑则返回 false，
+  // 让上层把 Esc 改作他用（如回到底部）。
+  const interrupt = useCallback((): boolean => {
+    const controller = abortRef.current
+    if (!controller) return false
+    controller.abort()
+    return true
+  }, [])
+
   // 输入框唯一的入口：一条斜杠命令，或一条聊天消息。
   const submit = useCallback(
     async (input: string) => {
@@ -347,7 +407,7 @@ export function useConversation({
       }
       const cmd = findCommand(parsed.name)
       if (!cmd) {
-        print(`Unknown command: /${parsed.name}. Type /help for a list.`)
+        print(`未知命令 /${parsed.name}。输入 /help 查看可用命令。`)
         return
       }
       const ctx: CommandContext = {
@@ -360,15 +420,32 @@ export function useConversation({
         currentModel,
         currentProviderId,
         switchModel,
+        openModelSelector: () => setModelSelectorOpen(true),
+        registry,
+        showHistory: () => onScrollToTop?.(),
       }
       try {
         await cmd.run(ctx)
       } catch (err) {
-        print(`Error: ${err instanceof Error ? err.message : String(err)}`)
+        print(`错误：${err instanceof Error ? err.message : String(err)}`)
       }
     },
-    [sendMessage, print, clear, load, settings, currentModel, currentProviderId, switchModel],
+    [sendMessage, print, clear, load, settings, currentModel, currentProviderId, switchModel, registry, onScrollToTop],
   )
 
-  return { state, submit, clear, pendingPermission, resolvePermission, currentModel, currentProviderId, clientError, switchModel }
+  return {
+    state,
+    submit,
+    clear,
+    pendingPermission,
+    resolvePermission,
+    currentModel,
+    currentProviderId,
+    clientError,
+    switchModel,
+    modelSelectorOpen,
+    confirmModelSelection,
+    closeModelSelector,
+    interrupt,
+  }
 }
