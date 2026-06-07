@@ -55,3 +55,20 @@ export function computeLineDiff(oldStr: string, newStr: string): DiffRow[] {
   }
   return rows
 }
+
+/** 统计新增 / 删除行数(供标题行的 +A -R)。 */
+export function diffStats(rows: DiffRow[]): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  for (const r of rows) {
+    if (r.kind === 'add') added++
+    else if (r.kind === 'del') removed++
+  }
+  return { added, removed }
+}
+
+/** 收口:取前 max 行,more = 截掉的行数(为 0 表示未截)。 */
+export function capDiff(rows: DiffRow[], max: number): { rows: DiffRow[]; more: number } {
+  if (rows.length <= max) return { rows, more: 0 }
+  return { rows: rows.slice(0, max), more: rows.length - max }
+}

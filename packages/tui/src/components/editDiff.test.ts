@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { computeLineDiff } from './editDiff.js'
+import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
+import type { DiffRow } from './editDiff.js'
 
 describe('computeLineDiff', () => {
   it('纯新增:尾部加一行', () => {
@@ -36,5 +37,40 @@ describe('computeLineDiff', () => {
       { kind: 'context', text: '' },
       { kind: 'context', text: 'b' },
     ])
+  })
+})
+
+describe('diffStats', () => {
+  it('分别数 add / del,context 不计', () => {
+    const rows: DiffRow[] = [
+      { kind: 'context', text: 'a' },
+      { kind: 'del', text: 'x' },
+      { kind: 'add', text: 'y' },
+      { kind: 'add', text: 'z' },
+    ]
+    expect(diffStats(rows)).toEqual({ added: 2, removed: 1 })
+  })
+  it('空 diff 全 0', () => {
+    expect(diffStats([])).toEqual({ added: 0, removed: 0 })
+  })
+})
+
+describe('capDiff', () => {
+  it('不超上限时原样返回,more=0', () => {
+    const rows: DiffRow[] = [
+      { kind: 'add', text: '1' },
+      { kind: 'add', text: '2' },
+    ]
+    expect(capDiff(rows, 10)).toEqual({ rows, more: 0 })
+  })
+  it('超上限时截前 max 行,more 记溢出数', () => {
+    const rows: DiffRow[] = Array.from({ length: 12 }, (_, k) => ({
+      kind: 'context' as const,
+      text: String(k),
+    }))
+    const out = capDiff(rows, 10)
+    expect(out.rows).toHaveLength(10)
+    expect(out.more).toBe(2)
+    expect(out.rows[9]).toEqual({ kind: 'context', text: '9' })
   })
 })
