@@ -5,7 +5,6 @@ import {
   listPrefix,
   wrapCell,
   computeColumnWidths,
-  buildBorderLine,
 } from './layout.js'
 
 describe('displayWidth', () => {
@@ -65,17 +64,5 @@ describe('computeColumnWidths', () => {
   it('超总宽时按自然宽度比例压缩', () => {
     // 单列自然宽 4,overhead=3*1+1=4,maxWidth=5 → 内容预算=1 → [1]
     expect(computeColumnWidths([['aaaa'], ['bb']], 5)).toEqual([1])
-  })
-})
-
-describe('buildBorderLine', () => {
-  it('top 用 ┌┬┐,段宽=列宽+2', () => {
-    expect(buildBorderLine([3, 2], 'top')).toBe('┌─────┬────┐')
-  })
-  it('mid 用 ├┼┤', () => {
-    expect(buildBorderLine([3, 2], 'mid')).toBe('├─────┼────┤')
-  })
-  it('bottom 用 └┴┘', () => {
-    expect(buildBorderLine([3, 2], 'bottom')).toBe('└─────┴────┘')
   })
 })

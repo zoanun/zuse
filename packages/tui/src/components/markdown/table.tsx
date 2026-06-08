@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink'
 import type { ReactNode } from 'react'
 import type { Tokens } from 'marked'
-import { computeColumnWidths, buildBorderLine, type CellAlign } from './layout.js'
+import { computeColumnWidths, type CellAlign } from './layout.js'
 import { inlineSpans, wrapSpans, padSpans, spansToPlainText, type StyledSpan } from './spans.js'
 import { renderSpan } from './inline.js'
 
@@ -50,13 +50,16 @@ export function Table({ token }: TableProps) {
     return lines
   }
 
+  // 抗缩放:不画 ┌┬┐ / ├┼┤ / └┴┘ 网格——带 junction 的横线一旦随消息打进 <Static> 冻结,
+  // 终端缩放重排时会与各行的 │ 错位拆碎(与横幅/输入框/代码块同病)。改为只保留行内 │ 列
+  // 分隔(各在单行内,换行随内容流动、不拆),表头与表体之间用一条纯 ─ 横线分隔(无 junction,
+  // 缩放至多换成两行短横、不拆)。横线宽度对齐行宽 = Σ(列宽+3) + 1(首列前的 │ 与各列后的「 │」)。
+  const ruleWidth = widths.reduce((sum, w) => sum + w + 3, 0) + 1
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text>{buildBorderLine(widths, 'top')}</Text>
       {renderRow(headerCells, 'h', true)}
-      <Text>{buildBorderLine(widths, 'mid')}</Text>
+      <Text dimColor>{'─'.repeat(Math.max(1, ruleWidth))}</Text>
       {bodyCells.map((cells, r) => renderRow(cells, `b${r}`, false))}
-      <Text>{buildBorderLine(widths, 'bottom')}</Text>
     </Box>
   )
 }

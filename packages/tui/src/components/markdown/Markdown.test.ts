@@ -42,10 +42,10 @@ describe('Markdown', () => {
     expect(out).toContain('│')
     expect(out).toContain('quoted')
   })
-  it('表格:绘制网格且保留表头与单元格', () => {
+  it('表格:列竖线分隔、不画会碎裂的网格,保留表头与单元格', () => {
     const out = frame('| A | B |\n|---|---|\n| 1 | 2 |')
-    expect(out).toContain('┌')
     expect(out).toContain('│')
+    expect(out).not.toContain('┌')
     expect(out).toContain('A')
     expect(out).toContain('1')
   })

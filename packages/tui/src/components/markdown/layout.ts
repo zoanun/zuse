@@ -43,9 +43,6 @@ export function wrapCell(text: string, width: number): string[] {
   return lines
 }
 
-/** 边框线种类:顶 / 中分隔 / 底。 */
-export type BorderKind = 'top' | 'mid' | 'bottom'
-
 /**
  * 计算各列宽度。rows 含表头,每行是各列文本。
  * 总宽(Σ列宽 + 3×列数 + 1)超过 maxWidth 时,按自然宽度比例压缩内容预算。
@@ -66,16 +63,4 @@ export function computeColumnWidths(rows: string[][], maxWidth: number): number[
   const contentBudget = Math.max(cols, maxWidth - overhead)
   const denom = naturalSum || 1
   return natural.map((w) => Math.max(1, Math.floor((w / denom) * contentBudget)))
-}
-
-/** 拼一条边框线,段宽 = 列宽 + 2(覆盖左右各 1 空格)。 */
-export function buildBorderLine(widths: number[], kind: BorderKind): string {
-  const corners: Record<BorderKind, [string, string, string]> = {
-    top: ['┌', '┬', '┐'],
-    mid: ['├', '┼', '┤'],
-    bottom: ['└', '┴', '┘'],
-  }
-  const [left, mid, right] = corners[kind]
-  const segments = widths.map((w) => '─'.repeat(w + 2))
-  return left + segments.join(mid) + right
 }

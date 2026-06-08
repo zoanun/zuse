@@ -43,10 +43,15 @@ describe('Table — 单元格内行内 Markdown', () => {
     expect(out).toContain('[1m') // bold
   })
 
-  it('画出 box-drawing 边框', () => {
+  it('用列分隔竖线 + 表头下横线,不画会随缩放拆碎的网格边框', () => {
     const out = tableFrame(MD)
-    expect(out).toContain('┌')
+    // 列之间仍以 │ 分隔
     expect(out).toContain('│')
-    expect(out).toContain('└')
+    // 表头与表体之间是一条纯横线
+    expect(out).toContain('─')
+    // 关键回归:不得再出现带 junction 的网格角/接点(冻结进 <Static> 后缩放会拆碎)
+    expect(out).not.toContain('┌')
+    expect(out).not.toContain('┬')
+    expect(out).not.toContain('└')
   })
 })
