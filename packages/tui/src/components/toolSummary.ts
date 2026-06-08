@@ -1,9 +1,10 @@
 import type { UIToolCall } from '../types.js'
 
-/** OUT 摘要的判别联合:单行计数 / 多行预览 / 错误单行。 */
+/** OUT 摘要的判别联合:单行计数 / 多行预览 / 文件清单(可点击) / 错误单行。 */
 export type OutputSummary =
   | { kind: 'line'; text: string }
   | { kind: 'preview'; lines: string[]; moreCount: number }
+  | { kind: 'files'; paths: string[]; moreCount: number }
   | { kind: 'error'; text: string }
 
 /** 匹配输出尾部的方括号状态/截断注记(可选前导 … 与多个换行)。 */
@@ -81,7 +82,7 @@ function isOutputValueTool(name: string): boolean {
 }
 
 /** "1 line" / "N lines" 之类的单复数;不规则复数(match→matches)传第三参。 */
-function plural(n: number, singular: string, pluralForm?: string): string {
+export function plural(n: number, singular: string, pluralForm?: string): string {
   return `${n} ${n === 1 ? singular : (pluralForm ?? singular + 's')}`
 }
 
@@ -90,9 +91,15 @@ function readSummary(output: string): OutputSummary {
   return { kind: 'line', text: `Read ${plural(countLines(stripTrailingNotes(output)), 'line')}` }
 }
 
+// 文件清单(Glob / Grep files 模式)行内最多列出的路径条数:其余记入 moreCount。
+// 与 Bash 预览同样收得很短,保持帧紧凑;命中文件由渲染层逐行包成可点击链接。
+const FILE_LIST_MAX = 3
+
 function globSummary(output: string): OutputSummary {
   if (output.startsWith('No files match:')) return { kind: 'line', text: 'No files matched' }
-  return { kind: 'line', text: `Found ${plural(countLines(stripTrailingNotes(output)), 'file')}` }
+  // 列出命中文件(相对路径),渲染层据 cwd 拼绝对路径再包成 OSC 8 链接。
+  const { lines, moreCount } = previewLines(stripTrailingNotes(output), FILE_LIST_MAX)
+  return { kind: 'files', paths: lines, moreCount }
 }
 
 function grepSummary(tool: UIToolCall): OutputSummary {
@@ -118,7 +125,9 @@ function grepSummary(tool: UIToolCall): OutputSummary {
   }
   const n = countLines(body)
   if (mode === 'content') return { kind: 'line', text: `Found ${plural(n, 'line')}` }
-  return { kind: 'line', text: `Found ${plural(n, 'file')}` }
+  // files_with_matches(默认):列出命中文件,渲染层包成可点击链接。
+  const { lines, moreCount } = previewLines(body, FILE_LIST_MAX)
+  return { kind: 'files', paths: lines, moreCount }
 }
 
 function editSummary(tool: UIToolCall): OutputSummary {
@@ -137,7 +146,7 @@ function writeSummary(tool: UIToolCall): OutputSummary {
 // Bash 类工具的 OUT 行内只展示前若干行,保持帧紧凑、不刷屏。超出部分不再硬塞进终端:
 // 完整输出由 hook 落盘到临时文件,UI 给出可 ctrl+点击的路径(见 useConversation 的 tool-result
 // 处理与 StreamRenderer 的 OutputCell)。模型侧拿到的始终是完整输出,截断只发生在展示层。
-const PREVIEW_MAX = 10
+const PREVIEW_MAX = 3
 
 function bashPreview(output: string, isError: boolean): OutputSummary {
   if (output === '(no output)') return { kind: 'line', text: '(no output)' }

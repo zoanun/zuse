@@ -9,6 +9,9 @@ export interface UIToolCall {
   output?: string // 工具结果，在 status === 'done' 时填入
   // 输出超出行内展示上限时，完整内容落盘的临时文件绝对路径；UI 给出可 ctrl+点击打开的链接。
   outputFile?: string
+  // 该工具运行时的会话工作目录(Bash cd 会改变它)。Glob/Grep 文件清单据此把相对路径拼成
+  // 可点击的绝对路径链接；缺省时渲染层回落到 App 入口 cwd。
+  cwd?: string
 }
 
 /** 会话中单条消息的 UI 状态 */

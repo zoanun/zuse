@@ -169,8 +169,10 @@ export function useConversation({
       let currentAssistantId: string | null = null
       let accumulated = ''
       const toolBubbleId: Record<string, string> = {}
-      // 记下每个工具调用的名字,tool-result 时据此判定是否需要把超长输出落盘(见下)。
+      // 记下每个工具调用的名字与入参,tool-result 时据此判定是否需要把超长输出落盘(见下)。
+      // 入参必须留底:Grep 的 output_mode 决定摘要是 files / 计数行,空 input 会误判模式。
       const toolName: Record<string, string> = {}
+      const toolInput: Record<string, unknown> = {}
       let lastInputTokens: number | undefined
 
       // 把错误渲染成行内消息气泡：能接到当前助手气泡就替换其文本，否则新开一条。
@@ -245,6 +247,7 @@ export function useConversation({
             const tid = generateId()
             toolBubbleId[event.id] = tid
             toolName[event.id] = event.name
+            toolInput[event.id] = event.input
             const tool = { name: event.name, input: event.input, status: 'running' as const }
             setState((prev) => ({
               ...prev,
@@ -262,21 +265,31 @@ export function useConversation({
               const name = toolName[event.id] ?? ''
               const probe: UIToolCall = {
                 name,
-                input: {},
+                input: toolInput[event.id] ?? {},
                 status: 'done',
                 isError: event.is_error,
                 output: event.output,
               }
               const summary = summarizeOutput(probe)
-              const outputFile =
-                summary.kind === 'preview' && summary.moreCount > 0
-                  ? writeToolOutputFile(name, event.output)
-                  : undefined
+              // preview(Bash 类)与 files(Glob/Grep 文件清单)被截断时,都把完整输出落盘,
+              // 让「… +N」那行可 ctrl+点击查看全体内容。
+              const truncated =
+                (summary.kind === 'preview' || summary.kind === 'files') && summary.moreCount > 0
+              const outputFile = truncated ? writeToolOutputFile(name, event.output) : undefined
               patch(tid, (m) => ({
                 ...m,
                 isStreaming: false,
                 tool: m.tool
-                  ? { ...m.tool, status: 'done', isError: event.is_error, output: event.output, outputFile }
+                  ? {
+                      ...m.tool,
+                      status: 'done',
+                      isError: event.is_error,
+                      output: event.output,
+                      outputFile,
+                      // 记下该工具运行时的会话 cwd(cwdRef 经 onCwdChange 实时镜像 Bash cd 后的目录)。
+                      // 否则文件清单链接会拿入口 cwd 拼相对路径,cd 之后指向错误目录。
+                      cwd: cwdRef.current,
+                    }
                   : m.tool,
               }))
             }

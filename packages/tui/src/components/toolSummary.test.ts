@@ -130,10 +130,27 @@ describe('summarizeOutput · Read', () => {
 })
 
 describe('summarizeOutput · Glob', () => {
-  it('命中计文件数', () => {
+  it('命中列出文件路径(≤3 全列,moreCount=0)', () => {
     expect(summarizeOutput(done({ name: 'Glob', output: 'a.ts\nb.ts\nc.ts' }))).toEqual({
-      kind: 'line',
-      text: 'Found 3 files',
+      kind: 'files',
+      paths: ['a.ts', 'b.ts', 'c.ts'],
+      moreCount: 0,
+    })
+  })
+  it('超 3 个时只列前 3,余下记 moreCount', () => {
+    const out = 'a.ts\nb.ts\nc.ts\nd.ts\ne.ts'
+    expect(summarizeOutput(done({ name: 'Glob', output: out }))).toEqual({
+      kind: 'files',
+      paths: ['a.ts', 'b.ts', 'c.ts'],
+      moreCount: 2,
+    })
+  })
+  it('剥掉 truncated 尾注后再切清单', () => {
+    const out = 'a.ts\nb.ts\n\n[truncated: showing first 100 of 250 matches]'
+    expect(summarizeOutput(done({ name: 'Glob', output: out }))).toEqual({
+      kind: 'files',
+      paths: ['a.ts', 'b.ts'],
+      moreCount: 0,
     })
   })
   it('无匹配哨兵 → No files matched', () => {
@@ -145,10 +162,19 @@ describe('summarizeOutput · Glob', () => {
 })
 
 describe('summarizeOutput · Grep', () => {
-  it('files_with_matches(默认)计文件数', () => {
+  it('files_with_matches(默认)列出文件路径', () => {
     expect(summarizeOutput(done({ name: 'Grep', output: 'a.ts\nb.ts' }))).toEqual({
-      kind: 'line',
-      text: 'Found 2 files',
+      kind: 'files',
+      paths: ['a.ts', 'b.ts'],
+      moreCount: 0,
+    })
+  })
+  it('files 模式超 3 个时只列前 3,余下记 moreCount', () => {
+    const out = 'a.ts\nb.ts\nc.ts\nd.ts\ne.ts'
+    expect(summarizeOutput(done({ name: 'Grep', output: out }))).toEqual({
+      kind: 'files',
+      paths: ['a.ts', 'b.ts', 'c.ts'],
+      moreCount: 2,
     })
   })
   it('content 模式计命中行数', () => {
@@ -197,21 +223,21 @@ describe('summarizeOutput · 通用兜底', () => {
 
 describe('summarizeOutput · Bash 类预览', () => {
   it('正文未触行内上限时原样全展示', () => {
-    const out = '1\n2\n3\n4\n5\n6\n7'
+    const out = '1\n2\n3'
     expect(summarizeOutput(done({ name: 'Bash', output: out }))).toEqual({
       kind: 'preview',
-      lines: ['1', '2', '3', '4', '5', '6', '7'],
+      lines: ['1', '2', '3'],
       moreCount: 0,
     })
   })
-  it('正文超 10 行行内上限时截前 10,余下记 moreCount(完整输出由 hook 落盘)', () => {
+  it('正文超 3 行行内上限时截前 3,余下记 moreCount(完整输出由 hook 落盘)', () => {
     const lines = Array.from({ length: 15 }, (_, i) => String(i + 1))
     const result = summarizeOutput(done({ name: 'Bash', output: lines.join('\n') }))
     expect(result.kind).toBe('preview')
     if (result.kind !== 'preview') throw new Error('expected preview')
-    expect(result.lines).toHaveLength(10)
-    expect(result.lines[9]).toBe('10')
-    expect(result.moreCount).toBe(5)
+    expect(result.lines).toHaveLength(3)
+    expect(result.lines[2]).toBe('3')
+    expect(result.moreCount).toBe(12)
   })
   it('剥掉 [exit code] 尾注后再切预览', () => {
     const out = 'line1\nline2\n[exit code: 1]'

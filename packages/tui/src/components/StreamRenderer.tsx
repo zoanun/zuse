@@ -1,7 +1,8 @@
 import { Box, Text } from 'ink'
+import { resolve } from 'node:path'
 import { Spinner } from './Spinner.js'
 import { BLACK_CIRCLE, L_CORNER } from './figures.js'
-import { summarizeOutput, toolSpecifier } from './toolSummary.js'
+import { summarizeOutput, toolSpecifier, plural } from './toolSummary.js'
 import { osc8FileLink } from '../toolOutputFile.js'
 import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
 import type { ReactElement } from 'react'
@@ -10,6 +11,8 @@ import { Markdown } from './markdown/Markdown.js'
 
 interface StreamRendererProps {
   message: UIMessage
+  /** 工作目录:把 Glob/Grep 输出的相对路径拼成绝对路径,才能包成可点击的文件链接。 */
+  cwd: string
 }
 
 
@@ -24,7 +27,7 @@ function toolHeaderArgs(tool: UIToolCall): string {
  *     ⎿ Read 43 lines
  * 标题行 ● + 加粗工具名 + 灰色 (参数);结果摘要挂在下方 ⎿ 行,不再用 IN/OUT 边框盒子。
  */
-function ToolBlock({ tool }: { tool: UIToolCall }) {
+function ToolBlock({ tool, cwd }: { tool: UIToolCall; cwd: string }) {
   // 标记:运行中 spinner(青);完成 ●(绿);出错 ●(红)。
   const marker =
     tool.status === 'running' ? (
@@ -50,15 +53,67 @@ function ToolBlock({ tool }: { tool: UIToolCall }) {
           <Text dimColor>{L_CORNER}</Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          <OutputCell tool={tool} />
+          <OutputCell tool={tool} cwd={cwd} />
         </Box>
       </Box>
     </Box>
   )
 }
 
+/**
+ * 文件清单(Glob / Grep files 模式)解析相对路径的基准目录。
+ * Glob 的相对路径相对 base = cwd(+ input.cwd);Grep 的相对路径相对 cwd,绝对路径(给了 path 时)
+ * 经 resolve 原样保留。统一交给 resolve(base, line) 处理。
+ */
+function fileListBase(tool: UIToolCall, cwd: string): string {
+  // 优先用工具运行时记录的 cwd(Bash cd 后 App 入口 cwd 已过期);未记录时回落到入口 cwd。
+  const baseCwd = tool.cwd ?? cwd
+  if (tool.name === 'Glob') {
+    const sub = (tool.input as { cwd?: unknown }).cwd
+    return typeof sub === 'string' ? resolve(baseCwd, sub) : baseCwd
+  }
+  return baseCwd
+}
+
+/** 文件清单:首行计数,其余每行一个命中文件,包成 OSC 8 链接(支持的终端可 ctrl+点击)。 */
+function FileList({
+  tool,
+  cwd,
+  paths,
+  moreCount,
+}: {
+  tool: UIToolCall
+  cwd: string
+  paths: string[]
+  moreCount: number
+}): ReactElement {
+  const total = paths.length + moreCount
+  const base = fileListBase(tool, cwd)
+  return (
+    <Box flexDirection="column">
+      <Text dimColor>{`Found ${plural(total, 'file')}`}</Text>
+      {paths.map((p) => (
+        // 链接目标必须是绝对路径;展示文字保留工具原样输出(相对或绝对)。
+        // key 用路径本身:同一次工具结果内命中路径唯一,比数组下标更稳。
+        <Text key={p} dimColor>
+          {osc8FileLink(resolve(base, p), p)}
+        </Text>
+      ))}
+      {moreCount > 0 && (
+        // 余下文件:有落盘文件时把整行包成链接,ctrl+点击打开临时文件看全体命中;
+        // 落盘失败(无 outputFile)则退化为纯文本提示。
+        <Text dimColor>
+          {tool.outputFile
+            ? osc8FileLink(tool.outputFile, `… +${moreCount} 个(点击查看全部)`)
+            : `… +${moreCount} 个`}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 /** OUT 列内容:运行中显示「运行中…」;完成后按 summarizeOutput 渲染(Edit 走彩色行级 diff)。 */
-function OutputCell({ tool }: { tool: UIToolCall }): ReactElement {
+function OutputCell({ tool, cwd }: { tool: UIToolCall; cwd: string }): ReactElement {
   if (tool.status === 'running') {
     return <Text dimColor>运行中…</Text>
   }
@@ -70,6 +125,9 @@ function OutputCell({ tool }: { tool: UIToolCall }): ReactElement {
   const summary = summarizeOutput(tool)
   if (summary.kind === 'error') {
     return <Text color="red">{summary.text}</Text>
+  }
+  if (summary.kind === 'files') {
+    return <FileList tool={tool} cwd={cwd} paths={summary.paths} moreCount={summary.moreCount} />
   }
   if (summary.kind === 'line') {
     // line 类不会来自错误(错误走 error/preview),恒为暗色。
@@ -144,10 +202,10 @@ function renderEditDiff(tool: UIToolCall): ReactElement | null {
   )
 }
 
-export function StreamRenderer({ message }: StreamRendererProps) {
+export function StreamRenderer({ message, cwd }: StreamRendererProps) {
   // 工具调用：一行青色的 "Name(args)"，带状态标记 + 结果预览。
   if (message.role === 'tool' && message.tool) {
-    return <ToolBlock tool={message.tool} />
+    return <ToolBlock tool={message.tool} cwd={cwd} />
   }
 
   // system 消息是本地通知（斜杠命令输出）：暗色、无边框。

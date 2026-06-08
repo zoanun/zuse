@@ -160,14 +160,14 @@ export function App({ cwd }: AppProps) {
             </Box>
           ) : (
             <Box key={row.msg.id} paddingX={1}>
-              <StreamRenderer message={row.msg} />
+              <StreamRenderer message={row.msg} cwd={cwd} />
             </Box>
           )
         }
       </Static>
 
       {/* 实时帧：仍在流式的消息 + 输入框/对话框 + 页脚。 */}
-      {live.length > 0 && <MessageList messages={live} />}
+      {live.length > 0 && <MessageList messages={live} cwd={cwd} />}
 
       {exitPending && <Text color="yellow">再按一次 Ctrl+C 退出</Text>}
 
