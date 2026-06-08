@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ToolRegistry, type ResolvedSettings, type ModelSelection, type Conversation, type Tool } from '@zuse/core'
-import { findCommand, editDistance, nearestMatch, buildModelOptions } from './registry.js'
+import { findCommand, editDistance, nearestMatch, buildModelOptions, listCommands } from './registry.js'
 import type { CommandContext } from './types.js'
 
 // 造一个最小可用的 ResolvedSettings；只有 providers / model 与 /model 校验相关。
@@ -244,6 +244,22 @@ describe('/history', () => {
   it('提示用终端滚动区查看历史（cc 式渲染下不再有应用内滚动）', () => {
     const { printed } = runCommand('history', '')
     expect(printed.join('\n')).toContain('终端')
+  })
+})
+
+describe('listCommands — 供 / 菜单消费的命令元信息', () => {
+  it('投影出全部命令的名字/描述', () => {
+    const names = listCommands().map((c) => c.name)
+    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'model', 'tools', 'history', 'terminal-setup'])
+  })
+
+  it('save/load 标记为需参数；其余（含 model）为无参', () => {
+    const byName = Object.fromEntries(listCommands().map((c) => [c.name, c.takesArgs]))
+    expect(byName['save']).toBe(true)
+    expect(byName['load']).toBe(true)
+    expect(byName['model']).toBe(false)
+    expect(byName['clear']).toBe(false)
+    expect(byName['terminal-setup']).toBe(false)
   })
 })
 

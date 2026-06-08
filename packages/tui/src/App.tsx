@@ -6,6 +6,7 @@ import { StreamRenderer } from './components/StreamRenderer.js'
 import { UsageFooter } from './components/UsageFooter.js'
 import { Banner } from './components/Banner.js'
 import { detectEditor, EDITOR_LABEL } from './commands/terminalSetup.js'
+import { listCommands } from './commands/registry.js'
 import { PermissionDialog } from './components/PermissionDialog.js'
 import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
@@ -118,6 +119,9 @@ export function App({ cwd }: AppProps) {
       : undefined
   }, [])
 
+  // `/` 命令菜单的候选清单。命令表是静态的，memo 一次即可，避免每帧重建数组引用。
+  const commands = useMemo(() => listCommands(), [])
+
   // settings 加载失败或 client 初始化失败，都在此统一展示错误页。
   if (initError || clientError) {
     return (
@@ -178,7 +182,7 @@ export function App({ cwd }: AppProps) {
           onCancel={closeModelSelector}
         />
       ) : (
-        <InputBox onSubmit={handleSubmit} isDisabled={state.isThinking} />
+        <InputBox onSubmit={handleSubmit} isDisabled={state.isThinking} commands={commands} />
       )}
 
       {/* 页脚紧贴输入框下方、靠右显示（见 UsageFooter）。 */}

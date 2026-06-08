@@ -33,5 +33,22 @@ export interface SlashCommand {
   /** 以 `/<name>` 调用。这里不带前导斜杠。 */
   name: string
   description: string
+  /**
+   * 该命令是否「需要参数」——决定 `/` 菜单选中时的行为：
+   * true → 补全为「/名字 」并关菜单，等用户输入参数（如 /save /load，无参只会打印用法）；
+   * false/缺省 → 无参可直接执行（如 /clear；/model 无参即打开选择器，故也归此类）。
+   */
+  takesArgs?: boolean
   run: (ctx: CommandContext) => void | Promise<void>
+}
+
+/**
+ * 供 `/` 命令菜单消费的命令元信息（名字 + 描述 + 是否需要参数）。
+ * 与 SlashCommand 解耦：菜单只需展示与选中所需的字段，不暴露 run。
+ */
+export interface CommandInfo {
+  name: string
+  description: string
+  /** 见 SlashCommand.takesArgs。缺省视为 false。 */
+  takesArgs?: boolean
 }

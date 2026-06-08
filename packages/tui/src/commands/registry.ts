@@ -1,5 +1,5 @@
 import { homedir } from 'node:os'
-import type { SlashCommand } from './types.js'
+import type { SlashCommand, CommandInfo } from './types.js'
 import { saveConversation, loadConversation } from './sessionStore.js'
 import { installTerminalSetup } from './terminalSetup.js'
 import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
@@ -134,6 +134,7 @@ const clear: SlashCommand = {
 const save: SlashCommand = {
   name: 'save',
   description: '保存当前对话：/save <名称>',
+  takesArgs: true,
   run: async ({ args, conversation, print }) => {
     if (!args) {
       print('用法：/save <名称>')
@@ -147,6 +148,7 @@ const save: SlashCommand = {
 const load: SlashCommand = {
   name: 'load',
   description: '加载已保存的对话：/load <名称>',
+  takesArgs: true,
   run: async ({ args, load: replaceConversation, print }) => {
     if (!args) {
       print('用法：/load <名称>')
@@ -271,4 +273,12 @@ export function parseInput(input: string): ParsedCommand | null {
 
 export function findCommand(name: string): SlashCommand | undefined {
   return COMMANDS.find((c) => c.name === name)
+}
+
+/**
+ * 把命令表投影成 `/` 菜单所需的元信息（名字/描述/是否需参数），按声明顺序。
+ * 菜单与命令实现解耦：只暴露展示与选中所需字段，不泄露 run。
+ */
+export function listCommands(): CommandInfo[] {
+  return COMMANDS.map((c) => ({ name: c.name, description: c.description, takesArgs: c.takesArgs ?? false }))
 }
