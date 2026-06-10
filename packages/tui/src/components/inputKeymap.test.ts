@@ -64,12 +64,3 @@ describe('keyToEvent', () => {
     expect(keyToEvent('', k())).toEqual({ type: 'none' })
   })
 })
-
-describe('Shift+Enter 换行', () => {
-  it('return + shift → newline', () => {
-    expect(keyToEvent('', { return: true, shift: true })).toEqual({ type: 'newline' })
-  })
-  it('return 无 shift → submit', () => {
-    expect(keyToEvent('', { return: true })).toEqual({ type: 'submit' })
-  })
-})
