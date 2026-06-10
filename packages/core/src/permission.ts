@@ -99,6 +99,14 @@ function hasUnanalyzableShell(command: string): boolean {
   return /\$\(/.test(command) || command.includes('`')
 }
 
+/** 一组规则里是否有「整条精确放行」该命令的规则（allow_session 追加的整条规则,或用户手写的整条精确 allow）。 */
+function hasWholeExactBashAllow(rules: string[], command: string): boolean {
+  return rules.some((r) => {
+    const p = parseRule(r)
+    return p !== null && p.tool === 'Bash' && p.specifier !== null && p.specifier === command
+  })
+}
+
 /**
  * Bash 命令是否被一组规则"完整覆盖"：要么有规则精确命中整条命令（会话覆盖层
  * allow_session 追加的就是整条精确规则,以及用户写的整条精确 allow）,要么每个
@@ -106,11 +114,7 @@ function hasUnanalyzableShell(command: string): boolean {
  * hasUnanalyzableShell）。
  */
 function bashCoveredBy(rules: string[], command: string, subs: string[], cwd: string): boolean {
-  const wholeExact = rules.some((r) => {
-    const p = parseRule(r)
-    return p !== null && p.tool === 'Bash' && p.specifier !== null && p.specifier === command
-  })
-  if (wholeExact) return true
+  if (hasWholeExactBashAllow(rules, command)) return true
   if (hasUnanalyzableShell(command)) return false
   return subs.length > 0 && subs.every((s) => rules.some((r) => matchesRule(r, 'Bash', s, cwd)))
 }
@@ -206,16 +210,20 @@ export function decide(
   // 3. bypassPermissions 模式直接放行（deny 已在上面检查过）。
   if (perms.defaultMode === 'bypassPermissions') return { decision: 'allow', rule }
 
+  // allow 规则集（含会话覆盖层）；3.5 安全闸与第 4 步共用。
+  const allowRules = [...perms.allow, ...sessionAllow]
+
   // 3.5 Bash 安全检查（23 项的 block 档）：把混淆/注入/解析歧义模式压过 allow，强制人审。
-  // 优先级低于 deny / bypass（上方已返回），高于 allow —— 即便有前缀 allow 规则覆盖，
-  // 命中 block 也不自动放行。词法拆分看不见的引号花招、进程替换、$IFS、回车符等在此兜底。
-  if (isBash) {
+  // 优先级低于 deny / bypass（上方已返回），也高于宽泛/前缀 allow（如 Bash(*)）。但用户/会话对
+  // 「这一整条命令」的精确放行（allow_session 追加的整条规则,或手写的整条精确 allow）是逐条
+  // 明示同意,凌驾于本闸 —— 否则弹框「本会话」对 block 档会静默失效、每次重复询问。首次命中
+  // 仍必经人审,通过后方记入会话层；词法拆分看不见的引号花招、进程替换、$IFS、回车符等在此兜底。
+  if (isBash && !hasWholeExactBashAllow(allowRules, specifier!)) {
     const sec = hasBlockingBashSecurityIssue(specifier!)
     if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
   }
 
-  // 4. allow（含会话覆盖层）。Bash 需整条被规则"完整覆盖"才放行。
-  const allowRules = [...perms.allow, ...sessionAllow]
+  // 4. allow（含会话覆盖层）。Bash 需整条被规则"完整覆盖"才放行。allowRules 已在上方构造。
   if (isBash) {
     if (bashCoveredBy(allowRules, specifier!, subs, cwd)) return { decision: 'allow', rule }
   } else {

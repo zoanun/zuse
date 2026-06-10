@@ -167,4 +167,19 @@ describe('decide — Bash 安全检查（23 项 block 档压过 allow）', () =>
     expect(decide(Bash, 'echo hi > out.txt', s, [], cwd).decision).toBe('allow')
     expect(decide(Bash, 'grep foo $file | sort', s, [], cwd).decision).toBe('allow')
   })
+  it('block 命令经 allow_session 整条精确放行后,复用时放行（弹框「本会话」对 block 档生效）', () => {
+    const s = settings({ allow: ['Bash(*)'] })
+    const cmd = 'diff <(sort a) <(sort b)'
+    // 首次仅宽泛 allow：block 闸压过 → ask（此时用户在弹框选「本会话」）
+    expect(decide(Bash, cmd, s, [], cwd).decision).toBe('ask')
+    // 会话层追加整条精确规则后再次请求 → 放行,不再被 block 闸重复拦
+    expect(decide(Bash, cmd, s, [`Bash(${cmd})`], cwd).decision).toBe('allow')
+  })
+  it('手写整条精确 allow 也凌驾 block 安全闸（宽泛 allow 仍被拦）', () => {
+    const exact = settings({ allow: ['Bash(diff <(sort a) <(sort b))'] })
+    expect(decide(Bash, 'diff <(sort a) <(sort b)', exact, [], cwd).decision).toBe('allow')
+    // 仅 Bash(*) 这类宽泛 allow 不算整条精确放行,block 闸照旧压过
+    const broad = settings({ allow: ['Bash(diff *)'] })
+    expect(decide(Bash, 'diff <(sort a) <(sort b)', broad, [], cwd).decision).toBe('ask')
+  })
 })
