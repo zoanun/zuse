@@ -41,6 +41,8 @@ function makeFakeStdin(isTTY: boolean) {
 function makeFakeBus(collected: ParsedKey[]) {
   return {
     subscribe: () => () => {},
+    // 测试中不需要粘贴订阅,提供空实现满足 InputBus 类型约束。
+    subscribePaste: () => () => {},
     dispatch: (k: ParsedKey) => {
       collected.push(k)
     },

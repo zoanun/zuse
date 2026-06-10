@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useInputBus } from './InputProvider.js'
 import type { InkKey } from './parsedKeyToInkKey.js'
-import type { KeySubscriber } from './inputBus.js'
+import type { KeySubscriber, PasteSubscriber } from './inputBus.js'
 
 export type { InkKey }
 
@@ -24,5 +24,23 @@ export function useInput(
   ref.current.isActive = isActive
   useEffect(() => {
     return bus.subscribe(ref)
+  }, [bus])
+}
+
+/**
+ * 订阅粘贴事件(bracketed paste 聚合后的完整内容)。与 useInput 同款 ref 订阅模型。
+ * 当前仅 InputBox 使用;isActive=false 时不收。
+ */
+export function usePaste(
+  handler: (content: string) => void,
+  opts?: { isActive?: boolean },
+): void {
+  const bus = useInputBus()
+  const isActive = opts?.isActive ?? true
+  const ref = useRef<PasteSubscriber>({ handler, isActive })
+  ref.current.handler = handler
+  ref.current.isActive = isActive
+  useEffect(() => {
+    return bus.subscribePaste(ref)
   }, [bus])
 }
