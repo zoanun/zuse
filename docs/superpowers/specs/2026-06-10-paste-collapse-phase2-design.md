@@ -21,7 +21,7 @@
 
 - **占位符编码**:用私有区(PUA)哨兵成对包裹自增 id —— `START=''` + `<id 十进制>` + `END=''`,嵌在扁平 `buf.text` 里。渲染/光标计算更干净。粘贴内容若自身含这两个哨兵字符,折叠前**剥除**(防止破坏 span 解析)。
 - **message 双份文本**:`UIMessage` 增可选 `displayText?: string`。`text` 仍是**全文**(模型 + API 历史用);`displayText` 是**折叠回显串**(含可见标签文本)。渲染层优先用 `displayText`。无折叠时 `displayText` 不设、回落 `text`。
-- **折叠标签文案**:`[粘贴#{id} · {N} 行 · {M} 字符]`,其中 `N` = 内容 `\n` 数 + 1,`M` = 字符数(`≥1000` 显示 `x.xk`)。带序号 `#id` 以区分多次粘贴。样式:青色文本(`<Text color="cyan">`),不加边框(遵循「`<Static>` 内不用边框块」的项目约定;此处虽在实时帧,仍从简)。
+- **折叠标签文案**:`[粘贴#{id} · {N} 行 · {M} 字符]`,其中 `N` = 内容 `\n` 数 + 1,`M` = 字符数(`≥1000` 显示 `x.xk`)。带序号 `#id` 以区分多次粘贴。样式:**v1 渲成方括号纯文本**(与输入文本同色),靠 `[...]` 与文案本身已足够辨识;**上色(青色)留作后续打磨**——见下方渲染方案,为复用现有渲染、降低风险,v1 不对标签单独着色。
 
 ## 4. 总体架构与数据流
 
@@ -52,7 +52,7 @@
 |---|---|---|
 | `packages/tui/src/input/inputBus.ts` | 改 | dispatch 分流 isPasted;新增 `subscribePaste` + 粘贴订阅者表 |
 | `packages/tui/src/input/useInput.ts` | 改 | 新增 `usePaste(handler, opts?)` hook |
-| `packages/tui/src/components/pasteFold.ts` | **新建** | 占位符纯逻辑:哨兵常量、`foldPaste`/`pasteReduce`/`parseSegments`/`expand`/`toDisplay`/`tagLabel` |
+| `packages/tui/src/components/pasteFold.ts` | **新建** | 占位符纯逻辑:哨兵常量、`foldPaste`/`pasteReduce`/`expand`/`toDisplay`/`toDisplayCursor`/`tagLabel` |
 | `packages/tui/src/components/InputBox.tsx` | 改 | 持 `pastes` Map + `nextId`;接 `usePaste`;编辑走 `pasteReduce`;渲染走 `parseSegments`;提交算 full/display |
 | `packages/tui/src/types.ts` | 改 | `UIMessage += displayText?: string` |
 | `packages/tui/src/hooks/useConversation.ts` | 改 | `submit`/`sendMessage` 加可选 `displayText`,透传到 UIMessage;`userText` 仍传全文 |
@@ -69,11 +69,6 @@ export const PASTE_END = ''
 
 /** pastes:id → 全文内容。 */
 export type PasteMap = ReadonlyMap<number, string>
-
-/** 渲染分段:纯文本 or 一个占位符(已知 id 与标签)。 */
-export type Segment =
-  | { kind: 'text'; value: string }
-  | { kind: 'paste'; id: number; label: string }
 
 /** 标签文案:`粘贴#{id} · {N} 行 · {M} 字符`(M≥1000 → x.xk)。 */
 export function tagLabel(id: number, content: string): string
@@ -93,14 +88,14 @@ export function pasteReduce(
   ev: InputEvent,
 ): { buf: TextBuffer; pastes: Map<number, string> }
 
-/** 把 text 切成段供渲染(占位符段带 label)。未知 id 的 span 退化为字面文本(防御)。 */
-export function parseSegments(text: string, pastes: PasteMap): Segment[]
-
-/** 哨兵 span → 全文(发模型)。 */
+/** 哨兵 span → 全文(发模型)。未知 id 的 span 退化为字面文本(防御)。 */
 export function expand(text: string, pastes: PasteMap): string
 
-/** 哨兵 span → 可见标签串(滚动区回显)。 */
+/** 哨兵 span → 可见标签串 `[label]`(渲染 / 滚动区回显)。 */
 export function toDisplay(text: string, pastes: PasteMap): string
+
+/** 把 buf.text 里的光标偏移映射到 toDisplay 后字符串的偏移(光标不在 span 内部,故可逐段累加)。 */
+export function toDisplayCursor(text: string, cursor: number, pastes: PasteMap): number
 ```
 
 ### 原子编辑语义(pasteReduce)
@@ -112,10 +107,17 @@ export function toDisplay(text: string, pastes: PasteMap): string
 - **home/end/pageUp/pageDown/up/down**:照常移动;若落点在 span 内部,夹到最近的 span 外边界。
 - 删除/编辑后,`pastes` 里**不再被任何 span 引用**的 id 一并剪除(以 `expand` 后的引用为准,保持 Map 与文本同步)。
 
-### 渲染(InputBox 用 parseSegments)
+### 渲染(复用现有 splitForRender,零新渲染逻辑)
 
-- 现有 `splitForRender` 处理纯文本的「按行 + 光标三段」。第二期 InputBox 改为:先 `parseSegments` 拿到 文本/占位符 段,再在**段序列**上做按行切分与光标定位。占位符段是一个原子单元(渲成 `<Text color="cyan">[标签]</Text>`),光标只会落在它前后、不在其内。
-- 为可单测,把「(text, cursor, pastes) → 渲染行模型」做成 `pasteFold` 里的纯函数(如 `splitFoldedForRender`),InputBox 只消费其输出。具体行模型在实现计划里定。
+关键简化:**不新写分段渲染**。InputBox 渲染时把内部带哨兵的 buf 转成「展示 buf」再喂现有 `splitForRender`:
+
+```
+const displayText = toDisplay(buf.text, pastes)            // span → [标签]
+const displayCursor = toDisplayCursor(buf.text, buf.cursor, pastes)
+const renderLines = splitForRender({ text: displayText, cursor: displayCursor })
+```
+
+因原子编辑保证**光标永不落在 span 内部**,`toDisplayCursor` 可逐段累加得到展示坐标。标签作为 `[…]` 纯文本随行渲染,光标三段切分、增高、横线全部沿用第一期 InputBox 渲染,无需改动。代价:标签不单独着色(留作后续打磨)。
 
 ## 7. 错误处理 / 边界
 
@@ -133,7 +135,7 @@ export function toDisplay(text: string, pastes: PasteMap): string
   - `foldPaste`:插入哨兵 span、id 自增、剥哨兵、pastes 落键。
   - `pasteReduce`:左右移整体跨越 span;退格/删除整块删并剪 id;普通编辑不误伤;落点夹出 span 内部。
   - `expand`/`toDisplay`:span → 全文 / 标签串;多 span;未知 id 退化。
-  - `parseSegments`:文本/占位符切分。
+  - `toDisplayCursor`:光标在 span 前/后、多 span 前的展示坐标映射。
 - `inputBus.test.ts`:isPasted 分流到粘贴订阅者、不触发按键订阅者;非粘贴键不触发粘贴订阅者。
 - `useInput`/`usePaste`:订阅/退订、isActive 门控(沿用现有模式)。
 - `InputBox.test.ts`:多行粘贴显示为标签;光标整体跨越;退格整块删;提交后 onSubmit 收到 (全文, 折叠串)。
