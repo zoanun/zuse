@@ -50,7 +50,7 @@ class FakeStdout extends EventEmitter implements StdoutLike {
 
 // 渲染一个 InputBox；不用 ink-testing-library（它创建自己的 stdin，不可注入），
 // 改用 ink 直接渲染 + 共享 FakeStdin，使 InputProvider 和 Ink 监听同一个 stdin。
-async function mount(onSubmit: (t: string) => void = () => {}) {
+async function mount(onSubmit: (text: string, displayText?: string) => void = () => {}) {
   const stdin = new FakeStdin()
   const stdout = new FakeStdout()
   const instance = inkRender(
@@ -114,6 +114,7 @@ describe('InputBox —— / 命令菜单', () => {
     await tick()
     stdin.write(ENTER)
     await tick()
+    // 无参命令不带 displayText:acceptCommand 直接调 onSubmit(`/clear`),不走 handleSubmit
     expect(onSubmit).toHaveBeenCalledWith('/clear')
     // 执行后输入框清空：不再显示命令菜单。
     expect(lastFrame() ?? '').not.toContain('Tab/Enter 确认')
@@ -145,7 +146,8 @@ describe('InputBox —— / 命令菜单', () => {
     stdin.write(ENTER)
     await tick()
     // 菜单关闭后回车走普通提交：文本 "/cl" trim 后非空 → 作为一条输入发送。
-    expect(onSubmit).toHaveBeenCalledWith('/cl')
+    // 纯文本提交 pastes 为空,displayText=undefined(toHaveBeenCalledWith 第二参可缺省)
+    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined)
     unmount()
   })
 
@@ -158,6 +160,7 @@ describe('InputBox —— / 命令菜单', () => {
     await tick()
     stdin.write(ENTER)
     await tick()
+    // 无参命令 acceptCommand 直接调 onSubmit(`/${cmd.name}`),不带 displayText
     expect(onSubmit).toHaveBeenCalledWith('/clear')
     unmount()
   })
@@ -178,6 +181,7 @@ describe('InputBox —— / 命令菜单', () => {
     stdin.write(ENTER)
     await tick()
     // 高亮已随过滤词归零 → 选中的是首项 clear，而非残留下标指向的 config。
+    // 无参命令 acceptCommand 直接调 onSubmit(`/${cmd.name}`),不带 displayText
     expect(onSubmit).toHaveBeenCalledWith('/clear')
     unmount()
   })
@@ -191,10 +195,63 @@ describe('InputBox —— / 命令菜单', () => {
     await tick()
     stdin.write(ENTER) // 普通提交，清空输入；dismissedText 应被一并清掉
     await tick()
-    expect(onSubmit).toHaveBeenCalledWith('/cl')
+    // 纯文本提交 pastes 为空,displayText=undefined
+    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined)
     stdin.write('/cl') // 再次原样输入
     await tick()
     expect(lastFrame() ?? '').toContain('Tab/Enter 确认') // 菜单重新出现
+    unmount()
+  })
+})
+
+// bracketed paste 序列包装:用真实换行符构造多行粘贴。
+function bracketedPaste(content: string): string {
+  return `\x1b[200~${content}\x1b[201~`
+}
+
+describe('InputBox —— 粘贴折叠', () => {
+  it('多行粘贴显示折叠标签、不铺全文', async () => {
+    const { stdin, lastFrame, unmount } = await mount()
+    // 发送多行 bracketed paste
+    stdin.emit('data', bracketedPaste('第一行\n第二行'))
+    await tick()
+    const out = lastFrame() ?? ''
+    // 应出现折叠标签
+    expect(out).toContain('[粘贴#1')
+    // 不应展示原始换行内容
+    expect(out).not.toContain('第二行')
+    unmount()
+  })
+
+  it('多行粘贴后提交:onSubmit 第一参含展开全文、第二参含折叠标签', async () => {
+    // 显式标注函数类型,使 mock.calls 类型可解构
+    const onSubmit = vi.fn<(text: string, displayText?: string) => void>()
+    const { stdin, unmount } = await mount(onSubmit)
+    stdin.emit('data', bracketedPaste('第一行\n第二行'))
+    await tick()
+    stdin.emit('data', ENTER)
+    await tick()
+    expect(onSubmit).toHaveBeenCalledOnce()
+    const args = onSubmit.mock.calls[0]!
+    const full = args[0]
+    const display = args[1]
+    // 第一参是展开全文
+    expect(full).toContain('第一行')
+    expect(full).toContain('第二行')
+    // 第二参是折叠展示串(含标签)
+    expect(display).toContain('[粘贴#1')
+    unmount()
+  })
+
+  it('单行粘贴当普通文本插入,不折叠', async () => {
+    const { stdin, lastFrame, unmount } = await mount()
+    stdin.emit('data', bracketedPaste('单行内容'))
+    await tick()
+    const out = lastFrame() ?? ''
+    // 单行粘贴内容直接显示
+    expect(out).toContain('单行内容')
+    // 不应出现折叠标签
+    expect(out).not.toContain('[粘贴#1')
     unmount()
   })
 })
