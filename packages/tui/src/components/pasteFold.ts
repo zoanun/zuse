@@ -1,4 +1,17 @@
-import { type TextBuffer } from './textBuffer.js'
+import {
+  insert,
+  backspace,
+  deleteForward,
+  moveUp,
+  moveDown,
+  moveHome,
+  moveEnd,
+  moveBufferStart,
+  moveBufferEnd,
+  reduce,
+  type TextBuffer,
+  type InputEvent,
+} from './textBuffer.js'
 
 // PUA 哨兵:包裹折叠粘贴的自增 id。正常文本不会出现这两个码位;粘贴内容自带时折叠前剥除。
 export const PASTE_START = '\u{E000}'
@@ -85,4 +98,107 @@ export function toDisplayCursor(text: string, cursor: number, pastes: PasteMap):
     }
   }
   return disp
+}
+
+/** 位置严格落在某 span 内则吸附到更近边界。 */
+function snapOut(text: string, pos: number): number {
+  for (const s of spans(text)) {
+    if (pos > s.start && pos < s.end) return pos - s.start <= s.end - pos ? s.start : s.end
+  }
+  return pos
+}
+
+/** 左移落点在 span 内 → 吸到 span 起点(整体跨过)。 */
+function snapLeft(text: string, pos: number): number {
+  for (const s of spans(text)) if (pos > s.start && pos < s.end) return s.start
+  return pos
+}
+
+/** 右移落点在 span 内 → 吸到 span 终点(整体跨过)。 */
+function snapRight(text: string, pos: number): number {
+  for (const s of spans(text)) if (pos > s.start && pos < s.end) return s.end
+  return pos
+}
+
+/** 对 buf.cursor 执行 snapOut,避免光标停留在 span 内部。 */
+function snapBuf(buf: TextBuffer): TextBuffer {
+  return { ...buf, cursor: snapOut(buf.text, buf.cursor) }
+}
+
+/** 剪除不再被任何 span 引用的 pastes 项,保持 Map 与文本同步。 */
+function prune(text: string, pastes: PasteMap): Map<number, string> {
+  const referenced = new Set(spans(text).map((s) => s.id))
+  const out = new Map<number, string>()
+  for (const [id, c] of pastes) if (referenced.has(id)) out.set(id, c)
+  return out
+}
+
+/** 退格:光标紧跟 span END 则整块删,否则普通退格。 */
+function atomicBackspace(buf: TextBuffer): TextBuffer {
+  if (buf.cursor > 0 && buf.text[buf.cursor - 1] === PASTE_END) {
+    const s = spans(buf.text).find((s) => s.end === buf.cursor)
+    if (s) return { text: buf.text.slice(0, s.start) + buf.text.slice(s.end), cursor: s.start }
+  }
+  return backspace(buf)
+}
+
+/** 向后删:光标正处 span START 则整块删,否则普通向后删。 */
+function atomicDelete(buf: TextBuffer): TextBuffer {
+  if (buf.text[buf.cursor] === PASTE_START) {
+    const s = spans(buf.text).find((s) => s.start === buf.cursor)
+    if (s) return { text: buf.text.slice(0, s.start) + buf.text.slice(s.end), cursor: s.start }
+  }
+  return deleteForward(buf)
+}
+
+/** 占位符感知地应用一个编辑事件,返回新 buf 与新 pastes(span 被删则剪除其 id)。 */
+export function pasteReduce(
+  buf: TextBuffer,
+  pastes: PasteMap,
+  ev: InputEvent,
+): { buf: TextBuffer; pastes: Map<number, string> } {
+  let next: TextBuffer
+  switch (ev.type) {
+    case 'insert':
+      next = insert(buf, ev.text)
+      break
+    case 'newline':
+      next = insert(buf, '\n')
+      break
+    case 'backspace':
+      next = atomicBackspace(buf)
+      break
+    case 'delete':
+      next = atomicDelete(buf)
+      break
+    case 'left':
+      next = { ...buf, cursor: snapLeft(buf.text, Math.max(0, buf.cursor - 1)) }
+      break
+    case 'right':
+      next = { ...buf, cursor: snapRight(buf.text, Math.min(buf.text.length, buf.cursor + 1)) }
+      break
+    case 'up':
+      next = snapBuf(moveUp(buf))
+      break
+    case 'down':
+      next = snapBuf(moveDown(buf))
+      break
+    case 'home':
+      next = snapBuf(moveHome(buf))
+      break
+    case 'end':
+      next = snapBuf(moveEnd(buf))
+      break
+    case 'pageUp':
+      next = snapBuf(moveBufferStart(buf))
+      break
+    case 'pageDown':
+      next = snapBuf(moveBufferEnd(buf))
+      break
+    case 'submit':
+    case 'none':
+      next = reduce(buf, ev)
+      break
+  }
+  return { buf: next, pastes: prune(next.text, pastes) }
 }
