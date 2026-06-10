@@ -104,4 +104,16 @@ describe('parsedKeyToInkKey', () => {
     expect(input).toBe('e')
     expect(key.ctrl).toBe(true)
   })
+  it('Home:key.home=true', () => {
+    expect(parsedKeyToInkKey(parseKeypress('\x1b[H')).key.home).toBe(true)
+  })
+  it('End:key.end=true', () => {
+    expect(parsedKeyToInkKey(parseKeypress('\x1b[F')).key.end).toBe(true)
+  })
+  it('PageUp:key.pageUp=true', () => {
+    expect(parsedKeyToInkKey(parseKeypress('\x1b[5~')).key.pageUp).toBe(true)
+  })
+  it('PageDown:key.pageDown=true', () => {
+    expect(parsedKeyToInkKey(parseKeypress('\x1b[6~')).key.pageDown).toBe(true)
+  })
 })

@@ -15,6 +15,10 @@ export interface InkKey {
   rightArrow: boolean
   upArrow: boolean
   downArrow: boolean
+  home: boolean
+  end: boolean
+  pageUp: boolean
+  pageDown: boolean
   ctrl: boolean
   meta: boolean
   shift: boolean
@@ -36,6 +40,10 @@ function blankKey(): InkKey {
     rightArrow: false,
     upArrow: false,
     downArrow: false,
+    home: false,
+    end: false,
+    pageUp: false,
+    pageDown: false,
     ctrl: false,
     meta: false,
     shift: false,
@@ -83,6 +91,18 @@ export function parsedKeyToInkKey(parsed: ParsedKey): MappedKey {
       return { input: '', key }
     case 'right':
       key.rightArrow = true
+      return { input: '', key }
+    case 'home':
+      key.home = true
+      return { input: '', key }
+    case 'end':
+      key.end = true
+      return { input: '', key }
+    case 'pageup':
+      key.pageUp = true
+      return { input: '', key }
+    case 'pagedown':
+      key.pageDown = true
       return { input: '', key }
     case 'space':
       return { input: ' ', key }

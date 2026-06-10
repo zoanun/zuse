@@ -47,6 +47,16 @@ describe('keyToEvent', () => {
     expect(keyToEvent('', k({ downArrow: true }))).toEqual({ type: 'down' })
   })
 
+  it('Home/End 键 → 行首/行尾', () => {
+    expect(keyToEvent('', k({ home: true }))).toEqual({ type: 'home' })
+    expect(keyToEvent('', k({ end: true }))).toEqual({ type: 'end' })
+  })
+
+  it('PageUp/PageDown 键 → 缓冲首/尾', () => {
+    expect(keyToEvent('', k({ pageUp: true }))).toEqual({ type: 'pageUp' })
+    expect(keyToEvent('', k({ pageDown: true }))).toEqual({ type: 'pageDown' })
+  })
+
   it('Ctrl+A → home，Ctrl+E → end', () => {
     expect(keyToEvent('a', k({ ctrl: true }))).toEqual({ type: 'home' })
     expect(keyToEvent('e', k({ ctrl: true }))).toEqual({ type: 'end' })

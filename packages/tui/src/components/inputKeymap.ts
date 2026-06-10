@@ -14,6 +14,10 @@ export interface KeyState {
   rightArrow?: boolean
   upArrow?: boolean
   downArrow?: boolean
+  home?: boolean
+  end?: boolean
+  pageUp?: boolean
+  pageDown?: boolean
   ctrl?: boolean
   meta?: boolean
 }
@@ -52,6 +56,13 @@ export function keyToEvent(input: string, key: KeyState): InputEvent {
   if (key.rightArrow) return { type: 'right' }
   if (key.upArrow) return { type: 'up' }
   if (key.downArrow) return { type: 'down' }
+
+  // Home/End 键:行首/行尾(与 Ctrl+A/E 同义)。
+  if (key.home) return { type: 'home' }
+  if (key.end) return { type: 'end' }
+  // PageUp/PageDown 键:跳到整个输入的开头/结尾(输入框无「翻页」概念,取缓冲首尾)。
+  if (key.pageUp) return { type: 'pageUp' }
+  if (key.pageDown) return { type: 'pageDown' }
 
   // readline 风格行首/行尾。
   if (key.ctrl && input === 'a') return { type: 'home' }

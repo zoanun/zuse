@@ -26,6 +26,8 @@ export type InputEvent =
   | { type: 'down' }
   | { type: 'home' }
   | { type: 'end' }
+  | { type: 'pageUp' }
+  | { type: 'pageDown' }
   | { type: 'submit' }
   | { type: 'none' }
 
@@ -125,6 +127,16 @@ export function moveEnd(buf: TextBuffer): TextBuffer {
   return { ...buf, cursor: rowColToCursor(buf.text, row, lineLen) }
 }
 
+/** 移到整个缓冲开头(PageUp:输入框无翻页,取缓冲首)。 */
+export function moveBufferStart(buf: TextBuffer): TextBuffer {
+  return { ...buf, cursor: 0 }
+}
+
+/** 移到整个缓冲结尾(PageDown:取缓冲尾)。 */
+export function moveBufferEnd(buf: TextBuffer): TextBuffer {
+  return { ...buf, cursor: buf.text.length }
+}
+
 /** 把一个编辑事件应用到缓冲；submit / none 原样返回。 */
 export function reduce(buf: TextBuffer, ev: InputEvent): TextBuffer {
   switch (ev.type) {
@@ -148,6 +160,10 @@ export function reduce(buf: TextBuffer, ev: InputEvent): TextBuffer {
       return moveHome(buf)
     case 'end':
       return moveEnd(buf)
+    case 'pageUp':
+      return moveBufferStart(buf)
+    case 'pageDown':
+      return moveBufferEnd(buf)
     case 'submit':
     case 'none':
       return buf

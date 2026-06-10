@@ -10,6 +10,8 @@ import {
   moveDown,
   moveHome,
   moveEnd,
+  moveBufferStart,
+  moveBufferEnd,
   reduce,
   splitForRender,
 } from './textBuffer.js'
@@ -114,6 +116,16 @@ describe('moveHome / moveEnd', () => {
   })
 })
 
+describe('moveBufferStart / moveBufferEnd', () => {
+  it('PageUp 移到整个缓冲开头', () => {
+    expect(moveBufferStart({ text: 'ab\ncd', cursor: 4 }).cursor).toBe(0)
+  })
+
+  it('PageDown 移到整个缓冲结尾', () => {
+    expect(moveBufferEnd({ text: 'ab\ncd', cursor: 1 }).cursor).toBe(5)
+  })
+})
+
 describe('reduce', () => {
   it('insert 事件等价于插入文本', () => {
     expect(reduce(emptyBuffer, { type: 'insert', text: 'x' })).toEqual({ text: 'x', cursor: 1 })
@@ -133,6 +145,11 @@ describe('reduce', () => {
 
   it('方向事件移动光标', () => {
     expect(reduce({ text: 'ab', cursor: 2 }, { type: 'left' }).cursor).toBe(1)
+  })
+
+  it('pageUp/pageDown 事件移到缓冲首/尾', () => {
+    expect(reduce({ text: 'ab\ncd', cursor: 3 }, { type: 'pageUp' }).cursor).toBe(0)
+    expect(reduce({ text: 'ab\ncd', cursor: 1 }, { type: 'pageDown' }).cursor).toBe(5)
   })
 
   it('submit / none 不改动缓冲', () => {
