@@ -222,7 +222,8 @@ export function StreamRenderer({ message, cwd }: StreamRendererProps) {
   // 一旦用绝对列宽画出带边框的盒子,终端缩放时会按新宽度重新折行,把边框拆碎成乱码(用户反馈的
   // 「一拖拽就变形」)。底色高亮随文字重排——窗口变窄时至多换行,底色仍跟着字走,不会破框。
   if (message.role === 'user') {
-    const lines = message.text.split('\n')
+    // displayText 存在时按折叠回显渲染（含 [粘贴#x] 标签），否则回落到全文
+    const lines = (message.displayText ?? message.text).split('\n')
     return (
       <Box flexDirection="column" marginBottom={1}>
         {lines.map((line, i) => (

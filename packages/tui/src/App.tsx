@@ -98,8 +98,8 @@ export function App({ cwd }: AppProps) {
   })
 
   const handleSubmit = useCallback(
-    (text: string) => {
-      void submit(text)
+    (text: string, displayText?: string) => {
+      void submit(text, displayText)
     },
     [submit],
   )

@@ -19,7 +19,9 @@ export interface UIMessage {
   id: string
   // 'system' = 本地通知（斜杠命令）；'tool' = 一次工具调用及其结果
   role: 'user' | 'assistant' | 'system' | 'tool'
-  text: string // 累积的文本内容
+  text: string // 累积的文本内容（user 消息为发给模型的全文）
+  /** 折叠回显文本：存在时滚动区按它渲染（含 [粘贴#x] 标签），text 仍为全文。仅 user 消息用。 */
+  displayText?: string
   isStreaming: boolean // 正在接收增量时为 true
   usage?: Usage // 仅用于完成后的助手消息
   tool?: UIToolCall // 仅用于 role === 'tool'

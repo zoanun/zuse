@@ -67,6 +67,22 @@ describe('StreamRenderer 工具输出截断', () => {
   })
 })
 
+describe('StreamRenderer user 消息双份文本', () => {
+  it('user 消息有 displayText 时渲染 displayText、不渲染 text', () => {
+    const out = frame({
+      role: 'user',
+      text: '超长全文不该出现',
+      displayText: '[粘贴#1 · 9 行 · 1.0k 字符]',
+    })
+    expect(out).toContain('[粘贴#1')
+    expect(out).not.toContain('超长全文不该出现')
+  })
+  it('user 消息无 displayText 时回落到 text', () => {
+    const out = frame({ role: 'user', text: '普通文本' })
+    expect(out).toContain('普通文本')
+  })
+})
+
 describe('StreamRenderer Glob/Grep 文件清单', () => {
   it('Glob 列出命中文件并包成可点击链接(Found N + OSC 8 file:// URI)', () => {
     const out = frame(

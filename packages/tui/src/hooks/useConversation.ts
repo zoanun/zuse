@@ -37,8 +37,8 @@ interface UseConversationOptions {
 
 interface UseConversationReturn {
   state: ConversationState
-  /** 输入框的入口：分发斜杠命令，或发送一条消息。 */
-  submit: (input: string) => Promise<void>
+  /** 输入框的入口：分发斜杠命令，或发送一条消息。displayText 为折叠回显文本（仅 user 消息用）。 */
+  submit: (input: string, displayText?: string) => Promise<void>
   clear: () => void
   pendingPermission: PermissionRequest | null
   resolvePermission: (verdict: PermissionVerdict) => void
@@ -144,7 +144,7 @@ export function useConversation({
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, displayText?: string) => {
       // client 尚未初始化（effect 还未运行或初始化失败）。
       if (!clientRef.current) {
         setState((prev) => ({ ...prev, error: '客户端未初始化' }))
@@ -152,8 +152,8 @@ export function useConversation({
       }
       const conversation = conversationRef.current
 
-      // 乐观更新：立刻显示用户这一回合。
-      const userMessage: UIMessage = { id: generateId(), role: 'user', text, isStreaming: false }
+      // 乐观更新：立刻显示用户这一回合。displayText 存在时供滚动区折叠回显，text 始终为全文发模型。
+      const userMessage: UIMessage = { id: generateId(), role: 'user', text, displayText, isStreaming: false }
       setState((prev) => ({
         ...prev,
         messages: [...prev.messages, userMessage],
@@ -437,11 +437,12 @@ export function useConversation({
   }, [])
 
   // 输入框唯一的入口：一条斜杠命令，或一条聊天消息。
+  // displayText 为折叠回显文本，仅非命令路径传入；命令路径不带 displayText。
   const submit = useCallback(
-    async (input: string) => {
+    async (input: string, displayText?: string) => {
       const parsed = parseInput(input)
       if (!parsed) {
-        await sendMessage(input)
+        await sendMessage(input, displayText)
         return
       }
       const cmd = findCommand(parsed.name)
