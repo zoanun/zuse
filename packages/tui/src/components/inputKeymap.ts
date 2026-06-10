@@ -16,6 +16,7 @@ export interface KeyState {
   downArrow?: boolean
   ctrl?: boolean
   meta?: boolean
+  shift?: boolean
 }
 
 /**
@@ -30,6 +31,9 @@ export interface KeyState {
  * Ctrl/Alt 修饰）一律提交。配置见 docs / 启动横幅提示。
  */
 export function keyToEvent(input: string, key: KeyState): InputEvent {
+  // Shift+Enter：现代终端经 Kitty keyboard / modifyOtherKeys 协议原生上报
+  // （parseKeypress 解出 return+shift）→ 换行。须在普通回车提交分支之前判定。
+  if (key.return && key.shift) return { type: 'newline' }
   // 普通回车（key.return）：提交。Ctrl/Alt 等修饰在回车上一律忽略。
   if (key.return) return { type: 'submit' }
   // Ctrl+Enter（VSCode 集成终端）：经 keybindings 发来的 ESC+CR 被 Ink 剥成裸`\r` 且无 return 标志 → 换行。

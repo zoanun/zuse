@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react'
-import { Box, Text, Static, useApp, useInput } from 'ink'
+import { Box, Text, Static, useApp } from 'ink'
+import { useInput } from './input/useInput.js'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
 import { StreamRenderer } from './components/StreamRenderer.js'

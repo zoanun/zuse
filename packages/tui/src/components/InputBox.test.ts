@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createElement } from 'react'
-import { render } from 'ink-testing-library'
+import { EventEmitter } from 'node:events'
+import { render as inkRender } from 'ink'
 import { InputBox } from './InputBox.js'
+import { InputProvider } from '../input/InputProvider.js'
+import type { StdinLike, StdoutLike } from '../input/stdin.js'
 import type { CommandInfo } from '../commands/types.js'
 
 const COMMANDS: CommandInfo[] = [
@@ -13,16 +16,67 @@ const COMMANDS: CommandInfo[] = [
 ]
 
 // stdin 写入后让 ink 处理一拍再断言。
+// 真实等待 60ms,需大于 ESC 超时窗口(ESC_FLUSH_TIMEOUT_MS=50ms):孤立 ESC 需等满
+// 该窗口才会被 flush 为 escape 键,等待不足会导致依赖 Esc 的用例漂移失败。
 function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20))
+  return new Promise((resolve) => setTimeout(resolve, 60))
 }
 
-// 渲染一个 InputBox；用 createElement 避免 .tsx（vitest include 只收 *.test.ts，仿 table.test.ts）。
-// 渲染后先 await 一拍：Ink 在挂载后才订阅 stdin 的 'data'，过早 write 会丢失。
+/**
+ * 仿 ink-testing-library 的 Stdin/Stdout，但把 stdin 同时暴露给
+ * InputProvider(useInput shim)使用，使测试里的 stdin.write() 能触发组件回调。
+ * isTTY=true 让 StdinManager 真正接管（不降级），setRawMode/setEncoding/resume 均空实现。
+ */
+class FakeStdin extends EventEmitter implements StdinLike {
+  isTTY = true as const
+  write(data: string): void {
+    this.emit('data', data)
+  }
+  setRawMode(): void { /* no-op */ }
+  setEncoding(): void { /* no-op */ }
+  resume(): void { /* no-op */ }
+  pause(): void { /* no-op */ }
+}
+
+class FakeStdout extends EventEmitter implements StdoutLike {
+  frames: string[] = []
+  _last: string | undefined
+  write = (s: string): void => {
+    this.frames.push(s)
+    this._last = s
+  }
+  get columns(): number { return 100 }
+}
+
+// 渲染一个 InputBox；不用 ink-testing-library（它创建自己的 stdin，不可注入），
+// 改用 ink 直接渲染 + 共享 FakeStdin，使 InputProvider 和 Ink 监听同一个 stdin。
 async function mount(onSubmit: (t: string) => void = () => {}) {
-  const r = render(createElement(InputBox, { onSubmit, isDisabled: false, commands: COMMANDS }))
+  const stdin = new FakeStdin()
+  const stdout = new FakeStdout()
+  const instance = inkRender(
+    createElement(
+      InputProvider,
+      { stdin, stdout },
+      createElement(InputBox, { onSubmit, isDisabled: false, commands: COMMANDS }),
+    ),
+    {
+      // Ink 也拿到同一个 stdin：Ink 内部监听 'data' 做焦点/自身 useInput（此处哑流）；
+      // 但我们的 shim 不走 Ink，走 InputProvider，所以这里传哑流即可。
+      stdout: stdout as unknown as NodeJS.WriteStream,
+      debug: true,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    },
+  )
   await tick()
-  return r
+  return {
+    stdin,
+    lastFrame: () => stdout._last,
+    unmount: () => {
+      instance.unmount()
+      instance.cleanup()
+    },
+  }
 }
 
 // 终端控制序列。

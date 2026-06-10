@@ -1,7 +1,9 @@
 import { render } from 'ink'
+import { PassThrough } from 'node:stream'
 import { cwd as processCwd, env, stderr } from 'node:process'
 import { loadSettings, installProxy } from '@zuse/core'
 import { App } from './App.js'
+import { InputProvider } from './input/InputProvider.js'
 
 // 在 bin 入口处一次性定下工作目录，再往下传，而不是散落到 hook 里临时取。
 // pnpm -F 会把进程 cwd 切到包目录（packages/tui），INIT_CWD 才记着用户真正敲
@@ -28,6 +30,17 @@ try {
   // loadSettings 失败：交由 App 统一处理配置错误。
 }
 
+// 给 Ink 喂一个非 TTY 哑流：Ink 的 useInput/焦点管理永不触发、不碰键盘，
+// 真实 process.stdin 全权交给 InputProvider 接管（见 input/ 子系统）。
+// Ink 仍正常渲染到 stdout，resize 走 stdout 不受影响。
+const dummyStdin = new PassThrough() as unknown as NodeJS.ReadStream
+dummyStdin.isTTY = false
+
 // exitOnCtrlC:false 关掉 Ink 默认的「单击 Ctrl+C 立即退出」，改由 App 实现双击退出，
 // 避免误触一次就丢掉会话（单击 Esc 才是中断流式）。
-render(<App cwd={cwd} />, { exitOnCtrlC: false })
+render(
+  <InputProvider>
+    <App cwd={cwd} />
+  </InputProvider>,
+  { stdin: dummyStdin, exitOnCtrlC: false },
+)

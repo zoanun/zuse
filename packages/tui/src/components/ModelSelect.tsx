@@ -1,4 +1,5 @@
-import { Box, Text, useInput } from 'ink'
+import { Box, Text } from 'ink'
+import { useInput } from '../input/useInput.js'
 import { useState } from 'react'
 import type { ResolvedSettings } from '@zuse/core'
 import { buildModelOptions } from '../commands/registry.js'
