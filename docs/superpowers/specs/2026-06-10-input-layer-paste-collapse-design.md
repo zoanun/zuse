@@ -181,6 +181,7 @@ tokenizer 在 `PASTE_START` 后进入粘贴态,聚合 `PASTE_END` 前的所有�
 - **协议不被支持**:推送的 Kitty/modifyOtherKeys 在老终端被忽略即可,不报错;Shift+Enter 自动回落到裸 `\r`/`\n` 兜底。
 - **半截序列**:tokenizer 的 `buffer()` 跨 chunk 保留未完成序列;进程退出前 `flush()` 一次,避免吞字符。
 - **跨平台**:Windows(Windows Terminal/PowerShell/VSCode 集成终端)、macOS、Linux 均需覆盖;协议推送对不支持者无害,兜底保证基本可用。Windows 下注意 `process.stdin` 在 raw 模式的 `data` 编码(utf8)。
+- **孤立 ESC 与超时(已知限制)**:单按 Escape 时,孤立的 `\x1b` 会被 tokenizer 缓冲以等待可能的后续序列字节;`stdin.ts` 用 50ms 超时(`ESC_FLUSH_TIMEOUT_MS`)flush——超时仍无续字节即判为 Escape 键。已知限制:慢终端/慢链路下,若一条多字节转义序列(如方向键 `\x1b[A`)的字节被拆开且间隔 >50ms 到达,会被误判(ESC 先 flush 成 Escape,余下字节当文本)。此为经典 ESC-timeout 取舍,与参考实现 cc-haha 一致;实践中同一按键的字节在同一 chunk 或微秒级内到达,不触发。
 
 ## 10. 测试策略
 

@@ -12,7 +12,6 @@ export interface StdinLike {
   setRawMode?(mode: boolean): void
   setEncoding?(encoding: string): void
   resume(): void
-  pause(): void
   on(event: 'data', listener: (chunk: Buffer | string) => void): void
   off(event: 'data', listener: (chunk: Buffer | string) => void): void
 }
