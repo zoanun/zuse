@@ -44,8 +44,11 @@ export function keyToEvent(input: string, key: KeyState): InputEvent {
   // name='enter'(非 'return'),故 key.return=false、ctrl=false,落到这里。
   if (input === '\n') return { type: 'newline' }
 
-  // 退格：终端常把退格上报为 delete，两者都按删除前一字符处理。
-  if (key.backspace || key.delete) return { type: 'backspace' }
+  // 退格键(\x7f / \b)删光标前一字符。
+  if (key.backspace) return { type: 'backspace' }
+  // Delete 键(\x1b[3~)删光标后一字符(向后删)。自建输入层能精确区分二者,
+  // 不再像旧 stock Ink 那样把退格误报为 delete 而需合并处理。
+  if (key.delete) return { type: 'delete' }
 
   if (key.leftArrow) return { type: 'left' }
   if (key.rightArrow) return { type: 'right' }

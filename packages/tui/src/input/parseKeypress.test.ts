@@ -86,6 +86,13 @@ describe('parseMultipleKeypresses 粘贴聚合', () => {
     expect(keys[0]!.sequence).toBe('a\nb\nc')
   })
 
+  it('粘贴内容把 CR / CRLF 规范为 LF(否则裸 \\r 会污染渲染)', () => {
+    const [crlf] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[200~a\r\nb\x1b[201~')
+    expect(crlf[0]!.sequence).toBe('a\nb')
+    const [cr] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[200~a\rb\x1b[201~')
+    expect(cr[0]!.sequence).toBe('a\nb')
+  })
+
   it('空粘贴也产出一个 isPasted key(供将来图片侦测)', () => {
     const [keys] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[200~\x1b[201~')
     expect(keys.length).toBe(1)

@@ -19,6 +19,7 @@ export type InputEvent =
   | { type: 'insert'; text: string }
   | { type: 'newline' }
   | { type: 'backspace' }
+  | { type: 'delete' }
   | { type: 'left' }
   | { type: 'right' }
   | { type: 'up' }
@@ -47,6 +48,13 @@ export function backspace(buf: TextBuffer): TextBuffer {
   if (buf.cursor === 0) return buf
   const text = buf.text.slice(0, buf.cursor - 1) + buf.text.slice(buf.cursor)
   return { text, cursor: buf.cursor - 1 }
+}
+
+/** 删除光标后(光标处)一个字符,光标不动；光标在末尾时为空操作。 */
+export function deleteForward(buf: TextBuffer): TextBuffer {
+  if (buf.cursor >= buf.text.length) return buf
+  const text = buf.text.slice(0, buf.cursor) + buf.text.slice(buf.cursor + 1)
+  return { text, cursor: buf.cursor }
 }
 
 /** 把光标偏移换算成 { row, col }（col 是行内列，0 起）。 */
@@ -126,6 +134,8 @@ export function reduce(buf: TextBuffer, ev: InputEvent): TextBuffer {
       return insert(buf, '\n')
     case 'backspace':
       return backspace(buf)
+    case 'delete':
+      return deleteForward(buf)
     case 'left':
       return moveLeft(buf)
     case 'right':

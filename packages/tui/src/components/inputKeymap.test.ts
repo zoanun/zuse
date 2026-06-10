@@ -35,8 +35,9 @@ describe('keyToEvent', () => {
     expect(keyToEvent('', k({ backspace: true }))).toEqual({ type: 'backspace' })
   })
 
-  it('Delete 也当作 backspace（多数终端退格上报为 delete）', () => {
-    expect(keyToEvent('', k({ delete: true }))).toEqual({ type: 'backspace' })
+  it('Backspace 与 Delete 区分：退格删前一字符、Delete 向后删', () => {
+    expect(keyToEvent('', k({ backspace: true }))).toEqual({ type: 'backspace' })
+    expect(keyToEvent('', k({ delete: true }))).toEqual({ type: 'delete' })
   })
 
   it('方向键 → 对应移动事件', () => {

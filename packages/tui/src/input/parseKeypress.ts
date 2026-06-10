@@ -30,6 +30,10 @@ const CSI_U_RE = /^\x1b\[(\d+)(?:;(\d+))?u/
 const MODIFY_OTHER_KEYS_RE = /^\x1b\[27;(\d+);(\d+)~/
 
 function createPasteKey(content: string): ParsedKey {
+  // 粘贴内容里的换行可能是 CR 或 CRLF(多数终端在 bracketed paste 里把换行发成
+  // \r 或 \r\n),统一规范成 \n。否则裸 \r 进入文本缓冲后,splitForRender 只按
+  // \n 切行、整段当一行,渲染时 CR 让终端回车覆盖打印,导致多行粘贴显示错乱。
+  const normalized = content.replace(/\r\n?/g, '\n')
   return {
     kind: 'key',
     name: '',
@@ -39,8 +43,8 @@ function createPasteKey(content: string): ParsedKey {
     shift: false,
     option: false,
     super: false,
-    sequence: content,
-    raw: content,
+    sequence: normalized,
+    raw: normalized,
     isPasted: true,
   }
 }

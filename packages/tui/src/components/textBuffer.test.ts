@@ -3,6 +3,7 @@ import {
   emptyBuffer,
   insert,
   backspace,
+  deleteForward,
   moveLeft,
   moveRight,
   moveUp,
@@ -42,6 +43,20 @@ describe('backspace', () => {
 
   it('可跨换行删除（合并两行）', () => {
     expect(backspace({ text: 'a\n', cursor: 2 })).toEqual({ text: 'a', cursor: 1 })
+  })
+})
+
+describe('deleteForward', () => {
+  it('删除光标处（后一个）字符，光标不动', () => {
+    expect(deleteForward({ text: 'abc', cursor: 1 })).toEqual({ text: 'ac', cursor: 1 })
+  })
+
+  it('光标在末尾时为空操作', () => {
+    expect(deleteForward({ text: 'abc', cursor: 3 })).toEqual({ text: 'abc', cursor: 3 })
+  })
+
+  it('可跨换行向后删（合并下一行）', () => {
+    expect(deleteForward({ text: 'a\nb', cursor: 1 })).toEqual({ text: 'ab', cursor: 1 })
   })
 })
 
@@ -110,6 +125,10 @@ describe('reduce', () => {
 
   it('backspace 事件删除前一字符', () => {
     expect(reduce({ text: 'ab', cursor: 2 }, { type: 'backspace' })).toEqual({ text: 'a', cursor: 1 })
+  })
+
+  it('delete 事件删除后一字符', () => {
+    expect(reduce({ text: 'ab', cursor: 0 }, { type: 'delete' })).toEqual({ text: 'b', cursor: 0 })
   })
 
   it('方向事件移动光标', () => {
