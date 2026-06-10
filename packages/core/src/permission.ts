@@ -1,6 +1,7 @@
 import { isAbsolute, resolve, relative, sep } from 'node:path'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionDecision } from './types.js'
+import { hasBlockingBashSecurityIssue } from './bash-security.js'
 
 /** 由工具名 + 限定符拼出规则字符串。 */
 export function buildRule(toolName: string, specifier: string | null): string {
@@ -176,7 +177,7 @@ export function decide(
   settings: ResolvedSettings,
   sessionAllow: string[],
   cwd: string,
-): { decision: PermissionDecision; rule: string; matched?: string } {
+): { decision: PermissionDecision; rule: string; matched?: string; reason?: string } {
   const name = tool.name
   const rule = buildRule(name, specifier)
 
@@ -204,6 +205,14 @@ export function decide(
 
   // 3. bypassPermissions 模式直接放行（deny 已在上面检查过）。
   if (perms.defaultMode === 'bypassPermissions') return { decision: 'allow', rule }
+
+  // 3.5 Bash 安全检查（23 项的 block 档）：把混淆/注入/解析歧义模式压过 allow，强制人审。
+  // 优先级低于 deny / bypass（上方已返回），高于 allow —— 即便有前缀 allow 规则覆盖，
+  // 命中 block 也不自动放行。词法拆分看不见的引号花招、进程替换、$IFS、回车符等在此兜底。
+  if (isBash) {
+    const sec = hasBlockingBashSecurityIssue(specifier!)
+    if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
+  }
 
   // 4. allow（含会话覆盖层）。Bash 需整条被规则"完整覆盖"才放行。
   const allowRules = [...perms.allow, ...sessionAllow]

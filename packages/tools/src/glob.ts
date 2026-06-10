@@ -3,10 +3,29 @@ import { join, relative, sep, matchesGlob } from 'node:path'
 import { resolvePath } from '@zuse/core'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 
-/** 一次 Glob 返回（展示）的路径条数上限（让输出有界）。 */
-const MAX_RESULTS = 100
-/** 收集阶段的硬上限：避免在超大目录树上无限收集，同时给 mtime 排序留足候选。 */
+/**
+ * 收集（遍历）的硬上限：避免在超大目录树上无限收集。注意这是「内部收集」的天花板，
+ * 不是「喂给模型」的条数 —— 见 RESULT_LIMIT。
+ */
 const HARD_CAP = 10_000
+
+/**
+ * 喂给模型的命中条数上限（与 CC 的 Glob 同一取舍：宁可只回一截 + 「太多了，缩小范围」，
+ * 也不把成百上千条路径灌进上下文撑爆它）。CC 默认 100、本仓库 Grep 默认 250；这里取 200，
+ * 比 CC 略宽，让寻常的定向 glob（如 src 下按扩展名找的那类）大多不触发截断，又把最坏情况
+ * 牢牢压在数 KB / ~2k token 量级。
+ *
+ * 关键：我们仍**内部收集全量**（至多 HARD_CAP）再按 mtime 倒序排序，故①回给模型的是
+ * mtime **最新的** RESULT_LIMIT 条（而非遍历到的前 N 条），②截断注记里能写出**真实总数**
+ * （CC 截断后并不知道总共多少）。注记形如 `[truncated: showing first 200 of 1432 …]`，
+ * 会被展示层的 stripTrailingNotes 剥除。
+ *
+ * （历史 bug 与权衡：曾硬截 100 且**不附注记** —— 模型/展示层都不知道被截过，徽标与
+ *  「查看全部」临时文件据残缺的 100 条派生，既少报又名不副实。我一度改为「整份返回、只在
+ *  展示层截」修掉了它，但那等于把模型侧上下文护栏从 100 放宽到 10000；经评审改回 CC 的
+ *  「截模型 + 如实注记」路线 —— 护栏回到位，且注记带真实总数比旧实现更诚实。）
+ */
+const RESULT_LIMIT = 200
 /**
  * 遍历时直接剪枝、不下钻的目录：这两个几乎必然巨大、又几乎不会想用通配符去翻。
  * 与 CC 的取舍说明：CC 的 Glob 默认连 gitignore 都不应用（包含被忽略的文件），
@@ -90,7 +109,7 @@ async function collect(
  *
  * 对齐要点：结果按**修改时间倒序**（最近改的在前，跟 CC 一致），不是字母序；隐藏
  * 文件一并包含（CC 的 Glob 默认也含 gitignore 掉的文件）。只看路径不看内容，按
- * 内容找用 Grep。展示上限 MAX_RESULTS。
+ * 内容找用 Grep。回给模型的条数上限见 RESULT_LIMIT（超出附带真实总数的截断注记）。
  */
 export const GlobTool: Tool = {
   name: 'Glob',
@@ -127,11 +146,16 @@ export const GlobTool: Tool = {
 
     // 按 mtime 倒序：最近修改的排在前面（与 CC 的 Glob 一致）。
     matches.sort((a, b) => b.mtimeMs - a.mtimeMs)
-    const truncated = matches.length > MAX_RESULTS
-    const shown = truncated ? matches.slice(0, MAX_RESULTS) : matches
-    const note = truncated
-      ? `\n\n[truncated: showing first ${MAX_RESULTS} of ${matches.length} matches]`
-      : ''
+    // 只回 mtime 最新的 RESULT_LIMIT 条；超出则附一条带真实总数的截断注记，提示模型缩小
+    // pattern。注记会被展示层 stripTrailingNotes 剥除（详见 RESULT_LIMIT 注释）。
+    const total = matches.length
+    const shown = matches.slice(0, RESULT_LIMIT)
+    let note = ''
+    if (total > RESULT_LIMIT) {
+      // 收集触顶 HARD_CAP 时真实总数可能更多，用 `N+` 表示这是下界。
+      const totalLabel = total >= HARD_CAP ? `${HARD_CAP}+` : String(total)
+      note = `\n\n[truncated: showing first ${RESULT_LIMIT} of ${totalLabel} matches; narrow the pattern for the rest]`
+    }
     return { output: shown.map((m) => m.rel).join('\n') + note, isError: false }
   },
 }

@@ -223,7 +223,11 @@
 
 ### ✅ 已实现（2026-06-04）
 
-三层 `settings.json` 配置（用户 < 项目 < 本地，标量覆盖 / permission 数组拼接 / env 兜底），`.env` 退役；权限模型 `Tool(specifier)` 文法 + `decide()` 判定（禁用 → deny → bypass → allow+会话层 → ask → defaultMode），**deny 硬护栏压过 bypass**；`ask` 交互弹框四档裁决（本次 / 本会话 / 写盘 / 拒绝）；工具暴露开关。**未做**：CC 的 23 项 Bash 安全检查，v1 只用 `deny` 规则做粗护栏。设计与全部细节见 spec [→](../specs/2026-06-04-zuse-settings-and-permissions-design.md)。
+三层 `settings.json` 配置（用户 < 项目 < 本地，标量覆盖 / permission 数组拼接 / env 兜底），`.env` 退役；权限模型 `Tool(specifier)` 文法 + `decide()` 判定（禁用 → deny → bypass → allow+会话层 → ask → defaultMode），**deny 硬护栏压过 bypass**；`ask` 交互弹框四档裁决（本次 / 本会话 / 写盘 / 拒绝）；工具暴露开关。设计与全部细节见 spec [→](../specs/2026-06-04-zuse-settings-and-permissions-design.md)。
+
+### ✅ 已补齐（2026-06-09）—— Bash 23 项安全检查
+
+新增 `packages/core/src/bash-security.ts`（对齐 CC `bashSecurity.ts` 的 23 项清单，按能力对齐而非照搬 2,592 行）。`checkBashSecurity()` 跑全部 23 项检查，分两档严重度：**block**（高置信混淆/注入/解析差异：ANSI-C/locale 引用、进程替换 `<()`/`>()`/`=()`、zsh 等号展开、`$IFS`、`/proc/<pid>/environ`、回车符、控制字符、Unicode 空白、zsh 危险内建 zmodload 等、jq system()/危险参数、git commit 内替换…）与 **warn**（日常合法但理论可滥用：重定向、`$f |`、花括号展开、换行等）。`decide()` 在 deny/bypass 之后、allow 之前插入 block 档闸 —— 命中即**压过 allow 强制 ask**（`splitBashCommand` 已处理操作符拼接，故这里只补「拆分器看不见」的混淆层）；warn 档 v1 仅检测、不改判定。ask 原因经 `PermissionRequest.reason` 透传到权限对话框（红色「⚠ 安全检查」行）。30 条安全单测 + 5 条 decide 集成测试，606 用例全绿。
 
 ### ✅ 已增强（2026-06-06）—— Bash 复合命令权限拆分 + cwd 持久化
 
@@ -284,7 +288,21 @@
 - 降级路径必须测：rc 不存在、`source` 报错、超时——都不能让 Bash 工具挂掉。
 - **不做**：CC 那套把 `find`/`grep`/`rg` 用 bun 内嵌二进制 `ARGV0` 派发的把戏（zuse 没有内嵌搜索二进制，直接用系统 rg / 自带 Grep 工具即可）。
 
-### 5.5.2 tmux 套接字隔离 —— 中优先级（依赖是否引入 tmux 执行后端）
+### 5.5.2 tmux 套接字隔离 —— ✅ 已完成（2026-06-09，仅第 1 层「套接字隔离」）
+
+> **落地**：新增 `packages/tools/src/tmux-isolation.ts`（对齐 CC `src/utils/tmuxSocket.ts`）。
+> 懒初始化：Bash 命令含整词 `tmux` 时（`isTmuxCommand`，从宽匹配，宁可错触发不可漏）先
+> `ensureTmuxSocket()` 在专属套接字 `zuse-<PID>` 上建 detached 会话、取 `socket_path`+`pid`，
+> 拼成 tmux 原生格式的 `TMUX` 值经 `getZuseTmuxEnv()` 注入并**覆盖**该 Bash 子进程的 `TMUX`
+> —— 模型的任何 `tmux` 命令只动 zuse 自己的 server，碰不到用户会话。探测不到 tmux（POSIX
+> `tmux -V` / Windows `wsl -e tmux -V`）则全程优雅降级。进程正常退出经 `process.once('exit')`
+> + spawnSync `kill-server` 清理（不抢 SIGINT，避免与 Ink 的 Ctrl+C 退出打架）。15 条单测、
+> 621 用例全绿。**平台**：POSIX 完整生效；Windows 走 git-bash、tmux 仅在 WSL，故基本 no-op
+> （见模块头注）。第 2 层「tmux 作为执行后端」仍归 Phase 11。
+
+#### 原始设计（保留备查）
+
+> 中优先级（依赖是否引入 tmux 执行后端）
 
 **两个层面，别混为一谈**：
 

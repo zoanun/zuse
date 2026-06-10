@@ -154,6 +154,8 @@ export interface PermissionRequest {
   specifier: string | null
   /** 用于会话覆盖 / 写盘的规则字符串，如 `Bash(git status)` / `Write(./a.ts)`。 */
   rule: string
+  /** 触发 ask 的原因（目前仅 Bash 安全检查会给出），供权限对话框展示，让用户知道为何被拦。 */
+  reason?: string
 }
 
 /** 用户对一次 ask 的裁决（方案 A 回调返回）。 */

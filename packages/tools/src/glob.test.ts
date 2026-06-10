@@ -72,4 +72,44 @@ describe('GlobTool', () => {
     const result = await GlobTool.run({}, makeCtx())
     expect(result.isError).toBe(true)
   })
+
+  it('returns all matches without a note when under the model-side cap', async () => {
+    // 未超 RESULT_LIMIT(200)时整份返回、不附截断注记。
+    const many = await mkdtemp(join(tmpdir(), 'zuse-glob-few-'))
+    try {
+      const count = 150
+      await Promise.all(
+        Array.from({ length: count }, (_, i) => writeFile(join(many, `f${i}.log`), '', 'utf8')),
+      )
+      const ctx: ToolContext = { cwd: many, signal: new AbortController().signal, tracker: createFileTracker() }
+      const result = await GlobTool.run({ pattern: '**/*.log' }, ctx)
+      expect(result.isError).toBeFalsy()
+      const lines = result.output.split('\n').filter((l) => l.endsWith('.log'))
+      expect(lines.length).toBe(count)
+      expect(result.output).not.toMatch(/truncated|capped/)
+    } finally {
+      await rm(many, { recursive: true, force: true })
+    }
+  })
+
+  it('caps model-facing output at RESULT_LIMIT and notes the true total', async () => {
+    // 回归 + 护栏：超出 200 条时，只回前 200 条（mtime 最新），并附一条写明真实总数的
+    // 截断注记 —— 既不把上千条灌进模型上下文，又如实告知「共多少、请缩小范围」。
+    const many = await mkdtemp(join(tmpdir(), 'zuse-glob-many-'))
+    try {
+      const count = 260
+      await Promise.all(
+        Array.from({ length: count }, (_, i) => writeFile(join(many, `f${i}.log`), '', 'utf8')),
+      )
+      const ctx: ToolContext = { cwd: many, signal: new AbortController().signal, tracker: createFileTracker() }
+      const result = await GlobTool.run({ pattern: '**/*.log' }, ctx)
+      expect(result.isError).toBeFalsy()
+      const lines = result.output.split('\n').filter((l) => l.endsWith('.log'))
+      expect(lines.length).toBe(200)
+      // 注记须写出真实总数 260，并提示缩小范围。
+      expect(result.output).toMatch(/truncated: showing first 200 of 260 matches/)
+    } finally {
+      await rm(many, { recursive: true, force: true })
+    }
+  })
 })

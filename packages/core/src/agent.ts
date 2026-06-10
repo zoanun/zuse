@@ -230,7 +230,7 @@ async function gateAndRunTool(
   if (!tool) return { output: `Unknown tool: ${tu.name}`, isError: true }
 
   const specifier = tool.specifierFor?.(tu.input) ?? null
-  const { decision, rule, matched } = decide(tool, specifier, deps.settings, deps.sessionAllow, deps.cwd)
+  const { decision, rule, matched, reason } = decide(tool, specifier, deps.settings, deps.sessionAllow, deps.cwd)
 
   if (decision === 'deny') {
     return { output: `Permission denied by settings (${matched ?? rule}).`, isError: true }
@@ -238,7 +238,7 @@ async function gateAndRunTool(
 
   if (decision === 'ask') {
     const verdict = deps.canUseTool
-      ? await deps.canUseTool({ toolName: tu.name, input: tu.input, specifier, rule })
+      ? await deps.canUseTool({ toolName: tu.name, input: tu.input, specifier, rule, reason })
       : 'deny'
     if (verdict === 'deny') return { output: `Permission denied by user (${rule}).`, isError: true }
     if (verdict === 'allow_session' || verdict === 'allow_persist') {

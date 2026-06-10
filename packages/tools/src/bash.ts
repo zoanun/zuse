@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 import { findOnPath, killTree } from './util.js'
 import { ensureShellSnapshot } from './shell-snapshot.js'
+import { ensureTmuxSocket, getZuseTmuxEnv, isTmuxCommand } from './tmux-isolation.js'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
@@ -218,6 +219,13 @@ export const BashTool: Tool = {
     // 取登录 shell 快照（记忆化,仅首次构建；非 bash/失败时为 null,命令照旧）。
     const snapshot = await primeShellSnapshot()
 
+    // tmux 套接字隔离：命令调用 tmux 时，先就绪 zuse 专属套接字，再把 TMUX 注入子进程环境
+    // 覆盖用户原值 —— 模型的 `tmux` 命令只动 zuse 自己的 server，碰不到用户会话（见 tmux-isolation）。
+    // 不碰 tmux 的命令完全不触发，零开销；探测不到 tmux 时优雅降级。
+    if (isTmuxCommand(input.command)) await ensureTmuxSocket()
+    const tmuxEnv = getZuseTmuxEnv()
+    const childEnv = tmuxEnv ? { ...process.env, TMUX: tmuxEnv } : undefined
+
     return new Promise<ToolResult>((resolvePromise) => {
       // 命令执行后捕获工作目录,让 cd 跨命令持久化（仅 bash/sh；其余 shell 为 null）。
       const capture = buildCwdCapture(input.command, snapshot)
@@ -226,6 +234,8 @@ export const BashTool: Tool = {
         cwd: ctx.cwd,
         shell: SHELL,
         detached: process.platform !== 'win32',
+        // tmuxEnv 为空时传 undefined → 继承 process.env（不影响非 tmux 命令）。
+        ...(childEnv ? { env: childEnv } : {}),
       })
 
       let output = ''

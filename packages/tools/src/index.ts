@@ -14,6 +14,14 @@ import { LspManager } from './lsp/manager.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel, primeShellSnapshot } from './bash.js'
+export {
+  checkTmuxAvailable,
+  ensureTmuxSocket,
+  getZuseTmuxEnv,
+  getZuseTmuxSocketName,
+  isTmuxCommand,
+  isTmuxSocketInitialized,
+} from './tmux-isolation.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'

@@ -27,6 +27,7 @@ export function PermissionDialog({ req, onDecision }: PermissionDialogProps) {
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
       <Text bold color="yellow">权限请求</Text>
       <Text>{detail}</Text>
+      {req.reason && <Text color="red">⚠ 安全检查：{req.reason}</Text>}
       <Box marginTop={1}>
         <SelectList
           items={OPTIONS}

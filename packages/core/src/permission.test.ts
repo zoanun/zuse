@@ -140,3 +140,31 @@ describe('decide — Bash compound commands', () => {
     expect(decide(Bash, 'cd src && npm test', s, ['Bash(cd src && npm test)'], cwd).decision).toBe('allow')
   })
 })
+
+describe('decide — Bash 安全检查（23 项 block 档压过 allow）', () => {
+  it('block 档命令即便被 allow 覆盖也强制 ask（不自动放行）', () => {
+    const s = settings({ allow: ['Bash(*)'] })
+    // 进程替换、$IFS、回车符等拆分器看不见的混淆模式：压过 allow → ask
+    expect(decide(Bash, 'diff <(sort a) <(sort b)', s, [], cwd).decision).toBe('ask')
+    expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('ask')
+    expect(decide(Bash, "ls $'\\x2d\\x6c'", s, [], cwd).decision).toBe('ask')
+  })
+  it('matched 标注了具体命中的安全检查', () => {
+    const s = settings({ allow: ['Bash(*)'] })
+    const r = decide(Bash, 'diff <(sort a) <(sort b)', s, [], cwd)
+    expect(r.matched).toMatch(/^security:8 /)
+  })
+  it('deny 仍压过安全检查', () => {
+    const s = settings({ allow: ['Bash(*)'], deny: ['Bash(diff *)'] })
+    expect(decide(Bash, 'diff <(sort a) <(sort b)', s, [], cwd).decision).toBe('deny')
+  })
+  it('bypassPermissions 仍压过安全检查', () => {
+    const s = settings({ mode: 'bypassPermissions' })
+    expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('allow')
+  })
+  it('warn 档（重定向等）不压过 allow', () => {
+    const s = settings({ allow: ['Bash(*)'] })
+    expect(decide(Bash, 'echo hi > out.txt', s, [], cwd).decision).toBe('allow')
+    expect(decide(Bash, 'grep foo $file | sort', s, [], cwd).decision).toBe('allow')
+  })
+})
