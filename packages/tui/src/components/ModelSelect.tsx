@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink'
 import { useInput } from '../input/useInput.js'
 import { useState } from 'react'
-import type { ResolvedSettings } from '@zuse/core'
+import type { ResolvedSettings, ErrorCategory } from '@zuse/core'
 import { buildModelOptions } from '../commands/registry.js'
 import { buildModelSelectItems } from './modelSelectItems.js'
 import { SelectList } from './SelectList.js'
@@ -14,6 +14,8 @@ interface ModelSelectProps {
   onConfirm: (providerId: string, model: string, persist: boolean) => void
   /** Esc 取消。 */
   onCancel: () => void
+  /** 本会话已判不可用的 provider/model(key=`pid/model`),picker 据此灰显标注。 */
+  badKeys?: ReadonlyMap<string, ErrorCategory>
 }
 
 /** 选项栏的开关定义。新增一个写盘外的 flag = 在这里加一条(数据驱动)，渲染与键位无需改。 */
@@ -35,8 +37,9 @@ export function ModelSelect({
   currentModel,
   onConfirm,
   onCancel,
+  badKeys,
 }: ModelSelectProps) {
-  const options = buildModelOptions(settings, currentProviderId, currentModel)
+  const options = buildModelOptions(settings, currentProviderId, currentModel, badKeys)
   const items = buildModelSelectItems(options)
   const currentIndex = options.findIndex((o) => o.isCurrent)
   const currentValue = currentIndex >= 0 ? String(currentIndex) : undefined
