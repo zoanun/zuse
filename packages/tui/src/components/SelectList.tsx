@@ -6,6 +6,7 @@ import {
   clampIndex,
   computeViewport,
   nextSelectableIndex,
+  governingHeaderIndex,
   type SelectListItem,
 } from './selectListCore.js'
 
@@ -66,6 +67,11 @@ export function SelectList({
     filtered[rawCursor]?.kind === 'header' ? nextSelectableIndex(filtered, rawCursor, 1) : rawCursor
   const view = computeViewport(offset, cursor, height, total)
   const visible = filtered.slice(view.offset, view.offset + height)
+  // 分组头吸顶:滚动到某组中间时,该组 header 已被滚出视口上方(光标永不停在 header,
+  // offset 回不到 0,头露不出来)。把它钉在视口顶行,让用户始终看得到当前所属 provider。
+  // 仅当 header 确在视口上方(govIdx < offset)时钉;header 本身可见则不重复。
+  const govIdx = grouped && view.offset > 0 ? governingHeaderIndex(filtered, view.offset) : null
+  const pinnedHeader = govIdx !== null && govIdx < view.offset ? filtered[govIdx] : null
 
   // 过滤变化后把光标与视口都归零（候选集换了，停在旧位置无意义）。
   const resetToTop = (): void => {
@@ -130,7 +136,14 @@ export function SelectList({
         </Box>
       )}
 
-      {view.hasAbove && <Text dimColor> ↑ 更多</Text>}
+      {pinnedHeader ? (
+        // 钉住的分组头:provider 名 + ↑ 更多(既给分组上下文,又保留"上方还有"提示)。
+        <Text bold dimColor>
+          {pinnedHeader.label} ↑ 更多
+        </Text>
+      ) : (
+        view.hasAbove && <Text dimColor> ↑ 更多</Text>
+      )}
 
       {total === 0 ? (
         <Text dimColor> （无匹配）</Text>

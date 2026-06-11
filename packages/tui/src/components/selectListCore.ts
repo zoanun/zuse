@@ -76,6 +76,17 @@ export function filterGroupedItems(items: SelectListItem[], query: string): Sele
   return result
 }
 
+/**
+ * 返回管辖 index 处行的分组头下标(从 index 向前找最近的 header);无 header / 空列表返回 null。
+ * 供「分组头吸顶」:滚动到某组中间时,把该组 header 钉在视口顶部,让用户始终看得到所属 provider。
+ */
+export function governingHeaderIndex(items: SelectListItem[], index: number): number | null {
+  for (let i = Math.min(index, items.length - 1); i >= 0; i--) {
+    if (items[i]?.kind === 'header') return i
+  }
+  return null
+}
+
 /** 列表里第一个可选(非 header)项的下标；无可选项 / 空列表返回 0。 */
 export function firstSelectableIndex(items: SelectListItem[]): number {
   for (let i = 0; i < items.length; i++) {

@@ -5,6 +5,7 @@ import {
   filterGroupedItems,
   firstSelectableIndex,
   nextSelectableIndex,
+  governingHeaderIndex,
   clampIndex,
   computeViewport,
 } from './selectListCore.js'
@@ -64,6 +65,29 @@ describe('filterItems — 按 query 过滤并保序', () => {
 
   it('无命中返回空数组', () => {
     expect(filterItems(items, 'zzz')).toEqual([])
+  })
+})
+
+describe('governingHeaderIndex', () => {
+  const grouped: SelectListItem[] = [
+    { value: 'h0', label: 'qwen', kind: 'header' },
+    { value: '0', label: 'm0' },
+    { value: '1', label: 'm1' },
+    { value: 'h3', label: 'deepseek', kind: 'header' },
+    { value: '2', label: 'm2' },
+  ]
+  it('返回 index 处行所属的最近分组头下标', () => {
+    expect(governingHeaderIndex(grouped, 2)).toBe(0) // m1 → qwen
+    expect(governingHeaderIndex(grouped, 4)).toBe(3) // m2 → deepseek
+  })
+  it('index 本身是 header 时返回自身', () => {
+    expect(governingHeaderIndex(grouped, 3)).toBe(3)
+  })
+  it('无 header(普通列表)返回 null', () => {
+    expect(governingHeaderIndex([{ value: '0', label: 'a' }], 0)).toBeNull()
+  })
+  it('空列表返回 null', () => {
+    expect(governingHeaderIndex([], 0)).toBeNull()
   })
 })
 
