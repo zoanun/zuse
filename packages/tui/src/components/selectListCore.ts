@@ -16,6 +16,10 @@ export interface SelectListItem {
    * 但占一行随列表滚动。仅 /model 选择器用到分组；权限框等普通列表不传 → 全是 option。
    */
   kind?: 'header' | 'option'
+  /** 标为不可选:渲染灰显,回车不确认(导航仍可经过,让用户看到标签)。 */
+  disabled?: boolean
+  /** 行尾标签(如「额度耗尽」),仅展示用。 */
+  badge?: string
 }
 
 /**

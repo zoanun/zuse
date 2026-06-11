@@ -3,8 +3,17 @@
  * 与 selectListCore 一样是不依赖 React/ink 的纯函数，便于单测。
  */
 
+import type { ErrorCategory } from '@zuse/core'
 import type { ModelOption } from '../commands/registry.js'
 import type { SelectListItem } from './selectListCore.js'
+
+/** 不可用原因 → picker 行尾中文标签。 */
+const REASON_LABEL: Record<ErrorCategory, string> = {
+  quota: '额度耗尽',
+  auth: 'key失效',
+  unavailable: '不可用',
+  other: '不可用',
+}
 
 /**
  * 按 provider 分组：每组前插一条 header 行(provider 名)，其后是该 provider 的各模型行。
@@ -24,7 +33,12 @@ export function buildModelSelectItems(options: ModelOption[]): SelectListItem[] 
       items.push({ value: `__header__${i}`, label: o.providerId, kind: 'header' })
       lastProvider = o.providerId
     }
-    items.push({ value: String(i), label: o.model, filterText: `${o.providerId}/${o.model}` })
+    items.push({
+      value: String(i),
+      label: o.model,
+      filterText: `${o.providerId}/${o.model}`,
+      ...(o.unavailable ? { disabled: true, badge: REASON_LABEL[o.unavailable.reason] } : {}),
+    })
   })
   return items
 }

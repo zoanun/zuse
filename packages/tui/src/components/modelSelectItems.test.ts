@@ -47,3 +47,18 @@ describe('buildModelSelectItems — 按 provider 分组成 SelectList 候选', (
     expect(buildModelSelectItems([])).toEqual([])
   })
 })
+
+describe('buildModelSelectItems — 不可用标注', () => {
+  it('unavailable 项带 disabled 与中文 badge,可用项不带', () => {
+    const items = buildModelSelectItems([
+      { providerId: 'p', model: 'm1', isCurrent: false, unavailable: { reason: 'quota' } },
+      { providerId: 'p', model: 'm2', isCurrent: false },
+    ])
+    const m1 = items.find((it) => it.label === 'm1')!
+    const m2 = items.find((it) => it.label === 'm2')!
+    expect(m1.disabled).toBe(true)
+    expect(m1.badge).toBe('额度耗尽')
+    expect(m2.disabled).toBeUndefined()
+    expect(m2.badge).toBeUndefined()
+  })
+})
