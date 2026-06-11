@@ -175,7 +175,10 @@ export function App({ cwd }: AppProps) {
       {exitPending && <Text color="yellow">再按一次 Ctrl+C 退出</Text>}
 
       {pendingPermission ? (
+        // key=队头 id:队头 A 兑现、B 顶上时强制 remount,否则 React 原地更新会让
+        // SelectList 内部的光标 state 从 A 泄漏到 B(对 A 选「拒绝」后 B 直接预选拒绝)。
         <PermissionDialog
+          key={pendingPermissionId}
           req={pendingPermission}
           onDecision={(v) => resolvePermission(v, pendingPermissionId)}
           queueLength={permissionQueueLength}

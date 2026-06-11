@@ -161,6 +161,9 @@ for (const p of settled) p.resolve(verdict)
   重渲染滞后于同步块 —— 按住 Enter/Esc 会在同一渲染窗口连调 resolvePermission,第二次
   会盲裁决未展示的下一项。故 resolvePermission 带 expectedHeadId(调用方渲染快照的队头
   id),与真实队头不符即丢弃。旧单例无此问题(第二次按键 resolve null 天然 no-op)。
+  局限:守卫只防同一渲染窗口内的连发;跨 chunk 的按住 Enter 仍会每次 React commit 兑现
+  一项(终端绘制可能滞后于 commit)——这是终端 UI 不引入防抖的已接受局限,对话框按队头
+  id key remount,保证每个新队头至少从默认项「允许本次」开始。
 
 ## 影响面
 

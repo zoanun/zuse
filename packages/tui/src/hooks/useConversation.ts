@@ -394,7 +394,7 @@ export function useConversation({
   // 本不会同步重入,但 PendingPermission.resolve 的类型允许任意同步回调(测试就传
   // 同步函数),不依赖微任务时序的写法更稳、也更易推理。
   const resolvePermission = useCallback((verdict: PermissionVerdict, expectedHeadId: string | null) => {
-    if (queueRef.current[0]?.id !== expectedHeadId || expectedHeadId === null) return
+    if (queueRef.current[0]?.id !== expectedHeadId) return
     const { settled, rest } = resolveHead(queueRef.current, verdict)
     queueRef.current = rest
     setPermissionQueue(rest)
