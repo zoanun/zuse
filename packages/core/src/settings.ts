@@ -26,6 +26,47 @@ const DEFAULT_MODEL = 'claude-sonnet-4-5-20250514'
 /** 扁平配置合成出的 provider id。导出供 TUI 判断「是否扁平默认」以决定写盘格式。 */
 export const DEFAULT_PROVIDER_ID = 'default'
 
+/**
+ * 内置默认 allow（合并基线最低层，用户三层配置在其上叠加）。
+ *
+ * 只收录「纯只读、无副作用」的 Bash 检查命令 —— Bash 工具本身不是 readOnly，不会在
+ * default 模式自动放行，故这些常用命令需要显式 allow 才不必每次弹框。Read/Grep/Glob/LSP
+ * 已是 readOnly（default 模式直接放行），不在此重复。
+ *
+ * 注意：matchCommand 是「尾 * 前缀匹配」，故形如 `cat ... > file` 的输出重定向仍会被
+ * `Bash(cat *)` 前缀命中而放行（splitBashCommand 不按 `>` 拆分，bash-security 对 `>` 只
+ * 标 warn 不压制）。这是已知口径，与用户原有手写配置一致 —— 如需收紧应在 bash-security
+ * 把重定向提升为 block，而非在此剔除命令。
+ */
+export const DEFAULT_ALLOW_RULES: readonly string[] = [
+  'Bash(ls)',
+  'Bash(ls *)',
+  'Bash(pwd)',
+  'Bash(cat *)',
+  'Bash(echo *)',
+  'Bash(which *)',
+  'Bash(head *)',
+  'Bash(tail *)',
+  'Bash(wc *)',
+]
+
+/**
+ * 内置默认 deny **刻意为空**。
+ *
+ * 曾考虑烤入 `Bash(rm -rf /)`、`Bash(mkfs *)` 之类的"硬底线",最终放弃，理由：
+ * 1. decide() 中非只读 Bash 在 default 模式本就走 ask —— `rm -rf /` 等危险命令默认必经人审，
+ *    deny 规则只在用户配了宽泛 `Bash(*)` allow 或开了 bypassPermissions 时才额外生效。
+ * 2. matchCommand 是字面前缀匹配，对 `rm -rf` / `rm -fr` / `rm -r -f` / `rm --recursive --force`
+ *    / 双空格等等价变体是打地鼠，永远列不全 —— 给的是虚假的安全感。
+ * 3. 而带尾通配的形式（`rm -rf /*`）又会退化成前缀 `rm -rf /`，误伤 `rm -rf /data/xxx` 这类
+ *    指向具体路径的合法删除。
+ *
+ * 结论：宁可不设默认 deny，让安全性诚实地落在「default 模式人审」上。用户/项目仍可在自己的
+ * 三层配置里按需添加 deny。若将来要按语义（而非字符串）拦截危险命令，应放进 bash-security.ts
+ * 那套解析式检查，而不是这里的前缀规则。
+ */
+export const DEFAULT_DENY_RULES: readonly string[] = []
+
 /** 通过查找 pnpm-workspace.yaml 定位项目根（从 env.ts 迁来，统一出口）。 */
 export function findProjectRoot(): string {
   let dir = cwd()
@@ -99,7 +140,8 @@ function readLayer(path: string): RawSettings {
 function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   const out: ResolvedSettings = {
     tools: {},
-    permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+    // 以内置默认 allow/deny 作基线，用户三层规则在其上叠加（dedupe 保留首现顺序 → 默认在前）。
+    permissions: { defaultMode: 'default', allow: [...DEFAULT_ALLOW_RULES], ask: [], deny: [...DEFAULT_DENY_RULES] },
     providers: {},
   }
   for (const layer of layers) {

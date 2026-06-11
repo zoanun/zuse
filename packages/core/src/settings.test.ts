@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig, DEFAULT_ALLOW_RULES } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -23,7 +23,9 @@ describe('loadSettings', () => {
   it('returns defaults when no files exist', () => {
     const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
     expect(s.permissions.defaultMode).toBe('default')
-    expect(s.permissions.allow).toEqual([])
+    // 空配置带内置默认 allow 基线；默认 deny 刻意为空。
+    expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES])
+    expect(s.permissions.deny).toEqual([])
     expect(s.tools).toEqual({})
     expect(s.apiKey).toBeUndefined()
   })
@@ -41,7 +43,8 @@ describe('loadSettings', () => {
     expect(s.model).toBe('local-model')
     expect(s.apiKey).toBe('local-key')
     expect(s.permissions.defaultMode).toBe('acceptEdits')
-    expect(s.permissions.allow).toEqual(['Read(./**)', 'Bash(git status)'])
+    // 内置默认 allow 基线在前，用户三层规则在其后叠加；deny 无默认基线。
+    expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES, 'Read(./**)', 'Bash(git status)'])
     expect(s.permissions.deny).toEqual(['Read(./.env)'])
   })
 
@@ -53,7 +56,8 @@ describe('loadSettings', () => {
       permissions: { allow: ['Read(./**)', 'Grep', 'Glob', 'Bash(ls)'], ask: ['Bash(*)', 'Write(./**)'] },
     }))
     const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
-    expect(s.permissions.allow).toEqual(['Read(./**)', 'Grep', 'Glob', 'Bash(ls)'])
+    // Bash(ls) 已在内置默认 allow 中，用户层重复的会被 dedupe 掉（保留默认里的首现）。
+    expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES, 'Read(./**)', 'Grep', 'Glob'])
     expect(s.permissions.ask).toEqual(['Bash(*)', 'Write(./**)'])
   })
 
