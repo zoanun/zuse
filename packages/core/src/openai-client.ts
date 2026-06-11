@@ -7,7 +7,7 @@ import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
 import { debugLog, debugEnabled } from './debug-log.js'
 import { StreamIdleGuard, resolveStreamIdleMs } from './stream-idle.js'
-import { resolveMaxRetries, isRetryableError, retryAfterMs, backoffMs, sleep } from './retry.js'
+import { resolveMaxRetries, isRetryableError, classifyError, retryAfterMs, backoffMs, sleep } from './retry.js'
 
 /** zuse Message[] → OpenAI chat messages。system 置顶；tool_result 提升为顶层 tool 消息。 */
 export function toOpenAIMessages(
@@ -301,7 +301,7 @@ export class OpenAIClient implements ModelClient {
               name: err instanceof Error ? err.name : undefined,
             })
           }
-          yield { type: 'error', message }
+          yield { type: 'error', message, ...classifyError(err) }
           return
         }
 
@@ -312,7 +312,7 @@ export class OpenAIClient implements ModelClient {
           if (debugEnabled()) {
             debugLog('openai.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
           }
-          yield { type: 'error', message }
+          yield { type: 'error', message, ...classifyError(err) }
           return
         }
 
@@ -327,7 +327,7 @@ export class OpenAIClient implements ModelClient {
         if (debugEnabled()) {
           debugLog('openai.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
         }
-        yield { type: 'error', message }
+        yield { type: 'error', message, ...classifyError(err) }
         return
       } finally {
         guard.dispose()

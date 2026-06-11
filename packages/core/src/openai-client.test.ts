@@ -317,3 +317,28 @@ describe('OpenAIClient.sendMessages —— 瞬时错误自动重试', () => {
     }
   })
 })
+
+describe('OpenAIClient.sendMessages —— 错误分类透出', () => {
+  it('开流即报 402:error 事件带 category=quota、status=402', async () => {
+    // 402 不可重试,立即透出;makeStream 抛错 → create reject → client 捕获后分类。
+    const sdk = fakeSdk(() => {
+      throw Object.assign(new Error('insufficient balance'), { status: 402 })
+    })
+    const client = new OpenAIClient(PROVIDER, 'm', sdk)
+    const events = await collect(client.sendMessages(MSGS, CFG))
+    const err = events.find((e) => e.type === 'error') as Extract<StreamEvent, { type: 'error' }>
+    expect(err).toBeTruthy()
+    expect(err.category).toBe('quota')
+    expect(err.status).toBe(402)
+  })
+
+  it('401 透出 category=auth', async () => {
+    const sdk = fakeSdk(() => {
+      throw Object.assign(new Error('invalid key'), { status: 401 })
+    })
+    const client = new OpenAIClient(PROVIDER, 'm', sdk)
+    const events = await collect(client.sendMessages(MSGS, CFG))
+    const err = events.find((e) => e.type === 'error') as Extract<StreamEvent, { type: 'error' }>
+    expect(err.category).toBe('auth')
+  })
+})

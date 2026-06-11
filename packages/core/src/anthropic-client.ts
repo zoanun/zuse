@@ -5,7 +5,7 @@ import type { Message, StreamEvent, ModelConfig, ProviderConfig, Usage } from '.
 import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
 import { StreamIdleGuard, resolveStreamIdleMs } from './stream-idle.js'
-import { resolveMaxRetries, isRetryableError, retryAfterMs, backoffMs, sleep } from './retry.js'
+import { resolveMaxRetries, isRetryableError, classifyError, retryAfterMs, backoffMs, sleep } from './retry.js'
 import { debugLog } from './debug-log.js'
 
 // 缓存控制标记：ephemeral 表示"本断点之前的内容写入缓存"。
@@ -168,7 +168,7 @@ export class AnthropicClient implements ModelClient {
             : err instanceof Error
               ? err.message
               : 'Unknown error'
-          yield { type: 'error', message }
+          yield { type: 'error', message, ...classifyError(err) }
           return
         }
 
@@ -176,7 +176,7 @@ export class AnthropicClient implements ModelClient {
 
         // 已经向下游发过事件：流到中途才断，重试会重复 message-start/文本 → 不重试。
         if (emitted) {
-          yield { type: 'error', message }
+          yield { type: 'error', message, ...classifyError(err) }
           return
         }
 
@@ -188,7 +188,7 @@ export class AnthropicClient implements ModelClient {
         }
 
         // 不可重试或重试用尽。
-        yield { type: 'error', message }
+        yield { type: 'error', message, ...classifyError(err) }
         return
       } finally {
         guard.dispose()
