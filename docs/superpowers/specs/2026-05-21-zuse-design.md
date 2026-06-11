@@ -216,28 +216,26 @@ UI 不直接调 Anthropic SDK，而是订阅 `Agent` 暴露的事件流：
 - 7.5 Ctrl+C / Ctrl+D / Esc
 - 7.6 footer token + model 显示
 
-### Phase 8 · 会话管理
+### Phase 8–12 · harness 加固轨（明细见 `phase-roadmap.md`）
 
-- 8.1 session 按 cwd 分组
-- 8.2 session 列表
-- 8.3 `--continue`
-- 8.4 `--resume <id>`
-- 8.5 每轮自动保存
+> 新增的一条加固轨，排在功能阶段（Skills / 多Agent）之前：**8** 错误回传契约 / **9** 输出整形·截断 / **10** 会话管理与上下文压缩（= 原「会话管理」并入压缩）/ **11** 鲁棒性与恢复 / **12** 检查点与回滚。明细以 `phase-roadmap.md` 为准。
 
-### Phase 9 · 项目记忆
+Phase 10（会话管理与上下文压缩）要点：session 按 cwd 分组 / session 列表 / `--continue` / `--resume <id>` / 每轮自动保存 / Token Budget + 压缩策略。
 
-- 9.1 加载 `~/.zuse/SYSTEM.md`
-- 9.2 cwd 向上找 `ZUSE.md`
-- 9.3 拼接进 system prompt
-- 9.4 `/memory` 查看
-- 9.5 `/init` 脚手架
+### Phase 13 · 项目记忆
 
-### Phase 10+（未来可选）
+- 13.1 加载 `~/.zuse/SYSTEM.md`
+- 13.2 cwd 向上找 `ZUSE.md`
+- 13.3 拼接进 system prompt
+- 13.4 `/memory` 查看
+- 13.5 `/init` 脚手架
 
-- Skills / 插件系统
-- Sub-agent（并行任务分发）
-- 长期记忆机制
-- Tauri 桌面壳 / 本地 server + Web UI
+### Phase 14+（未来）
+
+- Skills / 插件系统（Phase 14）
+- Sub-agent / 多 Agent 编排（Phase 15）
+- 调度与自动化 Cron / Wakeup（Phase 16）
+- 长期记忆机制 / Tauri 桌面壳 / 本地 server + Web UI（更远期可选）
 
 ## 6. 测试策略
 
@@ -261,7 +259,7 @@ UI 不直接调 Anthropic SDK，而是订阅 `Agent` 暴露的事件流：
 | Windows 终端兼容性（Ink 在 Windows Terminal 渲染有时有怪问题） | 早期就在目标终端跑，发现问题及时换组件                  |
 | Anthropic 和 OpenAI 的 tool_use 格式差异比想象大               | Phase 6 拆得细，先单 provider 跑通再抽象                |
 | Bash 工具的安全性                                              | Phase 5 强制权限询问；提供 `bypassPermissions` 但默认关 |
-| 会话/记忆设计可能要返工                                        | 接受。Phase 8-9 时再优化结构，初版怎么简单怎么来        |
+| 会话/记忆设计可能要返工                                        | 接受。Phase 10/13 时再优化结构，初版怎么简单怎么来      |
 
 ### 8.1 故障模式防御矩阵
 

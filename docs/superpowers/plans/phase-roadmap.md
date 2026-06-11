@@ -21,11 +21,15 @@
 | 6.5   | 联网工具    | —                                           | —                                                              | WebFetch✅/WebSearch✅ |
 | 6.6   | 代码智能LSP | —                                           | —                                                              | tools/LSP         |
 | 7     | UI打磨      | —                                           | —                                                              | ink/ components/  |
-| 8     | 会话管理    | 四（Token Budget）+ 11.6（压缩策略）        | 【Part 7】+【Part 8】+【专题课】Claude Code架构/Part 3/        | services/compact/ |
-| 9     | 项目记忆    | 五（记忆系统SQLite）+ 11.2（四种记忆类型）  | 【专题课】Harness Engineering驾驭工程实战/Part 4/ + 【Part 7】 | memdir/           |
-| 10+   | Skills系统  | 六（SKILL.md格式）+ 11.7（Skills实现）      | 【Part 6】Agent Skills/                                        | skills/           |
-| 11    | 多Agent编排 | 11.4（多Agent架构）                         | Claude Code专题课Part 3 + LangGraph Part 7                     | Agent/Team/Workflow|
-| 12    | 调度与自动化| —                                           | —                                                              | Cron/ScheduleWakeup|
+| 8     | 错误回传契约 | 一（故障模式④工具错误吞）                  | —（机制对齐 Crush / OpenCode）                                | Crush edit.go 错误分支 / OpenCode tool/edit.ts |
+| 9     | 输出整形/截断 | —（反馈塑形，无直接课程）                  | —                                                              | OpenCode truncate.ts / truncation-dir.ts |
+| 10    | 会话管理与上下文压缩 | 四（Token Budget）+ 11.6（压缩策略） | 【Part 7】+【Part 8】+【专题课】Claude Code架构/Part 3/        | services/compact/ + OpenCode compaction.ts |
+| 11    | 鲁棒性与恢复 | —（故障注入，无直接课程）                  | —                                                              | retry.ts / stream-idle.ts + OpenCode session/llm/ |
+| 12    | 检查点与回滚 | —（进阶/可选，无直接课程）                  | —                                                              | OpenCode snapshot/（影子 git）+ session/revert.ts |
+| 13    | 项目记忆    | 五（记忆系统SQLite）+ 11.2（四种记忆类型）  | 【专题课】Harness Engineering驾驭工程实战/Part 4/ + 【Part 7】 | memdir/           |
+| 14    | Skills系统  | 六（SKILL.md格式）+ 11.7（Skills实现）      | 【Part 6】Agent Skills/                                        | skills/           |
+| 15    | 多Agent编排 | 11.4（多Agent架构）                         | Claude Code专题课Part 3 + LangGraph Part 7                     | Agent/Team/Workflow|
+| 16    | 调度与自动化| —                                           | —                                                              | Cron/ScheduleWakeup|
 
 ---
 
@@ -298,7 +302,7 @@
 > `tmux -V` / Windows `wsl -e tmux -V`）则全程优雅降级。进程正常退出经 `process.once('exit')`
 > + spawnSync `kill-server` 清理（不抢 SIGINT，避免与 Ink 的 Ctrl+C 退出打架）。15 条单测、
 > 621 用例全绿。**平台**：POSIX 完整生效；Windows 走 git-bash、tmux 仅在 WSL，故基本 no-op
-> （见模块头注）。第 2 层「tmux 作为执行后端」仍归 Phase 11。
+> （见模块头注）。第 2 层「tmux 作为执行后端」仍归 Phase 15。
 
 #### 原始设计（保留备查）
 
@@ -307,13 +311,13 @@
 **两个层面，别混为一谈**：
 
 1. **套接字隔离（轻、该做）**：只要 zuse 允许模型跑 `tmux ...`（哪怕只是普通 Bash 里），就有「误杀用户自己 tmux 会话」的风险（`tmux kill-server` 之类）。CC 的解法（`src/utils/tmuxSocket.ts`，已读）：给 Claude 开**自己的 tmux 套接字** `claude-<PID>`，所有 tmux 命令带 `-L claude-<PID>`，并给所有 Bash 子进程注入指向该套接字的 `TMUX` env，**屏蔽用户原本的 `TMUX`**。这样模型怎么折腾都只动 Claude 自己的 server，碰不到用户的会话。Windows 上 tmux 只存在于 WSL，经 `wsl -e tmux` 调用。
-2. **tmux 作为执行后端（重、归 Phase 11）**：CC 用 tmux pane 跑后台/异步命令、以及多 agent（swarm/teammate）的 pane 后端（`src/utils/swarm/backends/TmuxBackend.ts`）。这是**真正的隔离执行模型**，与多 Agent 编排强耦合——**这部分挪到 Phase 11（多Agent与编排）**去做，不在 5.5。
+2. **tmux 作为执行后端（重、归 Phase 15）**：CC 用 tmux pane 跑后台/异步命令、以及多 agent（swarm/teammate）的 pane 后端（`src/utils/swarm/backends/TmuxBackend.ts`）。这是**真正的隔离执行模型**，与多 Agent 编排强耦合——**这部分挪到 Phase 15（多Agent与编排）**去做，不在 5.5。
 
 **选型 / 开发要点（仅做第 1 层）**：
 
 - 仅当探测到 `tmux` 可用（或 Windows 上 WSL 内可用）时启用；否则空操作，不影响普通 Bash。
 - 启动期创建 `zuse-<PID>` 套接字，注入 `TMUX`/`-L` 到 Bash 执行环境（可并入 5.5.1 的快照/env 注入管线）；退出 cleanup 杀掉该 server。
-- **优先级判断**：只有当 zuse 真的鼓励模型用 tmux（如做后台长任务）时才有收益。当前 v1 没有后台任务能力，故**排在环境快照之后**；可与 Phase 11 的 tmux 后端一并立项。
+- **优先级判断**：只有当 zuse 真的鼓励模型用 tmux（如做后台长任务）时才有收益。当前 v1 没有后台任务能力，故**排在环境快照之后**；可与 Phase 15 的 tmux 后端一并立项。
 
 ### 5.5.3 OS 级 sandbox —— 低优先级 / Windows 暂不可做
 
@@ -353,7 +357,7 @@
 ### 本 Phase 推进建议（小结）
 
 1. **先做 5.5.1 环境快照**（跨平台、确定性收益、解决 `command not found` 类真痛点，且与已做的 cwd 持久化天然同管线）。
-2. **再评估 5.5.2 tmux 套接字隔离**（只在引入 tmux/后台任务时才有收益，可与 Phase 11 合并）。
+2. **再评估 5.5.2 tmux 套接字隔离**（只在引入 tmux/后台任务时才有收益，可与 Phase 15 合并）。
 3. **5.5.3 sandbox 挂起**，等非 Windows 部署场景出现再启动；在那之前以现有权限护栏兜底。
 
 ---
@@ -560,7 +564,56 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 ---
 
-## Phase 8: 会话管理
+> **Phase 8–12 = 一条「harness 加固轨」**：插在功能阶段（Skills/多Agent）之前。理由——skills 与多 Agent 会放大 harness 的任何弱点（编排出错时，你 debug 的是「编排逻辑 + harness 缺陷」两层叠加，理不清）。先把**错误回传 / 输出塑形 / 上下文压缩 / 故障恢复 / 回滚**这五根承重柱浇硬，再往上盖。除 Phase 10（=原「会话管理」并入压缩）外均无直接课程，机制对齐已通读的 Crush / OpenCode 源码。**起手做 Phase 8**（最自包含、单位代码学到最多、不依赖下游）。
+
+## Phase 8: 错误回传契约（Observation Contract）
+
+### 补充文档参考
+
+第一章（故障模式④工具错误吞）—— 本 Phase 是对故障④的系统性收口：不止「别静默吞错」，而是把每个工具的失败都变成模型能据此行动的 observation。
+
+### 课程知识点
+
+无直接对应课程；机制层面对齐 Crush / OpenCode 的工具错误分支（已随对照源码通读）。核心原则一句话：**工具交还给模型的一切（成功输出 / 报错 / 截断块）都是写给模型读的 observation，不是写给开发者的日志。** 这条做好，agent 才有自愈能力；做不好，模型再强也会在第三步崩。
+
+### 源码参考（OpenCode / Crush）
+
+| 源码文件                              | 参考内容                                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Crush `internal/agent/tools/edit.go`  | 失败回的是**纠正指令**（`you must read the file before editing it. Use the View tool first`）而非裸异常 / stack trace |
+| OpenCode `tool/edit.ts` 错误分支      | 失败路径如何包装成自然语言 observation                                                          |
+
+### 开发要点
+
+- 过一遍 `packages/tools/src/` 里**每个工具的失败路径**：不抛裸异常、不回 stack trace，改回一句**带下一步指令**的话。
+- 覆盖的失败面：文件不存在、未读先改、坏路径、权限拒绝、命令不存在、坏入参。
+- 权限拒绝信息也走同一契约（与 Phase 5 的 `PermissionVerdict` 拒绝路径对齐，拒绝原因要「给模型读」）。
+- 验证（TDD）：每个工具一条触发失败的测试，断言返回里含「模型能据此行动的下一步」，而非断言抛了异常。
+
+---
+
+## Phase 9: 输出整形 / 截断（Feedback Shaping）
+
+### 补充文档参考
+
+—（反馈塑形，无直接课程。与 Phase 8 是兄弟：Phase 8 管「失败怎么说」，本 Phase 管「大输出怎么塑形成信号」。上下文管的是「留多少 token」，这条管的是「单条结果怎么截断/摘要成模型用得上的信号」。）
+
+### 源码参考（OpenCode）
+
+| 源码文件                          | 参考内容                       |
+| --------------------------------- | ------------------------------ |
+| OpenCode `tool/truncate.ts`       | 按 byte 预算的截断策略         |
+| OpenCode `tool/truncation-dir.ts` | 大目录 / 大列表的塑形          |
+
+### 开发要点
+
+- 统一截断策略：head + tail + 「已截断，完整输出见 X / 共 N 行」，按 byte 预算裁，而非粗暴砍尾。
+- 与 Phase 4 已做的 Read `MAX_OUTPUT_CHARS` / Grep 分页**归一到同一套塑形逻辑**，别各 truncate 各的。
+- 验证：喂一个超大输出（如 5000 行文件 / 10MB stdout），断言模型拿到的是可读摘要 + 关键首尾，且没炸 token 预算。
+
+---
+
+## Phase 10: 会话管理与上下文压缩
 
 ### 补充文档参考
 
@@ -578,10 +631,12 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 ### Claude Code源码参考
 
-| 源码目录/文件       | 参考内容            |
-| ------------------- | ------------------- |
-| `services/compact/` | AutoCompact压缩服务 |
-| `utils/messages.ts` | MicroCompact实现    |
+| 源码目录/文件               | 参考内容                                              |
+| --------------------------- | ----------------------------------------------------- |
+| `services/compact/`         | AutoCompact压缩服务                                   |
+| `utils/messages.ts`         | MicroCompact实现                                      |
+| OpenCode `session/compaction.ts` | `preserve_recent_tokens` / `PRUNE_PROTECT` 保留策略 |
+| OpenCode `session/overflow.ts`   | 溢出判定（input+output+cache.read+cache.write）     |
 
 ### 开发要点
 
@@ -593,7 +648,51 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 ---
 
-## Phase 9: 项目记忆
+## Phase 11: 鲁棒性与恢复（Fault Injection & Recovery）
+
+### 补充文档参考
+
+—（无直接课程，故障注入测试为主。前提认知：harness 要假设**模型和环境都会出错**，不只是模型。放在压缩（Phase 10）之后，因为压缩本身就是一个新的出错面。）
+
+### 源码参考
+
+| 源码文件                                        | 参考内容                                          |
+| ----------------------------------------------- | ------------------------------------------------- |
+| zuse `packages/core/src/retry.ts` / `stream-idle.ts` | 现有重试 / 流卡死检测，本 Phase 补测试锁住行为 |
+| OpenCode `session/llm/`                         | 重试 / 流处理对照                                  |
+
+### 开发要点（直接做成故障注入测试）
+
+- 流中途 kill → 断言 Esc 真能取消（`sendMessages` 传 `signal` 那段已做，补测试锁住，防 for-await 永久阻塞回归）。
+- 模型回了**坏 JSON 的 tool_use** → 断言不崩，且回模型一句「你的工具入参不是合法 JSON，请重发」。
+- 撞 max_tokens → 断言告警、不把半截回复当最终答案（已做，补测试）。
+- 429 / 5xx → 退避重试；区分**可重试**（网络 / 限流 / 5xx）与**不可重试**（400/422）。
+
+---
+
+## Phase 12: 检查点与回滚（Checkpoint / Revert）—— 进阶 / 可选
+
+### 补充文档参考
+
+—（进阶，无课程。把现有 staged 暂存从「出错不提交」升级到「已提交的过去回合也能回滚」。这是已通读过的 OpenCode 影子 git 那套，正好当一个**完全手写、不让 CC 端到端代劳**的练习。）
+
+### 源码参考（OpenCode）
+
+| 源码文件                        | 参考内容                                                              |
+| ------------------------------- | --------------------------------------------------------------------- |
+| OpenCode `snapshot/index.ts`    | 影子 git（独立 `--git-dir` + `--work-tree` 指向真实工作区）做 track / restore / diff |
+| OpenCode `session/processor.ts` | 每回合 LLM 流前后各打一次快照、hash 存到 message                       |
+| OpenCode `session/revert.ts`    | 按 message 回滚某一历史回合                                            |
+
+### 开发要点
+
+- 每回合落地前后打快照（影子 git，或自存 staged-diff）。两条路权衡：影子 git 省事、diff/revert 免费，但每回合两次 git 开销、且语义是「快照」非「事务」；自存 diff 更可控，但要自己保证 effect 全集进了缓冲。
+- 与现有 staged 暂存的分工：暂存解决「本回合出错不落地」，本 Phase 解决「已落地的过去回合也能撤」。
+- 验证：让一个回合改了文件后再报错 → 断言 worktree 干净；再断言能把某个**已提交的**历史回合 revert 掉。
+
+---
+
+## Phase 13: 项目记忆
 
 ### 补充文档参考
 
@@ -629,7 +728,7 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 ---
 
-## Phase 10+: Skills系统
+## Phase 14: Skills系统
 
 ### 补充文档参考
 
@@ -661,11 +760,11 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 - SKILL.md格式定义
 - 技能加载机制
 - 技能匹配触发
-- 多Agent Coordinator模式 → 抽到 **Phase 11** 单独做
+- 多Agent Coordinator模式 → 抽到 **Phase 15** 单独做
 
 ---
 
-## Phase 11: 多Agent与编排
+## Phase 15: 多Agent与编排
 
 ### 补充文档参考
 
@@ -705,12 +804,12 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 ---
 
-## Phase 12: 调度与自动化（Cron / Wakeup）
+## Phase 16: 调度与自动化（Cron / Wakeup）
 
 ### 补充文档参考
 
 —（CC 的 Cron / ScheduleWakeup：定时触发与自唤醒。属于自动化能力，依赖会话管理
-（Phase 8）能 resume，放在最后。）
+（Phase 10）能 resume，放在最后。）
 
 ### Claude Code 工具对照
 
@@ -730,7 +829,7 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 - Cron 任务表：cron 表达式 + 目标会话 + 触发动作，持久化到 ~/.zuse/
 - ScheduleWakeup：相对延时的一次性唤醒
-- 触发时以 `--resume` 拉起对应会话（依赖 Phase 8 会话管理）
+- 触发时以 `--resume` 拉起对应会话（依赖 Phase 10 会话管理）
 - 自动化跑务必走 Phase 5 权限闸，避免无人值守下的越权
 
 ---
@@ -757,11 +856,11 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 | ------------------------ | ------------- |
 | query.ts (1729行)        | Phase 1, 3    |
 | bashSecurity.ts (2592行) | Phase 5       |
-| context/ (1004行)        | Phase 2, 8    |
-| services/compact/        | Phase 8       |
-| memdir/ (1736行)         | Phase 9       |
-| skills/ (4066行)         | Phase 10+     |
-| coordinator/             | Phase 10+     |
+| context/ (1004行)        | Phase 2, 10    |
+| services/compact/        | Phase 10       |
+| memdir/ (1736行)         | Phase 13       |
+| skills/ (4066行)         | Phase 14     |
+| coordinator/             | Phase 15     |
 
 ---
 
