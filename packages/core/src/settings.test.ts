@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig, DEFAULT_ALLOW_RULES } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -264,5 +264,29 @@ describe('setModelInSettings', () => {
     writeFileSync(p('l.json'), JSON.stringify({ model: 'a/b' }))
     setModelInSettings('a/b', p('l.json'))
     expect(JSON.parse(readFileSync(p('l.json'), 'utf8')).model).toBe('a/b')
+  })
+})
+
+describe('resolveFailoverMode', () => {
+  const base: ResolvedSettings = {
+    tools: {},
+    permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+    providers: {},
+  }
+  it('缺省回退 dialog', () => {
+    expect(resolveFailoverMode(base)).toBe('dialog')
+  })
+  it('显式 auto 生效', () => {
+    expect(resolveFailoverMode({ ...base, failoverMode: 'auto' })).toBe('auto')
+  })
+  it('显式 dialog 生效', () => {
+    expect(resolveFailoverMode({ ...base, failoverMode: 'dialog' })).toBe('dialog')
+  })
+
+  it('mergeLayers 让高层 failoverMode 覆盖低层(经 loadSettings 端到端验证)', () => {
+    writeFileSync(p('u.json'), JSON.stringify({ failoverMode: 'dialog' }))
+    writeFileSync(p('l.json'), JSON.stringify({ failoverMode: 'auto' }))
+    const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
+    expect(resolveFailoverMode(s)).toBe('auto')
   })
 })

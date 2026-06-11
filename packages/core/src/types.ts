@@ -139,6 +139,8 @@ export interface ResolvedSettings {
   apiKey?: string
   /** HTTP(S) 代理地址（如 http://host:port）。配置后所有出站请求都经此代理，见 installProxy。 */
   proxy?: string
+  /** 模型调用失败时的降级策略:'dialog' 弹 /model 选择器(默认);'auto' 自动切同 provider 下一个可用模型。 */
+  failoverMode?: 'dialog' | 'auto'
   tools: ToolsConfig
   permissions: PermissionsConfig
   providers: Record<string, RawProviderConfig>

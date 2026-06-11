@@ -84,6 +84,7 @@ interface RawSettings {
   baseURL?: string
   apiKey?: string
   proxy?: string
+  failoverMode?: 'dialog' | 'auto'
   tools?: { enabled?: string[]; disabled?: string[] }
   permissions?: {
     defaultMode?: PermissionMode
@@ -150,6 +151,7 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey
     if (layer.proxy !== undefined) out.proxy = layer.proxy
+    if (layer.failoverMode !== undefined) out.failoverMode = layer.failoverMode
     if (layer.tools) out.tools = { ...out.tools, ...layer.tools }
     // 按 provider id 深合并：高层标量覆盖，字段级合并。
     if (layer.providers) {
@@ -243,6 +245,11 @@ export function appendAllowRule(rule: string, localPath?: string): void {
 /** max_tokens：settings.maxTokens，否则回退 4096。 */
 export function getDefaultMaxTokens(settings: ResolvedSettings): number {
   return settings.maxTokens && settings.maxTokens > 0 ? settings.maxTokens : 4096
+}
+
+/** 解析降级策略:settings.failoverMode,缺省 'dialog'。 */
+export function resolveFailoverMode(settings: ResolvedSettings): 'dialog' | 'auto' {
+  return settings.failoverMode ?? 'dialog'
 }
 
 /** 把 settings.model（`<id>/<model>` 或裸字符串）解析成选中项。 */
