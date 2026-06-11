@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import type { SlashCommand, CommandInfo } from './types.js'
 import { saveConversation, loadConversation } from './sessionStore.js'
 import { installTerminalSetup } from './terminalSetup.js'
-import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
+import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
 
 /** /model 交互式选择器的一个候选：provider+model 配对，外加是否为当前激活项。 */
 export interface ModelOption {
@@ -10,6 +10,8 @@ export interface ModelOption {
   model: string
   /** 是否当前激活的 provider+model 配对（供选择器高亮）。 */
   isCurrent: boolean
+  /** 运行时(内存)标注:该 provider/model 本会话已判不可用,picker 灰显并打标签。 */
+  unavailable?: { reason: ErrorCategory }
 }
 
 /**
@@ -22,6 +24,7 @@ export function buildModelOptions(
   settings: ResolvedSettings,
   currentProviderId: string,
   currentModel: string,
+  badKeys?: ReadonlyMap<string, ErrorCategory>,
 ): ModelOption[] {
   const options: ModelOption[] = []
   let currentSeen = false
@@ -29,7 +32,8 @@ export function buildModelOptions(
     for (const m of p.models ?? []) {
       const isCurrent = id === currentProviderId && m === currentModel
       if (isCurrent) currentSeen = true
-      options.push({ providerId: id, model: m, isCurrent })
+      const reason = badKeys?.get(`${id}/${m}`)
+      options.push({ providerId: id, model: m, isCurrent, ...(reason ? { unavailable: { reason } } : {}) })
     }
   }
   if (!currentSeen) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ToolRegistry, type ResolvedSettings, type ModelSelection, type Conversation, type Tool } from '@zuse/core'
+import { ToolRegistry, type ResolvedSettings, type ModelSelection, type Conversation, type Tool, type ErrorCategory } from '@zuse/core'
 import { findCommand, editDistance, nearestMatch, buildModelOptions, listCommands } from './registry.js'
 import type { CommandContext } from './types.js'
 
@@ -260,6 +260,23 @@ describe('listCommands — 供 / 菜单消费的命令元信息', () => {
     expect(byName['model']).toBe(false)
     expect(byName['clear']).toBe(false)
     expect(byName['terminal-setup']).toBe(false)
+  })
+})
+
+describe('buildModelOptions — 不可用标注', () => {
+  it('badKeys 命中项带 unavailable,未命中不带', () => {
+    const settings = makeSettings({ p: { models: ['m1', 'm2'] } })
+    const bad = new Map<string, ErrorCategory>([['p/m1', 'quota']])
+    const opts = buildModelOptions(settings, 'p', 'm2', bad)
+    const m1 = opts.find((o) => o.model === 'm1')!
+    const m2 = opts.find((o) => o.model === 'm2')!
+    expect(m1.unavailable).toEqual({ reason: 'quota' })
+    expect(m2.unavailable).toBeUndefined()
+  })
+  it('不传 badKeys 时全部无 unavailable(向后兼容)', () => {
+    const settings = makeSettings({ p: { models: ['m1', 'm2'] } })
+    const opts = buildModelOptions(settings, 'p', 'm1')
+    expect(opts.every((o) => o.unavailable === undefined)).toBe(true)
   })
 })
 
