@@ -181,10 +181,13 @@ describe('runAgent', () => {
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:out1', 'b:out2'])
   })
 
-  it('serializes read-only tools that hit an ask rule, so permission prompts never overlap', async () => {
-    // 回归：只读 ≠ 免审。decide 里 ask 规则先于 readOnly 自动放行判定,故 `ask: ['r1','r2']`
-    // 会让只读工具走 ask。若仍并发,两次 canUseTool 会重叠 —— TUI 的单例 resolver 被后者覆盖,
-    // 第一个权限 promise 永不兑现、Promise.all 卡死。修复后批内有 ask 即退回串行,弹框逐个排队。
+  it('runs concurrent ask prompts on read-only tools without deadlock', async () => {
+    // 契约:canUseTool 实现必须支持并发调用（多个未兑现 promise 同时在飞）。
+    // TUI 用权限队列满足之;本测试的实现直接并发応答。断言两个只读工具的 ask
+    // 同时在飞(maxInFlight=2)且都完成 —— 锁住「并发 ask 不死锁」。
+    // 历史:旧实现用单例 resolver,并发第二个 ask 会覆盖第一个的 resolve,
+    // Promise.all 永不 settle;当时靠 agent.ts 的 wouldAsk 预检退串行绕开,
+    // 权限队列落地后兜底已删,本测试取而代之。
     let inFlight = 0
     let maxInFlight = 0
     let calls = 0
@@ -192,9 +195,9 @@ describe('runAgent', () => {
       calls++
       inFlight++
       maxInFlight = Math.max(maxInFlight, inFlight)
-      await new Promise((res) => setTimeout(res, 10)) // 模拟"对话框"短暂停留,重叠时 maxInFlight 会到 2
+      await new Promise((res) => setTimeout(res, 10))
       inFlight--
-      return 'allow_session'
+      return 'allow'
     }
 
     const reg = new ToolRegistry()
@@ -225,9 +228,9 @@ describe('runAgent', () => {
       settings: askSettings, canUseTool,
     }))
 
-    // 两个工具都命中 ask（各被问一次）,但权限框从不重叠 —— 证明退回了串行。
+    // 两个 ask 都被问到且同时在飞 —— 不再退串行,也不死锁。
     expect(calls).toBe(2)
-    expect(maxInFlight).toBe(1)
+    expect(maxInFlight).toBe(2)
     // 两个工具结果仍按各自 id 回喂。
     const results = events.filter((e) => e.type === 'tool-result') as Array<{ id: string; output: string }>
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:r1', 'b:r2'])
