@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   isRetryableError,
+  classifyError,
   retryAfterMs,
   backoffMs,
   resolveMaxRetries,
@@ -158,5 +159,25 @@ describe('sleep', () => {
     const t0 = Date.now()
     await sleep(10_000, ac.signal)
     expect(Date.now() - t0).toBeLessThan(500)
+  })
+})
+
+describe('classifyError', () => {
+  it('401 → auth', () => {
+    expect(classifyError({ status: 401 })).toEqual({ status: 401, category: 'auth' })
+  })
+  it('402 / 403 / 429 → quota', () => {
+    for (const s of [402, 403, 429]) expect(classifyError({ status: s }).category).toBe('quota')
+  })
+  it('404 / 503 → unavailable', () => {
+    for (const s of [404, 503]) expect(classifyError({ status: s }).category).toBe('unavailable')
+  })
+  it('400 / 422 / 无状态码 → other', () => {
+    expect(classifyError({ status: 400 }).category).toBe('other')
+    expect(classifyError({ status: 422 }).category).toBe('other')
+    expect(classifyError(new Error('network')).category).toBe('other')
+  })
+  it('也识别 statusCode 字段', () => {
+    expect(classifyError({ statusCode: 401 }).category).toBe('auth')
   })
 })

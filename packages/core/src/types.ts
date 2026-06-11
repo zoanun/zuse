@@ -17,6 +17,9 @@ export interface Message {
   content: ContentBlock[]
 }
 
+/** 模型调用错误的归类:供编排层决定是否降级。 */
+export type ErrorCategory = 'quota' | 'auth' | 'unavailable' | 'other'
+
 // 一个回合中产生的事件。前四个来自 ModelClient；后三个由 Agent 循环在
 // 运行工具时产生（Phase 3）。
 export type StreamEvent =
@@ -29,7 +32,7 @@ export type StreamEvent =
   | { type: 'tool-result'; id: string; name: string; output: string; is_error: boolean }
   // Agent 触达 max_turns 并停止（故障模式①）。
   | { type: 'warning'; message: string }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; status?: number; category?: ErrorCategory }
 
 // Token 用量追踪（故障模式⑧的防御）。Phase 6 起含缓存命中统计。
 export interface Usage {

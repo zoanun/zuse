@@ -11,6 +11,8 @@
  * 那些是其更复杂架构的需求），只覆盖「开流前/首块前」的瞬时失败（429 / 5xx / 网络抖动）。
  */
 
+import type { ErrorCategory } from './types.js'
+
 /** 默认最大重试次数（不含首次尝试）。 */
 export const DEFAULT_MAX_RETRIES = 5
 
@@ -110,6 +112,18 @@ export function isRetryableError(err: unknown): boolean {
   }
 
   return false
+}
+
+/**
+ * 把「已耗尽重试 / 不可重试」的错误归类,供编排层(useConversation)决定是否降级。
+ * 与 isRetryableError 互补:那个判「要不要在 client 内重试」,这个判「最终透出后该怎么处置」。
+ */
+export function classifyError(err: unknown): { status?: number; category: ErrorCategory } {
+  const status = readStatus(err)
+  if (status === 401) return { status, category: 'auth' }
+  if (status === 402 || status === 403 || status === 429) return { status, category: 'quota' }
+  if (status === 404 || status === 503) return { status, category: 'unavailable' }
+  return { status, category: 'other' }
 }
 
 /**
