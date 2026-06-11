@@ -88,7 +88,8 @@ export function SelectList({
       }
       if (key.return) {
         const item = filtered[cursor]
-        if (item) onSelect(item.value)
+        // disabled 项(如额度耗尽的模型)不可确认;导航仍可停留,让用户看到标签。
+        if (item && !item.disabled) onSelect(item.value)
         return
       }
       if (key.upArrow) {
@@ -151,6 +152,16 @@ export function SelectList({
           const dot = isCurrent ? '●' : ' '
           // 分组模式下 option 行缩进 2 格，缩在组头之下；普通列表不缩进，保持原样。
           const indent = grouped ? '  ' : ''
+          // 不可用项:整行灰显(优先于光标/当前色),行尾追加 badge。导航仍可停留(已可见),但回车不确认。
+          if (item.disabled) {
+            return (
+              <Text key={item.value} dimColor>
+                {indent}
+                {marker} {dot} {item.label}
+                {item.badge ? ` (${item.badge})` : ''}
+              </Text>
+            )
+          }
           return (
             <Text
               key={item.value}
