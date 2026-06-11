@@ -102,9 +102,14 @@ function globSummary(output: string): OutputSummary {
   return { kind: 'files', paths: lines, moreCount }
 }
 
+/** Grep 输出是否「无命中」(content/count/files 各模式的空结果前缀)。 */
+function isGrepNoMatch(output: string): boolean {
+  return output.startsWith('No matches for:') || output.startsWith('[offset ')
+}
+
 function grepSummary(tool: UIToolCall): OutputSummary {
   const output = tool.output ?? ''
-  if (output.startsWith('No matches for:') || output.startsWith('[offset ')) {
+  if (isGrepNoMatch(output)) {
     return { kind: 'line', text: 'No matches found' }
   }
   const body = stripTrailingNotes(output)
@@ -159,6 +164,15 @@ function bashPreview(output: string, isError: boolean): OutputSummary {
   }
   const { lines, moreCount } = previewLines(body, PREVIEW_MAX)
   return { kind: 'preview', lines, moreCount }
+}
+
+/** 该工具的 line 摘要是否「隐藏了完整内容」、值得落盘给链接(当前:Grep content/count 有命中)。 */
+export function lineSummaryHidesContent(tool: UIToolCall): boolean {
+  if (tool.name !== 'Grep') return false
+  const mode = (tool.input as { output_mode?: unknown }).output_mode
+  if (mode !== 'content' && mode !== 'count') return false
+  const out = tool.output ?? ''
+  return !isGrepNoMatch(out)
 }
 
 /** 渲染期从 name + input + output 推导 `⎿` 行摘要(纯函数,不调用工具)。 */

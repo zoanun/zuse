@@ -177,3 +177,54 @@ describe('StreamRenderer Glob/Grep 文件清单', () => {
     expect(out).toContain('deep/a.ts')
   })
 })
+
+describe('StreamRenderer Grep content/count line 摘要可点击', () => {
+  it('Grep content 有 outputFile 时 line 摘要包成 OSC-8 链接(含路径与序列)', () => {
+    const out = frame({
+      role: 'tool',
+      tool: {
+        name: 'Grep',
+        input: { output_mode: 'content', pattern: 'foo' },
+        status: 'done',
+        output: 'a.ts:1: foo\nb.ts:2: bar',
+        outputFile: '/tmp/zuse/grep-abc.txt',
+      },
+    })
+    // 摘要文字应存在
+    expect(out).toContain('Found 2 lines')
+    // 路径与 OSC-8 序列应出现(链接以 ESC]8;; 开头)
+    expect(out).toContain('grep-abc.txt')
+    expect(out).toContain(']8;;file:')
+  })
+
+  it('Grep content 无 outputFile 时 line 摘要为纯文本,不含 OSC-8 序列', () => {
+    const out = frame({
+      role: 'tool',
+      tool: {
+        name: 'Grep',
+        input: { output_mode: 'content', pattern: 'foo' },
+        status: 'done',
+        output: 'a.ts:1: foo',
+        // 不传 outputFile
+      },
+    })
+    expect(out).toContain('Found 1 line')
+    expect(out).not.toContain(']8;;file:')
+  })
+
+  it('Grep count 有 outputFile 时 line 摘要包成 OSC-8 链接', () => {
+    const out = frame({
+      role: 'tool',
+      tool: {
+        name: 'Grep',
+        input: { output_mode: 'count', pattern: 'foo' },
+        status: 'done',
+        output: 'a.ts:3',
+        outputFile: '/tmp/zuse/grep-cnt.txt',
+      },
+    })
+    expect(out).toContain('Found 3 matches in 1 file')
+    expect(out).toContain('grep-cnt.txt')
+    expect(out).toContain(']8;;file:')
+  })
+})

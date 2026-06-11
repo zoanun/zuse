@@ -131,7 +131,12 @@ function OutputCell({ tool, cwd }: { tool: UIToolCall; cwd: string }): ReactElem
   }
   if (summary.kind === 'line') {
     // line 类不会来自错误(错误走 error/preview),恒为暗色。
-    return <Text dimColor>{summary.text}</Text>
+    // 有落盘文件(如 Grep content/count 隐藏了命中内容)时,整行计数包成可点击链接。
+    return tool.outputFile ? (
+      <Text dimColor>{osc8FileLink(tool.outputFile, summary.text)}</Text>
+    ) : (
+      <Text dimColor>{summary.text}</Text>
+    )
   }
   // preview:多行;Bash 类错误时整体着红,否则暗色。
   const color = tool.isError ? 'red' : undefined

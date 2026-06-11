@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import os from 'node:os'
 import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
-import { summarizeOutput } from '../components/toolSummary.js'
+import { summarizeOutput, lineSummaryHidesContent } from '../components/toolSummary.js'
 import { writeToolOutputFile } from '../toolOutputFile.js'
 import {
   Conversation,
@@ -275,7 +275,9 @@ export function useConversation({
               // 让「… +N」那行可 ctrl+点击查看全体内容。
               const truncated =
                 (summary.kind === 'preview' || summary.kind === 'files') && summary.moreCount > 0
-              const outputFile = truncated ? writeToolOutputFile(name, event.output) : undefined
+              // Grep content/count 有命中时摘要为单行计数,完整命中内容被隐藏,同样落盘供链接。
+              const hides = summary.kind === 'line' && lineSummaryHidesContent(probe)
+              const outputFile = truncated || hides ? writeToolOutputFile(name, event.output) : undefined
               patch(tid, (m) => ({
                 ...m,
                 isStreaming: false,
