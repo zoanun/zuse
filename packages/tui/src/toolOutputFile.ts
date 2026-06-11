@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
  * 把超出行内展示上限的工具完整输出落盘到系统临时目录,返回绝对路径,供终端 ctrl+点击打开。
  * 写盘失败(磁盘满 / 无权限等)返回 undefined,调用方据此回落到仅展示截断预览,不影响主流程。
  *
- * 写进 os.tmpdir()(跨平台:Windows %TEMP% / POSIX /tmp 等),由系统自行回收,故不主动清理。
+ * 写进 os.tmpdir()(跨平台:Windows %TEMP% / POSIX /tmp 等);启动时由 pruneOldTempFiles 主动清理 7 天前的旧文件。
  */
 export function writeToolOutputFile(toolName: string, output: string): string | undefined {
   try {
@@ -38,4 +38,30 @@ const BEL = String.fromCharCode(7) // OSC 序列终止符(BEL)
 export function osc8FileLink(absPath: string, label: string): string {
   const uri = pathToFileURL(absPath).href
   return `${ESC}]8;;${uri}${BEL}${label}${ESC}]8;;${BEL}`
+}
+
+/**
+ * 删除 dir 下 mtime 早于 now-maxAgeMs 的文件。
+ * best-effort：目录不存在、单个文件 stat/unlink 失败（权限/被占用）均跳过、不抛。
+ */
+export function pruneOldTempFilesAt(dir: string, maxAgeMs: number, now: number): void {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return // 目录不存在等：无事可做
+  }
+  for (const name of names) {
+    const p = join(dir, name)
+    try {
+      if (now - statSync(p).mtimeMs > maxAgeMs) unlinkSync(p)
+    } catch {
+      // 单个文件 stat/unlink 失败（权限/被占用）：跳过，不影响其他文件
+    }
+  }
+}
+
+/** 清理 zuse 临时目录里超龄文件（默认目录 tmpdir()/zuse）。 */
+export function pruneOldTempFiles(maxAgeMs: number, now: number): void {
+  pruneOldTempFilesAt(join(tmpdir(), 'zuse'), maxAgeMs, now)
 }

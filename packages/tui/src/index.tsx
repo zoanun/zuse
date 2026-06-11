@@ -4,6 +4,7 @@ import { cwd as processCwd, env, stderr } from 'node:process'
 import { loadSettings, installProxy } from '@zuse/core'
 import { App } from './App.js'
 import { InputProvider } from './input/InputProvider.js'
+import { pruneOldTempFiles } from './toolOutputFile.js'
 
 // 在 bin 入口处一次性定下工作目录，再往下传，而不是散落到 hook 里临时取。
 // pnpm -F 会把进程 cwd 切到包目录（packages/tui），INIT_CWD 才记着用户真正敲
@@ -28,6 +29,13 @@ try {
   }
 } catch {
   // loadSettings 失败：交由 App 统一处理配置错误。
+}
+
+try {
+  // 启动清理：删 7 天前的临时输出文件（Windows %TEMP% 不自动回收，防堆积）。
+  pruneOldTempFiles(7 * 24 * 60 * 60 * 1000, Date.now())
+} catch {
+  // 清理失败不影响启动
 }
 
 // 给 Ink 喂一个非 TTY 哑流：Ink 的 useInput/焦点管理永不触发、不碰键盘，
