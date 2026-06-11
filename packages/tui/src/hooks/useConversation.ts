@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { resolveHead, type PendingPermission } from '../permissionQueue.js'
 import os from 'node:os'
 import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
 import { summarizeOutput, lineSummaryHidesContent } from '../components/toolSummary.js'
@@ -56,8 +57,11 @@ interface UseConversationReturn {
   /** 输入框的入口：分发斜杠命令，或发送一条消息。displayText 为折叠回显文本，pasteFiles 为粘贴 id→路径映射（仅 user 消息用）。 */
   submit: (input: string, displayText?: string, pasteFiles?: Record<number, string>) => Promise<void>
   clear: () => void
+  /** 权限队列队头(当前显示的请求);null = 无弹框。派生自队列,App 渲染判断不变。 */
   pendingPermission: PermissionRequest | null
   resolvePermission: (verdict: PermissionVerdict) => void
+  /** 权限队列总长(含队头)。>1 时对话框标题显示 (1/N)。 */
+  permissionQueueLength: number
   /** 当前选中的模型名（用于 footer 展示与 /model 标星）。 */
   currentModel: string
   /** 当前选中的 provider id（与 currentModel 配对，用于 footer 展示 provider/model）。 */
@@ -101,10 +105,11 @@ export function useConversation({
   const cwdRef = useRef<string>(cwd)
   // 本会话权限覆盖层（allow_session/allow_persist 追加的规则），跨 submit 保留。
   const sessionAllowRef = useRef<string[]>([])
-  // 等待用户裁决的权限请求；非 null 时渲染对话框、禁用输入框。
-  const [pendingPermission, setPendingPermission] = useState<PermissionRequest | null>(null)
-  // 保存当前 ask 的 resolve，按键后调用它让 agent 循环继续。
-  const permissionResolveRef = useRef<((v: PermissionVerdict) => void) | null>(null)
+  // 权限请求 FIFO 队列。真相源放 ref:canUseTool 在 agent 循环的异步上下文里被调,
+  // 不能依赖闭包里可能陈旧的 state;每次入队/兑现先改 ref 再同步 state 镜像驱动渲染。
+  // UI 一次只显示队头;并发 ask(同轮只读批)各自入队、互不覆盖。
+  const queueRef = useRef<PendingPermission[]>([])
+  const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([])
 
   // client ref —— 持有当前激活的 ModelClient，支持运行时热替换。
   // 用 ref 而非 state：client 本身是外部可变对象，不需要触发重渲染。
@@ -242,8 +247,8 @@ export function useConversation({
           },
           canUseTool: (req: PermissionRequest) =>
             new Promise<PermissionVerdict>((resolve) => {
-              permissionResolveRef.current = resolve
-              setPendingPermission(req)
+              queueRef.current = [...queueRef.current, { id: generateId(), req, resolve }]
+              setPermissionQueue(queueRef.current)
             }),
         })) {
           if (event.type === 'message-start') {
@@ -375,12 +380,15 @@ export function useConversation({
     }))
   }, [])
 
-  // 用户在对话框按键 → 兑现 agent 正在 await 的 promise，并收起对话框。
+  // 用户在对话框按键 → 兑现队头(allow_session/allow_persist 连带清扫同 rule 项),
+  // 下一项自动顶上。必须先更新队列再调 resolver:resolver 会让 agent 循环继续,
+  // 可能同步触发下一个 canUseTool 入队 —— 顺序反了的话,新入队的项会被旧的
+  // rest 快照覆盖丢失。
   const resolvePermission = useCallback((verdict: PermissionVerdict) => {
-    const resolve = permissionResolveRef.current
-    permissionResolveRef.current = null
-    setPendingPermission(null)
-    resolve?.(verdict)
+    const { settled, rest } = resolveHead(queueRef.current, verdict)
+    queueRef.current = rest
+    setPermissionQueue(rest)
+    for (const p of settled) p.resolve(verdict)
   }, [])
 
   // 向对话记录追加一条本地通知（斜杠命令的输出）。
@@ -511,8 +519,9 @@ export function useConversation({
     state,
     submit,
     clear,
-    pendingPermission,
+    pendingPermission: permissionQueue[0]?.req ?? null,
     resolvePermission,
+    permissionQueueLength: permissionQueue.length,
     currentModel,
     currentProviderId,
     clientError,
