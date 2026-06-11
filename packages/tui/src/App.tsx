@@ -70,6 +70,7 @@ export function App({ cwd }: AppProps) {
     modelSelectorOpen,
     confirmModelSelection,
     closeModelSelector,
+    badModels,
     interrupt,
   } = useConversation({
     maxTokens: getDefaultMaxTokens(resolved),
@@ -188,6 +189,7 @@ export function App({ cwd }: AppProps) {
           settings={resolved}
           currentProviderId={currentProviderId}
           currentModel={currentModel}
+          badKeys={badModels}
           onConfirm={confirmModelSelection}
           onCancel={closeModelSelector}
         />

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { resolveHead, type PendingPermission } from '../permissionQueue.js'
+import { badKeysForFailure, decideFailover, modelKey } from './failoverCore.js'
 import os from 'node:os'
 import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
 import { summarizeOutput, lineSummaryHidesContent } from '../components/toolSummary.js'
@@ -14,6 +15,7 @@ import {
   getProviderConfig,
   setModelInSettings,
   resolveModelSelection,
+  resolveFailoverMode,
   buildSystemPrompt,
   DEFAULT_PROVIDER_ID,
   type ModelClient,
@@ -23,6 +25,7 @@ import {
   type PermissionRequest,
   type PermissionVerdict,
   type ModelSelection,
+  type ErrorCategory,
 } from '@zuse/core'
 import { getShellLabel } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
@@ -80,6 +83,8 @@ interface UseConversationReturn {
   confirmModelSelection: (providerId: string, model: string, persist: boolean) => void
   /** 选择器里 Esc 取消：仅收起，不切换。 */
   closeModelSelector: () => void
+  /** 本会话不可用标记(供 /model picker 灰显标注)。 */
+  badModels: ReadonlyMap<string, ErrorCategory>
   /** 中断进行中的流式回合（Esc）。当前有回合在跑则 abort 并返回 true，否则 false。 */
   interrupt: () => boolean
 }
@@ -114,6 +119,9 @@ export function useConversation({
   // UI 一次只显示队头;并发 ask(同轮只读批)各自入队、互不覆盖。
   const queueRef = useRef<PendingPermission[]>([])
   const [permissionQueue, setPermissionQueue] = useState<PendingPermission[]>([])
+  // 本会话判不可用的 provider/model(key=`pid/model` → 原因)。仅内存,进程重启即清。
+  // 供 /model picker 灰显标注,以及 auto 模式选下家时跳过。
+  const badModelsRef = useRef<Map<string, ErrorCategory>>(new Map())
 
   // client ref —— 持有当前激活的 ModelClient，支持运行时热替换。
   // 用 ref 而非 state：client 本身是外部可变对象，不需要触发重渲染。
@@ -169,7 +177,7 @@ export function useConversation({
   }, [])
 
   const sendMessage = useCallback(
-    async (text: string, displayText?: string, pasteFiles?: Record<number, string>) => {
+    async (text: string, displayText?: string, pasteFiles?: Record<number, string>, opts?: { isResend?: boolean }) => {
       // client 尚未初始化（effect 还未运行或初始化失败）。
       if (!clientRef.current) {
         setState((prev) => ({ ...prev, error: '客户端未初始化' }))
@@ -179,12 +187,17 @@ export function useConversation({
 
       // 乐观更新：立刻显示用户这一回合。displayText 存在时供滚动区折叠回显，text 始终为全文发模型。
       // pasteFiles 仅供渲染层把标签包成 OSC-8 链接，不影响发给模型的全文。
-      const userMessage: UIMessage = { id: generateId(), role: 'user', text, displayText, pasteFiles, isStreaming: false }
-      setState((prev) => ({
-        ...prev,
-        messages: [...prev.messages, userMessage],
-        isThinking: true,
-      }))
+      // 重发(降级后自动重试)不再压新 user 气泡——失败回合没提交,原气泡仍在屏。
+      if (!opts?.isResend) {
+        const userMessage: UIMessage = { id: generateId(), role: 'user', text, displayText, pasteFiles, isStreaming: false }
+        setState((prev) => ({
+          ...prev,
+          messages: [...prev.messages, userMessage],
+          isThinking: true,
+        }))
+      } else {
+        setState((prev) => ({ ...prev, isThinking: true }))
+      }
 
       const controller = new AbortController()
       abortRef.current = controller
@@ -200,6 +213,8 @@ export function useConversation({
       const toolName: Record<string, string> = {}
       const toolInput: Record<string, unknown> = {}
       let lastInputTokens: number | undefined
+      // 降级决策:error 分支只「记下」,绝不在 for-await 内重入 sendMessage;循环结束后才执行。
+      let failoverDecision: ErrorCategory | null = null
 
       // 把错误渲染成行内消息气泡：能接到当前助手气泡就替换其文本，否则新开一条。
       // 错误属于本回合的 scrollback，不再用会跨轮残留的粘性 state.error。
@@ -344,8 +359,16 @@ export function useConversation({
             }))
           } else if (event.type === 'error') {
             // 中断引发的错误（abort 经 runAgent 以 error 事件透出时）不渲染成错误。
-            if (controller.signal.aborted) showAborted()
-            else showError(event.message)
+            if (controller.signal.aborted) {
+              showAborted()
+            } else {
+              const cat: ErrorCategory = event.category ?? 'other'
+              // 只在「还没吐出任何文本」时才考虑降级:额度/认证错误都发生在开流阶段,满足;
+              // 流到一半才报错则只提示(重发会重复内容)。决策记下,循环结束后执行。
+              const preStream = accumulated === '' && currentAssistantId === null
+              if (preStream && cat !== 'other') failoverDecision = cat
+              else showError(event.message)
+            }
           }
         }
 
@@ -357,6 +380,51 @@ export function useConversation({
           totalUsage: conversation.totalUsage,
           contextTokens: lastInputTokens ?? prev.contextTokens,
         }))
+
+        // 降级:此时 for-await 已结束(client 已 return),安全地切模型/弹框。
+        if (failoverDecision) {
+          const cat = failoverDecision
+          const pid = currentProviderId
+          // 用 clientRef.current.getModel() 而非闭包里的 currentModel:auto 连环降级时,
+          // 递归 sendMessage 是同一闭包实例(currentModel 是陈旧的初始值),而 clientRef 已被
+          // 热替换,getModel() 才是本回合真正在用、刚失败的那个 model。
+          const failedModel = clientRef.current?.getModel() ?? currentModel
+          const models = settings.providers[pid]?.models ?? []
+          // 1) 标坏(auth 标整个 provider 的所有 model)。
+          for (const k of badKeysForFailure(pid, failedModel, cat, models)) {
+            badModelsRef.current.set(k, k === modelKey(pid, failedModel) ? cat : 'auth')
+          }
+          // 2) 决策。
+          const reasonText = cat === 'auth' ? 'API key 失效' : cat === 'quota' ? '额度耗尽' : '模型不可用'
+          const action = decideFailover({
+            category: cat,
+            mode: resolveFailoverMode(settings),
+            providerId: pid,
+            models,
+            currentModel: failedModel,
+            bad: new Set(badModelsRef.current.keys()),
+          })
+          // 系统通知内联(不调用 print:它定义在本 useCallback 之后,放进依赖数组会 TDZ)。
+          const notify = (msg: string): void =>
+            setState((prev) => ({
+              ...prev,
+              messages: [...prev.messages, { id: generateId(), role: 'system', text: msg, isStreaming: false }],
+            }))
+          if (action.kind === 'retry') {
+            notify(`${reasonText},已切换到 ${pid}/${action.model} 重试`)
+            // 同 provider 内热替换 client(persist=false,currentProviderId 不变)。不复用 switchModel:
+            // 它定义在本 useCallback 之后,放进依赖数组会 TDZ;这里是其无写盘的子集。
+            clientRef.current = createModelClient(getProviderConfig(settings, pid), action.model)
+            setCurrentModel(action.model)
+            // 重发的 runAgent 用 clientRef.current.getModel() 取新模型,直接重发即可。
+            abortRef.current = null
+            await sendMessage(text, undefined, undefined, { isResend: true })
+            return
+          }
+          // dialog:弹框,picker 据 badModelsRef 灰显标注。
+          notify(`${reasonText},请选择其他模型`)
+          setModelSelectorOpen(true)
+        }
       } catch (err) {
         // abort 多半以抛出 AbortError 的形式中断循环；按中断而非错误处理。
         if (controller.signal.aborted) {
@@ -369,7 +437,7 @@ export function useConversation({
         abortRef.current = null
       }
     },
-    [maxTokens, registry, patch, cwd, settings, systemPrompt],
+    [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel],
   )
 
   const clear = useCallback(() => {
@@ -540,6 +608,7 @@ export function useConversation({
     modelSelectorOpen,
     confirmModelSelection,
     closeModelSelector,
+    badModels: badModelsRef.current,
     interrupt,
   }
 }
