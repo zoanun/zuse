@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import os from 'node:os'
 import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
 import { summarizeOutput, lineSummaryHidesContent } from '../components/toolSummary.js'
+import { computeLineDiff, formatDiffText, EDIT_DIFF_CAP } from '../components/editDiff.js'
 import { writeToolOutputFile } from '../toolOutputFile.js'
 import {
   Conversation,
@@ -25,6 +26,21 @@ import {
 import { getShellLabel } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
+
+/**
+ * Edit 的行级 diff 超过 EDIT_DIFF_CAP 行被收口时,把「完整 diff 文本」落盘,返回临时文件路径;
+ * 否则 undefined。与 Bash/Grep 落盘同理:完整 diff 是无磁盘归宿的计算产物,且 old/new 是本次
+ * 编辑固定的历史记录、不会随文件变动而过期,落盘是正确的(不同于 Read 的输出有真文件可开)。
+ */
+function spillEditDiff(input: unknown, isError?: boolean): string | undefined {
+  if (isError) return undefined
+  const inp = (input ?? {}) as { old_string?: unknown; new_string?: unknown; file_path?: unknown }
+  if (typeof inp.old_string !== 'string' || typeof inp.new_string !== 'string') return undefined
+  const rows = computeLineDiff(inp.old_string, inp.new_string)
+  if (rows.length <= EDIT_DIFF_CAP) return undefined
+  const file = typeof inp.file_path === 'string' ? inp.file_path : ''
+  return writeToolOutputFile('edit', formatDiffText(file, rows))
+}
 
 interface UseConversationOptions {
   maxTokens: number
@@ -278,7 +294,13 @@ export function useConversation({
                 (summary.kind === 'preview' || summary.kind === 'files') && summary.moreCount > 0
               // Grep content/count 有命中时摘要为单行计数,完整命中内容被隐藏,同样落盘供链接。
               const hides = summary.kind === 'line' && lineSummaryHidesContent(probe)
-              const outputFile = truncated || hides ? writeToolOutputFile(name, event.output) : undefined
+              // Edit 的行级 diff 超过上限被收口时,落盘完整 diff 文本(内容来自 old/new,不是 event.output)。
+              const outputFile =
+                name === 'Edit'
+                  ? spillEditDiff(toolInput[event.id], event.is_error)
+                  : truncated || hides
+                    ? writeToolOutputFile(name, event.output)
+                    : undefined
               patch(tid, (m) => ({
                 ...m,
                 isStreaming: false,

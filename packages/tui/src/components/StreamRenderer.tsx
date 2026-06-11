@@ -4,7 +4,7 @@ import { Spinner } from './Spinner.js'
 import { BLACK_CIRCLE, L_CORNER } from './figures.js'
 import { summarizeOutput, toolSpecifier, plural } from './toolSummary.js'
 import { osc8FileLink } from '../toolOutputFile.js'
-import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
+import { computeLineDiff, diffStats, capDiff, EDIT_DIFF_CAP } from './editDiff.js'
 import { splitPasteLabels } from './pasteLabels.js'
 import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
@@ -20,6 +20,23 @@ interface StreamRendererProps {
 /** 标题行括号内的参数:Bash 截断后的命令,其余工具的主参数(file_path / pattern / url 等)。 */
 function toolHeaderArgs(tool: UIToolCall): string {
   return toolSpecifier(tool.name, tool.input)
+}
+
+/** 标题路径要做成可点击链接的文件类工具。 */
+const FILE_PATH_TOOLS = new Set(['Read', 'Edit', 'Write'])
+
+/**
+ * 文件类工具(Read/Edit/Write)的标题路径包成指向「真实文件」的 OSC 8 链接,点击在编辑器打开
+ * 当前磁盘内容(Edit/Write 即改后版本;"改了什么"由下方 inline diff 负责,职责分清)。
+ * 故意不落临时快照:Read 的输出本就是某真文件的内容,快照只会冗余且随文件变动而过期。
+ * 其余工具(Grep/Bash/...)的标题参数非文件路径,原样返回纯文本。
+ */
+function toolHeaderArgsNode(tool: UIToolCall, cwd: string, args: string): string {
+  if (!FILE_PATH_TOOLS.has(tool.name)) return args
+  const fp = (tool.input as { file_path?: unknown }).file_path
+  if (typeof fp !== 'string' || fp === '') return args
+  // 基准优先用工具运行时 cwd(Bash cd 后入口 cwd 已过期),与文件清单同一处理。
+  return osc8FileLink(resolve(tool.cwd ?? cwd, fp), args)
 }
 
 /**
@@ -45,7 +62,7 @@ function ToolBlock({ tool, cwd }: { tool: UIToolCall; cwd: string }) {
         <Box marginRight={1}>{marker}</Box>
         <Text>
           <Text bold color="cyan">{tool.name}</Text>
-          {args ? <Text dimColor>({args})</Text> : null}
+          {args ? <Text dimColor>({toolHeaderArgsNode(tool, cwd, args)})</Text> : null}
         </Text>
       </Box>
       {/* 结果行:⎿ 摘要;多行(预览 / diff)在 ⎿ 右侧悬挂对齐。 */}
@@ -180,7 +197,7 @@ function renderEditDiff(tool: UIToolCall): ReactElement | null {
   const file = typeof input.file_path === 'string' ? input.file_path : ''
   const rows = computeLineDiff(input.old_string, input.new_string)
   const { added, removed } = diffStats(rows)
-  const { rows: shown, more } = capDiff(rows, 10)
+  const { rows: shown, more } = capDiff(rows, EDIT_DIFF_CAP)
   // replace_all 多处替换:标题行追加 (×N);+A -R 仍按单 hunk 计。
   const times = countReplacements(tool.output)
   const suffix = input.replace_all === true && times > 1 ? ` (×${times})` : ''
@@ -203,7 +220,13 @@ function renderEditDiff(tool: UIToolCall): ReactElement | null {
           </Text>
         )
       })}
-      {more > 0 && <Text dimColor>{`… +${more} 行`}</Text>}
+      {more > 0 &&
+        (tool.outputFile ? (
+          // 完整 diff 已落盘:整行包成 OSC 8 链接,ctrl+点击打开临时文件看全量 diff。
+          <Text dimColor>{osc8FileLink(tool.outputFile, `… +${more} 行(点击查看完整 diff)`)}</Text>
+        ) : (
+          <Text dimColor>{`… +${more} 行`}</Text>
+        ))}
     </Box>
   )
 }

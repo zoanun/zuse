@@ -229,6 +229,75 @@ describe('StreamRenderer Grep content/count line 摘要可点击', () => {
   })
 })
 
+describe('StreamRenderer 文件工具标题路径可点击', () => {
+  it('Read 标题里的 file_path 包成指向真实文件的 OSC 8 链接', () => {
+    const out = frame({
+      role: 'tool',
+      tool: { name: 'Read', input: { file_path: 'src/a.ts' }, status: 'done', output: 'x\ny\nz' },
+    }, '/work')
+    // 路径文字仍可见,且被包成 OSC 8 file:// 链接(指向真实文件,非临时快照)。
+    expect(out).toContain('src/a.ts')
+    expect(out).toContain(']8;;file:')
+  })
+
+  it('Edit 标题路径链接基准用 tool.cwd(Bash cd 后仍指向真实目录)', () => {
+    const out = frame({
+      role: 'tool',
+      tool: {
+        name: 'Edit',
+        input: { file_path: 'a.ts', old_string: 'foo', new_string: 'bar' },
+        status: 'done',
+        output: '(1 replacement)',
+        cwd: '/work/deep',
+      },
+    }, '/work')
+    // 链接目标 = resolve('/work/deep', 'a.ts'),file:// URI 含 deep/a.ts 段。
+    expect(out).toContain('deep/a.ts')
+    expect(out).toContain(']8;;file:')
+  })
+
+  it('非文件工具(Grep)标题 pattern 不做链接', () => {
+    const out = frame({
+      role: 'tool',
+      tool: { name: 'Grep', input: { pattern: 'foo', output_mode: 'content' }, status: 'done', output: 'a.ts:1: foo' },
+    }, '/work')
+    // 标题里的 pattern 是纯文本,不应被包成 file:// 链接(OUT 行也无 outputFile)。
+    expect(out).not.toContain(']8;;file:')
+  })
+})
+
+describe('StreamRenderer Edit diff 截断行可点击', () => {
+  // 首行不变 + 11 行新增 = 12 个 diff 行 → 超过 10 行上限,more=2,出现「… +2 行」。
+  const longEdit = (outputFile?: string): Partial<UIMessage> => ({
+    role: 'tool',
+    tool: {
+      name: 'Edit',
+      input: {
+        file_path: 'a.ts',
+        old_string: 'L0',
+        new_string: Array.from({ length: 12 }, (_, i) => `L${i}`).join('\n'),
+      },
+      status: 'done',
+      output: '(1 replacement)',
+      outputFile,
+    },
+  })
+
+  it('有 outputFile 时「… +N 行」整行包成指向完整 diff 临时文件的 OSC 8 链接', () => {
+    const out = frame(longEdit('/tmp/zuse/edit-x.txt'))
+    expect(out).toContain('… +2 行(点击查看完整 diff)')
+    expect(out).toContain('edit-x.txt')
+    expect(out).toContain(']8;;file:')
+  })
+
+  it('无 outputFile 时「… +N 行」为纯文本(无「点击」热区)', () => {
+    // 注意:标题路径本身已是链接,故不能断言整帧无 file:// 序列;只验 more 行不带点击后缀。
+    const out = frame(longEdit())
+    expect(out).toContain('… +2 行')
+    expect(out).not.toContain('点击查看完整 diff')
+  })
+})
+
 describe('StreamRenderer 粘贴标签 OSC-8 链接', () => {
   it('user 消息有 displayText + pasteFiles：标签段包成 OSC-8 链接', () => {
     const out = frame({

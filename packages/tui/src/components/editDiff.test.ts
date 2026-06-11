@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
+import { computeLineDiff, diffStats, capDiff, formatDiffText } from './editDiff.js'
 import type { DiffRow } from './editDiff.js'
 
 describe('computeLineDiff', () => {
@@ -72,5 +72,17 @@ describe('capDiff', () => {
     expect(out.rows).toHaveLength(10)
     expect(out.more).toBe(2)
     expect(out.rows[9]).toEqual({ kind: 'context', text: '9' })
+  })
+})
+
+describe('formatDiffText', () => {
+  it('落盘用的完整 diff 文本:首行 Updated <file> +A -R,随后每行带 +/-/空 前缀,且不截断', () => {
+    const rows: DiffRow[] = [
+      { kind: 'context', text: 'a' },
+      { kind: 'del', text: 'x' },
+      { kind: 'add', text: 'y' },
+      { kind: 'add', text: 'z' },
+    ]
+    expect(formatDiffText('src/f.ts', rows)).toBe(['Updated src/f.ts  +2 -1', '  a', '- x', '+ y', '+ z'].join('\n'))
   })
 })

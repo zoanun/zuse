@@ -72,3 +72,22 @@ export function capDiff(rows: DiffRow[], max: number): { rows: DiffRow[]; more: 
   if (rows.length <= max) return { rows, more: 0 }
   return { rows: rows.slice(0, max), more: rows.length - max }
 }
+
+/** Edit diff 在 OUT 列行内展示的最大行数;超出收口为「… +N 行」并落盘完整 diff 供链接。 */
+export const EDIT_DIFF_CAP = 10
+
+/** diff 行按 add/del/context 加前缀。 */
+function rowPrefix(kind: DiffRow['kind']): string {
+  return kind === 'add' ? '+ ' : kind === 'del' ? '- ' : '  '
+}
+
+/**
+ * 把完整(未截断)diff 渲染成纯文本,落盘到临时文件供「… +N 行」链接打开。
+ * 首行 `Updated <file>  +A -R`,随后每行带 +/-/空 前缀 —— 与行内彩色 diff 同形,只是不收口、无颜色。
+ */
+export function formatDiffText(file: string, rows: DiffRow[]): string {
+  const { added, removed } = diffStats(rows)
+  const header = `Updated ${file}  +${added} -${removed}`
+  const body = rows.map((r) => `${rowPrefix(r.kind)}${r.text}`)
+  return [header, ...body].join('\n')
+}
