@@ -159,21 +159,63 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     // 执行每个被请求的工具（先过权限闸门），并把结果作为一条 user 消息暂存。
-    const resultBlocks: ContentBlock[] = []
-    for (const tu of toolUses) {
-      // 每个工具调用按会话当前 cwd 重建 ctx —— 上一条 Bash 的 cd 才能被下一条看到。
-      const ctx: ToolContext = {
-        cwd: sessionCwd,
-        signal,
-        tracker,
-        setCwd: (p: string): void => {
-          sessionCwd = p
-          opts.onCwdChange?.(p)
-        },
+    //
+    // 同一轮里的多个 tool_use 之间天然无数据依赖（模型一次性请求时还没看到任何结果，
+    // 有依赖会分轮做）。但「无数据依赖」≠「无副作用」：Bash 的 cd 改写共享 sessionCwd、
+    // Edit 的乐观锁竞争同一文件、ask 闸门会并发弹多个权限框。所以并发只在两条都满足时才启用：
+    //   ① 整批全是只读工具 —— 只读工具不调 setCwd（cwd 全程不变、共享快照无碍），也不竞争文件锁；
+    //   ② 没有任何一个会命中 ask —— 只读 ≠ 免审：decide() 里 ask 规则（第 5 步）先于 readOnly
+    //      自动放行（第 6 步）判定，故 `ask: ['Read(./**)']` 这类配置会让只读工具走 ask。而 TUI
+    //      的 canUseTool 用单例 resolver，并发两个 ask 会互相覆盖 → 第一个 promise 永不兑现、
+    //      Promise.all 卡死。一旦批内有任一工具会 ask，就退回串行，让权限框逐个排队。
+    // 只要混进一个写工具、或有工具会命中 ask，就维持串行。
+    const allReadOnly = toolUses.every((tu) => registry.get(tu.name)?.readOnly === true)
+
+    // 并发前的纯判定预检：该工具是否会命中 ask。decide 无副作用，可安全预跑；且当全批只读且
+    // 无人 ask 时，sessionAllow / sessionCwd 都不会变，这份基于当前快照的预检对整批都成立。
+    const wouldAsk = (tu: PendingToolUse): boolean => {
+      const tool = registry.get(tu.name)
+      if (!tool) return false
+      const specifier = tool.specifierFor?.(tu.input) ?? null
+      return decide(tool, specifier, settings, sessionAllow, sessionCwd).decision === 'ask'
+    }
+    const canRunConcurrently = allReadOnly && toolUses.length > 1 && !toolUses.some(wouldAsk)
+
+    // 每个工具调用按会话当前 cwd 重建 ctx —— 上一条 Bash 的 cd 才能被下一条看到。
+    const buildCtx = (): ToolContext => ({
+      cwd: sessionCwd,
+      signal,
+      tracker,
+      setCwd: (p: string): void => {
+        sessionCwd = p
+        opts.onCwdChange?.(p)
+      },
+    })
+    // 闸门依赖按调用时的 sessionCwd 现取 —— 串行路径里上一条 Bash 的 cd 改了 cwd,
+    // 后续工具的路径规则匹配（decide）才看得到新目录。
+    const gateDeps = (): GateDeps => ({
+      settings, sessionAllow, cwd: sessionCwd, canUseTool: opts.canUseTool, onPersistAllow,
+    })
+
+    let outputs: Array<{ output: string; isError: boolean }>
+    if (canRunConcurrently) {
+      // 并发执行整批只读工具。已排除会命中 ask 的工具,故并发路径不会触碰 canUseTool;
+      // gateAndRunTool 余下逻辑（decide=allow → runOneTool）内部把异常 try/catch 成 isError、
+      // 从不抛出,所以 Promise.all 不会因单个失败而整体 reject。只读工具不调 setCwd,cwd 全程不变。
+      outputs = await Promise.all(toolUses.map((tu) => gateAndRunTool(registry, tu, buildCtx(), gateDeps())))
+    } else {
+      // 含写工具 / 单个工具 / 任一工具会命中 ask：串行,保住 cd、乐观锁、ask 排队的顺序语义。
+      outputs = []
+      for (const tu of toolUses) {
+        outputs.push(await gateAndRunTool(registry, tu, buildCtx(), gateDeps()))
       }
-      const result = await gateAndRunTool(registry, tu, ctx, {
-        settings, sessionAllow, cwd: sessionCwd, canUseTool: opts.canUseTool, onPersistAllow,
-      })
+    }
+
+    // 按请求顺序回喂结果（tool_result 靠 id 匹配,顺序非强制,但保持一致更稳）。
+    const resultBlocks: ContentBlock[] = []
+    for (let i = 0; i < toolUses.length; i++) {
+      const tu = toolUses[i]!
+      const result = outputs[i]!
       yield {
         type: 'tool-result',
         id: tu.id,
