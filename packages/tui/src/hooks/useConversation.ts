@@ -59,7 +59,11 @@ interface UseConversationReturn {
   clear: () => void
   /** 权限队列队头(当前显示的请求);null = 无弹框。派生自队列,App 渲染判断不变。 */
   pendingPermission: PermissionRequest | null
-  resolvePermission: (verdict: PermissionVerdict) => void
+  /** 兑现队头。expectedHeadId 必须是调用方渲染快照里的队头 id(pendingPermissionId);
+   *  与当前真实队头不符时丢弃 —— 防同一输入 chunk 的连发按键盲裁决未展示的请求。 */
+  resolvePermission: (verdict: PermissionVerdict, expectedHeadId: string | null) => void
+  /** 权限队列队头 id,与 pendingPermission 同源同帧;传回 resolvePermission 做身份校验。 */
+  pendingPermissionId: string | null
   /** 权限队列总长(含队头)。>1 时对话框标题显示 (1/N)。 */
   permissionQueueLength: number
   /** 当前选中的模型名（用于 footer 展示与 /model 标星）。 */
@@ -381,10 +385,16 @@ export function useConversation({
   }, [])
 
   // 用户在对话框按键 → 兑现队头(allow_session/allow_persist 连带清扫同 rule 项),
-  // 下一项自动顶上。必须先更新队列再调 resolver:resolver 会让 agent 循环继续,
-  // 可能同步触发下一个 canUseTool 入队 —— 顺序反了的话,新入队的项会被旧的
-  // rest 快照覆盖丢失。
-  const resolvePermission = useCallback((verdict: PermissionVerdict) => {
+  // 下一项自动顶上。
+  // expectedHeadId 校验:输入层对同一 stdin chunk 的多个按键同步循环派发(见
+  // input/stdin.ts),重渲染要等同步块结束 —— 按住 Enter/Esc 会在同一渲染窗口连调
+  // 本函数,不校验的话第二次会盲裁决用户还没看到的下一项。id 来自调用方渲染快照,
+  // 与真实队头不符即丢弃(下一帧对话框会带新 id 重新出现)。
+  // 先更新队列再调 resolver:这是防御性顺序 —— resolve 的 await 延续按规范走微任务,
+  // 本不会同步重入,但 PendingPermission.resolve 的类型允许任意同步回调(测试就传
+  // 同步函数),不依赖微任务时序的写法更稳、也更易推理。
+  const resolvePermission = useCallback((verdict: PermissionVerdict, expectedHeadId: string | null) => {
+    if (queueRef.current[0]?.id !== expectedHeadId || expectedHeadId === null) return
     const { settled, rest } = resolveHead(queueRef.current, verdict)
     queueRef.current = rest
     setPermissionQueue(rest)
@@ -521,6 +531,7 @@ export function useConversation({
     clear,
     pendingPermission: permissionQueue[0]?.req ?? null,
     resolvePermission,
+    pendingPermissionId: permissionQueue[0]?.id ?? null,
     permissionQueueLength: permissionQueue.length,
     currentModel,
     currentProviderId,

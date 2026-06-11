@@ -62,6 +62,8 @@ export function App({ cwd }: AppProps) {
     submit,
     pendingPermission,
     resolvePermission,
+    permissionQueueLength,
+    pendingPermissionId,
     currentModel,
     currentProviderId,
     clientError,
@@ -173,7 +175,11 @@ export function App({ cwd }: AppProps) {
       {exitPending && <Text color="yellow">再按一次 Ctrl+C 退出</Text>}
 
       {pendingPermission ? (
-        <PermissionDialog req={pendingPermission} onDecision={resolvePermission} />
+        <PermissionDialog
+          req={pendingPermission}
+          onDecision={(v) => resolvePermission(v, pendingPermissionId)}
+          queueLength={permissionQueueLength}
+        />
       ) : modelSelectorOpen ? (
         <ModelSelect
           settings={resolved}

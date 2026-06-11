@@ -157,6 +157,10 @@ for (const p of settled) p.resolve(verdict)
   gateAndRunTool 内各自执行——`appendAllowRule` 幂等去重,重复写同一规则无害)。
 - **同规则清扫的边界**:`rule` 是 `buildRule(toolName, specifier)` 的整串(如
   `Bash(git status)`),仅字面相等才清扫;不同命令/路径各自弹框,不做前缀/glob 推断。
+- **连发按键防护(实施期增补)**:输入层对同一 stdin chunk 的多个按键同步循环派发,
+  重渲染滞后于同步块 —— 按住 Enter/Esc 会在同一渲染窗口连调 resolvePermission,第二次
+  会盲裁决未展示的下一项。故 resolvePermission 带 expectedHeadId(调用方渲染快照的队头
+  id),与真实队头不符即丢弃。旧单例无此问题(第二次按键 resolve null 天然 no-op)。
 
 ## 影响面
 
