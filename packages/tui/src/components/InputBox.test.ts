@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createElement } from 'react'
 import { EventEmitter } from 'node:events'
 import { render as inkRender } from 'ink'
@@ -50,7 +50,7 @@ class FakeStdout extends EventEmitter implements StdoutLike {
 
 // 渲染一个 InputBox；不用 ink-testing-library（它创建自己的 stdin，不可注入），
 // 改用 ink 直接渲染 + 共享 FakeStdin，使 InputProvider 和 Ink 监听同一个 stdin。
-async function mount(onSubmit: (text: string, displayText?: string) => void = () => {}) {
+async function mount(onSubmit: (text: string, displayText?: string, pasteFiles?: Record<number, string>) => void = () => {}) {
   const stdin = new FakeStdin()
   const stdout = new FakeStdout()
   const instance = inkRender(
@@ -146,8 +146,8 @@ describe('InputBox —— / 命令菜单', () => {
     stdin.write(ENTER)
     await tick()
     // 菜单关闭后回车走普通提交：文本 "/cl" trim 后非空 → 作为一条输入发送。
-    // 纯文本提交 pastes 为空,displayText=undefined(toHaveBeenCalledWith 第二参可缺省)
-    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined)
+    // 纯文本提交 pastes 为空：displayText=undefined、pasteFiles=undefined
+    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined, undefined)
     unmount()
   })
 
@@ -195,8 +195,8 @@ describe('InputBox —— / 命令菜单', () => {
     await tick()
     stdin.write(ENTER) // 普通提交，清空输入；dismissedText 应被一并清掉
     await tick()
-    // 纯文本提交 pastes 为空,displayText=undefined
-    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined)
+    // 纯文本提交 pastes 为空：displayText=undefined、pasteFiles=undefined
+    expect(onSubmit).toHaveBeenCalledWith('/cl', undefined, undefined)
     stdin.write('/cl') // 再次原样输入
     await tick()
     expect(lastFrame() ?? '').toContain('Tab/Enter 确认') // 菜单重新出现
@@ -225,7 +225,7 @@ describe('InputBox —— 粘贴折叠', () => {
 
   it('多行粘贴后提交:onSubmit 第一参含展开全文、第二参含折叠标签', async () => {
     // 显式标注函数类型,使 mock.calls 类型可解构
-    const onSubmit = vi.fn<(text: string, displayText?: string) => void>()
+    const onSubmit = vi.fn<(text: string, displayText?: string, pasteFiles?: Record<number, string>) => void>()
     const { stdin, unmount } = await mount(onSubmit)
     stdin.emit('data', bracketedPaste('第一行\n第二行'))
     await tick()
@@ -252,6 +252,51 @@ describe('InputBox —— 粘贴折叠', () => {
     expect(out).toContain('单行内容')
     // 不应出现折叠标签
     expect(out).not.toContain('[粘贴#1')
+    unmount()
+  })
+})
+
+// mock writeToolOutputFile：返回固定路径，避免真正落盘
+vi.mock('../toolOutputFile.js', () => ({
+  writeToolOutputFile: vi.fn((_name: string, _content: string) => `/tmp/zuse/${_name}-mock.txt`),
+  osc8FileLink: vi.fn((path: string, label: string) => `${label}(${path})`),
+}))
+
+describe('InputBox —— 粘贴提交 pasteFiles 第三参', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('多行粘贴后提交：onSubmit 第三参含 id→路径映射', async () => {
+    // 签名包含第三参 pasteFiles
+    const onSubmit = vi.fn<(text: string, displayText?: string, pasteFiles?: Record<number, string>) => void>()
+    const { stdin, unmount } = await mount(onSubmit)
+    stdin.emit('data', bracketedPaste('第一行\n第二行'))
+    await tick()
+    stdin.emit('data', ENTER)
+    await tick()
+    expect(onSubmit).toHaveBeenCalledOnce()
+    const args = onSubmit.mock.calls[0]!
+    const pasteFiles = args[2]
+    // 第三参应为 Record<number, string>，id=1 对应路径
+    expect(pasteFiles).toBeDefined()
+    expect(typeof pasteFiles![1]).toBe('string')
+    expect(pasteFiles![1]).toContain('paste')
+    unmount()
+  })
+
+  it('纯文本（无粘贴）提交：onSubmit 第三参为 undefined', async () => {
+    const onSubmit = vi.fn<(text: string, displayText?: string, pasteFiles?: Record<number, string>) => void>()
+    const { stdin, unmount } = await mount(onSubmit)
+    stdin.write('你好世界')
+    await tick()
+    stdin.emit('data', ENTER)
+    await tick()
+    expect(onSubmit).toHaveBeenCalledOnce()
+    const args = onSubmit.mock.calls[0]!
+    // 纯文本：displayText 和 pasteFiles 均为 undefined
+    expect(args[1]).toBeUndefined()
+    expect(args[2]).toBeUndefined()
     unmount()
   })
 })

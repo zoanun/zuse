@@ -5,6 +5,7 @@ import { BLACK_CIRCLE, L_CORNER } from './figures.js'
 import { summarizeOutput, toolSpecifier, plural } from './toolSummary.js'
 import { osc8FileLink } from '../toolOutputFile.js'
 import { computeLineDiff, diffStats, capDiff } from './editDiff.js'
+import { splitPasteLabels } from './pasteLabels.js'
 import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
 import { Markdown } from './markdown/Markdown.js'
@@ -229,11 +230,19 @@ export function StreamRenderer({ message, cwd }: StreamRendererProps) {
   if (message.role === 'user') {
     // displayText 存在时按折叠回显渲染（含 [粘贴#x] 标签），否则回落到全文
     const lines = (message.displayText ?? message.text).split('\n')
+    const pasteFiles = message.pasteFiles
     return (
       <Box flexDirection="column" marginBottom={1}>
         {lines.map((line, i) => (
+          // 保持原有底色高亮（blackBright 底 whiteBright 字）；标签段有临时文件时包成 OSC-8 链接
           <Text key={i} backgroundColor="blackBright" color="whiteBright">
-            {`${i === 0 ? '› ' : '  '}${line} `}
+            {`${i === 0 ? '› ' : '  '}`}
+            {splitPasteLabels(line).map((seg, j) => {
+              const filePath = seg.id !== undefined ? pasteFiles?.[seg.id] : undefined
+              // 有落盘文件：包成 OSC-8 超链接；否则纯文本（含标签退化场景，不崩）
+              return filePath ? osc8FileLink(filePath, seg.text) : seg.text
+            }).join('')}
+            {' '}
           </Text>
         ))}
       </Box>

@@ -228,3 +228,47 @@ describe('StreamRenderer Grep content/count line 摘要可点击', () => {
     expect(out).toContain(']8;;file:')
   })
 })
+
+describe('StreamRenderer 粘贴标签 OSC-8 链接', () => {
+  it('user 消息有 displayText + pasteFiles：标签段包成 OSC-8 链接', () => {
+    const out = frame({
+      role: 'user',
+      text: '第一行\n第二行',
+      displayText: '[粘贴#1 · 2 行 · 9 字符]',
+      pasteFiles: { 1: '/tmp/zuse/paste-abc.txt' },
+    })
+    // 标签文字应存在
+    expect(out).toContain('[粘贴#1')
+    // 临时文件路径应出现（OSC-8 序列含 file:// URI）
+    expect(out).toContain('paste-abc.txt')
+    expect(out).toContain(']8;;file:')
+    // 模型全文不应渲染到滚动区
+    expect(out).not.toContain('第一行')
+    expect(out).not.toContain('第二行')
+  })
+
+  it('user 消息有 displayText 但无 pasteFiles：标签退化为纯文本，不含 OSC-8 序列', () => {
+    const out = frame({
+      role: 'user',
+      text: '全文',
+      displayText: '[粘贴#1 · 2 行 · 9 字符]',
+      // 不传 pasteFiles
+    })
+    // 标签文字应存在
+    expect(out).toContain('[粘贴#1')
+    // 无落盘文件 → 纯文本，不含 OSC-8 序列
+    expect(out).not.toContain(']8;;file:')
+  })
+
+  it('user 消息多段粘贴：各标签各自链接各自文件', () => {
+    const out = frame({
+      role: 'user',
+      text: '全文',
+      displayText: '[粘贴#1 · 2 行 · 9 字符][粘贴#2 · 3 行 · 15 字符]',
+      pasteFiles: { 1: '/tmp/zuse/paste-111.txt', 2: '/tmp/zuse/paste-222.txt' },
+    })
+    expect(out).toContain('paste-111.txt')
+    expect(out).toContain('paste-222.txt')
+    expect(out).toContain(']8;;file:')
+  })
+})

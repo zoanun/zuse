@@ -22,6 +22,8 @@ export interface UIMessage {
   text: string // 累积的文本内容（user 消息为发给模型的全文）
   /** 折叠回显文本：存在时滚动区按它渲染（含 [粘贴#x] 标签），text 仍为全文。仅 user 消息用。 */
   displayText?: string
+  /** 折叠粘贴 id → 临时文件绝对路径；回显标签据此渲成可点击 OSC-8 链接。仅 user 消息用。 */
+  pasteFiles?: Record<number, string>
   isStreaming: boolean // 正在接收增量时为 true
   usage?: Usage // 仅用于完成后的助手消息
   tool?: UIToolCall // 仅用于 role === 'tool'

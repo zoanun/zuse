@@ -8,9 +8,10 @@ import { useTerminalSize } from '../hooks/useTerminalSize.js'
 import { CommandMenu } from './CommandMenu.js'
 import { isCommandMenuActive, commandMenuQuery, filterCommands, wrapIndex } from './commandMenuCore.js'
 import type { CommandInfo } from '../commands/types.js'
+import { writeToolOutputFile } from '../toolOutputFile.js'
 
 interface InputBoxProps {
-  onSubmit: (text: string, displayText?: string) => void
+  onSubmit: (text: string, displayText?: string, pasteFiles?: Record<number, string>) => void
   isDisabled: boolean
   /** 全部可用命令的元信息，驱动 `/` 输入时的命令选择菜单。 */
   commands: CommandInfo[]
@@ -59,14 +60,23 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
   const cursor = menuOpen ? Math.min(selectedIndex, menuItems.length - 1) : 0
 
   const handleSubmit = (): void => {
-    // expand 还原哨兵 span 为全文;toDisplay 产出折叠展示串用于回显
+    // expand 还原哨兵 span 为全文；toDisplay 产出折叠展示串用于回显
     const full = expand(model.buf.text, model.pastes).trim()
     if (full && !isDisabled) {
-      // 有折叠粘贴时才传 displayText;纯文本提交不需要
-      const display =
-        model.pastes.size > 0 ? toDisplay(model.buf.text, model.pastes).trim() : undefined
-      onSubmit(full, display)
-      // 清空输入保留 nextId,使后续粘贴 id 单调递增
+      let display: string | undefined
+      let pasteFiles: Record<number, string> | undefined
+      if (model.pastes.size > 0) {
+        // 有折叠粘贴：产出折叠展示串，并把每段粘贴内容落盘为临时文件（供 OSC-8 链接）
+        display = toDisplay(model.buf.text, model.pastes).trim()
+        pasteFiles = {}
+        for (const [id, content] of model.pastes) {
+          // 落盘失败（磁盘满/权限等）返回 undefined；失败的 id 不进 pasteFiles，标签退化为纯文本
+          const f = writeToolOutputFile('paste', content)
+          if (f) pasteFiles[id] = f
+        }
+      }
+      onSubmit(full, display, pasteFiles)
+      // 清空输入保留 nextId，使后续粘贴 id 单调递增
       setModel((m) => ({ buf: emptyBuffer, pastes: new Map(), nextId: m.nextId }))
       setSelectedIndex(0)
       setDismissedText(null)
