@@ -36,7 +36,12 @@ export interface RunAgentOptions {
   tracker?: FileReadTracker
   /** 解析后的设置；缺省时回退为全允许（保持 Phase 4 行为）。 */
   settings?: ResolvedSettings
-  /** ask 判定的交互回调；缺省（无头/测试）时 ask 默认 deny。 */
+  /**
+   * ask 判定的交互回调；缺省（无头/测试）时 ask 一律按 deny 处理。
+   * 契约：实现必须支持并发调用（多个未兑现的 promise 同时在飞）—— 同轮只读批并发时
+   * 可能多个工具同时走到 ask。TUI 的实现是权限请求队列（tui/permissionQueue.ts）；
+   * 单 resolver 的实现会让第二个 ask 覆盖第一个，Promise.all 永不 settle（死锁）。
+   */
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
   /** 本会话内存覆盖层（额外 allow 规则）。由调用方持有以跨回合保留。 */
   sessionAllow?: string[]
@@ -190,7 +195,8 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     let outputs: Array<{ output: string; isError: boolean }>
     if (allReadOnly && toolUses.length > 1) {
       // 并发执行整批只读工具。gateAndRunTool 把工具异常 try/catch 成 isError 结果;
-      // ask 路径的 canUseTool 按契约可并发(见上),故 Promise.all 不会卡死或整体 reject。
+      // ask 路径的 canUseTool 按契约可并发(见上),故 Promise.all 不会卡死。
+      // 仅 canUseTool / onPersistAllow 自身抛错才会整体 reject —— 串行路径下同样中止回合,非并发新增风险。
       outputs = await Promise.all(toolUses.map((tu) => gateAndRunTool(registry, tu, buildCtx(), gateDeps())))
     } else {
       // 含写工具（或单个工具）：串行,保住 cd / 乐观锁的顺序语义。
