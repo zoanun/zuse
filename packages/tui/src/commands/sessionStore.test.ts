@@ -35,9 +35,14 @@ function convWith(texts: string[]): Conversation {
 }
 
 describe('cwdSlug', () => {
-  it('flattens a Windows path to a single safe segment', () => {
-    expect(cwdSlug('E:\\ai-study\\zuse')).toBe('E--ai-study-zuse')
-    expect(cwdSlug('/home/u/proj')).toBe('-home-u-proj')
+  it('可读前缀 + 8 位路径哈希,稳定可复现', () => {
+    expect(cwdSlug('E:\\ai-study\\zuse')).toMatch(/^E--ai-study-zuse-[0-9a-f]{8}$/)
+    expect(cwdSlug('/home/u/proj')).toMatch(/^-home-u-proj-[0-9a-f]{8}$/)
+    expect(cwdSlug('E:\\ai-study\\zuse')).toBe(cwdSlug('E:\\ai-study\\zuse')) // 确定性
+  })
+
+  it('归一后同名的不同路径,slug 不碰撞(单射)', () => {
+    expect(cwdSlug('E:\\a-b')).not.toBe(cwdSlug('E:\\a\\b'))
   })
 })
 

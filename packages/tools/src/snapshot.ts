@@ -14,17 +14,26 @@
  * 设计与决策见 docs/superpowers/specs/2026-06-12-zuse-checkpoint-revert-design.md。
  */
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /**
- * cwd → 单个安全目录段(盘符冒号、斜杠都归一成 -)。与自动会话的目录编码一致 ——
- * 同一 cwd 的会话与快照在各自根下用同一个 slug,排查时对得上号。
- * sessionStore(tui)从这里复用,不再各自维护一份。
+ * cwd → 单个安全目录段:可读前缀(非字母数字归一成 -)+ 全路径短哈希。
+ *
+ * 纯归一编码是有损的:`E:\a-b` 与 `E:\a\b` 都压成 `E--a-b`,两个项目的会话/
+ * 影子快照/项目记忆就会互相串(消费方:sessions、snapshots、memory.db 的
+ * project 列,三处共用本函数)。补 8 位 sha256 后缀让编码单射 —— 前缀保留
+ * 可读性(翻 ~/.zuse 目录认得出是哪个项目),哈希保证不同路径必不同目录。
+ * Windows 路径大小写不敏感,哈希前统一小写,避免同一目录因盘符大小写拿到
+ * 两个身份;可读前缀保留原大小写。
  */
 export function cwdSlug(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, '-')
+  const readable = cwd.replace(/[^a-zA-Z0-9]/g, '-')
+  const canonical = process.platform === 'win32' ? cwd.toLowerCase() : cwd
+  const hash = createHash('sha256').update(canonical).digest('hex').slice(0, 8)
+  return `${readable}-${hash}`
 }
 
 /** 影子仓库存放根(测试经 ZUSE_SNAPSHOTS_DIR 注入临时目录)。 */
