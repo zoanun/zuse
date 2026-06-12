@@ -6,6 +6,14 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 11: Done. 鲁棒性与恢复(故障注入)。审计确认 Esc 取消/流空闲守卫/429+5xx
+退避重试前期已落,本期收口:**坏 JSON tool_use 从「error 作废整回合」改为回喂
+模型自纠**——client 产出带 `invalid_args` 的 tool-use(input `{}` 占位可重放),
+agent 跳过执行合成 is_error tool_result(回显原始串+重发指令),同轮合法调用不
+连坐;补 agent 层 max_tokens 截断告警、中断零提交测试;AnthropicClient 加 SDK
+注入口,镜像重试循环补故障注入测试。下一步:Phase 12 检查点与回滚(可选)/
+Phase 13 项目记忆。
+
 Phase 10: Done. 会话管理与上下文压缩。自动会话按 cwd 分组存
 `~/.zuse/sessions/auto/`,每回合自动保存;`zuse --continue` 续接最新会话,
 `--resume <序号>` 指定续接,会话内 `/resume` 列表续接,`/clear` 换新会话不覆写旧

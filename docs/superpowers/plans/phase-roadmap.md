@@ -718,6 +718,22 @@ blob**(Bash stdout、WebFetch 正文)归一到新模块 `packages/tools/src/trun
 - 撞 max_tokens → 断言告警、不把半截回复当最终答案（已做，补测试）。
 - 429 / 5xx → 退避重试；区分**可重试**（网络 / 限流 / 5xx）与**不可重试**（400/422）。
 
+### ✅ 已实现（2026-06-12）
+
+审计发现四要点里三个早已顺手做掉且 client 级测试齐全（stream-idle 空闲守卫 +
+Esc 接线、retry.ts 退避/分类、agent 的 max_tokens 告警），本期收敛为一个行为
+变更 + 三组补测试。**行为变更——坏 JSON tool_use 回喂自纠**：OpenAI 协议下模型
+生成非法参数串时，旧行为 error 作废整回合（已流出文本一起丢、模型零自纠机会）；
+改为 client 产出带 `invalid_args` 的 tool-use（input 用 `{}` 占位保证账本可重放，
+id 缺失合成兜底），agent 跳过权限闸与执行、合成 is_error tool_result（点明非法
++ 回显原始串 + 重发指令），循环继续模型下一轮重发；同轮合法调用不连坐；Anthropic
+路径不需要（服务端保证 input 合法）。**补测试**：agent 层 max_tokens 截断告警
+（半截照常提交但带告警）、signal 已中断零调用零提交；AnthropicClient 镜像重试
+循环原零覆盖，加 `sdk?` 注入口后补 429 透明重试 / emitted 后绝不重试 / 401 不可
+重试三条。另顺手清掉 TUI 测试 4 个既有 lint error。设计与决策见 spec
+[→](../specs/2026-06-12-zuse-robustness-recovery-design.md)。TDD，新增 11 用例，
+868 用例全绿。
+
 ---
 
 ## Phase 12: 检查点与回滚（Checkpoint / Revert）—— 进阶 / 可选
