@@ -811,6 +811,25 @@ generation remount + FileReadTracker 清空 + autosave；restore 失败账本不
 - SQLite + FTS5存储
 - Nudge机制（自动更新MEMORY.md）
 
+### ✅ 已实现（2026-06-12）
+
+三层记忆:**常驻指令**——core `instructions.ts` 的 `loadPromptSections(home, cwd)`
+读 `~/.zuse/SYSTEM.md`(用户全局)+ `ZUSE.md`(cwd 向上逐级收集,外层在前内层
+在后,monorepo 两级都生效)+ `~/.zuse/MEMORY.md`(记忆索引),行边界截断
+(20k/8k 窗口护栏),带 ## 来源标头进系统提示词;只在启动读一次(提示词稳定
+才有 prompt cache 命中,D5)。**结构化记忆**——tools `memory-store.ts`,
+`node:sqlite`(经 `process.getBuiltinModule` 取,vite 不认识该内置模块 + 推迟
+ExperimentalWarning)+ FTS5 trigram(unicode61 把连续中文当一个 token)+ 短查询
+/零命中回退 LIKE;单库 `~/.zuse/memory.db` 带 project 列(空串=全局),检索范围
+= 当前项目 ∪ 全局;四类型 user/project/insight/reference;id AUTOINCREMENT 不
+复用(记忆按 id 被引用)。**Memory 工具**——单工具带 action(save/search/list/
+delete),readOnly: true(有意拉伸:写入面 = zuse 自有库,弹确认会杀死功能,D3),
+user 型强制全局,失败路径走 observation contract。**轻量 Nudge**——save/delete
+即重投影 MEMORY.md(确定性纯函数,db 是唯一真相源);LLM 驱动的记忆巩固
+(Auto Dream)记 backlog(D8)。设计与 D1–D8 决策见 spec
+[→](../specs/2026-06-12-zuse-project-memory-design.md)。TDD,新增 29 用例
+(instructions 13 + store 12 + 工具 8,部分与 prompt 共担),916 用例全绿。
+
 ---
 
 ## Phase 14: Skills系统

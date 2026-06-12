@@ -6,6 +6,14 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 13: Done. 项目记忆。三层:**常驻指令**(`~/.zuse/SYSTEM.md` 用户全局 +
+`ZUSE.md` 项目级向上逐级收集,启动时带来源标头进系统提示词,行边界截断防窗口
+爆炸);**结构化记忆**(`~/.zuse/memory.db`,node:sqlite + FTS5 trigram 中文可检,
+单库多项目,user/project/insight/reference 四类型);**Memory 工具**(模型可
+save/search/list/delete,免确认——写入面只有 zuse 自有库),save/delete 即时
+重投影 `~/.zuse/MEMORY.md` 索引、下次启动整体召回。LLM 记忆巩固记 backlog。
+下一步:Phase 14 Skills 系统。
+
 Phase 12: Done. 检查点与回滚。影子 git(独立 --git-dir 存 `~/.zuse/snapshots/`,
 与项目 .git 完全隔离)每个用户回合开始前自动打快照,检查点随会话记录(v3)持久化、
 压缩时下标联动、/resume 跨进程带回。`/revert` 列检查点;`/revert <序号>` 先展示
