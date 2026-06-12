@@ -9,6 +9,8 @@ import {
   autosaveSession,
   listAutoSessions,
   loadAutoSession,
+  remapCheckpoints,
+  type SessionCheckpoint,
 } from './sessionStore.js'
 
 let dir: string
@@ -113,5 +115,62 @@ describe('loadAutoSession', () => {
   it('rejects ids that try to escape the sessions dir', async () => {
     mkdirSync(join(dir, 'auto'), { recursive: true })
     await expect(loadAutoSession('E:\\proj\\a', '..\\..\\evil')).rejects.toThrow()
+  })
+})
+
+// ——— Phase 12:checkpoints(v3) ———
+
+const CP = (messageIndex: number, hash = 'a'.repeat(40)): SessionCheckpoint => ({
+  messageIndex,
+  hash,
+  at: '2026-06-12T08:00:00Z',
+  label: `回合 ${messageIndex}`,
+})
+
+describe('SessionRecord v3 checkpoints', () => {
+  it('v3 写读往返:checkpoints 原样带回', async () => {
+    const id = newSessionId()
+    const cps = [CP(0), CP(2, 'b'.repeat(40))]
+    await autosaveSession(id, 'E:\\proj\\a', convWith(['问1', '答1', '问2', '答2']), '2026-06-12T08:00:00Z', cps)
+    const loaded = await loadAutoSession('E:\\proj\\a', id)
+    expect(loaded.checkpoints).toEqual(cps)
+  })
+
+  it('v2 旧文件读入时 checkpoints 缺省为 [](向后兼容)', async () => {
+    const slugDir = join(dir, 'auto', cwdSlug('E:\\proj\\a'))
+    mkdirSync(slugDir, { recursive: true })
+    const v2 = {
+      version: 2,
+      cwd: 'E:\\proj\\a',
+      createdAt: '2026-06-12T08:00:00Z',
+      updatedAt: '2026-06-12T08:05:00Z',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      totalUsage: { input_tokens: 1, output_tokens: 1 },
+    }
+    writeFileSync(join(slugDir, '20260612-080000-v2v2.json'), JSON.stringify(v2), 'utf8')
+    const loaded = await loadAutoSession('E:\\proj\\a', '20260612-080000-v2v2')
+    expect(loaded.checkpoints).toEqual([])
+    // v2 也仍出现在 /resume 列表里。
+    const metas = await listAutoSessions('E:\\proj\\a')
+    expect(metas.map((m) => m.id)).toContain('20260612-080000-v2v2')
+  })
+})
+
+describe('remapCheckpoints(压缩联动)', () => {
+  it('折叠区间内的删除、保留区间的重映射(−cut+1 条摘要占位)', () => {
+    // 压缩 cut=4:messages[0..4) 折叠为 1 条摘要。
+    const out = remapCheckpoints([CP(0), CP(2), CP(4), CP(6)], 4)
+    expect(out.map((c) => c.messageIndex)).toEqual([1, 3]) // 4→1(摘要后第一条)、6→3
+  })
+
+  it('恰在切点的检查点保留并映射到摘要后第一位', () => {
+    const out = remapCheckpoints([CP(4)], 4)
+    expect(out).toHaveLength(1)
+    expect(out[0]!.messageIndex).toBe(1)
+    expect(out[0]!.hash).toBe('a'.repeat(40)) // 其余字段不动
+  })
+
+  it('全部在折叠区间内 → 空', () => {
+    expect(remapCheckpoints([CP(0), CP(2)], 4)).toEqual([])
   })
 })
