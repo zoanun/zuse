@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink'
+import { Box, Text, useStdout } from 'ink'
 import { resolve } from 'node:path'
 import { Spinner } from './Spinner.js'
 import { BLACK_CIRCLE, L_CORNER } from './figures.js'
@@ -6,6 +6,7 @@ import { summarizeOutput, toolSpecifier, plural } from './toolSummary.js'
 import { osc8FileLink } from '../toolOutputFile.js'
 import { computeLineDiff, diffStats, capDiff, EDIT_DIFF_CAP } from './editDiff.js'
 import { splitPasteLabels } from './pasteLabels.js'
+import { padToWidth } from './userEcho.js'
 import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
 import { Markdown } from './markdown/Markdown.js'
@@ -231,7 +232,16 @@ function renderEditDiff(tool: UIToolCall): ReactElement | null {
   )
 }
 
+/** 消息容器的左右内边距(App <Static> 行与 MessageList 实时帧共用):
+ *  用户消息补宽时要减去两侧合计 2×MSG_PAD_X,否则补出的底色空格会折到下一行。 */
+export const MSG_PAD_X = 1
+
 export function StreamRenderer({ message, cwd }: StreamRendererProps) {
+  // 用户消息底色条的可用宽度 = 终端列宽 - 容器左右内边距(管道/测试下无列宽时随 Ink 回落 80)。
+  // hook 必须在所有条件 return 之前调用。
+  const { stdout } = useStdout()
+  const echoWidth = (stdout?.columns || 80) - MSG_PAD_X * 2
+
   // 工具调用：一行青色的 "Name(args)"，带状态标记 + 结果预览。
   if (message.role === 'tool' && message.tool) {
     return <ToolBlock tool={message.tool} cwd={cwd} />
@@ -246,28 +256,34 @@ export function StreamRenderer({ message, cwd }: StreamRendererProps) {
     )
   }
 
-  // user 消息:左侧 › 标记 + 浅底色高亮,按内容宽度排版。
-  // 关键:不再用「定宽 + 圆角边框」的盒子。已提交消息会被 App 打进 <Static> 滚动区且永不重绘,
+  // user 消息:左侧 › 标记 + 底色铺满整行的高亮条。
+  // 关键:不用「定宽 + 圆角边框」的盒子。已提交消息会被 App 打进 <Static> 滚动区且永不重绘,
   // 一旦用绝对列宽画出带边框的盒子,终端缩放时会按新宽度重新折行,把边框拆碎成乱码(用户反馈的
-  // 「一拖拽就变形」)。底色高亮随文字重排——窗口变窄时至多换行,底色仍跟着字走,不会破框。
+  // 「一拖拽就变形」)。整行底色用带样式的空格补到当前列宽:没有边框字符可拆,窗口变窄时
+  // 至多把行尾空格折下去多出一截底色,不会破框。
   if (message.role === 'user') {
     // displayText 存在时按折叠回显渲染（含 [粘贴#x] 标签），否则回落到全文
     const lines = (message.displayText ?? message.text).split('\n')
     const pasteFiles = message.pasteFiles
     return (
       <Box flexDirection="column" marginBottom={1}>
-        {lines.map((line, i) => (
-          // 保持原有底色高亮（blackBright 底 whiteBright 字）；标签段有临时文件时包成 OSC-8 链接
-          <Text key={i} backgroundColor="blackBright" color="whiteBright">
-            {`${i === 0 ? '› ' : '  '}`}
-            {splitPasteLabels(line).map((seg, j) => {
-              const filePath = seg.id !== undefined ? pasteFiles?.[seg.id] : undefined
-              // 有落盘文件：包成 OSC-8 超链接；否则纯文本（含标签退化场景，不崩）
-              return filePath ? osc8FileLink(filePath, seg.text) : seg.text
-            }).join('')}
-            {' '}
-          </Text>
-        ))}
+        {lines.map((line, i) => {
+          const prefix = i === 0 ? '› ' : '  '
+          const segs = splitPasteLabels(line)
+          return (
+            // 保持原有底色高亮（blackBright 底 whiteBright 字）；标签段有临时文件时包成 OSC-8 链接
+            <Text key={i} backgroundColor="blackBright" color="whiteBright">
+              {prefix}
+              {segs.map((seg) => {
+                const filePath = seg.id !== undefined ? pasteFiles?.[seg.id] : undefined
+                // 有落盘文件：包成 OSC-8 超链接；否则纯文本（含标签退化场景，不崩）
+                return filePath ? osc8FileLink(filePath, seg.text) : seg.text
+              }).join('')}
+              {/* 补宽用「可见文本」计宽:OSC-8 转义不占列,故用 seg.text 而非链接串 */}
+              {padToWidth(prefix + segs.map(s => s.text).join(''), echoWidth)}
+            </Text>
+          )
+        })}
       </Box>
     )
   }

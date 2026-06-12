@@ -3,7 +3,7 @@ import { Box, Text, Static, useApp } from 'ink'
 import { useInput } from './input/useInput.js'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
-import { StreamRenderer } from './components/StreamRenderer.js'
+import { StreamRenderer, MSG_PAD_X } from './components/StreamRenderer.js'
 import { UsageFooter } from './components/UsageFooter.js'
 import { Banner } from './components/Banner.js'
 import { detectEditor, EDITOR_LABEL } from './commands/terminalSetup.js'
@@ -163,7 +163,7 @@ export function App({ cwd }: AppProps) {
               <Banner model={modelLabel} proxy={resolved.proxy} cwd={cwd} tip={terminalTip} />
             </Box>
           ) : (
-            <Box key={row.msg.id} paddingX={1}>
+            <Box key={row.msg.id} paddingX={MSG_PAD_X}>
               <StreamRenderer message={row.msg} cwd={cwd} />
             </Box>
           )

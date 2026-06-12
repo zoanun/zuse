@@ -1,5 +1,5 @@
 import { Box } from 'ink'
-import { StreamRenderer } from './StreamRenderer.js'
+import { StreamRenderer, MSG_PAD_X } from './StreamRenderer.js'
 import type { UIMessage } from '../types.js'
 
 interface MessageListProps {
@@ -14,7 +14,7 @@ export function MessageList({ messages, cwd }: MessageListProps) {
   }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={MSG_PAD_X}>
       {messages.map((msg) => (
         <StreamRenderer key={msg.id} message={msg} cwd={cwd} />
       ))}
