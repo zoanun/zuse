@@ -6,6 +6,13 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 8: Done. 错误回传契约(Observation Contract)。工具交还给模型的一切都是写给
+模型读的 observation:失败不抛裸异常、不回 stack trace,带具体入参回显与**下一步
+指令**(重读文件 / 换工具 / 改入参 / 别再重试)。本期收口:Unknown tool 列可用工具
+清单;权限拒绝分两档语义(settings deny=硬护栏别重试,user deny=问用户意图);Read
+文件不存在指引 Glob、二进制拒读;Edit old_string 未命中指引重读;Bash 超时/127 点破
+原因。下一步:Phase 9 输出整形 / Phase 10 上下文压缩。
+
 Phase 6: Done. 多 provider。`ModelClient` 接口下两套手搓实现——`AnthropicClient`
 （Anthropic 原生 + DashScope 等兼容端点，含 prompt 缓存 cache_control 三断点）与
 `OpenAIClient`（OpenAI 协议：DeepSeek / 本地 Ollama / vLLM，手写 tool_call 分片累积

@@ -590,6 +590,20 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 - 权限拒绝信息也走同一契约（与 Phase 5 的 `PermissionVerdict` 拒绝路径对齐，拒绝原因要「给模型读」）。
 - 验证（TDD）：每个工具一条触发失败的测试，断言返回里含「模型能据此行动的下一步」，而非断言抛了异常。
 
+### ✅ 已实现（2026-06-12）
+
+全量审计 `packages/tools/src/` + `core/agent.ts` 所有 `isError: true` 路径后发现:多数
+工具(Edit/Write 的 read-before-edit、Read/Glob 截断尾、WebSearch 拉黑、Lsp 安装指引)
+**本来就是按契约写的**,本期只收口真有差距的几处——core:`Unknown tool` 列出可用工具
+清单(模型可自纠工具名);settings deny 点明「硬护栏 + do not retry + 换路子/找用户改
+配置」;user deny 点明「本次裁决 + 问用户意图」。tools:Read 文件不存在指引 Glob、
+readFile 抛错(EACCES 等)不再裸抛到 agent 兜底层、NUL 字节判二进制拒读且不 markRead
+(不给 Edit 假通行证);Edit old_string 未命中点破空白/缩进漂移并指引重读拷原文、读后
+被删指引 Write 重建;Bash 超时点明 timeout 入参可调、exit 127 点破 command not found。
+设计决策(D1 改文案不改结构 / D2 两档拒绝语义分开 / D5 仅 127 点破其余码不猜)与文案
+规格见 spec [→](../specs/2026-06-12-zuse-error-observation-contract-design.md)。
+TDD,新增 10 断言点,820 用例全绿。坏 JSON tool_use 回喂归 Phase 11,大输出塑形归 Phase 9。
+
 ---
 
 ## Phase 9: 输出整形 / 截断（Feedback Shaping）
