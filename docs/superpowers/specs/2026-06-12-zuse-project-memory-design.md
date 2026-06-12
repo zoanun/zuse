@@ -98,6 +98,32 @@
   `[日期 会话id] role: 片段` + `/resume <id>` 回看指引;FTS 用内建 snippet()
   截片段,LIKE 回退(两字中文词)手工截窗。
 
+## F. 源码对照增强(同日追加;对照 cc-haha / opencode / openclaw / hermes-agent)
+
+通读四家记忆实现后落地五项(各自的对照来源与有意取舍):
+
+1. **recall 上下文窗口**(Hermes session_search):命中带锚点 ±2 条对话(zuse 索引
+   只收 user/assistant 文本,±2 ≈ Hermes 含工具消息的 ±5 的有效跨度),邻居截
+   150 字符,锚点 ▶ 标记。
+2. **记忆年龄标注**(CC memoryAge):search/list 与投影行带「N 天前」(当天不标),
+   软提醒不硬过期。
+3. **压缩前记忆冲刷**(OpenClaw memory flush):摘要请求顺带抽取 MEMORY 候选行
+   (≤3 条)入库 —— 有意不学独立子代理回合,零额外请求。
+4. **满容硬闸**(Hermes 容量语义):save 前预演投影,将超 8k 即拒绝并给整理路径
+   —— 把维护压力放在写入那一刻,不静默截断。
+5. **自动巩固**(CC autoDream / OpenClaw Dreaming 的轻量版):投影 >70% 上限且距
+   上次 ≥24h,后台单次**无工具**请求输出 DELETE/SAVE 操作行,harness 确定性应用;
+   安全帽 = 单次删除 >20 条整体放弃。**有意不做** CC 的「回合末后台抽取兜底」——
+   实测 deepseek-v4-flash 会自主存,冲刷又兜住压缩时机,边际价值配不上每回合
+   一次后台请求。
+
+可见性约定:Memory 工具块标题显示 action+要点;冲刷结果并入压缩提示行;巩固
+前后各一条 🧠 系统行;启动载入记忆索引提示条数。
+
+**不抄的**:OpenClaw 的嵌入向量混合检索(要 embedding key/成本/网络,当前量级
+FTS 召回率瓶颈未出现);Hermes 的双 FTS 表(unicode61+trigram 双索引,zuse 的
+trigram+LIKE 已覆盖同一问题面,体积减半)。
+
 ## 设计决策汇总
 
 | # | 决策 | 理由 |

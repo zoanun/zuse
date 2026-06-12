@@ -839,6 +839,15 @@ days 时间过滤),返回带会话 id 的片段 + /resume 回看指引。另:sav
 cwdSlug 加全路径短哈希根治归一编码碰撞(sessions/snapshots/memory 三处共用)。
 spec 增 §E。931 用例全绿。
 
+**源码对照增强(同日再追加)**:clone cc-haha/opencode/openclaw/hermes-agent 四家
+对照通读记忆实现后落地五项 —— recall 命中带 ±2 条上下文(Hermes)、记忆年龄标注
+(CC memoryAge)、压缩前记忆冲刷(OpenClaw flush 轻量版:摘要顺带抽 MEMORY 候选行,
+零额外请求)、满容硬闸(Hermes:save 预演投影超 8k 拒绝并给整理路径)、自动巩固
+(autoDream/Dreaming 轻量版:>70% 满 + ≥24h 触发单次无工具请求,DELETE/SAVE 操作行
+确定性应用,删除 >20 安全帽)。全链路可见性:工具块标题可读化、冲刷/巩固/启动载入
+均有提示行。spec 增 §F(含有意不抄清单:嵌入检索/双 FTS 表/回合末抽取兜底)。
+952 用例全绿。
+
 ---
 
 ## Phase 14: Skills系统
