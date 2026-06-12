@@ -1,0 +1,214 @@
+/**
+ * 记忆库(Phase 13B)—— SQLite + FTS5,跨会话的结构化记忆存储。
+ *
+ * 选型(spec D1):Node 22 内置 `node:sqlite`,零原生依赖(better-sqlite3 要
+ * node-gyp,Windows 上是常见坑),FTS5 已编译进。import 时 Node 会向 stderr 打一条
+ * ExperimentalWarning,无运行时开关可关 —— 已知并接受(启动期一次,先于 TUI 渲染)。
+ *
+ * 单库多项目(spec D7):`~/.zuse/memory.db` 一个文件,`project` 列区分归属
+ * (cwd-slug;空串 = 全局)。user 型记忆天然全局,跨项目共享。
+ *
+ * 中文检索:FTS5 用 trigram 分词器(unicode61 会把连续中文当一个 token,词内
+ * 检索必然落空)。trigram 要求查询 ≥3 字符,两字中文词(高频!)命中不了 ——
+ * 短查询或 FTS 零命中时回退 LIKE 子串匹配,两头兜住。
+ *
+ * 设计见 docs/superpowers/specs/2026-06-12-zuse-project-memory-design.md。
+ */
+import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+
+// 经 process.getBuiltinModule 运行时取 node:sqlite,而非静态 import:
+// ① vite/vitest 的内置模块清单早于 node:sqlite,静态导入会被当成普通包去解析而失败;
+// ② 推迟到首次开库才触发 Node 的 ExperimentalWarning(打给 stderr,无开关可关)。
+function getSqlite(): typeof import('node:sqlite') {
+  return process.getBuiltinModule('node:sqlite')
+}
+
+export type MemoryType = 'user' | 'project' | 'insight' | 'reference'
+
+export const MEMORY_TYPES: readonly MemoryType[] = ['user', 'project', 'insight', 'reference']
+
+export interface MemoryRow {
+  id: number
+  type: MemoryType
+  content: string
+  /** cwd-slug;空串 = 全局(所有项目可见)。 */
+  project: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MemoryStore {
+  /** 保存一条记忆,返回完整行。project 空串 = 全局。 */
+  save(type: MemoryType, content: string, project: string): MemoryRow
+  /** 全文检索,范围 = 指定项目 ∪ 全局。 */
+  search(query: string, project: string, limit?: number): MemoryRow[]
+  /** 列出指定项目 ∪ 全局的全部记忆。 */
+  list(project: string): MemoryRow[]
+  /** 删除;未命中返回 false。 */
+  remove(id: number): boolean
+  /** 全量(MEMORY.md 投影用),id 升序。 */
+  all(): MemoryRow[]
+  close(): void
+}
+
+/** 缺省库路径(测试经 ZUSE_MEMORY_DB 或显式参数注入)。 */
+function defaultDbPath(): string {
+  return process.env.ZUSE_MEMORY_DB ?? join(homedir(), '.zuse', 'memory.db')
+}
+
+/**
+ * FTS5 查询词项清洗(spec D6):按空白拆词、剥掉内部双引号、每词加引号、OR 连接。
+ * FTS5 的语法字符(AND、OR、NOT、星号、减号、引号)直接拼必抛 syntax error,
+ * 中文短语更是必炸;引号包裹后一律按字面词项处理。
+ */
+export function sanitizeFtsQuery(query: string): string {
+  const terms = query
+    .split(/\s+/)
+    .map((t) => t.replace(/"/g, ''))
+    .filter(Boolean)
+  return terms.map((t) => `"${t}"`).join(' OR ')
+}
+
+interface RawRow {
+  id: number
+  type: string
+  content: string
+  project: string
+  created_at: string
+  updated_at: string
+}
+
+function toRow(r: RawRow): MemoryRow {
+  return {
+    id: r.id,
+    type: r.type as MemoryType,
+    content: r.content,
+    project: r.project,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
+  mkdirSync(dirname(dbPath), { recursive: true })
+  const db = new (getSqlite().DatabaseSync)(dbPath)
+  // schema 幂等:IF NOT EXISTS 全套,重开同一文件直接复用。
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id INTEGER PRIMARY KEY,
+      type TEXT NOT NULL CHECK(type IN ('user','project','insight','reference')),
+      content TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      content,
+      content='memories',
+      content_rowid='id',
+      tokenize='trigram'
+    );
+    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+    END;
+    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+      INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+    END;
+  `)
+
+  return {
+    save(type, content, project) {
+      const now = new Date().toISOString()
+      const res = db
+        .prepare('INSERT INTO memories (type, content, project, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+        .run(type, content, project, now, now)
+      const id = Number(res.lastInsertRowid)
+      return { id, type, content, project, createdAt: now, updatedAt: now }
+    },
+
+    search(query, project, limit = 10) {
+      const fts = sanitizeFtsQuery(query)
+      let rows: RawRow[] = []
+      if (fts) {
+        try {
+          rows = db
+            .prepare(
+              `SELECT m.* FROM memories_fts f JOIN memories m ON m.id = f.rowid
+               WHERE memories_fts MATCH ? AND (m.project = ? OR m.project = '')
+               ORDER BY rank LIMIT ?`,
+            )
+            .all(fts, project, limit) as unknown as RawRow[]
+        } catch {
+          rows = [] // 清洗后仍极端非法的查询:按零命中走 LIKE 回退,不向上抛
+        }
+      }
+      if (rows.length === 0) {
+        // 短查询(trigram 需 ≥3 字符,两字中文词命中不了)或 FTS 零命中:LIKE 子串兜底。
+        const term = query.trim()
+        if (term) {
+          rows = db
+            .prepare(
+              `SELECT * FROM memories
+               WHERE content LIKE ? AND (project = ? OR project = '')
+               ORDER BY id DESC LIMIT ?`,
+            )
+            .all(`%${term}%`, project, limit) as unknown as RawRow[]
+        }
+      }
+      return rows.map(toRow)
+    },
+
+    list(project) {
+      const rows = db
+        .prepare(`SELECT * FROM memories WHERE project = ? OR project = '' ORDER BY id`)
+        .all(project) as unknown as RawRow[]
+      return rows.map(toRow)
+    },
+
+    remove(id) {
+      const res = db.prepare('DELETE FROM memories WHERE id = ?').run(id)
+      return Number(res.changes) > 0
+    },
+
+    all() {
+      const rows = db.prepare('SELECT * FROM memories ORDER BY id').all() as unknown as RawRow[]
+      return rows.map(toRow)
+    },
+
+    close() {
+      db.close()
+    },
+  }
+}
+
+/** 投影里单条内容的展示上限。 */
+const PROJECTION_LINE_CAP = 120
+
+/**
+ * MEMORY.md 投影(Phase 13D):按类型分组、每条一行带 id。db 是唯一真相源,
+ * 此文件是生成物 —— 头部注明改了会被覆盖。
+ */
+export function renderMemoryMarkdown(rows: MemoryRow[]): string {
+  const header =
+    '<!-- 自动生成:此文件是 ~/.zuse/memory.db 的投影,手工修改会在下次记忆变更时被覆盖。 -->\n# Memory\n'
+  if (rows.length === 0) {
+    return `${header}\n(还没有任何记忆。模型可用 Memory 工具保存。)\n`
+  }
+  const oneLine = (r: MemoryRow): string => {
+    const flat = r.content.replace(/\s+/g, ' ').trim()
+    const capped = flat.length > PROJECTION_LINE_CAP ? flat.slice(0, PROJECTION_LINE_CAP) + '…' : flat
+    const scope = r.project ? ` (${r.project})` : ''
+    return `- [${r.id}] ${capped}${scope}`
+  }
+  const groups = MEMORY_TYPES.filter((t) => rows.some((r) => r.type === t)).map((t) => {
+    const lines = rows.filter((r) => r.type === t).map(oneLine)
+    return `\n## ${t}\n${lines.join('\n')}`
+  })
+  return header + groups.join('\n') + '\n'
+}
