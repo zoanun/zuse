@@ -81,6 +81,23 @@
   自动 review)——v1 投影是确定性纯函数,零成本零延迟;每回合 LLM 审一遍
   「有什么值得记」既贵又吵。
 
+## E. 情景记忆 recall(Phase 13.5,追加)
+
+语义记忆(B/C)存蒸馏后的结论,回答不了「我们十天前讨论 X 时是怎么说的」——
+要引用的是**对话原文**。原始数据 Phase 10A 已全量落盘(自动会话 JSON),只缺
+检索通道:
+
+- **episodes 索引**:`memory.db` 加 episodes 表(+FTS5 trigram),索引历史会话
+  里 user/assistant 的 text 块;tool_use/tool_result **不进索引**(动辄千行的
+  命令输出会把真正的讨论淹掉)。单条消息截 4k 字符。
+- **懒索引 + 增量**:不在 autosave 时同步建(每回合写放大,recall 是低频操作);
+  recall 时按会话 `updatedAt` 水位增量同步 —— 变了的会话整体重建,没变的跳过。
+- **时间过滤按会话粒度**:会话文件没有逐条消息时间戳,`days` 参数过滤的是
+  「最近 N 天更新过的会话」。
+- **工具面**:Memory 工具加 `recall` action(query 必填、days 可选),返回
+  `[日期 会话id] role: 片段` + `/resume <id>` 回看指引;FTS 用内建 snippet()
+  截片段,LIKE 回退(两字中文词)手工截窗。
+
 ## 设计决策汇总
 
 | # | 决策 | 理由 |

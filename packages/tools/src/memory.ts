@@ -22,6 +22,7 @@ import {
   type MemoryType,
   type MemoryRow,
 } from './memory-store.js'
+import { openEpisodeStore, type EpisodeStore } from './episode-store.js'
 
 /** MEMORY.md 投影落点(测试经 ZUSE_MEMORY_MD 或 opts 注入)。 */
 function defaultMemoryMdPath(): string {
@@ -33,6 +34,8 @@ export interface MemoryToolOptions {
   dbPath?: string
   /** MEMORY.md 投影路径(缺省 ~/.zuse/MEMORY.md;测试注入)。 */
   memoryMdPath?: string
+  /** 会话存放根(recall 检索历史会话用;缺省 ZUSE_SESSIONS_DIR 或 ~/.zuse/sessions)。 */
+  sessionsDir?: string
 }
 
 interface MemoryInput {
@@ -42,6 +45,7 @@ interface MemoryInput {
   hook?: unknown
   query?: unknown
   id?: unknown
+  days?: unknown
 }
 
 function formatRow(r: MemoryRow): string {
@@ -62,6 +66,12 @@ export function createMemoryTool(project: string, opts: MemoryToolOptions = {}):
     store ??= openMemoryStore(opts.dbPath)
     return store
   }
+  // 情景索引(recall)同样懒开;与语义记忆共用同一个 db 文件,表独立。
+  let episodes: EpisodeStore | null = null
+  const getEpisodes = (): EpisodeStore => {
+    episodes ??= openEpisodeStore({ dbPath: opts.dbPath, sessionsDir: opts.sessionsDir })
+    return episodes
+  }
 
   /** 投影重建(D):best-effort,失败不影响记忆操作本身。 */
   const reproject = (): void => {
@@ -76,24 +86,28 @@ export function createMemoryTool(project: string, opts: MemoryToolOptions = {}):
     dispose(): void {
       store?.close()
       store = null
+      episodes?.close()
+      episodes = null
     },
     name: 'Memory',
     description: `Persistent cross-session memory. Saved memories survive restarts; an index of them (MEMORY.md) is loaded into your system prompt at session start.
 Actions:
 - save: store a durable fact. Requires "type" and "content". Types: user = who the user is / their preferences (global across projects); project = facts and constraints of this project; insight = lessons learned and corrections received (include why); reference = pointers to external resources (URLs, docs). When "content" is longer than a sentence or two, also provide "hook": a one-line gist used as the memory's index entry — without it the index falls back to a blind prefix cut of the content.
 - search: full-text search memories visible to this project (its own + global). Requires "query".
+- recall: full-text search PAST CONVERSATION transcripts of this project (episodic memory — "what did we discuss about X?"). Requires "query"; optional "days" limits to sessions updated in the last N days. Returns matching excerpts with session ids; the user can reopen a session with /resume <id>.
 - list: list all memories visible to this project.
 - delete: remove an outdated or wrong memory by "id".
 Save sparingly: durable facts only (preferences, constraints, corrections) — not transient task state, and not what the project files already record.`,
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['save', 'search', 'list', 'delete'] },
+        action: { type: 'string', enum: ['save', 'search', 'recall', 'list', 'delete'] },
         type: { type: 'string', enum: [...MEMORY_TYPES], description: 'save 必填:记忆类型' },
         content: { type: 'string', description: 'save 必填:记忆内容' },
         hook: { type: 'string', description: 'save 可选:一行式要点,用作 MEMORY.md 索引行;内容较长时必给' },
-        query: { type: 'string', description: 'search 必填:检索词' },
+        query: { type: 'string', description: 'search/recall 必填:检索词' },
         id: { type: 'number', description: 'delete 必填:记忆 id' },
+        days: { type: 'number', description: 'recall 可选:只搜最近 N 天更新过的会话' },
       },
       required: ['action'],
     },
@@ -144,6 +158,33 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
           return { output: rows.map(formatRow).join('\n') }
         }
 
+        case 'recall': {
+          const query = typeof inp.query === 'string' ? inp.query.trim() : ''
+          if (!query) {
+            return { output: 'Missing "query" — provide search terms for past conversations.', isError: true }
+          }
+          const days = typeof inp.days === 'number' && inp.days > 0 ? inp.days : undefined
+          let hits
+          try {
+            hits = getEpisodes().recall(query, project, { days })
+          } catch (err) {
+            return {
+              output: `Episode index unavailable: ${err instanceof Error ? err.message : String(err)}. Proceed without recall; do not retry this call.`,
+              isError: true,
+            }
+          }
+          if (hits.length === 0) {
+            return {
+              output: `No past conversation matched "${query}"${days ? ` in the last ${days} days` : ''}. Try different terms or a wider time range.`,
+            }
+          }
+          const lines = hits.map(
+            (h) => `[${h.at.slice(0, 16).replace('T', ' ')} 会话 ${h.sessionId}] ${h.role}: ${h.snippet}`,
+          )
+          lines.push('(完整会话可用 /resume <会话id> 回看)')
+          return { output: lines.join('\n') }
+        }
+
         case 'list': {
           const rows = s.list(project)
           if (rows.length === 0) {
@@ -170,7 +211,7 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
 
         default:
           return {
-            output: `Unknown action: ${String(inp.action)}. Use one of: save, search, list, delete.`,
+            output: `Unknown action: ${String(inp.action)}. Use one of: save, search, recall, list, delete.`,
             isError: true,
           }
       }

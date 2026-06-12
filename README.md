@@ -11,8 +11,10 @@ Phase 13: Done. 项目记忆。三层:**常驻指令**(`~/.zuse/SYSTEM.md` 用�
 爆炸);**结构化记忆**(`~/.zuse/memory.db`,node:sqlite + FTS5 trigram 中文可检,
 单库多项目,user/project/insight/reference 四类型);**Memory 工具**(模型可
 save/search/list/delete,免确认——写入面只有 zuse 自有库),save/delete 即时
-重投影 `~/.zuse/MEMORY.md` 索引、下次启动整体召回。LLM 记忆巩固记 backlog。
-下一步:Phase 14 Skills 系统。
+重投影 `~/.zuse/MEMORY.md` 索引(索引行用模型写的 hook 一行要点)、下次启动整体
+召回;**情景记忆** `recall`——历史会话原文全文检索(懒索引 + 按 updatedAt 增量,
+days 时间过滤,命中带会话 id 可 /resume 回看),「十天前讨论过什么」可直接问。
+LLM 记忆巩固记 backlog。下一步:Phase 14 Skills 系统。
 
 Phase 12: Done. 检查点与回滚。影子 git(独立 --git-dir 存 `~/.zuse/snapshots/`,
 与项目 .git 完全隔离)每个用户回合开始前自动打快照,检查点随会话记录(v3)持久化、

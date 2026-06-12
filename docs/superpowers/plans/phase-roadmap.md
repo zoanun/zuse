@@ -830,6 +830,15 @@ user 型强制全局,失败路径走 observation contract。**轻量 Nudge**—�
 [→](../specs/2026-06-12-zuse-project-memory-design.md)。TDD,新增 29 用例
 (instructions 13 + store 12 + 工具 8,部分与 prompt 共担),916 用例全绿。
 
+**13.5 情景记忆 recall(同日追加)**:语义记忆答不了「十天前讨论 X 时怎么说的」,
+补对话原文检索 —— `episode-store.ts` 把历史会话(Phase 10A 落盘的 JSON)的
+user/assistant 文本懒索引进 memory.db(FTS5 trigram + LIKE 回退;按会话 updatedAt
+水位增量;工具块不进索引防噪音淹没);Memory 工具加 `recall` action(query +
+days 时间过滤),返回带会话 id 的片段 + /resume 回看指引。另:save 加 hook 参数
+(索引行用作者写的一行要点,不再机械掐正文前 120 字符,老库自动迁移补列);
+cwdSlug 加全路径短哈希根治归一编码碰撞(sessions/snapshots/memory 三处共用)。
+spec 增 §E。931 用例全绿。
+
 ---
 
 ## Phase 14: Skills系统

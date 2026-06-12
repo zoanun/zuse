@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Tool, ToolContext } from '@zuse/core'
@@ -88,6 +88,54 @@ describe('Memory 工具', () => {
   it('未知 action 列出可用 action(observation contract)', async () => {
     const res = await tool.run({ action: 'wipe' }, ctx())
     expect(res.isError).toBe(true)
-    expect(res.output).toContain('save, search, list, delete')
+    expect(res.output).toContain('save, search, recall, list, delete')
+  })
+})
+
+describe('Memory recall(情景记忆)', () => {
+  function writeSession(id: string, text: string): void {
+    const d = join(dir, 'sessions', 'auto', 'E--proj')
+    mkdirSync(d, { recursive: true })
+    writeFileSync(
+      join(d, `${id}.json`),
+      JSON.stringify({
+        version: 3,
+        cwd: 'E:\\proj',
+        createdAt: '2026-06-02T11:00:00Z',
+        updatedAt: '2026-06-02T11:00:00Z',
+        messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+        totalUsage: { input_tokens: 0, output_tokens: 0 },
+      }),
+      'utf8',
+    )
+  }
+
+  it('recall 检索历史会话,返回带会话 id 与 /resume 指引的片段', async () => {
+    writeSession('20260602-110000-aaaa', '我们讨论过影子 git 的 clean -fd 语义')
+    const t = createMemoryTool('E--proj', {
+      dbPath: join(dir, 'memory.db'),
+      memoryMdPath: mdPath(),
+      sessionsDir: join(dir, 'sessions'),
+    })
+    const res = await t.run({ action: 'recall', query: 'clean -fd' }, ctx())
+    t.dispose()
+    expect(res.isError).toBeFalsy()
+    expect(res.output).toContain('20260602-110000-aaaa')
+    expect(res.output).toContain('clean')
+    expect(res.output).toContain('/resume')
+  })
+
+  it('recall 缺 query 回指引;零命中给建议', async () => {
+    const t = createMemoryTool('E--proj', {
+      dbPath: join(dir, 'memory.db'),
+      memoryMdPath: mdPath(),
+      sessionsDir: join(dir, 'sessions'),
+    })
+    const noQuery = await t.run({ action: 'recall' }, ctx())
+    expect(noQuery.isError).toBe(true)
+    const miss = await t.run({ action: 'recall', query: '没聊过的话题xyz', days: 7 }, ctx())
+    t.dispose()
+    expect(miss.isError).toBeFalsy()
+    expect(miss.output).toContain('last 7 days')
   })
 })
