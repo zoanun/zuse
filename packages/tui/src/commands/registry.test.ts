@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { ToolRegistry, type ResolvedSettings, type ModelSelection, type Conversation, type Tool, type ErrorCategory } from '@zuse/core'
 import { findCommand, editDistance, nearestMatch, buildModelOptions, listCommands } from './registry.js'
 import type { CommandContext } from './types.js'
+import type { SessionCheckpoint } from './sessionStore.js'
 
 // 造一个最小可用的 ResolvedSettings；只有 providers / model 与 /model 校验相关。
 function makeSettings(providers: ResolvedSettings['providers'], model?: string): ResolvedSettings {
@@ -44,6 +45,9 @@ function runModel(args: string, settings: ResolvedSettings, current: { providerI
     adoptSession: () => {},
     cwd: 'E:\\proj',
     compact: async () => '已压缩',
+    checkpoints: [],
+    checkpointDiff: async () => '',
+    revertToCheckpoint: async () => '',
     settings,
     currentModel: current.model,
     currentProviderId: current.providerId,
@@ -203,6 +207,9 @@ function runCommand(
     adoptSession: () => {},
     cwd: 'E:\\proj',
     compact: async () => '已压缩',
+    checkpoints: [],
+    checkpointDiff: async () => '',
+    revertToCheckpoint: async () => '',
     settings: opts.settings ?? makeSettings({}),
     currentModel: 'm',
     currentProviderId: 'p',
@@ -253,10 +260,112 @@ describe('/history', () => {
   })
 })
 
+// ——— /revert(Phase 12)———
+
+const CP = (i: number, label: string): SessionCheckpoint => ({
+  messageIndex: i,
+  hash: `${i}`.repeat(40).slice(0, 40),
+  at: `2026-06-12T0${i}:00:00Z`,
+  label,
+})
+
+// /revert 专用 runner:可注入检查点与 diff/revert spy,并 await 异步 run。
+async function runRevert(
+  args: string,
+  checkpoints: SessionCheckpoint[],
+  hooks?: {
+    checkpointDiff?: (cp: SessionCheckpoint) => Promise<string>
+    revertToCheckpoint?: (cp: SessionCheckpoint) => Promise<string>
+  },
+) {
+  const printed: string[] = []
+  const calls: { diff: SessionCheckpoint[]; revert: SessionCheckpoint[] } = { diff: [], revert: [] }
+  const ctx: CommandContext = {
+    args,
+    print: (t) => printed.push(t),
+    clear: () => {},
+    conversation: {} as unknown as Conversation,
+    load: () => {},
+    adoptSession: () => {},
+    cwd: 'E:\\proj',
+    compact: async () => '已压缩',
+    checkpoints,
+    checkpointDiff: async (cp) => {
+      calls.diff.push(cp)
+      return hooks?.checkpointDiff ? await hooks.checkpointDiff(cp) : ' a.txt | 2 +-'
+    },
+    revertToCheckpoint: async (cp) => {
+      calls.revert.push(cp)
+      return hooks?.revertToCheckpoint ? await hooks.revertToCheckpoint(cp) : '已回滚'
+    },
+    settings: makeSettings({}),
+    currentModel: 'm',
+    currentProviderId: 'p',
+    switchModel: () => '',
+    openModelSelector: () => {},
+    registry: makeRegistry([]),
+  }
+  const cmd = findCommand('revert')
+  if (!cmd) throw new Error('revert command not found')
+  await cmd.run(ctx)
+  return { printed, calls }
+}
+
+describe('/revert', () => {
+  it('无检查点时给出提示', async () => {
+    const { printed } = await runRevert('', [])
+    expect(printed.join('\n')).toContain('还没有检查点')
+  })
+
+  it('无参列出检查点,1 = 最新(倒序),带时间与 label', async () => {
+    const { printed, calls } = await runRevert('', [CP(0, '第一问'), CP(2, '第二问')])
+    const out = printed.join('\n')
+    expect(out).toContain('1. 2026-06-12 02:00  第二问')
+    expect(out).toContain('2. 2026-06-12 00:00  第一问')
+    expect(calls.revert).toHaveLength(0)
+  })
+
+  it('带序号不带 --yes:展示 diffStat 与确认指引,不执行回滚', async () => {
+    const { printed, calls } = await runRevert('1', [CP(0, '第一问'), CP(2, '第二问')])
+    const out = printed.join('\n')
+    expect(calls.diff).toHaveLength(1)
+    expect(calls.diff[0]!.messageIndex).toBe(2) // 序号 1 = 最新的检查点
+    expect(out).toContain('a.txt')
+    expect(out).toContain('/revert 1 --yes')
+    expect(calls.revert).toHaveLength(0) // 未确认绝不执行
+  })
+
+  it('带 --yes:执行回滚并打印结果', async () => {
+    const { printed, calls } = await runRevert('2 --yes', [CP(0, '第一问'), CP(2, '第二问')])
+    expect(calls.revert).toHaveLength(1)
+    expect(calls.revert[0]!.messageIndex).toBe(0) // 序号 2 = 较早的检查点
+    expect(printed.join('\n')).toContain('已回滚')
+  })
+
+  it('序号越界给出明确提示,不执行', async () => {
+    const { printed, calls } = await runRevert('9', [CP(0, '第一问')])
+    expect(printed.join('\n')).toContain('没有序号为 "9" 的检查点')
+    expect(calls.diff).toHaveLength(0)
+    expect(calls.revert).toHaveLength(0)
+  })
+
+  it('diffStat 失败不阻断确认流程(降级为提示对比失败)', async () => {
+    const { printed, calls } = await runRevert('1', [CP(0, '第一问')], {
+      checkpointDiff: async () => {
+        throw new Error('影子仓库不可用')
+      },
+    })
+    const out = printed.join('\n')
+    expect(out).toContain('改动对比失败')
+    expect(out).toContain('--yes') // 仍给出确认路径
+    expect(calls.revert).toHaveLength(0)
+  })
+})
+
 describe('listCommands — 供 / 菜单消费的命令元信息', () => {
   it('投影出全部命令的名字/描述', () => {
     const names = listCommands().map((c) => c.name)
-    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'resume', 'compact', 'model', 'tools', 'history', 'terminal-setup'])
+    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'resume', 'revert', 'compact', 'model', 'tools', 'history', 'terminal-setup'])
   })
 
   it('save/load 标记为需参数；其余（含 model）为无参', () => {

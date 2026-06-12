@@ -33,10 +33,15 @@ import {
   type ModelSelection,
   type ErrorCategory,
 } from '@zuse/core'
-import { getShellLabel } from '@zuse/tools'
+import { getShellLabel, createSnapshotStore, type SnapshotStore } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
-import { autosaveSession, newSessionId } from '../commands/sessionStore.js'
+import {
+  autosaveSession,
+  newSessionId,
+  remapCheckpoints,
+  type SessionCheckpoint,
+} from '../commands/sessionStore.js'
 
 /**
  * Edit 的行级 diff 超过 EDIT_DIFF_CAP 行被收口时,把「完整 diff 文本」落盘,返回临时文件路径;
@@ -61,7 +66,7 @@ interface UseConversationOptions {
   /** 解析后的设置，驱动权限闸门与 client 初始化。 */
   settings: ResolvedSettings
   /** --continue/--resume 预载的会话(Phase 10A)。id 沿用 = 同一会话延续写同一文件。 */
-  initialSession?: { conversation: Conversation; id: string; createdAt: string }
+  initialSession?: { conversation: Conversation; id: string; createdAt: string; checkpoints?: SessionCheckpoint[] }
 }
 
 interface UseConversationReturn {
@@ -149,6 +154,11 @@ export function useConversation({
   // 上一回合实测的窗口占用(input + cache 读,见 message-stop 处)。放 ref:
   // sendMessage 闭包要在下一回合开头读它判定自动压缩,state 快照会陈旧。
   const contextTokensRef = useRef<number | undefined>(undefined)
+  // 影子 git 快照(Phase 12):每回合开始前打检查点,/revert 据此回滚。懒建一次。
+  const snapshotRef = useRef<SnapshotStore | null>(null)
+  if (!snapshotRef.current) snapshotRef.current = createSnapshotStore(cwd)
+  // 本会话的检查点列表(随 autosave 写进 SessionRecord v3;--continue/--resume 带回)。
+  const checkpointsRef = useRef<SessionCheckpoint[]>(initialSession?.checkpoints ?? [])
 
   // client ref —— 持有当前激活的 ModelClient，支持运行时热替换。
   // 用 ref 而非 state：client 本身是外部可变对象，不需要触发重渲染。
@@ -219,6 +229,8 @@ export function useConversation({
       max_tokens: maxTokens,
     })
     conversationRef.current = applyCompaction(conv, summary, cut)
+    // 检查点联动(Phase 12):被折叠区间的检查点失效删除,保留区间的下标重映射。
+    checkpointsRef.current = remapCheckpoints(checkpointsRef.current, cut)
     // 压缩后窗口占用未知(下一回合实测),先清掉,免得旧值再次触发自动压缩。
     contextTokensRef.current = undefined
     setState((prev) => ({ ...prev, contextTokens: undefined }))
@@ -232,7 +244,6 @@ export function useConversation({
         setState((prev) => ({ ...prev, error: '客户端未初始化' }))
         return
       }
-      const conversation = conversationRef.current
 
       // 乐观更新：立刻显示用户这一回合。displayText 存在时供滚动区折叠回显，text 始终为全文发模型。
       // pasteFiles 仅供渲染层把标签包成 OSC-8 链接，不影响发给模型的全文。
@@ -273,6 +284,20 @@ export function useConversation({
         }
       }
 
+      // 账本引用必须在自动压缩「之后」取:compactConversation 会把 conversationRef.current
+      // 整体换成新 Conversation,先取会让本回合发送/提交/autosave 全落在被换下的旧对象上
+      // ——压缩等于没压,且本回合的交换从后续账本里丢失。
+      const conversation = conversationRef.current
+
+      // 检查点(Phase 12):回合开始前给工作区打影子快照。fire-and-forget 发起,
+      // 失败降级为本回合无检查点(D5);hash 到回合结束记录检查点时再 await(通常早已
+      // settle)。重发跳过 —— 失败回合没提交,首发时打的快照仍是本回合的正确锚点。
+      const checkpointIndex = conversation.length
+      const trackAt = new Date().toISOString()
+      const trackPromise: Promise<string | null> = opts?.isResend
+        ? Promise.resolve(null)
+        : snapshotRef.current!.track().catch(() => null)
+
       const controller = new AbortController()
       abortRef.current = controller
 
@@ -290,9 +315,14 @@ export function useConversation({
       // 降级决策:error 分支只「记下」,绝不在 for-await 内重入 sendMessage;循环结束后才执行。
       let failoverDecision: ErrorCategory | null = null
 
+      // 本回合是否以错误收场(showError 真正展示过):决定是否在回合末尾追加
+      // 「可用 /revert 撤销本回合文件改动」的提示(Phase 12,spec D6 的轻量替代)。
+      let turnErrored = false
+
       // 把错误渲染成行内消息气泡：能接到当前助手气泡就替换其文本，否则新开一条。
       // 错误属于本回合的 scrollback，不再用会跨轮残留的粘性 state.error。
       const showError = (msg: string): void => {
+        turnErrored = true
         const aid = currentAssistantId
         setState((prev) => ({
           ...prev,
@@ -456,6 +486,22 @@ export function useConversation({
           contextTokens: lastInputTokens ?? prev.contextTokens,
         }))
 
+        // 记录检查点(Phase 12):track 成功才记。出错回合也记 —— 快照是「回合开始前」
+        // 的锚点,此时 checkpointIndex == 账本长度,/revert 的截断退化为 no-op、
+        // 文件回滚正是「撤销出错回合的半截改动」。await 通常立即返回(track 早已 settle)。
+        const checkpointHash = await trackPromise
+        if (checkpointHash) {
+          checkpointsRef.current = [
+            ...checkpointsRef.current,
+            {
+              messageIndex: checkpointIndex,
+              hash: checkpointHash,
+              at: trackAt,
+              label: text.replace(/\s+/g, ' ').trim().slice(0, 80),
+            },
+          ]
+        }
+
         // 自动保存(Phase 10A):回合提交后写盘,fire-and-forget——autosave 失败
         // 不能打断对话(空会话在 store 层跳过;出错回合未提交,重写同内容无害)。
         void autosaveSession(
@@ -463,7 +509,20 @@ export function useConversation({
           cwd,
           conversation,
           sessionCreatedAtRef.current,
+          checkpointsRef.current,
         ).catch(() => {})
+
+        // 出错收场且有检查点:点一句 /revert,把「要不要撤销半截文件改动」的决定权
+        // 交给用户(有意不自动回滚 —— 出错 ≠ 用户想丢掉半成品,spec D6)。
+        if (turnErrored && checkpointHash) {
+          setState((prev) => ({
+            ...prev,
+            messages: [
+              ...prev.messages,
+              { id: generateId(), role: 'system', text: '本回合的文件改动可用 /revert 撤销。', isStreaming: false },
+            ],
+          }))
+        }
 
         // 降级:此时 for-await 已结束(client 已 return),安全地切模型/弹框。
         if (failoverDecision) {
@@ -531,6 +590,7 @@ export function useConversation({
     sessionIdRef.current = newSessionId()
     sessionCreatedAtRef.current = new Date().toISOString()
     contextTokensRef.current = undefined
+    checkpointsRef.current = [] // 新会话从零开始;影子仓库不清(历史 commit 无害)
     // 整体替换消息 → 自增 generation 令 <Static> remount，不再沿用旧会话的高水位。
     setState((prev) => ({
       messages: [],
@@ -569,6 +629,8 @@ export function useConversation({
   // 换入一个已加载的会话，并据其历史重建 UI 列表。
   const load = useCallback((conv: Conversation) => {
     conversationRef.current = conv
+    // 换入的账本与现有检查点下标对不上,清空(/resume 路径由 adoptSession 重新填入)。
+    checkpointsRef.current = []
     // 同 clear：换入新会话属于整体替换，自增 generation 强制 <Static> remount，
     // 否则换入的历史会被旧高水位从头截断。
     setState((prev) => ({
@@ -583,12 +645,60 @@ export function useConversation({
   // /resume 载入自动会话:换入账本 + 接管会话身份(后续 autosave 续写同一文件)。
   // 与 /load 命名存档不同——后者是只读快照,不接管 id(autosave 仍写当前自动会话)。
   const adoptSession = useCallback(
-    (conv: Conversation, id: string, createdAt: string) => {
+    (conv: Conversation, id: string, createdAt: string, checkpoints: SessionCheckpoint[] = []) => {
       load(conv)
       sessionIdRef.current = id
       sessionCreatedAtRef.current = createdAt
+      // 检查点随会话身份一起接管(影子仓库在盘上,跨进程 hash 仍有效)。
+      checkpointsRef.current = checkpoints
     },
     [load],
+  )
+
+  // 回滚到检查点(Phase 12,/revert):文件先回、账本后截 —— restore 抛错时账本
+  // 必须原样(文件没回去,账本更不能动)。截断后清 FileReadTracker(旧 mtime 记录
+  // 对不上回滚后的文件,会让 read-before-edit 误判「读过」)。
+  const revertToCheckpoint = useCallback(
+    async (cp: SessionCheckpoint): Promise<string> => {
+      await snapshotRef.current!.restore(cp.hash)
+      const conv = conversationRef.current
+      const before = conv.length
+      conversationRef.current = Conversation.fromJSON({
+        version: 1,
+        messages: conv.getMessages().slice(0, cp.messageIndex),
+        // 成本账非窗口账:已花的钱不因回滚消失(与压缩同一原则)。
+        totalUsage: conv.totalUsage,
+      })
+      // 回滚点之后的检查点全部失效(含同 index 的出错回合检查点)。
+      checkpointsRef.current = checkpointsRef.current.filter((c) => c.messageIndex < cp.messageIndex)
+      trackerRef.current = createFileTracker()
+      contextTokensRef.current = undefined
+      // 回滚到会话起点 = 账本清空:对齐 /clear 语义换新会话 id,旧文件保留旧历史
+      //(否则 autosave 的空会话跳过会让旧文件残留已回滚的账本,--continue 又复活它)。
+      if (conversationRef.current.length === 0) {
+        sessionIdRef.current = newSessionId()
+        sessionCreatedAtRef.current = new Date().toISOString()
+      }
+      setState((prev) => ({
+        messages: uiMessagesFromConversation(conversationRef.current),
+        isThinking: false,
+        totalUsage: conversationRef.current.totalUsage,
+        contextTokens: undefined,
+        generation: prev.generation + 1,
+      }))
+      void autosaveSession(
+        sessionIdRef.current,
+        cwd,
+        conversationRef.current,
+        sessionCreatedAtRef.current,
+        checkpointsRef.current,
+      ).catch(() => {})
+      return (
+        `已回滚到 ${cp.at.slice(0, 16).replace('T', ' ')} 的检查点(账本 ${before} → ` +
+        `${conversationRef.current.length} 条)。影子仓库保留全部历史,误滚可再 /revert 到更近的检查点。`
+      )
+    },
+    [cwd],
   )
 
   // 运行时热替换 client，支持不清空对话历史地切换模型。
@@ -664,6 +774,9 @@ export function useConversation({
         adoptSession,
         cwd,
         compact: compactConversation,
+        checkpoints: [...checkpointsRef.current],
+        checkpointDiff: (cp) => snapshotRef.current!.diffStat(cp.hash),
+        revertToCheckpoint,
         settings,
         currentModel,
         currentProviderId,
@@ -685,6 +798,7 @@ export function useConversation({
       adoptSession,
       cwd,
       compactConversation,
+      revertToCheckpoint,
       settings,
       currentModel,
       currentProviderId,

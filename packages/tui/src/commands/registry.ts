@@ -191,8 +191,58 @@ const resume: SlashCommand = {
       return
     }
     const loaded = await loadAutoSession(cwd, meta.id)
-    adoptSession(loaded.conversation, loaded.id, loaded.createdAt)
+    adoptSession(loaded.conversation, loaded.id, loaded.createdAt, loaded.checkpoints)
     print(`已续接会话 ${meta.id}(${meta.messageCount} 条消息)。`)
+  },
+}
+
+const revert: SlashCommand = {
+  name: 'revert',
+  description: '回滚到某回合开始前(文件 + 对话一起回):/revert [<序号> [--yes]]',
+  run: async ({ args, checkpoints, checkpointDiff, revertToCheckpoint, print }) => {
+    if (checkpoints.length === 0) {
+      print('本会话还没有检查点(每个回合开始前自动打点;git 不可用时降级为无检查点)。')
+      return
+    }
+    const list = [...checkpoints].reverse() // 1 = 最新
+    const when = (at: string): string => at.slice(0, 16).replace('T', ' ')
+    if (!args) {
+      const lines = list.map((c, i) => `  ${i + 1}. ${when(c.at)}  ${c.label}`)
+      print(
+        [
+          '本会话的检查点(/revert <序号> 回滚到该回合开始前):',
+          ...lines,
+          '影子仓库保留全部历史,误滚可再 /revert 到更近的检查点。',
+        ].join('\n'),
+      )
+      return
+    }
+    const parts = args.split(/\s+/)
+    const confirmed = parts.includes('--yes')
+    const numToken = parts.find((x) => x !== '--yes') ?? ''
+    const n = Number.parseInt(numToken, 10)
+    const cp = Number.isInteger(n) && n >= 1 && String(n) === numToken ? list[n - 1] : undefined
+    if (!cp) {
+      print(`没有序号为 "${numToken}" 的检查点。先用 /revert 查看列表。`)
+      return
+    }
+    if (!confirmed) {
+      // 回滚是破坏性操作:撤销的是「该检查点之后的全部文件改动」,包括用户自己手改的
+      // 部分。先展示真实范围(diffStat),要求显式 --yes 确认后才执行。
+      const stat = await checkpointDiff(cp).catch(
+        (e: unknown) => `(改动对比失败:${e instanceof Error ? e.message : String(e)})`,
+      )
+      print(
+        [
+          `将回滚到检查点 ${n}(${when(cp.at)}「${cp.label}」开始前),以下文件改动将被撤销:`,
+          stat,
+          `回滚同时截断该回合起的对话历史。确认请执行:/revert ${n} --yes`,
+        ].join('\n'),
+      )
+      return
+    }
+    // revertToCheckpoint 失败会抛错(文件没回去,账本不动),由 submit 的统一 catch 透出。
+    print(await revertToCheckpoint(cp))
   },
 }
 
@@ -305,7 +355,7 @@ const terminalSetup: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, compact, model, tools, history, terminalSetup]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, revert, compact, model, tools, history, terminalSetup]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

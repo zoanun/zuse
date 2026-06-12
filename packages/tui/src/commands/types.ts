@@ -1,4 +1,5 @@
 import type { Conversation, ResolvedSettings, ModelSelection, ToolRegistry } from '@zuse/core'
+import type { SessionCheckpoint } from './sessionStore.js'
 
 /**
  * 斜杠命令运行时被交予的东西。真正的 state 由 hook 持有；命令只通过这些
@@ -16,11 +17,17 @@ export interface CommandContext {
   /** 替换实时会话并据此重建 UI（用于 /load）。 */
   load: (conversation: Conversation) => void
   /** 换入自动会话并接管其身份(后续 autosave 续写同一文件;用于 /resume)。 */
-  adoptSession: (conversation: Conversation, id: string, createdAt: string) => void
+  adoptSession: (conversation: Conversation, id: string, createdAt: string, checkpoints?: SessionCheckpoint[]) => void
   /** 会话工作目录(自动会话按它分组;/resume 列本目录的会话)。 */
   cwd: string
   /** 压缩账本:老历史折叠为摘要,保留最近回合(用于 /compact)。返回结果说明。 */
   compact: () => Promise<string>
+  /** 本会话的检查点列表快照(每回合开始前的影子 git 锚点;用于 /revert)。 */
+  checkpoints: SessionCheckpoint[]
+  /** 自某检查点以来的工作区改动摘要(git diff --stat;/revert 确认前展示范围)。 */
+  checkpointDiff: (cp: SessionCheckpoint) => Promise<string>
+  /** 回滚:工作区回到检查点时刻 + 账本截断到该回合前。失败抛错(账本不动)。返回结果说明。 */
+  revertToCheckpoint: (cp: SessionCheckpoint) => Promise<string>
   /** 本会话实际生效的三层合并设置（供 /config 等只读展示用）。 */
   settings: ResolvedSettings
   /** 当前选中的 model 名（用于 /model 列表标星）。 */

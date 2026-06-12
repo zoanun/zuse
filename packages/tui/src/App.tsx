@@ -14,13 +14,14 @@ import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
+import type { SessionCheckpoint } from './commands/sessionStore.js'
 import type { UIMessage } from './types.js'
 
 interface AppProps {
   /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
   cwd: string
   /** --continue/--resume 预载的会话(入口解析 argv 并读盘后传入;Phase 10A)。 */
-  initialSession?: { conversation: Conversation; id: string; createdAt: string }
+  initialSession?: { conversation: Conversation; id: string; createdAt: string; checkpoints?: SessionCheckpoint[] }
 }
 
 /** 顶部一次性横幅（仿 Claude Code）：随首批 <Static> 内容打进终端滚动区,只渲染一次。 */
