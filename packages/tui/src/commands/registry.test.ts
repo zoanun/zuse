@@ -41,6 +41,8 @@ function runModel(args: string, settings: ResolvedSettings, current: { providerI
     // /model 不触碰 conversation，给个占位即可。
     conversation: {} as unknown as Conversation,
     load: () => {},
+    adoptSession: () => {},
+    cwd: 'E:\\proj',
     settings,
     currentModel: current.model,
     currentProviderId: current.providerId,
@@ -197,6 +199,8 @@ function runCommand(
     clear: () => {},
     conversation: {} as unknown as Conversation,
     load: () => {},
+    adoptSession: () => {},
+    cwd: 'E:\\proj',
     settings: opts.settings ?? makeSettings({}),
     currentModel: 'm',
     currentProviderId: 'p',
@@ -250,7 +254,7 @@ describe('/history', () => {
 describe('listCommands — 供 / 菜单消费的命令元信息', () => {
   it('投影出全部命令的名字/描述', () => {
     const names = listCommands().map((c) => c.name)
-    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'model', 'tools', 'history', 'terminal-setup'])
+    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'resume', 'model', 'tools', 'history', 'terminal-setup'])
   })
 
   it('save/load 标记为需参数；其余（含 model）为无参', () => {

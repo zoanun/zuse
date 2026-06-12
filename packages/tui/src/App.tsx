@@ -12,19 +12,21 @@ import { PermissionDialog } from './components/PermissionDialog.js'
 import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
-import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type ResolvedSettings } from '@zuse/core'
+import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
 import type { UIMessage } from './types.js'
 
 interface AppProps {
   /** 工作目录，由入口（index.tsx）一次性定好传入，工具的相对路径据此解析。 */
   cwd: string
+  /** --continue/--resume 预载的会话(入口解析 argv 并读盘后传入;Phase 10A)。 */
+  initialSession?: { conversation: Conversation; id: string; createdAt: string }
 }
 
 /** 顶部一次性横幅（仿 Claude Code）：随首批 <Static> 内容打进终端滚动区,只渲染一次。 */
 type StaticRow = { kind: 'banner' } | { kind: 'msg'; msg: UIMessage }
 
-export function App({ cwd }: AppProps) {
+export function App({ cwd, initialSession }: AppProps) {
   // 启动即预热登录 shell 快照,把 ≤10s 的首次构建挪离首条 Bash 命令路径。
   // bash/zsh（Windows git-bash 或 POSIX 用户 $SHELL）下真正构建,其余降级无影响
   // （见 @zuse/tools 的 primeShellSnapshot）。
@@ -77,6 +79,7 @@ export function App({ cwd }: AppProps) {
     registry,
     cwd,
     settings: resolved,
+    initialSession,
   })
 
   // 应用退出：Ink 的默认 Ctrl+C 退出已在入口关掉（exitOnCtrlC:false），改由这里双击退出。

@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 import type { SlashCommand, CommandInfo } from './types.js'
-import { saveConversation, loadConversation } from './sessionStore.js'
+import { saveConversation, loadConversation, listAutoSessions, loadAutoSession } from './sessionStore.js'
 import { installTerminalSetup } from './terminalSetup.js'
 import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
 
@@ -164,6 +164,38 @@ const load: SlashCommand = {
   },
 }
 
+const resume: SlashCommand = {
+  name: 'resume',
+  description: '列出或续接本目录的自动会话：/resume [<序号>]',
+  run: async ({ args, cwd, adoptSession, print }) => {
+    const metas = await listAutoSessions(cwd)
+    if (metas.length === 0) {
+      print('本目录还没有自动保存的会话。')
+      return
+    }
+    if (!args) {
+      // 无参:列表(1 = 最新)。
+      const lines = metas.map((m, i) => {
+        const when = m.updatedAt.slice(0, 16).replace('T', ' ')
+        return `  ${i + 1}. ${when}  ${String(m.messageCount).padStart(3)} 条  ${m.firstUserText}`
+      })
+      print(['本目录的自动会话(/resume <序号> 续接):', ...lines].join('\n'))
+      return
+    }
+    // 参数:列表序号(1 最新)或完整会话 id 均可。
+    const n = Number.parseInt(args, 10)
+    const meta =
+      Number.isInteger(n) && n >= 1 && String(n) === args ? metas[n - 1] : metas.find((m) => m.id === args)
+    if (!meta) {
+      print(`没有匹配 "${args}" 的会话。先用 /resume 查看列表。`)
+      return
+    }
+    const loaded = await loadAutoSession(cwd, meta.id)
+    adoptSession(loaded.conversation, loaded.id, loaded.createdAt)
+    print(`已续接会话 ${meta.id}(${meta.messageCount} 条消息)。`)
+  },
+}
+
 const model: SlashCommand = {
   name: 'model',
   description: '查看或切换模型：/model [<provider/model>] [--save]',
@@ -264,7 +296,7 @@ const terminalSetup: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, model, tools, history, terminalSetup]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, model, tools, history, terminalSetup]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

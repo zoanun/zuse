@@ -30,6 +30,7 @@ import {
 import { getShellLabel } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
+import { autosaveSession, newSessionId } from '../commands/sessionStore.js'
 
 /**
  * Edit 的行级 diff 超过 EDIT_DIFF_CAP 行被收口时,把「完整 diff 文本」落盘,返回临时文件路径;
@@ -53,6 +54,8 @@ interface UseConversationOptions {
   cwd: string
   /** 解析后的设置，驱动权限闸门与 client 初始化。 */
   settings: ResolvedSettings
+  /** --continue/--resume 预载的会话(Phase 10A)。id 沿用 = 同一会话延续写同一文件。 */
+  initialSession?: { conversation: Conversation; id: string; createdAt: string }
 }
 
 interface UseConversationReturn {
@@ -93,16 +96,31 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
 
+/** 把已提交账本映射成 UI 消息列表(/load 换入与 --continue 初始化共用)。 */
+function uiMessagesFromConversation(conv: Conversation): UIMessage[] {
+  return conv.getMessages().map((m) => ({
+    id: generateId(),
+    role: m.role,
+    text: m.content.map((b) => (b.type === 'text' ? b.text : '')).join(''),
+    isStreaming: false,
+  }))
+}
+
 export function useConversation({
   maxTokens,
   registry,
   cwd,
   settings,
+  initialSession,
 }: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
   // sendMessage 内部闭包拿到它的陈旧快照。
-  const conversationRef = useRef<Conversation>(new Conversation())
+  const conversationRef = useRef<Conversation>(initialSession?.conversation ?? new Conversation())
+  // 自动会话身份(Phase 10A):每回合提交后 autosave 到 auto/<cwd-slug>/<id>.json。
+  // --continue/--resume 沿用被载入会话的 id(同一会话延续);/clear 换新 id。
+  const sessionIdRef = useRef<string>(initialSession?.id ?? newSessionId())
+  const sessionCreatedAtRef = useRef<string>(initialSession?.createdAt ?? new Date().toISOString())
   // 让将来的 Ctrl+C/Esc 处理器能够中断进行中的回合（signal 已经穿过
   // runAgent 接线到了每个工具里）。
   const abortRef = useRef<AbortController | null>(null)
@@ -163,13 +181,14 @@ export function useConversation({
   }, []) // 空依赖：settings 在整个会话生命周期内不变，仅首次挂载运行一次
 
   // 渲染视图。镜像会话内容，外加流式期间任何进行中（尚未提交）的气泡。
-  const [state, setState] = useState<ConversationState>({
-    messages: [],
+  // --continue/--resume 预载会话时,初始列表直接由账本重建(惰性初始化只跑一次)。
+  const [state, setState] = useState<ConversationState>(() => ({
+    messages: initialSession ? uiMessagesFromConversation(initialSession.conversation) : [],
     isThinking: false,
-    totalUsage: undefined,
+    totalUsage: initialSession ? initialSession.conversation.totalUsage : undefined,
     contextTokens: undefined,
     generation: 0,
-  })
+  }))
 
   // 小辅助函数：按 id 不可变地更新某一条消息。
   const patch = useCallback((id: string, fn: (m: UIMessage) => UIMessage) => {
@@ -381,6 +400,15 @@ export function useConversation({
           contextTokens: lastInputTokens ?? prev.contextTokens,
         }))
 
+        // 自动保存(Phase 10A):回合提交后写盘,fire-and-forget——autosave 失败
+        // 不能打断对话(空会话在 store 层跳过;出错回合未提交,重写同内容无害)。
+        void autosaveSession(
+          sessionIdRef.current,
+          cwd,
+          conversation,
+          sessionCreatedAtRef.current,
+        ).catch(() => {})
+
         // 降级:此时 for-await 已结束(client 已 return),安全地切模型/弹框。
         if (failoverDecision) {
           const cat = failoverDecision
@@ -442,6 +470,10 @@ export function useConversation({
 
   const clear = useCallback(() => {
     conversationRef.current.clear()
+    // 换新会话 id(Phase 10A):清掉的历史保留在旧文件里(仍可 --resume 回来),
+    // 新对话写新文件,不覆写旧会话。
+    sessionIdRef.current = newSessionId()
+    sessionCreatedAtRef.current = new Date().toISOString()
     // 整体替换消息 → 自增 generation 令 <Static> remount，不再沿用旧会话的高水位。
     setState((prev) => ({
       messages: [],
@@ -480,22 +512,27 @@ export function useConversation({
   // 换入一个已加载的会话，并据其历史重建 UI 列表。
   const load = useCallback((conv: Conversation) => {
     conversationRef.current = conv
-    const messages: UIMessage[] = conv.getMessages().map((m) => ({
-      id: generateId(),
-      role: m.role,
-      text: m.content.map((b) => (b.type === 'text' ? b.text : '')).join(''),
-      isStreaming: false,
-    }))
     // 同 clear：换入新会话属于整体替换，自增 generation 强制 <Static> remount，
     // 否则换入的历史会被旧高水位从头截断。
     setState((prev) => ({
-      messages,
+      messages: uiMessagesFromConversation(conv),
       isThinking: false,
       totalUsage: conv.totalUsage,
       contextTokens: undefined,
       generation: prev.generation + 1,
     }))
   }, [])
+
+  // /resume 载入自动会话:换入账本 + 接管会话身份(后续 autosave 续写同一文件)。
+  // 与 /load 命名存档不同——后者是只读快照,不接管 id(autosave 仍写当前自动会话)。
+  const adoptSession = useCallback(
+    (conv: Conversation, id: string, createdAt: string) => {
+      load(conv)
+      sessionIdRef.current = id
+      sessionCreatedAtRef.current = createdAt
+    },
+    [load],
+  )
 
   // 运行时热替换 client，支持不清空对话历史地切换模型。
   // persist=true 时同步写入本地层 settings.local.json。
@@ -567,6 +604,8 @@ export function useConversation({
         clear,
         conversation: conversationRef.current,
         load,
+        adoptSession,
+        cwd,
         settings,
         currentModel,
         currentProviderId,
@@ -585,6 +624,8 @@ export function useConversation({
       print,
       clear,
       load,
+      adoptSession,
+      cwd,
       settings,
       currentModel,
       currentProviderId,

@@ -15,6 +15,10 @@ export interface CommandContext {
   conversation: Conversation
   /** 替换实时会话并据此重建 UI（用于 /load）。 */
   load: (conversation: Conversation) => void
+  /** 换入自动会话并接管其身份(后续 autosave 续写同一文件;用于 /resume)。 */
+  adoptSession: (conversation: Conversation, id: string, createdAt: string) => void
+  /** 会话工作目录(自动会话按它分组;/resume 列本目录的会话)。 */
+  cwd: string
   /** 本会话实际生效的三层合并设置（供 /config 等只读展示用）。 */
   settings: ResolvedSettings
   /** 当前选中的 model 名（用于 /model 列表标星）。 */

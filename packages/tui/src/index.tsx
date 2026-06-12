@@ -1,10 +1,11 @@
 import { render } from 'ink'
 import { PassThrough } from 'node:stream'
-import { cwd as processCwd, env, stderr } from 'node:process'
-import { loadSettings, installProxy } from '@zuse/core'
+import { argv, cwd as processCwd, env, exit, stderr, stdout } from 'node:process'
+import { loadSettings, installProxy, type Conversation } from '@zuse/core'
 import { App } from './App.js'
 import { InputProvider } from './input/InputProvider.js'
 import { pruneOldTempFiles } from './toolOutputFile.js'
+import { listAutoSessions, loadAutoSession } from './commands/sessionStore.js'
 
 // 在 bin 入口处一次性定下工作目录，再往下传，而不是散落到 hook 里临时取。
 // pnpm -F 会把进程 cwd 切到包目录（packages/tui），INIT_CWD 才记着用户真正敲
@@ -38,6 +39,55 @@ try {
   // 清理失败不影响启动
 }
 
+/**
+ * 解析 --continue/-c 与 --resume <序号|id>(Phase 10A)。读盘失败/无会话都不阻断
+ * 启动:提示一行后照常开新会话。`--resume` 无参则打印列表并退出(选择在会话内用
+ * /resume <序号> 完成,不做启动期交互式选择器 —— 见 spec A5)。
+ */
+async function resolveInitialSession(): Promise<
+  { conversation: Conversation; id: string; createdAt: string } | undefined
+> {
+  const args = argv.slice(2)
+  const wantsContinue = args.includes('--continue') || args.includes('-c')
+  const resumeIdx = args.indexOf('--resume')
+  const wantsResume = resumeIdx !== -1
+  if (!wantsContinue && !wantsResume) return undefined
+
+  try {
+    const metas = await listAutoSessions(cwd)
+    if (metas.length === 0) {
+      stderr.write('[zuse] 本目录还没有自动保存的会话,已开新会话。\n')
+      return undefined
+    }
+    if (wantsContinue) {
+      return await loadAutoSession(cwd, metas[0]!.id)
+    }
+    // --resume:取其后第一个非 flag 参数作为 序号|id。
+    const ref = args[resumeIdx + 1]
+    if (!ref || ref.startsWith('-')) {
+      const lines = metas.map((m, i) => {
+        const when = m.updatedAt.slice(0, 16).replace('T', ' ')
+        return `  ${i + 1}. ${when}  ${String(m.messageCount).padStart(3)} 条  ${m.firstUserText}`
+      })
+      stdout.write(['本目录的自动会话(zuse --resume <序号> 续接):', ...lines, ''].join('\n'))
+      exit(0)
+    }
+    const n = Number.parseInt(ref, 10)
+    const meta =
+      Number.isInteger(n) && n >= 1 && String(n) === ref ? metas[n - 1] : metas.find((m) => m.id === ref)
+    if (!meta) {
+      stderr.write(`[zuse] 没有匹配 "${ref}" 的会话,已开新会话(zuse --resume 可查看列表)。\n`)
+      return undefined
+    }
+    return await loadAutoSession(cwd, meta.id)
+  } catch (err) {
+    stderr.write(`[zuse] 载入会话失败,已开新会话:${err instanceof Error ? err.message : String(err)}\n`)
+    return undefined
+  }
+}
+
+const initialSession = await resolveInitialSession()
+
 // 给 Ink 喂一个非 TTY 哑流：Ink 的 useInput/焦点管理永不触发、不碰键盘，
 // 真实 process.stdin 全权交给 InputProvider 接管（见 input/ 子系统）。
 // Ink 仍正常渲染到 stdout，resize 走 stdout 不受影响。
@@ -48,7 +98,7 @@ dummyStdin.isTTY = false
 // 避免误触一次就丢掉会话（单击 Esc 才是中断流式）。
 render(
   <InputProvider>
-    <App cwd={cwd} />
+    <App cwd={cwd} initialSession={initialSession} />
   </InputProvider>,
   { stdin: dummyStdin, exitOnCtrlC: false },
 )
