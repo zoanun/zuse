@@ -34,13 +34,15 @@ export function contextRatioColor(ratio: number): string | undefined {
 }
 
 /**
- * CC 风格的上下文占用圈:按占比点亮 ○ ◔ ◑ ◕ ●(四舍五入到最近的四分之一档)。
- * 字形取自 Geometric Shapes 区(与工具块的 ● 同区),Windows Terminal/主流终端字体均覆盖。
+ * 上下文占用指示:单字符、随占比逐级点亮。
+ * 用八分块 ▁▂▃▄▅▆▇█(8 档)而非圆圈 ○◔◑◕●(4 档)——等宽 Unicode 没有比
+ * 四分之一更细的圆圈填充字形,要细只能换 Block Elements 区。Windows Terminal /
+ * 主流终端字体均覆盖。0 占用显示底线 ▁(空槽基线),满档 █。
  */
 export function contextGlyph(ratio: number): string {
   const clamped = Math.min(Math.max(ratio, 0), 1)
-  const quarters = Math.round(clamped * 4)
-  return ['○', '◔', '◑', '◕', '●'][quarters]!
+  const eighths = Math.round(clamped * 8)
+  return ['▁', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][eighths]!
 }
 
 /**

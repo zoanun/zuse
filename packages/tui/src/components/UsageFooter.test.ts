@@ -21,18 +21,20 @@ describe('formatTokens', () => {
 })
 
 describe('contextGlyph', () => {
-  it('lights up the circle by quarters', () => {
-    expect(contextGlyph(0)).toBe('○')
-    expect(contextGlyph(0.1)).toBe('○')
-    expect(contextGlyph(0.25)).toBe('◔')
-    expect(contextGlyph(0.5)).toBe('◑')
-    expect(contextGlyph(0.7)).toBe('◕')
-    expect(contextGlyph(0.95)).toBe('●')
+  it('lights up in eighths (finer than the quarter-circle glyphs)', () => {
+    expect(contextGlyph(0)).toBe('▁')
+    expect(contextGlyph(0.1)).toBe('▁')
+    expect(contextGlyph(0.25)).toBe('▂')
+    expect(contextGlyph(0.4)).toBe('▃')
+    expect(contextGlyph(0.5)).toBe('▄')
+    expect(contextGlyph(0.7)).toBe('▆')
+    expect(contextGlyph(0.85)).toBe('▇')
+    expect(contextGlyph(0.95)).toBe('█')
   })
 
   it('clamps out-of-range ratios', () => {
-    expect(contextGlyph(-0.5)).toBe('○')
-    expect(contextGlyph(1.5)).toBe('●')
+    expect(contextGlyph(-0.5)).toBe('▁')
+    expect(contextGlyph(1.5)).toBe('█')
   })
 })
 
