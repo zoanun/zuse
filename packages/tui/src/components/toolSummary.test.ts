@@ -223,8 +223,8 @@ describe('summarizeOutput · 通用兜底', () => {
 })
 
 describe('lineSummaryHidesContent', () => {
-  const grep = (mode: string, output: string) =>
-    ({ name: 'Grep', input: { output_mode: mode }, output, status: 'done' }) as any
+  const grep = (mode: string, output: string): UIToolCall =>
+    ({ name: 'Grep', input: { output_mode: mode }, output, status: 'done' })
   it('Grep content 有命中 → true', () => {
     expect(lineSummaryHidesContent(grep('content', 'a.ts:1: foo\nb.ts:2: bar'))).toBe(true)
   })
@@ -238,7 +238,7 @@ describe('lineSummaryHidesContent', () => {
     expect(lineSummaryHidesContent(grep('files_with_matches', 'a.ts\nb.ts'))).toBe(false)
   })
   it('非 Grep → false', () => {
-    expect(lineSummaryHidesContent({ name: 'Read', input: {}, output: 'x', status: 'done' } as any)).toBe(false)
+    expect(lineSummaryHidesContent({ name: 'Read', input: {}, output: 'x', status: 'done' })).toBe(false)
   })
   it('Grep content 但 [offset 越界无命中 → false', () => {
     expect(lineSummaryHidesContent(grep('content', '[offset 100] no more results'))).toBe(false)

@@ -110,18 +110,18 @@ describe('parseMultipleKeypresses 粘贴聚合', () => {
 
 describe('parseMultipleKeypresses flush(传 null)', () => {
   it('粘贴中途 flush:吐出已累积的内容', () => {
-    let [keys, st] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[200~partial')
-    expect(keys).toEqual([])
-    ;[keys] = parseMultipleKeypresses(st, null)
+    const [pending, st] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[200~partial')
+    expect(pending).toEqual([])
+    const [keys] = parseMultipleKeypresses(st, null)
     expect(keys.length).toBe(1)
     expect(keys[0]!.isPasted).toBe(true)
     expect(keys[0]!.sequence).toBe('partial')
   })
 
   it('flush 半截转义序列:强制吐出,不吞字符', () => {
-    let [keys, st] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[')
-    expect(keys).toEqual([])
-    ;[keys] = parseMultipleKeypresses(st, null)
+    const [pending, st] = parseMultipleKeypresses(INITIAL_STATE, '\x1b[')
+    expect(pending).toEqual([])
+    const [keys] = parseMultipleKeypresses(st, null)
     expect(keys.length).toBe(1)
     expect(keys[0]!.sequence).toBe('\x1b[')
   })
