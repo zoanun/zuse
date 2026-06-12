@@ -96,8 +96,10 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
   const db = new (getSqlite().DatabaseSync)(dbPath)
   // schema 幂等:IF NOT EXISTS 全套,重开同一文件直接复用。
   db.exec(`
+    -- AUTOINCREMENT:id 单调、绝不复用被删的值。记忆按 id 被模型引用(对话里、
+    -- MEMORY.md 投影里),复用会让旧引用悄悄指向另一条记忆。
     CREATE TABLE IF NOT EXISTS memories (
-      id INTEGER PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL CHECK(type IN ('user','project','insight','reference')),
       content TEXT NOT NULL,
       project TEXT NOT NULL DEFAULT '',

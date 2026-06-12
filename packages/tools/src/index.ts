@@ -11,6 +11,7 @@ import { createWebSearchTool } from './websearch.js'
 import { createLspTool } from './lsp/index.js'
 import { createLspInstallTool } from './lsp/install.js'
 import { LspManager } from './lsp/manager.js'
+import { createMemoryTool } from './memory.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel, primeShellSnapshot } from './bash.js'
@@ -23,6 +24,16 @@ export {
   isTmuxSocketInitialized,
 } from './tmux-isolation.js'
 export { createSnapshotStore, cwdSlug, type SnapshotStore } from './snapshot.js'
+export { createMemoryTool } from './memory.js'
+export {
+  openMemoryStore,
+  renderMemoryMarkdown,
+  sanitizeFtsQuery,
+  MEMORY_TYPES,
+  type MemoryStore,
+  type MemoryRow,
+  type MemoryType,
+} from './memory-store.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'
@@ -34,6 +45,8 @@ export interface DefaultRegistryOptions {
   webSearch?: WebSearchConfig | null
   /** LSP 进程池；传入时注册 Lsp 工具（无条件可注册，没装服务器是运行时错误）。 */
   lsp?: LspManager
+  /** Memory 工具的项目归属(会话起始 cwd 的 slug;缺省空串 = 全局,Phase 13)。 */
+  memoryProject?: string
 }
 
 /**
@@ -50,6 +63,8 @@ export function createDefaultRegistry(opts: DefaultRegistryOptions = {}): ToolRe
   registry.register(GrepTool)
   registry.register(BashTool)
   registry.register(WebFetchTool)
+  // Memory 无条件注册:不需要任何 key,库文件懒创建(不用记忆的会话不碰 sqlite)。
+  registry.register(createMemoryTool(opts.memoryProject ?? ''))
   if (opts.webSearch) registry.register(createWebSearchTool(opts.webSearch))
   if (opts.lsp) {
     registry.register(createLspTool(opts.lsp))

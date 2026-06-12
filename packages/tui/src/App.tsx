@@ -13,7 +13,7 @@ import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
-import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
+import { createDefaultRegistry, LspManager, primeShellSnapshot, cwdSlug } from '@zuse/tools'
 import type { SessionCheckpoint } from './commands/sessionStore.js'
 import type { UIMessage } from './types.js'
 
@@ -57,8 +57,9 @@ export function App({ cwd, initialSession }: AppProps) {
   const registry = useMemo(() => {
     // 构建会话级 LSP 进程池，随 registry 一起在 settings 变化时重建。
     const lsp = new LspManager()
-    return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp })
-  }, [resolved])
+    // Memory 记忆按会话起始 cwd 归属项目(Bash cd 漂移不影响归属,Phase 13)。
+    return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp, memoryProject: cwdSlug(cwd) })
+  }, [resolved, cwd])
 
   const {
     state,
