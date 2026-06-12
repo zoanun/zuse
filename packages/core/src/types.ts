@@ -89,6 +89,11 @@ export interface RawProviderConfig {
   baseURL?: string
   apiKey?: string
   models?: string[]
+  /**
+   * 上下文窗口(token)。供自动压缩判定占用比例;缺省取 DEFAULT_CONTEXT_WINDOW
+   * (128k 保守值)。provider 级共用 —— 同 provider 各 model 窗口差异大时拆条目。
+   */
+  contextWindow?: number
 }
 
 /** 解析后、可直接交给 client 工厂的完整 provider 配置。 */
