@@ -264,20 +264,34 @@ async function gateAndRunTool(
   deps: GateDeps,
 ): Promise<{ output: string; isError: boolean }> {
   const tool: Tool | undefined = registry.get(tu.name)
-  if (!tool) return { output: `Unknown tool: ${tu.name}`, isError: true }
+  if (!tool) return unknownToolResult(registry, tu.name)
 
   const specifier = tool.specifierFor?.(tu.input) ?? null
   const { decision, rule, matched, reason } = decide(tool, specifier, deps.settings, deps.sessionAllow, deps.cwd)
 
   if (decision === 'deny') {
-    return { output: `Permission denied by settings (${matched ?? rule}).`, isError: true }
+    // settings deny 是硬护栏:配置写死,原样重试必然再拒,要把"换路子"说给模型听。
+    return {
+      output:
+        `Permission denied by settings rule "${matched ?? rule}". This is a hard guardrail; ` +
+        'do not retry the same call. Take a different approach, or ask the user to change their permission settings.',
+      isError: true,
+    }
   }
 
   if (decision === 'ask') {
     const verdict = deps.canUseTool
       ? await deps.canUseTool({ toolName: tu.name, input: tu.input, specifier, rule, reason })
       : 'deny'
-    if (verdict === 'deny') return { output: `Permission denied by user (${rule}).`, isError: true }
+    if (verdict === 'deny') {
+      // 用户拒绝是本次裁决:下一步是问用户意图,而非立刻原样重发。
+      return {
+        output:
+          `The user declined this ${tu.name} call (rule: ${rule}). Do not retry the same call. ` +
+          'Ask the user how to proceed, or take a different approach.',
+        isError: true,
+      }
+    }
     if (verdict === 'allow_session' || verdict === 'allow_persist') {
       if (!deps.sessionAllow.includes(rule)) deps.sessionAllow.push(rule)
     }
@@ -285,6 +299,15 @@ async function gateAndRunTool(
   }
 
   return runOneTool(registry, tu, ctx)
+}
+
+/** 未知工具的 observation:列出可用工具清单,模型才能自纠工具名(典型:Read 写成 read_file)。 */
+function unknownToolResult(
+  registry: ToolRegistry,
+  name: string,
+): { output: string; isError: boolean } {
+  const names = registry.list().map((t) => t.name).join(', ') || '(none)'
+  return { output: `Unknown tool: ${name}. Available tools: ${names}.`, isError: true }
 }
 
 /** 运行单个工具，把"未知工具"和抛出的错误转换成 is_error 结果（故障模式④）。 */
@@ -295,7 +318,7 @@ async function runOneTool(
 ): Promise<{ output: string; isError: boolean }> {
   const tool = registry.get(tu.name)
   if (!tool) {
-    return { output: `Unknown tool: ${tu.name}`, isError: true }
+    return unknownToolResult(registry, tu.name)
   }
   try {
     const result = await tool.run(tu.input, ctx)

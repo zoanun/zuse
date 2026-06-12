@@ -258,8 +258,31 @@ describe('runAgent', () => {
         signal,
       }),
     )
-    const tr = events.find((e) => e.type === 'tool-result')
-    expect(tr).toMatchObject({ is_error: true, output: 'Unknown tool: nope' })
+    const tr = events.find((e) => e.type === 'tool-result') as { is_error: boolean; output: string }
+    expect(tr.is_error).toBe(true)
+    // 错误回传契约(Phase 8):报未知工具时列出可用工具清单,模型才能自纠工具名。
+    expect(tr.output).toContain('Unknown tool: nope')
+    expect(tr.output).toContain('Available tools:')
+  })
+
+  it('unknown tool error lists the registered tool names', async () => {
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'c1', name: 'read_file', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+
+    const events = await collect(
+      runAgent({
+        conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      }),
+    )
+    const tr = events.find((e) => e.type === 'tool-result') as { output: string }
+    expect(tr.output).toContain('echo')
   })
 
   it('does not commit anything when the model call errors', async () => {
@@ -338,8 +361,11 @@ describe('runAgent', () => {
       settings: denySettings,
     }))
     expect(ran).toBe(false)
-    const tr = events.find((e) => e.type === 'tool-result')
-    expect(tr).toMatchObject({ is_error: true })
+    const tr = events.find((e) => e.type === 'tool-result') as { is_error: boolean; output: string }
+    expect(tr.is_error).toBe(true)
+    // 错误回传契约(Phase 8):settings deny 是硬护栏,要点明"别原样重试"与改法。
+    expect(tr.output).toContain('do not retry')
+    expect(tr.output).toContain('echo')
   })
 
   it('ask → canUseTool deny blocks; allow runs', async () => {
@@ -349,7 +375,11 @@ describe('runAgent', () => {
       conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
       settings: askSettings, canUseTool: async () => 'deny',
     }))
-    expect((denied.find((e) => e.type === 'tool-result') as { is_error?: boolean }).is_error).toBe(true)
+    const deniedTr = denied.find((e) => e.type === 'tool-result') as { is_error?: boolean; output: string }
+    expect(deniedTr.is_error).toBe(true)
+    // 错误回传契约(Phase 8):用户拒绝是本次裁决,下一步是问用户,而非原样重发。
+    expect(deniedTr.output).toContain('user declined')
+    expect(deniedTr.output).toContain('Ask the user')
 
     const { client: client2 } = fakeClient(askScript())
     const allowed = await collect(runAgent({
