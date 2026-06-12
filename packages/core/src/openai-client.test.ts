@@ -92,18 +92,41 @@ describe('streamToEvents', () => {
     expect(stop.stop_reason).toBe('max_tokens')
   })
 
-  it('emits an error (not a {} tool-use) when tool_call arguments are non-empty but invalid JSON', async () => {
+  it('非法 JSON 参数串 → 带 invalid_args 的 tool-use,不中止回合（Phase 11 回喂自纠）', async () => {
     const chunks = [
       { id: 'm4', model: 'x', choices: [{ delta: { tool_calls: [{ index: 0, id: 'c0', function: { name: 'Bash', arguments: '{"cmd":' } }] }, finish_reason: null }] },
       { id: 'm4', model: 'x', choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 5, completion_tokens: 7 } },
     ]
     const events = await collect(streamToEvents(feed(chunks)))
-    expect(events.some((e) => e.type === 'tool-use')).toBe(false)
-    const err = events.find((e) => e.type === 'error') as Extract<StreamEvent, { type: 'error' }>
-    expect(err).toBeTruthy()
-    expect(err.message).toContain('Bash')
-    // error 后中止，不再产出 message-stop。
-    expect(events.some((e) => e.type === 'message-stop')).toBe(false)
+    const use = events.find((e) => e.type === 'tool-use') as Extract<StreamEvent, { type: 'tool-use' }>
+    // 不再 error 中止（那会连已流出的文本一起作废）；input 用 {} 占位保证可序列化重放，
+    // 原始非法串放 invalid_args 供 Agent 合成回喂 observation。
+    expect(use).toEqual({ type: 'tool-use', id: 'c0', name: 'Bash', input: {}, invalid_args: '{"cmd":' })
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    const stop = events.find((e) => e.type === 'message-stop') as Extract<StreamEvent, { type: 'message-stop' }>
+    expect(stop.stop_reason).toBe('tool_use')
+  })
+
+  it('非法参数且 id 缺失时合成兜底 id，保证 tool_use/tool_result 可配对', async () => {
+    const chunks = [
+      // 弱端点可能不回 tool_call id —— 首片只有 name 与参数片段。
+      { id: 'm6', model: 'x', choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'Read', arguments: 'not-json' } }] }, finish_reason: null }] },
+      { id: 'm6', model: 'x', choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 5, completion_tokens: 7 } },
+    ]
+    const events = await collect(streamToEvents(feed(chunks)))
+    const use = events.find((e) => e.type === 'tool-use') as Extract<StreamEvent, { type: 'tool-use' }>
+    expect(use.id).toBe('invalid-json-0')
+    expect(use.invalid_args).toBe('not-json')
+  })
+
+  it('空参数串仍按 {} 处理（合法的无参调用，不带 invalid_args）', async () => {
+    const chunks = [
+      { id: 'm7', model: 'x', choices: [{ delta: { tool_calls: [{ index: 0, id: 'c0', function: { name: 'ListTools', arguments: '' } }] }, finish_reason: null }] },
+      { id: 'm7', model: 'x', choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 5, completion_tokens: 7 } },
+    ]
+    const events = await collect(streamToEvents(feed(chunks)))
+    const use = events.find((e) => e.type === 'tool-use') as Extract<StreamEvent, { type: 'tool-use' }>
+    expect(use).toEqual({ type: 'tool-use', id: 'c0', name: 'ListTools', input: {} })
   })
 
   it('accumulates fragmented tool_call arguments by index and emits tool-use before stop', async () => {

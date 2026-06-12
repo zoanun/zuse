@@ -184,13 +184,18 @@ export async function* streamToEvents(stream: AsyncIterable<unknown>): AsyncIter
       try {
         input = JSON.parse(t.args)
       } catch {
-        // 非空但非法/截断的参数串：不能静默当成 {} 让工具空参运行，
-        // 产出 error 让 Agent 循环中止本回合（不提交），用户可见而非默默跑错。
+        // 非空但非法/截断的参数串：既不能静默当成 {} 让工具空参运行，也不再 error 中止
+        // 整回合（那会连已流出的文本一起作废、模型零自纠机会）。改为带 invalid_args 的
+        // tool-use 透出，Agent 循环合成 is_error tool_result 回喂、模型下一轮重发
+        // （Phase 11，spec §2）。id 缺失（弱端点）时合成兜底 id 保证 tool_result 可配对。
         yield {
-          type: 'error',
-          message: `模型生成的工具调用参数不是合法 JSON（tool=${t.name}）：${t.args.slice(0, 200)}`,
+          type: 'tool-use',
+          id: t.id || `invalid-json-${idx}`,
+          name: t.name,
+          input: {},
+          invalid_args: t.args.slice(0, 200),
         }
-        return
+        continue
       }
     }
     yield { type: 'tool-use', id: t.id, name: t.name, input }

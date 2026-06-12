@@ -59,6 +59,8 @@ interface PendingToolUse {
   id: string
   name: string
   input: unknown
+  /** 模型生成的参数串不是合法 JSON 时的原始串（见 StreamEvent 的 invalid_args）。 */
+  invalidArgs?: string
 }
 
 /**
@@ -121,7 +123,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
         text += event.text
         yield event
       } else if (event.type === 'tool-use') {
-        toolUses.push({ id: event.id, name: event.name, input: event.input })
+        toolUses.push({ id: event.id, name: event.name, input: event.input, invalidArgs: event.invalid_args })
         yield event
       } else if (event.type === 'message-start') {
         yield event
@@ -192,17 +194,24 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       settings, sessionAllow, cwd: sessionCwd, canUseTool: opts.canUseTool, onPersistAllow,
     })
 
+    // 参数非合法 JSON 的调用不过闸、不执行,直接合成回喂 observation(Phase 11);
+    // 同轮里的合法调用不连坐,照常执行。合成结果即时 resolve,放进并发批也无副作用。
+    const dispatch = (tu: PendingToolUse): Promise<{ output: string; isError: boolean }> =>
+      tu.invalidArgs !== undefined
+        ? Promise.resolve(invalidJsonResult(tu))
+        : gateAndRunTool(registry, tu, buildCtx(), gateDeps())
+
     let outputs: Array<{ output: string; isError: boolean }>
     if (allReadOnly && toolUses.length > 1) {
       // 并发执行整批只读工具。gateAndRunTool 把工具异常 try/catch 成 isError 结果;
       // ask 路径的 canUseTool 按契约可并发(见上),故 Promise.all 不会卡死。
       // 仅 canUseTool / onPersistAllow 自身抛错才会整体 reject —— 串行路径下同样中止回合,非并发新增风险。
-      outputs = await Promise.all(toolUses.map((tu) => gateAndRunTool(registry, tu, buildCtx(), gateDeps())))
+      outputs = await Promise.all(toolUses.map((tu) => dispatch(tu)))
     } else {
       // 含写工具（或单个工具）：串行,保住 cd / 乐观锁的顺序语义。
       outputs = []
       for (const tu of toolUses) {
-        outputs.push(await gateAndRunTool(registry, tu, buildCtx(), gateDeps()))
+        outputs.push(await dispatch(tu))
       }
     }
 
@@ -299,6 +308,20 @@ async function gateAndRunTool(
   }
 
   return runOneTool(registry, tu, ctx)
+}
+
+/**
+ * 坏 JSON tool_use 的 observation(Phase 11):点明哪个工具、回显原始串,并给出
+ * 下一步指令(重发),模型下一轮即可自纠。不执行工具 —— 空参运行是静默跑错。
+ */
+function invalidJsonResult(tu: PendingToolUse): { output: string; isError: boolean } {
+  return {
+    output:
+      `Tool call arguments were not valid JSON (tool: ${tu.name}). ` +
+      `Raw arguments (truncated): ${tu.invalidArgs}. ` +
+      'Re-issue the tool call with well-formed JSON arguments.',
+    isError: true,
+  }
 }
 
 /** 未知工具的 observation:列出可用工具清单,模型才能自纠工具名(典型:Read 写成 read_file)。 */

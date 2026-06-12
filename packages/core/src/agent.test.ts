@@ -332,6 +332,89 @@ describe('runAgent', () => {
     expect(msgs[msgs.length - 1]!.role).toBe('assistant')
   })
 
+  // ——— Phase 11 故障注入 ———
+
+  it('坏 JSON tool_use（invalid_args）：不执行工具，合成 is_error 回喂，循环继续', async () => {
+    let ran = false
+    const reg = new ToolRegistry()
+    reg.register({ ...echoTool(), run: async () => { ran = true; return { output: 'should-not' } } })
+    const { client, calls } = fakeClient([
+      [
+        { type: 'tool-use', id: 'c1', name: 'echo', input: {}, invalid_args: '{"value":' },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const conv = new Conversation()
+    const events = await collect(
+      runAgent({ conversation: conv, client, registry: reg, userText: 'go', config, cwd: '.', signal }),
+    )
+
+    expect(ran).toBe(false) // 绝不空参运行
+    const tr = events.find((e) => e.type === 'tool-result') as Extract<StreamEvent, { type: 'tool-result' }>
+    expect(tr.is_error).toBe(true)
+    expect(tr.output).toContain('not valid JSON')
+    expect(tr.output).toContain('{"value":') // 回显原始串
+    expect(tr.output).toContain('Re-issue') // 下一步指令
+
+    // 第二次模型调用看到了回喂的 tool_result；账本 4 条且角色合法。
+    expect(calls).toHaveLength(2)
+    const msgs = conv.getMessages()
+    expect(msgs).toHaveLength(4)
+    expect(msgs[1]!.content[0]).toEqual({ type: 'tool_use', id: 'c1', name: 'echo', input: {} })
+    expect(msgs[2]!.content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'c1', is_error: true })
+  })
+
+  it('同轮一个坏 JSON 一个合法调用：合法的照常执行，不连坐', async () => {
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'bad', name: 'echo', input: {}, invalid_args: 'oops' },
+        { type: 'tool-use', id: 'ok', name: 'echo', input: { value: 'x' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const events = await collect(
+      runAgent({ conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal }),
+    )
+    const results = events.filter((e): e is Extract<StreamEvent, { type: 'tool-result' }> => e.type === 'tool-result')
+    expect(results.find((r) => r.id === 'bad')!.is_error).toBe(true)
+    expect(results.find((r) => r.id === 'ok')).toMatchObject({ output: 'echoed:x', is_error: false })
+  })
+
+  it('stop_reason=max_tokens：产出截断告警，半截回复仍提交但用户可见告警', async () => {
+    const { client } = fakeClient([
+      [
+        { type: 'text-delta', text: 'half' },
+        { type: 'message-stop', stop_reason: 'max_tokens', usage: USAGE },
+      ],
+    ])
+    const conv = new Conversation()
+    const events = await collect(
+      runAgent({ conversation: conv, client, registry: new ToolRegistry(), userText: 'hi', config, cwd: '.', signal }),
+    )
+    const warn = events.find((e) => e.type === 'warning') as Extract<StreamEvent, { type: 'warning' }>
+    expect(warn.message).toContain('max_tokens')
+    expect(conv.getMessages()).toHaveLength(2) // 半截文本不是悬空账本，照常提交
+  })
+
+  it('signal 已中断：产出 Interrupted 告警，模型零调用、账本零提交', async () => {
+    const ac = new AbortController()
+    ac.abort()
+    const { client, calls } = fakeClient([
+      [{ type: 'text-delta', text: 'never' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const conv = new Conversation()
+    const events = await collect(
+      runAgent({ conversation: conv, client, registry: new ToolRegistry(), userText: 'hi', config, cwd: '.', signal: ac.signal }),
+    )
+    expect(events).toEqual([{ type: 'warning', message: 'Interrupted.' }])
+    expect(calls).toHaveLength(0)
+    expect(conv.getMessages()).toHaveLength(0)
+  })
+
   const askSettings: ResolvedSettings = {
     tools: {},
     permissions: { defaultMode: 'default', allow: [], ask: ['echo'], deny: [] },

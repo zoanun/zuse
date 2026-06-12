@@ -26,7 +26,11 @@ export type StreamEvent =
   | { type: 'message-start'; id: string; model: string }
   | { type: 'text-delta'; text: string }
   // 模型决定调用一个工具（由 client 在流把完整 tool_use 块拼装好后产生）。
-  | { type: 'tool-use'; id: string; name: string; input: unknown }
+  // invalid_args（Phase 11）：模型生成的参数串不是合法 JSON 时，client 不中止回合，
+  // 而是带上原始串（截 200 字符）透出；此时 input 为 {} 占位（保证账本可序列化重放），
+  // Agent 循环据此跳过执行、合成 is_error tool_result 回喂模型自纠。仅 OpenAI 协议
+  // 路径会产生（Anthropic 服务端保证 tool_use.input 合法）。
+  | { type: 'tool-use'; id: string; name: string; input: unknown; invalid_args?: string }
   | { type: 'message-stop'; stop_reason: string; usage: Usage }
   // 一个工具运行完成（由 Agent 循环产生，不是 client）。
   | { type: 'tool-result'; id: string; name: string; output: string; is_error: boolean }
