@@ -20,7 +20,8 @@ import {
   findCompactionCut,
   applyCompaction,
   summarizeForCompaction,
-  DEFAULT_CONTEXT_WINDOW,
+  resolveContextWindow,
+  modelNames,
   COMPACTION_THRESHOLD,
   DEFAULT_PROVIDER_ID,
   type ModelClient,
@@ -251,7 +252,12 @@ export function useConversation({
       // 重发(failover)跳过:刚失败的回合没增加占用,且重发要快。压缩失败不阻断
       // 发送 —— 提示后照常发(可能炸窗,但「拒发」比「可能炸」更打断工作流)。
       if (!opts?.isResend) {
-        const windowSize = settings.providers[currentProviderId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
+        // 窗口按「当前实际在用的 model」解析(模型级 → provider 级 → 缺省 512k)。
+        const windowSize = resolveContextWindow(
+          settings,
+          currentProviderId,
+          clientRef.current.getModel(),
+        )
         if ((contextTokensRef.current ?? 0) > windowSize * COMPACTION_THRESHOLD) {
           const notifyCompact = (msg: string): void =>
             setState((prev) => ({
@@ -467,7 +473,7 @@ export function useConversation({
           // 递归 sendMessage 是同一闭包实例(currentModel 是陈旧的初始值),而 clientRef 已被
           // 热替换,getModel() 才是本回合真正在用、刚失败的那个 model。
           const failedModel = clientRef.current?.getModel() ?? currentModel
-          const models = settings.providers[pid]?.models ?? []
+          const models = modelNames(settings.providers[pid])
           // 1) 标坏(auth 标整个 provider 的所有 model)。
           for (const k of badKeysForFailure(pid, failedModel, cat, models)) {
             badModelsRef.current.set(k, k === modelKey(pid, failedModel) ? cat : 'auth')

@@ -21,6 +21,11 @@ import type {
 import { createModelClient } from './model-client.js'
 import type { ModelClient } from './model-client.js'
 
+/** 归一化 providers.models 条目为模型名列表(字符串/对象两种形态都合法)。 */
+export function modelNames(p?: RawProviderConfig): string[] {
+  return (p?.models ?? []).map((m) => (typeof m === 'string' ? m : m.name))
+}
+
 // 默认 provider 标识符与默认模型（未配置 model 时的回退）。
 const DEFAULT_MODEL = 'claude-sonnet-4-5-20250514'
 /** 扁平配置合成出的 provider id。导出供 TUI 判断「是否扁平默认」以决定写盘格式。 */
@@ -312,7 +317,7 @@ export function getProviderConfig(settings: ResolvedSettings, providerId: string
     protocol: raw.protocol ?? 'anthropic',
     baseURL: raw.baseURL,
     apiKey,
-    models: raw.models ?? [],
+    models: modelNames(raw),
   }
 }
 

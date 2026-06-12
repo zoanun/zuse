@@ -7,6 +7,8 @@ import {
   buildSummaryPrompt,
   applyCompaction,
   summarizeForCompaction,
+  resolveContextWindow,
+  DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
 
 const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
@@ -131,5 +133,41 @@ describe('summarizeForCompaction', () => {
     await expect(
       summarizeForCompaction(client, [user('一')], { model: 'fake', max_tokens: 100 }),
     ).rejects.toThrow()
+  })
+})
+
+describe('resolveContextWindow', () => {
+  const settings = (providers: Record<string, unknown>): import('./types.js').ResolvedSettings =>
+    ({
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+      providers,
+    }) as import('./types.js').ResolvedSettings
+
+  it('model-level entry wins over provider-level contextWindow', () => {
+    const s = settings({
+      dashscope: {
+        contextWindow: 131072,
+        models: ['qwen3-coder', { name: 'qwen3.7-max', contextWindow: 1000000 }],
+      },
+    })
+    expect(resolveContextWindow(s, 'dashscope', 'qwen3.7-max')).toBe(1000000)
+  })
+
+  it('string entries fall back to the provider-level contextWindow', () => {
+    const s = settings({
+      dashscope: { contextWindow: 131072, models: ['qwen3-coder'] },
+    })
+    expect(resolveContextWindow(s, 'dashscope', 'qwen3-coder')).toBe(131072)
+  })
+
+  it('falls back to the global default when nothing is configured', () => {
+    const s = settings({ deepseek: { models: ['deepseek-chat'] } })
+    expect(resolveContextWindow(s, 'deepseek', 'deepseek-chat')).toBe(DEFAULT_CONTEXT_WINDOW)
+    expect(resolveContextWindow(s, 'unknown-provider', 'whatever')).toBe(DEFAULT_CONTEXT_WINDOW)
+  })
+
+  it('default is 512K (mainstream flagships are 1M-class in 2026)', () => {
+    expect(DEFAULT_CONTEXT_WINDOW).toBe(512_000)
   })
 })

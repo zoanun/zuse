@@ -1,5 +1,5 @@
 import { Conversation } from './conversation.js'
-import type { Message, ModelConfig } from './types.js'
+import type { Message, ModelConfig, ResolvedSettings } from './types.js'
 import type { ModelClient } from './model-client.js'
 
 /**
@@ -14,8 +14,30 @@ import type { ModelClient } from './model-client.js'
 /** 压缩时保留的最近真实用户回合数。 */
 export const KEEP_RECENT_TURNS = 2
 
-/** 默认上下文窗口(provider 未配 contextWindow 时)。保守取 128k:宁可早压不可炸窗。 */
-export const DEFAULT_CONTEXT_WINDOW = 128_000
+/**
+ * 默认上下文窗口(模型级/provider 级都未配时)。2026 年主流旗舰(Claude 主线、
+ * GPT、Qwen3.7-Max、DeepSeek V4)都是 1M 档,缺省取 512k。
+ * 注意不对称风险:猜大了(实际 128k 的模型,如 DeepSeek V3)阈值永远等不到、
+ * 窗口先炸 —— 小窗口模型务必在 models 条目或 provider 级显式声明 contextWindow。
+ */
+export const DEFAULT_CONTEXT_WINDOW = 512_000
+
+/**
+ * 解析某 provider/model 生效的上下文窗口:模型级条目 → provider 级 → 全局缺省。
+ */
+export function resolveContextWindow(
+  settings: ResolvedSettings,
+  providerId: string,
+  model: string,
+): number {
+  const p = settings.providers[providerId]
+  for (const entry of p?.models ?? []) {
+    if (typeof entry !== 'string' && entry.name === model && entry.contextWindow) {
+      return entry.contextWindow
+    }
+  }
+  return p?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
+}
 
 /** 占用超过窗口的此比例即触发自动压缩。 */
 export const COMPACTION_THRESHOLD = 0.8

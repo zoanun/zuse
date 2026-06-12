@@ -689,7 +689,8 @@ blob**(Bash stdout、WebFetch 正文)归一到新模块 `packages/tools/src/trun
 保留最近 2 个回合;`summarizeForCompaction` 单独请求生成结构化摘要(目标/决策/改动
 文件/未完成/约束),失败抛出绝不半压;`applyCompaction` 摘要替换老历史,totalUsage
 不清零(成本账非窗口账)。窗口占用用**上一回合实测** input+cache 读(不估算),
-provider 配 `contextWindow`(缺省 128k 保守值),占用 >80% 在下一次 sendMessage
+窗口大小**模型级配置**(`models` 条目可写 `{ name, contextWindow }`,查找顺序
+模型级 → provider 级 → 缺省 512k;小窗口模型如 DeepSeek V3 须显式声明),占用 >80% 在下一次 sendMessage
 开头自动压缩(重发跳过;失败提示后照原历史发送);`/compact` 手动随时可压。压缩
 只换账本不动屏幕 scrollback。设计见 spec
 [→](../specs/2026-06-12-zuse-session-and-compaction-design.md)。TDD,新增 20 用例

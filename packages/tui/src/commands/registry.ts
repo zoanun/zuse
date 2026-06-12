@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import type { SlashCommand, CommandInfo } from './types.js'
 import { saveConversation, loadConversation, listAutoSessions, loadAutoSession } from './sessionStore.js'
 import { installTerminalSetup } from './terminalSetup.js'
-import { resolveModelSelection, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
+import { resolveModelSelection, modelNames, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
 
 /** /model 交互式选择器的一个候选：provider+model 配对，外加是否为当前激活项。 */
 export interface ModelOption {
@@ -29,7 +29,7 @@ export function buildModelOptions(
   const options: ModelOption[] = []
   let currentSeen = false
   for (const [id, p] of Object.entries(settings.providers)) {
-    for (const m of p.models ?? []) {
+    for (const m of modelNames(p)) {
       const isCurrent = id === currentProviderId && m === currentModel
       if (isCurrent) currentSeen = true
       const reason = badKeys?.get(`${id}/${m}`)
@@ -240,7 +240,7 @@ const model: SlashCommand = {
       return
     }
     // 校验 model：provider 声明了 models 清单、但目标不在其中。
-    const declared = settings.providers[sel.providerId]?.models ?? []
+    const declared = modelNames(settings.providers[sel.providerId])
     if (declared.length > 0 && !declared.includes(sel.model)) {
       const suggestion = nearestMatch(sel.model, declared)
       if (suggestion) {

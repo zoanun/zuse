@@ -9,7 +9,8 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 Phase 10: Done. 会话管理与上下文压缩。自动会话按 cwd 分组存
 `~/.zuse/sessions/auto/`,每回合自动保存;`zuse --continue` 续接最新会话,
 `--resume <序号>` 指定续接,会话内 `/resume` 列表续接,`/clear` 换新会话不覆写旧
-历史。压缩:`/compact` 手动 / 占用越过 provider `contextWindow`(缺省 128k)的 80%
+历史。压缩:`/compact` 手动 / 占用越过上下文窗口(模型级配置,`models` 条目可写
+`{ "name", "contextWindow" }`,模型级 → provider 级 → 缺省 512K)的 80%
 自动——老回合折叠为结构化摘要,保留最近 2 个真实回合,切点永不劈开 tool_use/
 tool_result 配对;摘要失败绝不半压。下一步:Phase 11 鲁棒性与恢复。
 

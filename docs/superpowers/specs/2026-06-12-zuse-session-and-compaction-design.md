@@ -83,9 +83,15 @@ interface SessionRecord {
 
 - 真实占用已有:`message-stop` 的 `input_tokens + cache_read_input_tokens`(两家
   client 已归一,footer 在用)——**不估算,用上一回合实测值**(OpenCode 同思路)。
-- 窗口大小:`RawProviderConfig` 增可选 `contextWindow?: number`(provider 级,该
-  provider 所有 model 共用;模型差异大时用户可拆 provider 条目)。缺省 **128_000**
-  (保守值:DeepSeek 128k / Qwen 128k+ / Claude 200k,宁可早压不可炸窗)。
+- 窗口大小(2026-06-12 修订,模型级配置):`models` 条目放宽为
+  `string | { name, contextWindow? }`,查找顺序**模型级 → provider 级
+  `contextWindow` → 全局缺省 512_000**。改模型级的理由:窗口是模型属性而非
+  provider 属性(DashScope 下 qwen3.7-max 1M 与小模型 128k 并存),拆 provider
+  条目会重复 apiKey、切断 failover 同 provider 降级链。缺省取 512k 依据 2026-06
+  实测主流(Claude 主线/GPT/Qwen3.7-Max/DeepSeek V4 均 1M 档);**不对称风险**:
+  仍在用的小窗口模型(DeepSeek V3 128k、本地 Ollama)必须显式声明,否则压缩
+  阈值永远等不到、窗口先炸。归一化 helper `modelNames()` 供所有消费 models
+  名单的代码(picker/failover/校验)共用。
 - 阈值:占用 > `contextWindow * 0.8` 触发自动压缩(下回合发送前);`/compact` 手动
   随时可触发。
 

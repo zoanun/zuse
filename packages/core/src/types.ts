@@ -83,15 +83,25 @@ export interface PermissionsConfig {
 /** provider 的 wire 协议。 */
 export type ProviderProtocol = 'anthropic' | 'openai'
 
+/** models 数组的对象形条目:窗口等属性与 provider 缺省不同的模型用它声明。 */
+export interface ModelEntryObject {
+  name: string
+  /** 该模型的上下文窗口(token),压过 provider 级 contextWindow。 */
+  contextWindow?: number
+}
+
+/** providers.models 的条目:纯字符串(常态),或带模型级覆盖的对象。 */
+export type ModelEntry = string | ModelEntryObject
+
 /** settings 文件里单个 provider 的原始（未解析）形状，全部可选。 */
 export interface RawProviderConfig {
   protocol?: ProviderProtocol
   baseURL?: string
   apiKey?: string
-  models?: string[]
+  models?: ModelEntry[]
   /**
-   * 上下文窗口(token)。供自动压缩判定占用比例;缺省取 DEFAULT_CONTEXT_WINDOW
-   * (128k 保守值)。provider 级共用 —— 同 provider 各 model 窗口差异大时拆条目。
+   * 上下文窗口(token),provider 级回退值。查找顺序:模型级条目 → 这里 →
+   * DEFAULT_CONTEXT_WINDOW。供自动压缩判定占用比例。
    */
   contextWindow?: number
 }
