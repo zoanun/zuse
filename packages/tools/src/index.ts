@@ -22,6 +22,7 @@ export {
   isTmuxCommand,
   isTmuxSocketInitialized,
 } from './tmux-isolation.js'
+export { createSnapshotStore, cwdSlug, type SnapshotStore } from './snapshot.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'
