@@ -196,6 +196,15 @@ const resume: SlashCommand = {
   },
 }
 
+const compact: SlashCommand = {
+  name: 'compact',
+  description: '压缩对话历史:老回合折叠为摘要,保留最近回合',
+  run: async ({ compact: doCompact, print }) => {
+    print('压缩中…(调用模型生成摘要)')
+    print(await doCompact())
+  },
+}
+
 const model: SlashCommand = {
   name: 'model',
   description: '查看或切换模型：/model [<provider/model>] [--save]',
@@ -296,7 +305,7 @@ const terminalSetup: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, model, tools, history, terminalSetup]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, compact, model, tools, history, terminalSetup]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {

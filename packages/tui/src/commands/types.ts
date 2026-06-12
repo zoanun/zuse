@@ -19,6 +19,8 @@ export interface CommandContext {
   adoptSession: (conversation: Conversation, id: string, createdAt: string) => void
   /** 会话工作目录(自动会话按它分组;/resume 列本目录的会话)。 */
   cwd: string
+  /** 压缩账本:老历史折叠为摘要,保留最近回合(用于 /compact)。返回结果说明。 */
+  compact: () => Promise<string>
   /** 本会话实际生效的三层合并设置（供 /config 等只读展示用）。 */
   settings: ResolvedSettings
   /** 当前选中的 model 名（用于 /model 列表标星）。 */

@@ -17,6 +17,11 @@ import {
   resolveModelSelection,
   resolveFailoverMode,
   buildSystemPrompt,
+  findCompactionCut,
+  applyCompaction,
+  summarizeForCompaction,
+  DEFAULT_CONTEXT_WINDOW,
+  COMPACTION_THRESHOLD,
   DEFAULT_PROVIDER_ID,
   type ModelClient,
   type ToolRegistry,
@@ -140,6 +145,9 @@ export function useConversation({
   // 本会话判不可用的 provider/model(key=`pid/model` → 原因)。仅内存,进程重启即清。
   // 供 /model picker 灰显标注,以及 auto 模式选下家时跳过。
   const badModelsRef = useRef<Map<string, ErrorCategory>>(new Map())
+  // 上一回合实测的窗口占用(input + cache 读,见 message-stop 处)。放 ref:
+  // sendMessage 闭包要在下一回合开头读它判定自动压缩,state 快照会陈旧。
+  const contextTokensRef = useRef<number | undefined>(undefined)
 
   // client ref —— 持有当前激活的 ModelClient，支持运行时热替换。
   // 用 ref 而非 state：client 本身是外部可变对象，不需要触发重渲染。
@@ -195,6 +203,27 @@ export function useConversation({
     setState((prev) => ({ ...prev, messages: prev.messages.map((m) => (m.id === id ? fn(m) : m)) }))
   }, [])
 
+  // 上下文压缩(Phase 10B):摘要替换老历史,保留最近回合。/compact 手动调;
+  // sendMessage 在占用越过阈值时自动调。失败抛出 —— 原账本不动,绝不半压。
+  // 只换账本不动屏幕:state.messages 是显示层 scrollback,压缩前的对话仍可回看。
+  const compactConversation = useCallback(async (): Promise<string> => {
+    const conv = conversationRef.current
+    const cut = findCompactionCut(conv.getMessages())
+    if (cut === null) return '历史太短,无需压缩。'
+    const client = clientRef.current
+    if (!client) throw new Error('客户端未初始化,无法压缩。')
+    const before = conv.length
+    const summary = await summarizeForCompaction(client, conv.getMessages().slice(0, cut), {
+      model: client.getModel(),
+      max_tokens: maxTokens,
+    })
+    conversationRef.current = applyCompaction(conv, summary, cut)
+    // 压缩后窗口占用未知(下一回合实测),先清掉,免得旧值再次触发自动压缩。
+    contextTokensRef.current = undefined
+    setState((prev) => ({ ...prev, contextTokens: undefined }))
+    return `已压缩:账本 ${before} → ${conversationRef.current.length} 条消息(前 ${cut} 条折叠为摘要)。`
+  }, [maxTokens])
+
   const sendMessage = useCallback(
     async (text: string, displayText?: string, pasteFiles?: Record<number, string>, opts?: { isResend?: boolean }) => {
       // client 尚未初始化（effect 还未运行或初始化失败）。
@@ -216,6 +245,26 @@ export function useConversation({
         }))
       } else {
         setState((prev) => ({ ...prev, isThinking: true }))
+      }
+
+      // 自动压缩(Phase 10B):上一回合实测占用越过窗口阈值 → 先压缩再发送。
+      // 重发(failover)跳过:刚失败的回合没增加占用,且重发要快。压缩失败不阻断
+      // 发送 —— 提示后照常发(可能炸窗,但「拒发」比「可能炸」更打断工作流)。
+      if (!opts?.isResend) {
+        const windowSize = settings.providers[currentProviderId]?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
+        if ((contextTokensRef.current ?? 0) > windowSize * COMPACTION_THRESHOLD) {
+          const notifyCompact = (msg: string): void =>
+            setState((prev) => ({
+              ...prev,
+              messages: [...prev.messages, { id: generateId(), role: 'system', text: msg, isStreaming: false }],
+            }))
+          notifyCompact(`上下文占用超过窗口 ${Math.round(COMPACTION_THRESHOLD * 100)}%,自动压缩中…`)
+          try {
+            notifyCompact(await compactConversation())
+          } catch (err) {
+            notifyCompact(`自动压缩失败,本回合按原历史发送:${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
       }
 
       const controller = new AbortController()
@@ -393,6 +442,7 @@ export function useConversation({
 
         // 回合结束。runAgent 此时已把整个回合提交进账本（成功时）或什么都
         // 没提交（出错时），所以直接从它读取总计。
+        contextTokensRef.current = lastInputTokens ?? contextTokensRef.current
         setState((prev) => ({
           ...prev,
           isThinking: false,
@@ -465,7 +515,7 @@ export function useConversation({
         abortRef.current = null
       }
     },
-    [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel],
+    [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel, compactConversation],
   )
 
   const clear = useCallback(() => {
@@ -474,6 +524,7 @@ export function useConversation({
     // 新对话写新文件,不覆写旧会话。
     sessionIdRef.current = newSessionId()
     sessionCreatedAtRef.current = new Date().toISOString()
+    contextTokensRef.current = undefined
     // 整体替换消息 → 自增 generation 令 <Static> remount，不再沿用旧会话的高水位。
     setState((prev) => ({
       messages: [],
@@ -606,6 +657,7 @@ export function useConversation({
         load,
         adoptSession,
         cwd,
+        compact: compactConversation,
         settings,
         currentModel,
         currentProviderId,
@@ -626,6 +678,7 @@ export function useConversation({
       load,
       adoptSession,
       cwd,
+      compactConversation,
       settings,
       currentModel,
       currentProviderId,
