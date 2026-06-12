@@ -625,6 +625,21 @@ TDD,新增 10 断言点,820 用例全绿。坏 JSON tool_use 回喂归 Phase 11,
 - 与 Phase 4 已做的 Read `MAX_OUTPUT_CHARS` / Grep 分页**归一到同一套塑形逻辑**，别各 truncate 各的。
 - 验证：喂一个超大输出（如 5000 行文件 / 10MB stdout），断言模型拿到的是可读摘要 + 关键首尾，且没炸 token 预算。
 
+### ✅ 已实现（2026-06-12）
+
+审计后把「归一」精确化为**同一策略族而非同一个函数**:可寻址输出(Read 行窗口 /
+Grep head_limit+offset / Glob 条数上限)分页+续读指引已是正确塑形,不动;**不可寻址
+blob**(Bash stdout、WebFetch 正文)归一到新模块 `packages/tools/src/truncate.ts`——
+`shapeHeadTail`(整段)与 `StreamShaper`(流式,内存恒有界:head 缓冲 + tail 字符串
+环形缓冲),head/tail 均行边界收口(让步上限预算 20%),统一 `[truncated: 总量/首尾
+尺寸/落盘路径]` marker。**Bash** 从「30k 触顶丢弃全部尾部」(测试失败摘要、报错堆栈
+恰在尾部)改为 head 10k + tail 20k 尾重头轻,截断时**完整输出落盘** `~/.zuse/tool-output/`
+(总量首次越过 headChars 即懒落盘——再晚 tail 环开始丢字符就不全;未触顶删白开文件;
+落盘失败优雅降级),模型用 Read/Grep(自带分页)续查——把不可寻址转化成可寻址。
+**WebFetch** 换共享 shapeHeadTail 只留头(尾部多为页脚杂讯),中文注记换统一英文 marker。
+设计与决策见 spec [→](../specs/2026-06-12-zuse-output-shaping-design.md)。TDD,
+新增 11 用例(truncate 单测 9 + Bash 集成 2),831 用例全绿。spill 文件自动清理记为后续优化。
+
 ---
 
 ## Phase 10: 会话管理与上下文压缩

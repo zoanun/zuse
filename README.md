@@ -6,6 +6,12 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 9: Done. 输出整形(Feedback Shaping)。可寻址输出(Read/Grep/Glob)维持分页+
+续读指引;不可寻址 blob 归一到 `truncate.ts`:head+tail 行边界截断、统一
+`[truncated: …]` marker。Bash 从「30k 触顶丢尾」(报错堆栈恰在尾部)改为 head 10k +
+tail 20k,截断时完整输出落盘 `~/.zuse/tool-output/`,模型用 Read/Grep 续查;流式塑形
+内存恒有界。WebFetch 共享同一模块只留头。下一步:Phase 10 会话管理与上下文压缩。
+
 Phase 8: Done. 错误回传契约(Observation Contract)。工具交还给模型的一切都是写给
 模型读的 observation:失败不抛裸异常、不回 stack trace,带具体入参回显与**下一步
 指令**(重读文件 / 换工具 / 改入参 / 别再重试)。本期收口:Unknown tool 列可用工具
