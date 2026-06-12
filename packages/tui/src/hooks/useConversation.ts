@@ -17,6 +17,7 @@ import {
   resolveModelSelection,
   resolveFailoverMode,
   buildSystemPrompt,
+  loadPromptSections,
   findCompactionCut,
   applyCompaction,
   summarizeForCompaction,
@@ -172,18 +173,23 @@ export function useConversation({
   // /model 交互式选择器是否打开；打开时 App 渲染选择器、收起输入框。
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
 
-  // 系统提示词在挂载时拼一次：身份提示词 + 真实运行环境（平台/shell/目录/日期）。
+  // 系统提示词在挂载时拼一次：身份提示词 + 真实运行环境（平台/shell/目录/日期）
+  // + 常驻指令(SYSTEM.md/ZUSE.md/MEMORY.md,Phase 13)。
   // 没有环境块时模型只能凭训练惯性假设 Unix，在 Windows 上张口就 pwd/ls 而报错。
-  // cwd 整个会话不变，故只随它记忆；环境随机器而变，所以不同系统拼出的内容不同。
+  // cwd 整个会话不变，故只随它记忆;指令文件只在启动读一次(系统提示词稳定才有
+  // prompt cache 命中,会话中途改 ZUSE.md 不热加载,spec D5)。
   const systemPrompt = useMemo(
     () =>
-      buildSystemPrompt({
-        platform: process.platform,
-        osVersion: os.release(),
-        shell: getShellLabel(),
-        cwd,
-        date: new Date().toISOString().slice(0, 10),
-      }),
+      buildSystemPrompt(
+        {
+          platform: process.platform,
+          osVersion: os.release(),
+          shell: getShellLabel(),
+          cwd,
+          date: new Date().toISOString().slice(0, 10),
+        },
+        loadPromptSections(os.homedir(), cwd),
+      ),
     [cwd],
   )
 

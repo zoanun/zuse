@@ -50,7 +50,10 @@ export interface AgentEnvironment {
  * 环境随机器而变（平台/shell/目录/日期都是运行时实测），所以这段在不同系统上
  * 内容不同 —— 这正是目的：让提示词如实反映模型当前所在的系统。
  */
-export function buildSystemPrompt(env: AgentEnvironment): string {
+export function buildSystemPrompt(
+  env: AgentEnvironment,
+  sections: Array<{ title: string; content: string }> = [],
+): string {
   const block = [
     'Environment:',
     `- Operating system: ${env.platform}${env.osVersion ? ` (${env.osVersion})` : ''}`,
@@ -58,5 +61,8 @@ export function buildSystemPrompt(env: AgentEnvironment): string {
     `- Working directory: ${env.cwd}`,
     `- Today's date: ${env.date}`,
   ].join('\n')
-  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}`
+  // 附加段(Phase 13:SYSTEM.md / ZUSE.md / MEMORY.md):带 ## 来源标头追加在
+  // 环境块之后。无附加段时输出与历史行为字节一致(prompt cache 前缀不抖动)。
+  const extras = sections.map((s) => `\n\n## ${s.title}\n${s.content}`).join('')
+  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${extras}`
 }
