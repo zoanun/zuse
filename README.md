@@ -6,6 +6,13 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 10: Done. 会话管理与上下文压缩。自动会话按 cwd 分组存
+`~/.zuse/sessions/auto/`,每回合自动保存;`zuse --continue` 续接最新会话,
+`--resume <序号>` 指定续接,会话内 `/resume` 列表续接,`/clear` 换新会话不覆写旧
+历史。压缩:`/compact` 手动 / 占用越过 provider `contextWindow`(缺省 128k)的 80%
+自动——老回合折叠为结构化摘要,保留最近 2 个真实回合,切点永不劈开 tool_use/
+tool_result 配对;摘要失败绝不半压。下一步:Phase 11 鲁棒性与恢复。
+
 Phase 9: Done. 输出整形(Feedback Shaping)。可寻址输出(Read/Grep/Glob)维持分页+
 续读指引;不可寻址 blob 归一到 `truncate.ts`:head+tail 行边界截断、统一
 `[truncated: …]` marker。Bash 从「30k 触顶丢尾」(报错堆栈恰在尾部)改为 head 10k +

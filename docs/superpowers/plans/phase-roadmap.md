@@ -675,6 +675,26 @@ blob**(Bash stdout、WebFetch 正文)归一到新模块 `packages/tools/src/trun
 - Token Budget分配
 - 压缩策略: keep_recent_n + summarize_middle
 
+### ✅ 已实现（2026-06-12）
+
+**A. 会话管理**:自动会话存 `~/.zuse/sessions/auto/<cwd-slug>/<session-id>.json`
+(SessionRecord v2 带 cwd/createdAt/updatedAt;命名存档 /save /load 的 v1 原样保留)。
+每回合提交后 fire-and-forget autosave(空会话不落盘、失败静默);/clear 换新会话 id
+(旧历史保留可续接);`--continue` 载最新、`--resume <序号|id>` 指定续接(沿用 id 续写
+同一文件)、`--resume` 无参打印列表;会话内 `/resume` 列表+续接。列表按 updatedAt
+倒序、损坏文件跳过。**有意不做**启动交互式选择器(记 UI backlog)。
+
+**B. 上下文压缩**:`packages/core/src/compaction.ts`——`findCompactionCut` 只认
+「user 且首块 text」的真实回合起点(tool_result 回填不算,切点永不劈开 tool 配对),
+保留最近 2 个回合;`summarizeForCompaction` 单独请求生成结构化摘要(目标/决策/改动
+文件/未完成/约束),失败抛出绝不半压;`applyCompaction` 摘要替换老历史,totalUsage
+不清零(成本账非窗口账)。窗口占用用**上一回合实测** input+cache 读(不估算),
+provider 配 `contextWindow`(缺省 128k 保守值),占用 >80% 在下一次 sendMessage
+开头自动压缩(重发跳过;失败提示后照原历史发送);`/compact` 手动随时可压。压缩
+只换账本不动屏幕 scrollback。设计见 spec
+[→](../specs/2026-06-12-zuse-session-and-compaction-design.md)。TDD,新增 20 用例
+(sessionStore 11 + compaction 9),851 用例全绿。
+
 ---
 
 ## Phase 11: 鲁棒性与恢复（Fault Injection & Recovery）
