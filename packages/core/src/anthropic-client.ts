@@ -76,10 +76,14 @@ export class AnthropicClient implements ModelClient {
   private clientPromise?: Promise<Anthropic>
   private model: string
   private provider: ProviderConfig
+  /** 单测注入的 sdk;存在时直接用,跳过懒加载(镜像 OpenAIClient 的可测性口子)。 */
+  private injectedClient?: Anthropic
 
-  constructor(provider: ProviderConfig, model: string) {
+  /** sdk 可注入,便于单测;省略时首次发请求时按 provider 配置懒加载并 new 一个。 */
+  constructor(provider: ProviderConfig, model: string, sdk?: Anthropic) {
     this.provider = provider
     this.model = model
+    this.injectedClient = sdk
   }
 
   getModel(): string {
@@ -92,6 +96,7 @@ export class AnthropicClient implements ModelClient {
    * import() 结果记忆化，同一 client 只构建一次实例。
    */
   private getClient(): Promise<Anthropic> {
+    if (this.injectedClient) return Promise.resolve(this.injectedClient)
     if (!this.clientPromise) {
       this.clientPromise = import('@anthropic-ai/sdk').then(
         ({ default: AnthropicSDK }) =>
