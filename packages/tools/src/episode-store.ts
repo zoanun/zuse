@@ -31,6 +31,19 @@ const MESSAGE_TEXT_CAP = 4_000
 const LIKE_SNIPPET_BEFORE = 60
 const LIKE_SNIPPET_AFTER = 90
 
+/** 命中锚点前后各带几条对话(对齐 Hermes session_search 的窗口语义,预算缩小)。 */
+const RECALL_CONTEXT_WINDOW = 2
+
+/** 上下文行的单条展示上限:邻居只是背景,不需要全文。 */
+const CONTEXT_LINE_CAP = 150
+
+/** 命中上下文里的一条消息;anchor=true 的那条是命中本身。 */
+export interface EpisodeContextLine {
+  role: string
+  text: string
+  anchor: boolean
+}
+
 export interface EpisodeHit {
   /** 会话 id(可用 /resume <id> 回看完整会话)。 */
   sessionId: string
@@ -39,6 +52,11 @@ export interface EpisodeHit {
   role: string
   /** 命中片段(FTS snippet 或 LIKE 截窗)。 */
   snippet: string
+  /**
+   * 锚点 ±RECALL_CONTEXT_WINDOW 条对话(按 msg_index 排序,含锚点自身)。
+   * 一句孤立的「对,就这么办」被搜到时,没有前后文等于没搜到。
+   */
+  context: EpisodeContextLine[]
 }
 
 export interface EpisodeStore {
@@ -168,6 +186,7 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
         session_id: string
         at: string
         role: string
+        msg_index: number
         snip: string
       }
 
@@ -177,7 +196,7 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
         try {
           rows = db
             .prepare(
-              `SELECT e.session_id, e.at, e.role,
+              `SELECT e.session_id, e.at, e.role, e.msg_index,
                       snippet(episodes_fts, 0, '', '', '…', 24) AS snip
                FROM episodes_fts f JOIN episodes e ON e.id = f.rowid
                WHERE episodes_fts MATCH ? AND e.slug = ? AND e.at >= ?
@@ -194,7 +213,7 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
         if (term) {
           const likeRows = db
             .prepare(
-              `SELECT session_id, at, role, text FROM episodes
+              `SELECT session_id, at, role, msg_index, text FROM episodes
                WHERE text LIKE ? AND slug = ? AND at >= ?
                ORDER BY at DESC LIMIT ?`,
             )
@@ -205,16 +224,39 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
             const end = Math.min(r.text.length, idx + term.length + LIKE_SNIPPET_AFTER)
             const snip =
               (start > 0 ? '…' : '') + r.text.slice(start, end) + (end < r.text.length ? '…' : '')
-            return { session_id: r.session_id, at: r.at, role: r.role, snip }
+            return { session_id: r.session_id, at: r.at, role: r.role, msg_index: r.msg_index, snip }
           })
         }
       }
-      return rows.map((r) => ({
-        sessionId: r.session_id,
-        at: r.at,
-        role: r.role,
-        snippet: r.snip.replace(/\s+/g, ' ').trim(),
-      }))
+
+      // 锚点 ±N 条上下文(只查 episodes,工具消息本就不在索引里)。
+      const ctxStmt = db.prepare(
+        `SELECT role, text, msg_index FROM episodes
+         WHERE session_id = ? AND msg_index BETWEEN ? AND ?
+         ORDER BY msg_index`,
+      )
+      return rows.map((r) => {
+        const neighbors = ctxStmt.all(
+          r.session_id,
+          r.msg_index - RECALL_CONTEXT_WINDOW,
+          r.msg_index + RECALL_CONTEXT_WINDOW,
+        ) as unknown as Array<{ role: string; text: string; msg_index: number }>
+        const context: EpisodeContextLine[] = neighbors.map((n) => {
+          const flat = n.text.replace(/\s+/g, ' ').trim()
+          return {
+            role: n.role,
+            text: flat.length > CONTEXT_LINE_CAP ? flat.slice(0, CONTEXT_LINE_CAP) + '…' : flat,
+            anchor: n.msg_index === r.msg_index,
+          }
+        })
+        return {
+          sessionId: r.session_id,
+          at: r.at,
+          role: r.role,
+          snippet: r.snip.replace(/\s+/g, ' ').trim(),
+          context,
+        }
+      })
     },
 
     close() {

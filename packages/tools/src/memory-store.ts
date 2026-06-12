@@ -209,6 +209,18 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
   }
 }
 
+/**
+ * 记忆年龄标注(对齐 CC 的 memoryAge):≥1 天才标。旧记忆按当下状态行动前该核对
+ * 时效 —— 「三个月前的约定」和「昨天的约定」对模型的置信度应该不同。
+ * now 可注入,纯函数便于测试。
+ */
+export function memoryAgeNote(createdAt: string, now = Date.now()): string {
+  const ts = Date.parse(createdAt)
+  if (!Number.isFinite(ts)) return ''
+  const days = Math.floor((now - ts) / 86_400_000)
+  return days >= 1 ? `${days} 天前` : ''
+}
+
 /** 投影里单条内容的展示上限。 */
 const PROJECTION_LINE_CAP = 120
 
@@ -216,7 +228,7 @@ const PROJECTION_LINE_CAP = 120
  * MEMORY.md 投影(Phase 13D):按类型分组、每条一行带 id。db 是唯一真相源,
  * 此文件是生成物 —— 头部注明改了会被覆盖。
  */
-export function renderMemoryMarkdown(rows: MemoryRow[]): string {
+export function renderMemoryMarkdown(rows: MemoryRow[], now = Date.now()): string {
   const header =
     '<!-- 自动生成:此文件是 ~/.zuse/memory.db 的投影,手工修改会在下次记忆变更时被覆盖。 -->\n# Memory\n'
   if (rows.length === 0) {
@@ -228,7 +240,8 @@ export function renderMemoryMarkdown(rows: MemoryRow[]): string {
     const flat = (r.hook || r.content).replace(/\s+/g, ' ').trim()
     const capped = flat.length > PROJECTION_LINE_CAP ? flat.slice(0, PROJECTION_LINE_CAP) + '…' : flat
     const scope = r.project ? ` (${r.project})` : ''
-    return `- [${r.id}] ${capped}${scope}`
+    const age = memoryAgeNote(r.createdAt, now)
+    return `- [${r.id}] ${capped}${scope}${age ? ` · ${age}` : ''}`
   }
   const groups = MEMORY_TYPES.filter((t) => rows.some((r) => r.type === t)).map((t) => {
     const lines = rows.filter((r) => r.type === t).map(oneLine)

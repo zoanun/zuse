@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openMemoryStore, sanitizeFtsQuery, renderMemoryMarkdown, type MemoryStore } from './memory-store.js'
+import {
+  openMemoryStore,
+  sanitizeFtsQuery,
+  renderMemoryMarkdown,
+  memoryAgeNote,
+  type MemoryStore,
+  type MemoryRow,
+} from './memory-store.js'
 
 let dir: string
 let store: MemoryStore
@@ -139,6 +146,34 @@ describe('hook(索引行钩子)', () => {
     expect(rows[0]!.hook).toBe('') // 迁移补空 hook
     store.save('user', '新数据', '', '新钩子') // 迁移后可正常写入 hook
     expect(store.all()[1]!.hook).toBe('新钩子')
+  })
+})
+
+describe('memoryAgeNote(年龄标注)', () => {
+  const NOW = Date.parse('2026-06-12T12:00:00Z')
+
+  it('≥1 天才标注,当天不标', () => {
+    expect(memoryAgeNote('2026-06-12T08:00:00Z', NOW)).toBe('')
+    expect(memoryAgeNote('2026-06-10T12:00:00Z', NOW)).toBe('2 天前')
+    expect(memoryAgeNote('2026-04-26T12:00:00Z', NOW)).toBe('47 天前')
+  })
+
+  it('非法时间串返回空,不抛', () => {
+    expect(memoryAgeNote('not-a-date', NOW)).toBe('')
+  })
+
+  it('投影行带年龄后缀', () => {
+    const row: MemoryRow = {
+      id: 1,
+      type: 'project',
+      content: '旧约定',
+      project: 'p',
+      hook: '',
+      createdAt: '2026-05-12T12:00:00Z',
+      updatedAt: '2026-05-12T12:00:00Z',
+    }
+    const md = renderMemoryMarkdown([row], NOW)
+    expect(md).toContain('- [1] 旧约定 (p) · 31 天前')
   })
 })
 

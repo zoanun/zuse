@@ -13,10 +13,11 @@
 import { writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { Tool, ToolResult } from '@zuse/core'
+import { MEMORY_INDEX_CAP, type Tool, type ToolResult } from '@zuse/core'
 import {
   openMemoryStore,
   renderMemoryMarkdown,
+  memoryAgeNote,
   MEMORY_TYPES,
   type MemoryStore,
   type MemoryType,
@@ -50,7 +51,9 @@ interface MemoryInput {
 
 function formatRow(r: MemoryRow): string {
   const scope = r.project ? '' : ' (global)'
-  return `[${r.id}] (${r.type}${scope}) ${r.content}`
+  // 年龄标注:旧记忆提醒模型核对时效(对齐 CC 的 freshness note)。
+  const age = memoryAgeNote(r.createdAt)
+  return `[${r.id}] (${r.type}${scope}${age ? `, ${age}` : ''}) ${r.content}`
 }
 
 /**
@@ -139,8 +142,31 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
           if (!content) {
             return { output: 'Missing "content" — provide the fact to remember.', isError: true }
           }
-          // user 型强制全局:用户是谁与当前项目无关,跨项目共享。
           const hook = typeof inp.hook === 'string' ? inp.hook.trim() : ''
+          // 满容硬闸(对齐 Hermes 的容量语义):投影若将超过启动注入上限,拒绝保存、
+          // 要求先整理 —— 把维护压力放在写入那一刻;静默截断会让索引悄悄丢尾部。
+          const prospective = renderMemoryMarkdown([
+            ...s.all(),
+            {
+              id: 0,
+              type: type as MemoryType,
+              content,
+              project,
+              hook,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+          ])
+          if (prospective.length > MEMORY_INDEX_CAP) {
+            return {
+              output:
+                `Memory index is full (${prospective.length} chars > cap ${MEMORY_INDEX_CAP}). ` +
+                'Consolidate before saving: use action "list" to review, merge related memories into fewer entries ' +
+                '(save the merged one, then "delete" the originals), remove obsolete ones, then retry this save.',
+              isError: true,
+            }
+          }
+          // user 型强制全局:用户是谁与当前项目无关,跨项目共享。
           const row = s.save(type as MemoryType, content, type === 'user' ? '' : project, hook)
           reproject()
           return { output: `Saved memory [${row.id}] (${row.type}).` }
@@ -178,9 +204,14 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
               output: `No past conversation matched "${query}"${days ? ` in the last ${days} days` : ''}. Try different terms or a wider time range.`,
             }
           }
-          const lines = hits.map(
-            (h) => `[${h.at.slice(0, 16).replace('T', ' ')} 会话 ${h.sessionId}] ${h.role}: ${h.snippet}`,
-          )
+          // 每个命中渲染成一小块:标题行 + ±2 条上下文,锚点行用 ▶ 标记并展示命中片段。
+          const lines: string[] = []
+          for (const h of hits) {
+            lines.push(`[${h.at.slice(0, 16).replace('T', ' ')} 会话 ${h.sessionId}]`)
+            for (const c of h.context) {
+              lines.push(c.anchor ? `▶ ${c.role}: ${h.snippet || c.text}` : `  ${c.role}: ${c.text}`)
+            }
+          }
           lines.push('(完整会话可用 /resume <会话id> 回看)')
           return { output: lines.join('\n') }
         }

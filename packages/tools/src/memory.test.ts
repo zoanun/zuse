@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { Tool, ToolContext } from '@zuse/core'
 import { createFileTracker } from '@zuse/core'
 import { createMemoryTool } from './memory.js'
+import { openMemoryStore } from './memory-store.js'
 
 let dir: string
 let tool: Tool & { dispose: () => void }
@@ -83,6 +84,22 @@ describe('Memory 工具', () => {
     const bad = await tool.run({ action: 'delete', id: 99 }, ctx())
     expect(bad.isError).toBe(true)
     expect(bad.output).toContain('Existing ids: 2')
+  })
+
+  it('记忆索引满容时 save 被拒绝并要求先整理(Hermes 式硬闸,不静默截断)', async () => {
+    // 直接灌满库:80 条 × ~110 字符的 hook 行,投影必超 8k。
+    const s = openMemoryStore(join(dir, 'memory.db'))
+    for (let i = 0; i < 80; i++) {
+      s.save('project', `第 ${i} 条事实正文`, 'E--proj', 'h'.repeat(100))
+    }
+    s.close()
+    const res = await tool.run({ action: 'save', type: 'project', content: '再来一条' }, ctx())
+    expect(res.isError).toBe(true)
+    expect(res.output).toContain('full')
+    expect(res.output).toContain('delete') // 给出整理路径
+    // 确认真的没存进去。
+    const list = await tool.run({ action: 'list' }, ctx())
+    expect(list.output).not.toContain('再来一条')
   })
 
   it('未知 action 列出可用 action(observation contract)', async () => {

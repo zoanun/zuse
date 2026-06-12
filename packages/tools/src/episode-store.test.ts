@@ -51,6 +51,25 @@ describe('EpisodeStore.recall', () => {
     expect(hits[0]!.snippet).toContain('clean')
   })
 
+  it('命中带 ±2 条对话上下文,锚点标记(对齐 Hermes 的窗口语义)', () => {
+    writeSession('20260602-110000-aaaa', '2026-06-02T11:00:00Z', [
+      user('先聊点别的开场白'),
+      user('影子 git 怎么初始化?'),
+      assistant('用独立 --git-dir 配合 --work-tree。'),
+      user('那 restore 呢?'),
+      assistant('read-tree 加 checkout-index 加 clean 三连。'),
+    ])
+    const hits = store.recall('初始化', SLUG)
+    expect(hits).toHaveLength(1)
+    const ctx = hits[0]!.context
+    // 锚点是第 2 条(msg_index 1),±2 = 下标 0..3 共 4 条。
+    expect(ctx.length).toBe(4)
+    expect(ctx.filter((c) => c.anchor)).toHaveLength(1)
+    expect(ctx.find((c) => c.anchor)!.text).toContain('初始化')
+    expect(ctx[0]!.text).toContain('开场白') // 前文
+    expect(ctx[3]!.text).toContain('restore') // 后文
+  })
+
   it('中文检索可命中(trigram)', () => {
     writeSession('20260602-110000-aaaa', '2026-06-02T11:00:00Z', [user('我们讨论过上下文压缩的切点')])
     const hits = store.recall('上下文压缩', SLUG)
