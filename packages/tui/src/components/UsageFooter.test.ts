@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatTokens, contextRatioColor } from './UsageFooter.js'
+import { formatTokens, contextRatioColor, contextGlyph } from './UsageFooter.js'
 
 describe('formatTokens', () => {
   it('renders small numbers as-is', () => {
@@ -17,6 +17,22 @@ describe('formatTokens', () => {
   it('renders millions compactly', () => {
     expect(formatTokens(1_000_000)).toBe('1M')
     expect(formatTokens(1_048_576)).toBe('1.0M')
+  })
+})
+
+describe('contextGlyph', () => {
+  it('lights up the circle by quarters', () => {
+    expect(contextGlyph(0)).toBe('○')
+    expect(contextGlyph(0.1)).toBe('○')
+    expect(contextGlyph(0.25)).toBe('◔')
+    expect(contextGlyph(0.5)).toBe('◑')
+    expect(contextGlyph(0.7)).toBe('◕')
+    expect(contextGlyph(0.95)).toBe('●')
+  })
+
+  it('clamps out-of-range ratios', () => {
+    expect(contextGlyph(-0.5)).toBe('○')
+    expect(contextGlyph(1.5)).toBe('●')
   })
 })
 
