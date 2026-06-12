@@ -756,6 +756,16 @@ id 缺失合成兜底），agent 跳过权限闸与执行、合成 is_error tool
 - 与现有 staged 暂存的分工：暂存解决「本回合出错不落地」，本 Phase 解决「已落地的过去回合也能撤」。
 - 验证：让一个回合改了文件后再报错 → 断言 worktree 干净；再断言能把某个**已提交的**历史回合 revert 掉。
 
+### 📐 设计就绪（2026-06-12，实现待用户手写）
+
+设计与 TDD 实施计划已出，实现按本 Phase 的定位**由用户手写**：
+spec [→](../specs/2026-06-12-zuse-checkpoint-revert-design.md)（影子 git 选型、
+命令级机制、SessionRecord v3、/revert 语义、与压缩/续接的交互、D1–D7 决策表）、
+plan [→](../plans/2026-06-12-zuse-checkpoint-revert.md)（四阶段 TDD 步骤 + 测试清单）。
+设计上对原开发要点的两处修正：① 仅 pre-turn 快照（流后快照不值一倍开销，D2）；
+② **否决「回合出错自动回滚 worktree」**——出错≠用户想丢半成品，改为出错时提示
+可用 /revert，把决定权还给用户（D6）。
+
 ---
 
 ## Phase 13: 项目记忆
