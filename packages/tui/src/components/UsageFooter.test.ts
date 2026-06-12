@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatTokens, contextRatioColor, contextGauge } from './UsageFooter.js'
+import { formatTokens, contextRatioColor, contextGlyph } from './UsageFooter.js'
 
 describe('formatTokens', () => {
   it('renders small numbers as-is', () => {
@@ -20,20 +20,18 @@ describe('formatTokens', () => {
   })
 })
 
-describe('contextGauge', () => {
-  it('fills a row of circles, the partial one in quarter steps (16 档)', () => {
-    expect(contextGauge(0)).toBe('○○○○')
-    expect(contextGauge(0.06)).toBe('◔○○○') // 1/16 档就有可见变化
-    expect(contextGauge(0.2)).toBe('◕○○○')
-    expect(contextGauge(0.41)).toBe('●◕○○') // 0.41*16≈7 档 = 4+3
-    expect(contextGauge(0.5)).toBe('●●○○')
-    expect(contextGauge(0.7)).toBe('●●◕○')
-    expect(contextGauge(1)).toBe('●●●●')
+describe('contextGlyph', () => {
+  it('lights up the circle by quarters', () => {
+    expect(contextGlyph(0)).toBe('○')
+    expect(contextGlyph(0.25)).toBe('◔')
+    expect(contextGlyph(0.5)).toBe('◑')
+    expect(contextGlyph(0.7)).toBe('◕')
+    expect(contextGlyph(0.95)).toBe('●')
   })
 
   it('clamps out-of-range ratios', () => {
-    expect(contextGauge(-0.5)).toBe('○○○○')
-    expect(contextGauge(1.5)).toBe('●●●●')
+    expect(contextGlyph(-0.5)).toBe('○')
+    expect(contextGlyph(1.5)).toBe('●')
   })
 })
 

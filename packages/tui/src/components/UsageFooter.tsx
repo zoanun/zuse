@@ -34,19 +34,13 @@ export function contextRatioColor(ratio: number): string | undefined {
 }
 
 /**
- * 上下文占用圈(CC 风):一排小圈随占比逐个点亮。单个圆圈的填充字形只有
- * 四分之一档(○◔◑◕●,Unicode 没有更细的圆),所以用 4 个圈、每圈自身再按
- * 四分之一填充 —— 纯圆圈字形下做到 16 档。例:38% → ●◑○○,70% → ●●◕○。
+ * CC 风格的上下文占用圈:单个圆圈按占比点亮 ○ ◔ ◑ ◕ ●(四舍五入到最近的
+ * 四分之一档 —— Unicode 圆圈填充字形只有这五个,精确值看旁边的百分比)。
  */
-export function contextGauge(ratio: number, cells = 4): string {
+export function contextGlyph(ratio: number): string {
   const clamped = Math.min(Math.max(ratio, 0), 1)
-  const totalQuarters = Math.round(clamped * cells * 4)
-  let out = ''
-  for (let i = 0; i < cells; i++) {
-    const q = Math.min(Math.max(totalQuarters - i * 4, 0), 4)
-    out += ['○', '◔', '◑', '◕', '●'][q]!
-  }
-  return out
+  const quarters = Math.round(clamped * 4)
+  return ['○', '◔', '◑', '◕', '●'][quarters]!
 }
 
 /**
@@ -74,7 +68,7 @@ export function UsageFooter({ totalUsage, contextTokens, contextWindow, isThinki
     contextTokens === undefined
       ? undefined
       : ratio !== undefined
-        ? `${contextGauge(ratio)} ${formatTokens(contextTokens)} / ${formatTokens(contextWindow!)} (${Math.round(ratio * 100)}%)`
+        ? `${contextGlyph(ratio)} ${formatTokens(contextTokens)} / ${formatTokens(contextWindow!)} (${Math.round(ratio * 100)}%)`
         : `上下文 ${formatTokens(contextTokens)}`
 
   return (
