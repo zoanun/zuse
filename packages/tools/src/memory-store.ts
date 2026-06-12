@@ -56,6 +56,9 @@ export interface MemoryStore {
   remove(id: number): boolean
   /** 全量(MEMORY.md 投影用),id 升序。 */
   all(): MemoryRow[]
+  /** 元数据(如上次巩固时间);不存在返回 null。 */
+  getMeta(key: string): string | null
+  setMeta(key: string, value: string): void
   close(): void
 }
 
@@ -140,6 +143,11 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
       INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
       INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
     END;
+    -- 元数据键值(上次自动巩固时间等水位)。
+    CREATE TABLE IF NOT EXISTS memory_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `)
 
   return {
@@ -201,6 +209,19 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
     all() {
       const rows = db.prepare('SELECT * FROM memories ORDER BY id').all() as unknown as RawRow[]
       return rows.map(toRow)
+    },
+
+    getMeta(key) {
+      const row = db.prepare('SELECT value FROM memory_meta WHERE key = ?').get(key) as
+        | { value: string }
+        | undefined
+      return row?.value ?? null
+    },
+
+    setMeta(key, value) {
+      db.prepare(
+        'INSERT INTO memory_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      ).run(key, value)
     },
 
     close() {

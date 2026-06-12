@@ -30,6 +30,51 @@ function defaultMemoryMdPath(): string {
   return process.env.ZUSE_MEMORY_MD ?? join(homedir(), '.zuse', 'MEMORY.md')
 }
 
+/** MEMORY.md 投影写盘(工具闭包与巩固应用共用):best-effort,失败不丢数据。 */
+function writeProjection(store: MemoryStore, mdPath?: string): void {
+  try {
+    writeFileSync(mdPath ?? defaultMemoryMdPath(), renderMemoryMarkdown(store.all()), 'utf8')
+  } catch {
+    // 投影只是缓存,下次变更会重试。
+  }
+}
+
+/** 自动巩固的操作集(core parseConsolidationOps 的输出形状)。 */
+export interface ConsolidationApplyOps {
+  deletes: number[]
+  saves: Array<{ type: MemoryType; hook: string; content: string }>
+}
+
+/**
+ * 应用自动巩固操作(Phase 13,轻量 autoDream):save 在前、delete 在后 ——
+ * 合并的新条目先落地,中途失败也不丢旧数据;完成后重投影一次。
+ * **有意绕过满容闸**:巩固是净收缩操作,在接近满容时恰恰最需要执行,
+ * 走工具的 save 会被 ④ 的闸拒掉。
+ */
+export function applyMemoryConsolidation(
+  ops: ConsolidationApplyOps,
+  project: string,
+  opts: MemoryToolOptions = {},
+): { saved: number; deleted: number } {
+  const store = openMemoryStore(opts.dbPath)
+  try {
+    let saved = 0
+    for (const s of ops.saves) {
+      if (!s.content) continue
+      store.save(s.type, s.content, s.type === 'user' ? '' : project, s.hook)
+      saved++
+    }
+    let deleted = 0
+    for (const id of ops.deletes) {
+      if (store.remove(id)) deleted++
+    }
+    if (saved || deleted) writeProjection(store, opts.memoryMdPath)
+    return { saved, deleted }
+  } finally {
+    store.close()
+  }
+}
+
 export interface MemoryToolOptions {
   /** 记忆库文件路径(缺省 ~/.zuse/memory.db;测试注入)。 */
   dbPath?: string
@@ -78,11 +123,7 @@ export function createMemoryTool(project: string, opts: MemoryToolOptions = {}):
 
   /** 投影重建(D):best-effort,失败不影响记忆操作本身。 */
   const reproject = (): void => {
-    try {
-      writeFileSync(opts.memoryMdPath ?? defaultMemoryMdPath(), renderMemoryMarkdown(getStore().all()), 'utf8')
-    } catch {
-      // 投影只是缓存,下次变更会重试;丢一次不丢数据。
-    }
+    writeProjection(getStore(), opts.memoryMdPath)
   }
 
   return {

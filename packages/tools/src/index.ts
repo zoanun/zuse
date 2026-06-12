@@ -24,7 +24,7 @@ export {
   isTmuxSocketInitialized,
 } from './tmux-isolation.js'
 export { createSnapshotStore, cwdSlug, type SnapshotStore } from './snapshot.js'
-export { createMemoryTool } from './memory.js'
+export { createMemoryTool, applyMemoryConsolidation, type ConsolidationApplyOps } from './memory.js'
 export { openEpisodeStore, type EpisodeStore, type EpisodeHit } from './episode-store.js'
 export {
   openMemoryStore,

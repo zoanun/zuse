@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Tool, ToolContext } from '@zuse/core'
 import { createFileTracker } from '@zuse/core'
-import { createMemoryTool } from './memory.js'
+import { createMemoryTool, applyMemoryConsolidation } from './memory.js'
 import { openMemoryStore } from './memory-store.js'
 
 let dir: string
@@ -106,6 +106,48 @@ describe('Memory 工具', () => {
     const res = await tool.run({ action: 'wipe' }, ctx())
     expect(res.isError).toBe(true)
     expect(res.output).toContain('save, search, recall, list, delete')
+  })
+})
+
+describe('applyMemoryConsolidation(自动巩固应用)', () => {
+  it('合并场景:先存新条目再删旧条目,重投影一次', async () => {
+    const s = openMemoryStore(join(dir, 'memory.db'))
+    s.save('project', '用 pnpm', 'E--proj', '')
+    s.save('project', 'pnpm 管依赖', 'E--proj', '')
+    s.save('user', '保留的', '', '')
+    s.close()
+
+    const { saved, deleted } = applyMemoryConsolidation(
+      { saves: [{ type: 'project', hook: 'pnpm', content: '本项目统一用 pnpm 管依赖' }], deletes: [1, 2] },
+      'E--proj',
+      { dbPath: join(dir, 'memory.db'), memoryMdPath: mdPath() },
+    )
+    expect(saved).toBe(1)
+    expect(deleted).toBe(2)
+    const md = readFileSync(mdPath(), 'utf8')
+    expect(md).toContain('- [4] pnpm') // 合并的新条目(投影行用 hook)
+    expect(md).not.toContain('- [1]') // 旧条目已删
+    expect(md).toContain('保留的')
+  })
+
+  it('meta 水位读写往返(巩固时间防抖用)', () => {
+    const s = openMemoryStore(join(dir, 'memory.db'))
+    expect(s.getMeta('consolidated_at')).toBe(null)
+    s.setMeta('consolidated_at', '2026-06-12T12:00:00Z')
+    expect(s.getMeta('consolidated_at')).toBe('2026-06-12T12:00:00Z')
+    s.setMeta('consolidated_at', '2026-06-13T12:00:00Z') // 覆写
+    expect(s.getMeta('consolidated_at')).toBe('2026-06-13T12:00:00Z')
+    s.close()
+  })
+
+  it('删除不存在的 id 不计数也不抛;空操作不写投影', () => {
+    const res = applyMemoryConsolidation(
+      { saves: [], deletes: [99] },
+      'E--proj',
+      { dbPath: join(dir, 'memory.db'), memoryMdPath: mdPath() },
+    )
+    expect(res).toEqual({ saved: 0, deleted: 0 })
+    expect(existsSync(mdPath())).toBe(false)
   })
 })
 
