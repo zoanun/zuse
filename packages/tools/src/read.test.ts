@@ -44,6 +44,22 @@ describe('ReadTool', () => {
     const result = await ReadTool.run({ file_path: join(dir, 'nope.txt') }, ctx)
     expect(result.isError).toBe(true)
     expect(result.output).toMatch(/not found/i)
+    // 错误回传契约(Phase 8):给出定位手段,而不是只报"没有"。
+    expect(result.output).toContain('Glob')
+  })
+
+  it('rejects a binary file and does not mark it as read', async () => {
+    // 错误回传契约(Phase 8):二进制内容喂给模型只会是乱码,应拒读并指引换 Bash 检查;
+    // 且不 markRead——读到的不是真内容,不能给后续 Edit 发通行证。
+    const bin = join(dir, 'blob.bin')
+    await writeFile(bin, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0xff]))
+    const tracker = createFileTracker()
+    const freshCtx: ToolContext = { cwd: process.cwd(), signal: ctx.signal, tracker }
+    const result = await ReadTool.run({ file_path: bin }, freshCtx)
+    expect(result.isError).toBe(true)
+    expect(result.output).toMatch(/binary/i)
+    expect(result.output).toContain('Bash')
+    expect(tracker.getFingerprint(bin)).toBeUndefined()
   })
 
   it('returns is_error for a directory', async () => {

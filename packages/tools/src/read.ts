@@ -70,13 +70,35 @@ export const ReadTool: Tool = {
     try {
       info = await stat(absPath)
     } catch {
-      return { output: `File not found: ${input.file_path}`, isError: true }
+      return {
+        output: `File not found: ${input.file_path}. Check the path, or use Glob to locate the file.`,
+        isError: true,
+      }
     }
     if (info.isDirectory()) {
       return { output: `Path is a directory, not a file: ${input.file_path}`, isError: true }
     }
 
-    const raw = await readFile(absPath, 'utf8')
+    let raw: string
+    try {
+      raw = await readFile(absPath, 'utf8')
+    } catch (err) {
+      // stat 过了但 readFile 失败(EACCES/EBUSY 等):不裸抛给 agent 兜底层,
+      // 在这里变成带指引的 observation(错误回传契约,Phase 8)。
+      const msg = err instanceof Error ? err.message : String(err)
+      return {
+        output: `Failed to read ${input.file_path}: ${msg}. Check file permissions, or inspect it with Bash.`,
+        isError: true,
+      }
+    }
+    // 二进制检测:UTF-8 文本不含 NUL,含 NUL 即判二进制。乱码喂给模型毫无信号,
+    // 拒读并指引换 Bash 检查;也不 markRead(读到的不是真内容,不给 Edit 通行证)。
+    if (raw.includes('\0')) {
+      return {
+        output: `${input.file_path} appears to be a binary file; Read only supports text. Use Bash (e.g. \`file\`) to inspect it.`,
+        isError: true,
+      }
+    }
     // 登记"读的是哪个版本"（内容指纹），供 read-before-edit 校验（Phase 4）。空文件也算读过。
     ctx.tracker.markRead(absPath, fingerprintContent(raw))
     if (raw === '') {

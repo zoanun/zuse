@@ -295,12 +295,23 @@ export const BashTool: Tool = {
           ? output + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
           : output
         if (timedOut) {
-          finish({ output: `${body}\n[timed out after ${timeout}ms]`, isError: true })
+          // 错误回传契约(Phase 8):timeout 是模型自己可调的入参,点给它。
+          finish({
+            output: `${body}\n[timed out after ${timeout}ms; partial output above. Increase the timeout parameter for long-running commands]`,
+            isError: true,
+          })
         } else if (aborted) {
           finish({ output: `${body}\n[interrupted]`, isError: true })
         } else if (code === null) {
           // code 为 null 表示被信号杀死（段错误、被外部 kill 等），真正原因在 signal。
           finish({ output: `${body}\n[killed by signal: ${signal}]`, isError: true })
+        } else if (code === 127) {
+          // 127 = POSIX/git-bash 的"command not found",高频失因,点破并给下一步。
+          // 其余非零码不猜原因——stderr 已在 body 里,模型自己读。
+          finish({
+            output: `${body}\n[exit code: 127 — command not found. Check the spelling, install it, or use an absolute path]`,
+            isError: true,
+          })
         } else if (code !== 0) {
           finish({ output: `${body}\n[exit code: ${code}]`, isError: true })
         } else {

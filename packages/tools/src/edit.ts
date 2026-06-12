@@ -102,7 +102,13 @@ export const EditTool: Tool = {
     try {
       info = await stat(absPath)
     } catch {
-      return { output: `File not found: ${input.file_path}`, isError: true }
+      // 能走到这里说明 tracker 里有指纹(读过)但文件已不在:点破"读后被删"并给重建路径。
+      return {
+        output:
+          `File not found: ${input.file_path} (it existed when read but is gone now). ` +
+          'Re-check the path, or recreate it with Write.',
+        isError: true,
+      }
     }
     if (info.isDirectory()) {
       return { output: `Path is a directory, not a file: ${input.file_path}`, isError: true }
@@ -122,7 +128,12 @@ export const EditTool: Tool = {
 
     // 校验③：old_string 必须能定位。
     if (occurrences === 0) {
-      return { output: `old_string not found in ${input.file_path}.`, isError: true }
+      return {
+        output:
+          `old_string not found in ${input.file_path}. The file content may differ from what you ` +
+          'expect (check whitespace and indentation). Read the file again and copy the exact text.',
+        isError: true,
+      }
     }
     if (occurrences > 1 && !input.replace_all) {
       return {

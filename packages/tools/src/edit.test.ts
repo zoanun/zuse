@@ -86,6 +86,22 @@ describe('EditTool', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.output).toMatch(/not found/i)
+    // 错误回传契约(Phase 8):点破最常见失因(空白/缩进漂移)并给下一步(重读拷原文)。
+    expect(result.output).toContain('Read the file again')
+    expect(result.output).toMatch(/whitespace/i)
+  })
+
+  it('tells the model the file vanished after it was read', async () => {
+    await ReadTool.run({ file_path: filePath }, ctx)
+    await rm(filePath)
+    const result = await EditTool.run(
+      { file_path: filePath, old_string: 'const foo = 1', new_string: 'const foo = 2' },
+      ctx,
+    )
+    expect(result.isError).toBe(true)
+    // 错误回传契约(Phase 8):读过之后被删要点明,并给重建路径(Write)。
+    expect(result.output).toMatch(/not found/i)
+    expect(result.output).toContain('Write')
   })
 
   it('returns is_error when old_string equals new_string', async () => {

@@ -46,6 +46,17 @@ describe('BashTool', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.output).toMatch(/timed out/i)
+    // 错误回传契约(Phase 8):告诉模型 timeout 是它自己可调的入参。
+    expect(result.output).toContain('timeout parameter')
+  })
+
+  it('points out "command not found" on exit code 127', async () => {
+    // 127 是 POSIX/git-bash 一致的"命令不存在"退出码,直接 exit 127 跨平台稳定复现。
+    const result = await BashTool.run({ command: `node -e "process.exit(127)"` }, makeCtx())
+    expect(result.isError).toBe(true)
+    expect(result.output).toMatch(/exit code: 127/)
+    // 错误回传契约(Phase 8):点破高频失因并给下一步(查拼写/装它/绝对路径)。
+    expect(result.output).toMatch(/command not found/i)
   })
 
   it('is interrupted when the signal aborts', async () => {
