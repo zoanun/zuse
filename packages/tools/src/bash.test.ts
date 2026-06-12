@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { BashTool, getShellLabel, primeShellSnapshot } from './bash.js'
@@ -48,6 +49,47 @@ describe('BashTool', () => {
     expect(result.output).toMatch(/timed out/i)
     // 错误回传契约(Phase 8):告诉模型 timeout 是它自己可调的入参。
     expect(result.output).toContain('timeout parameter')
+  })
+
+  it('keeps head and tail of oversized output and spills the full output to disk', async () => {
+    // 输出整形(Phase 9):>30k 的输出应保留首尾、中段省略,完整输出落盘可供 Read/Grep。
+    const dir = mkdtempSync(path.join(tmpdir(), 'zuse-spill-'))
+    process.env.ZUSE_TOOL_OUTPUT_DIR = dir
+    try {
+      const script =
+        "console.log('HEAD-LINE'); for (let i = 0; i < 400; i++) console.log('mid-' + i + '-' + 'x'.repeat(95)); console.log('TAIL-LINE')"
+      const result = await BashTool.run({ command: `node -e "${script}"` }, makeCtx())
+      expect(result.isError).toBeFalsy()
+      expect(result.output).toContain('HEAD-LINE')
+      expect(result.output).toContain('TAIL-LINE')
+      expect(result.output).toMatch(/\[truncated: output was \d+ chars/)
+      // marker 指向落盘文件,文件含被省略的中段。
+      const m = result.output.match(/Full output: (.+?) — use Read or Grep/)
+      expect(m).not.toBeNull()
+      const spillPath = m![1]!
+      expect(spillPath.startsWith(dir)).toBe(true)
+      const full = await readFile(spillPath, 'utf8')
+      expect(full).toContain('HEAD-LINE')
+      expect(full).toContain('mid-200-')
+      expect(full).toContain('TAIL-LINE')
+    } finally {
+      delete process.env.ZUSE_TOOL_OUTPUT_DIR
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves small output untouched (no marker, no spill file)', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'zuse-nospill-'))
+    process.env.ZUSE_TOOL_OUTPUT_DIR = dir
+    try {
+      const result = await BashTool.run({ command: `node -e "console.log('tiny')"` }, makeCtx())
+      expect(result.isError).toBeFalsy()
+      expect(result.output).not.toContain('[truncated')
+      expect(readdirSync(dir)).toEqual([])
+    } finally {
+      delete process.env.ZUSE_TOOL_OUTPUT_DIR
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('points out "command not found" on exit code 127', async () => {

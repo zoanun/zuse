@@ -1,19 +1,30 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 import { findOnPath, killTree } from './util.js'
 import { ensureShellSnapshot } from './shell-snapshot.js'
 import { ensureTmuxSocket, getZuseTmuxEnv, isTmuxCommand } from './tmux-isolation.js'
+import { StreamShaper } from './truncate.js'
 
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
 /** 超时上限（毫秒）。 */
 const MAX_TIMEOUT = 600_000
-/** 合并输出的字符上限（让输出有界）。 */
-const MAX_OUTPUT = 30_000
+/**
+ * 合并输出的字符预算(让输出有界),head+tail 分配(Phase 9 输出整形)。
+ * 尾重头轻:coding agent 的高频场景是跑测试/构建,失败摘要与报错堆栈都在尾部;
+ * 头部留够看命令回显与早期输出即可。完整输出落盘见 spillDir()。
+ */
+const HEAD_CHARS = 10_000
+const TAIL_CHARS = 20_000
+
+/** 截断时完整输出的落盘目录(测试经 ZUSE_TOOL_OUTPUT_DIR 注入临时目录)。 */
+function spillDir(): string {
+  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? path.join(homedir(), '.zuse', 'tool-output')
+}
 
 /** git-bash 相对 Git 安装根目录的两种固定布局。 */
 function gitBashUnder(root: string): string | undefined {
@@ -199,7 +210,8 @@ export const BashTool: Tool = {
   name: 'Bash',
   description:
     'Run a shell command and return its combined stdout/stderr and exit code. ' +
-    'Use for one-off commands (builds, tests, git). Long output is truncated; commands time out.',
+    'Use for one-off commands (builds, tests, git). Long output keeps its head and tail ' +
+    '(the full output is saved to a file referenced in the result); commands time out.',
   inputSchema,
   specifierFor: (input: unknown): string | null => {
     // 返回 shell 命令字符串作为限定符；无则 null。
@@ -238,22 +250,17 @@ export const BashTool: Tool = {
         ...(childEnv ? { env: childEnv } : {}),
       })
 
-      let output = ''
-      let outputTruncated = false
       let timedOut = false
       let aborted = false
 
-      // 累加时即时封顶：到上限就停止追加，内存恒为 ~MAX_OUTPUT，而不是把整条流
-      // 都堆进内存、最后才截断（刷屏命令如 `yes`/`cat 大文件` 会先把进程撑爆）。
-      const append = (text: string): void => {
-        if (outputTruncated || text === '') return
-        if (output.length + text.length > MAX_OUTPUT) {
-          output += text.slice(0, MAX_OUTPUT - output.length)
-          outputTruncated = true
-        } else {
-          output += text
-        }
-      }
+      // 输出整形(Phase 9):head+tail 流式塑形,内存恒有界(刷屏命令如 `yes`/
+      // `cat 大文件` 不会撑爆进程);截断时完整输出落盘,模型可用 Read/Grep 续查。
+      const shaper = new StreamShaper({
+        headChars: HEAD_CHARS,
+        tailChars: TAIL_CHARS,
+        spill: { dir: spillDir(), prefix: 'bash' },
+      })
+      const append = (text: string): void => shaper.append(text)
 
       // 每条流各用一个 StringDecoder：多字节 UTF-8 码点跨 chunk 边界时，decoder 会
       // 缓存半个字符等下一块，避免 chunk.toString() 各自解码造成的乱码（中文/emoji）。
@@ -291,9 +298,7 @@ export const BashTool: Tool = {
         // 回写命令执行后的工作目录（cd 持久化）。即便超时/中断也读一次：进程被杀前
         // 可能已写入,读到就用,读不到自然跳过。
         if (capture) applyCapturedCwd(capture.file, ctx.setCwd)
-        const body = outputTruncated
-          ? output + `\n…[truncated: output exceeded ${MAX_OUTPUT} chars]`
-          : output
+        const body = shaper.finalize().body
         if (timedOut) {
           // 错误回传契约(Phase 8):timeout 是模型自己可调的入参,点给它。
           finish({
