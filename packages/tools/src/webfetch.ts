@@ -9,6 +9,7 @@ import { Readability } from '@mozilla/readability'
 import TurndownService from 'turndown'
 import { gfm } from 'turndown-plugin-gfm'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
+import { shapeHeadTail } from './truncate.js'
 
 /** 抓取超时（毫秒）。 */
 const FETCH_TIMEOUT_MS = 30_000
@@ -152,13 +153,13 @@ function formatOutput(title: string, url: string, content: string): string {
 }
 
 /**
- * 超过上限则截断并附提示。
- * 注意：作用于含抬头（# 标题 + URL）的最终 output，而非仅正文 ——
- * 目的是给「最终回喂给模型的总文本」设上限，抬头开销（通常 <200 字符）一并计入。
+ * 超过上限则截断并附统一 marker(Phase 9 输出整形,共享 shapeHeadTail)。
+ * 只留头不留尾:文章正文头部是信号,尾部多为页脚杂讯;不落盘(重抓有 15min 缓存,代价低)。
+ * 注意:作用于含抬头(# 标题 + URL)的最终 output,而非仅正文 ——
+ * 目的是给「最终回喂给模型的总文本」设上限,抬头开销(通常 <200 字符)一并计入。
  */
 function truncate(text: string): string {
-  if (text.length <= MAX_OUTPUT_CHARS) return text
-  return text.slice(0, MAX_OUTPUT_CHARS) + `\n\n[内容已截断，原文超过 ${MAX_OUTPUT_CHARS} 字符]`
+  return shapeHeadTail(text, { headChars: MAX_OUTPUT_CHARS, tailChars: 0 }).body
 }
 
 interface WebFetchInput {

@@ -189,7 +189,10 @@ describe('WebFetchTool.run', () => {
       new Response(huge, { status: 200, headers: { 'content-type': 'text/html' } }),
     )
     const res = await WebFetchTool.run({ url: 'https://example.com/big' }, makeCtx())
-    expect(res.output).toContain('已截断')
+    // 输出整形(Phase 9):统一 [truncated: …] marker(observation 读者是模型,
+    // 与其他工具的英文标记保持一致);正文截断只留头,尾部多为页脚杂讯。
+    expect(res.output).toMatch(/\[truncated: output was \d+ chars/)
+    expect(res.output).toMatch(/showing first \d+ chars\]/)
   })
 
   it('serves a second identical request from cache without re-fetching', async () => {
