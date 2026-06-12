@@ -7,6 +7,7 @@ import {
   buildSummaryPrompt,
   applyCompaction,
   summarizeForCompaction,
+  splitMemoryCandidates,
   resolveContextWindow,
   DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
@@ -25,6 +26,44 @@ function toolUse(id: string): Message {
 function toolResult(id: string, content = 'ok'): Message {
   return { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }
 }
+
+describe('splitMemoryCandidates(压缩前记忆冲刷)', () => {
+  it('拆出 MEMORY 行入候选,摘要剥掉这些行', () => {
+    const raw = '1. 目标:重构\n2. 决策:用 sqlite\nMEMORY: user|偏好中文|用户永远用中文交流\nMEMORY: project|用 pnpm|本项目用 pnpm 不用 npm'
+    const { summary, candidates } = splitMemoryCandidates(raw)
+    expect(candidates).toEqual([
+      { type: 'user', hook: '偏好中文', content: '用户永远用中文交流' },
+      { type: 'project', hook: '用 pnpm', content: '本项目用 pnpm 不用 npm' },
+    ])
+    expect(summary).not.toContain('MEMORY:')
+    expect(summary).toContain('决策:用 sqlite')
+  })
+
+  it('无 MEMORY 行时摘要原样、候选为空', () => {
+    const { summary, candidates } = splitMemoryCandidates('普通摘要\n第二行')
+    expect(candidates).toEqual([])
+    expect(summary).toBe('普通摘要\n第二行')
+  })
+
+  it('超出 cap(3)的候选丢弃,且所有 MEMORY 行都从摘要剥掉', () => {
+    const raw = ['MEMORY: user|a|A', 'MEMORY: user|b|B', 'MEMORY: user|c|C', 'MEMORY: user|d|D'].join('\n')
+    const { summary, candidates } = splitMemoryCandidates(raw)
+    expect(candidates).toHaveLength(3)
+    expect(summary).toBe('')
+  })
+
+  it('格式不匹配的行原样保留(坏 type、缺竖线)', () => {
+    const raw = 'MEMORY: banana|x|y\nMEMORY: user|缺内容段'
+    const { summary, candidates } = splitMemoryCandidates(raw)
+    expect(candidates).toEqual([])
+    expect(summary).toContain('banana')
+  })
+
+  it('buildSummaryPrompt 含 MEMORY 行格式指令', () => {
+    const prompt = buildSummaryPrompt([user('hi')])
+    expect(prompt).toContain('MEMORY: <type>|')
+  })
+})
 
 describe('findCompactionCut', () => {
   it('cuts at the keepTurns-th real user turn from the end', () => {

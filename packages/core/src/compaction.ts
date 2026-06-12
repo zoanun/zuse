@@ -100,10 +100,54 @@ export function buildSummaryPrompt(messages: Message[]): string {
     '4. 未完成事项\n' +
     '5. 用户明确提出的约束\n' +
     '只输出摘要本身,不要前言后语。\n\n' +
+    // 记忆冲刷(Phase 13,对照 OpenClaw memory flush 的轻量版):老历史即将被折叠,
+    // 摘要请求顺带抽取值得跨会话保留的持久事实 —— 不另起回合,零额外请求。
+    '另外:若对话中出现「跨会话仍然成立的持久事实」(用户偏好、被纠正过的做法、' +
+    '项目硬约束),在摘要末尾逐条追加,每条独占一行、最多 3 条,严格使用此格式' +
+    '(没有就不要输出任何 MEMORY 行):\n' +
+    'MEMORY: <type>|<一行要点>|<完整内容>\n' +
+    'type 取 user(用户偏好,跨项目)/project(本项目事实)/insight(经验教训)/reference(外部资源)之一。\n\n' +
     '<对话>\n' +
     transcript +
     '\n</对话>'
   )
+}
+
+/** 摘要里抽出的记忆候选(压缩前记忆冲刷)。 */
+export interface MemoryCandidate {
+  type: 'user' | 'project' | 'insight' | 'reference'
+  hook: string
+  content: string
+}
+
+/** 单次冲刷最多入库的候选数:摘要顺带抽取只该抓最重要的几条,多了多半是噪音。 */
+export const MEMORY_FLUSH_CAP = 3
+
+/**
+ * 从摘要文本里拆出 MEMORY 候选行:候选入库、摘要去掉这些行后入账本
+ * (留在摘要里是重复噪音)。格式不匹配的行原样保留;超出 cap 的候选丢弃。
+ */
+export function splitMemoryCandidates(summaryText: string): {
+  summary: string
+  candidates: MemoryCandidate[]
+} {
+  const candidates: MemoryCandidate[] = []
+  const kept: string[] = []
+  for (const line of summaryText.split('\n')) {
+    const m = /^MEMORY:\s*(user|project|insight|reference)\s*\|([^|]*)\|(.+)$/.exec(line.trim())
+    if (m) {
+      if (candidates.length < MEMORY_FLUSH_CAP) {
+        candidates.push({
+          type: m[1] as MemoryCandidate['type'],
+          hook: m[2]!.trim(),
+          content: m[3]!.trim(),
+        })
+      }
+      continue // 超 cap 的 MEMORY 行也从摘要里剥掉,不留半截协议噪音
+    }
+    kept.push(line)
+  }
+  return { summary: kept.join('\n').trim(), candidates }
 }
 
 /**
