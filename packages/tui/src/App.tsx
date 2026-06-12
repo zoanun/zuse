@@ -12,7 +12,7 @@ import { PermissionDialog } from './components/PermissionDialog.js'
 import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
-import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
+import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
 import { createDefaultRegistry, LspManager, primeShellSnapshot } from '@zuse/tools'
 import type { UIMessage } from './types.js'
 
@@ -204,6 +204,7 @@ export function App({ cwd, initialSession }: AppProps) {
       <UsageFooter
         totalUsage={state.totalUsage}
         contextTokens={state.contextTokens}
+        contextWindow={resolveContextWindow(resolved, currentProviderId, currentModel)}
         isThinking={state.isThinking}
       />
     </Box>
