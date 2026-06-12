@@ -39,6 +39,7 @@ interface MemoryInput {
   action?: unknown
   type?: unknown
   content?: unknown
+  hook?: unknown
   query?: unknown
   id?: unknown
 }
@@ -79,7 +80,7 @@ export function createMemoryTool(project: string, opts: MemoryToolOptions = {}):
     name: 'Memory',
     description: `Persistent cross-session memory. Saved memories survive restarts; an index of them (MEMORY.md) is loaded into your system prompt at session start.
 Actions:
-- save: store a durable fact. Requires "type" and "content". Types: user = who the user is / their preferences (global across projects); project = facts and constraints of this project; insight = lessons learned and corrections received (include why); reference = pointers to external resources (URLs, docs).
+- save: store a durable fact. Requires "type" and "content". Types: user = who the user is / their preferences (global across projects); project = facts and constraints of this project; insight = lessons learned and corrections received (include why); reference = pointers to external resources (URLs, docs). When "content" is longer than a sentence or two, also provide "hook": a one-line gist used as the memory's index entry — without it the index falls back to a blind prefix cut of the content.
 - search: full-text search memories visible to this project (its own + global). Requires "query".
 - list: list all memories visible to this project.
 - delete: remove an outdated or wrong memory by "id".
@@ -90,6 +91,7 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
         action: { type: 'string', enum: ['save', 'search', 'list', 'delete'] },
         type: { type: 'string', enum: [...MEMORY_TYPES], description: 'save 必填:记忆类型' },
         content: { type: 'string', description: 'save 必填:记忆内容' },
+        hook: { type: 'string', description: 'save 可选:一行式要点,用作 MEMORY.md 索引行;内容较长时必给' },
         query: { type: 'string', description: 'search 必填:检索词' },
         id: { type: 'number', description: 'delete 必填:记忆 id' },
       },
@@ -124,7 +126,8 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
             return { output: 'Missing "content" — provide the fact to remember.', isError: true }
           }
           // user 型强制全局:用户是谁与当前项目无关,跨项目共享。
-          const row = s.save(type as MemoryType, content, type === 'user' ? '' : project)
+          const hook = typeof inp.hook === 'string' ? inp.hook.trim() : ''
+          const row = s.save(type as MemoryType, content, type === 'user' ? '' : project, hook)
           reproject()
           return { output: `Saved memory [${row.id}] (${row.type}).` }
         }

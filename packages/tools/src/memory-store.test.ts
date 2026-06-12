@@ -92,6 +92,56 @@ describe('sanitizeFtsQuery', () => {
   })
 })
 
+describe('hook(索引行钩子)', () => {
+  it('save 带 hook 往返保留;投影行用 hook 而非正文前缀', () => {
+    store.save(
+      'insight',
+      '排查了两小时:vite 5.4 判定内置模块时会剥掉 node: 前缀查裸名清单,node:sqlite 这类仅限前缀的模块因此被当成 npm 包,解法是 process.getBuiltinModule。',
+      'p',
+      'vite5 不认 node:sqlite,用 process.getBuiltinModule 绕过',
+    )
+    const rows = store.all()
+    expect(rows[0]!.hook).toContain('getBuiltinModule')
+    const md = renderMemoryMarkdown(rows)
+    const line = md.split('\n').find((l) => l.startsWith('- [1]'))!
+    expect(line).toContain('vite5 不认 node:sqlite')
+    expect(line).not.toContain('排查了两小时') // 用钩子,不用正文前缀
+  })
+
+  it('无 hook 的记忆投影回退正文前缀截断(兼容旧数据)', () => {
+    store.save('user', 'x'.repeat(300), '')
+    const md = renderMemoryMarkdown(store.all())
+    const line = md.split('\n').find((l) => l.startsWith('- [1]'))!
+    expect(line).toContain('…')
+  })
+
+  it('老 schema(无 hook 列)的库重开时自动迁移,数据保留', () => {
+    store.close()
+    const oldDb = join(dir, 'old.db')
+    // 手工建一张 Phase 13 初版的表(无 hook 列)并塞一行。
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
+    const raw = new DatabaseSync(oldDb)
+    raw.exec(`CREATE TABLE memories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      type TEXT NOT NULL CHECK(type IN ('user','project','insight','reference')),
+      content TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`)
+    raw.prepare("INSERT INTO memories (type, content, project, created_at, updated_at) VALUES ('user', '老数据', '', 't', 't')").run()
+    raw.close()
+
+    store = openMemoryStore(oldDb)
+    const rows = store.all()
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.content).toBe('老数据')
+    expect(rows[0]!.hook).toBe('') // 迁移补空 hook
+    store.save('user', '新数据', '', '新钩子') // 迁移后可正常写入 hook
+    expect(store.all()[1]!.hook).toBe('新钩子')
+  })
+})
+
 describe('renderMemoryMarkdown(MEMORY.md 投影)', () => {
   it('按类型分组、每条一行带 id,文件头注明自动生成', () => {
     store.save('user', '用户偏好中文', '')

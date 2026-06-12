@@ -35,13 +35,19 @@ export interface MemoryRow {
   content: string
   /** cwd-slug;空串 = 全局(所有项目可见)。 */
   project: string
+  /**
+   * 索引行钩子:保存者(模型)写的一行式摘要,MEMORY.md 投影优先用它。
+   * 机械掐正文前缀会让「要点在 120 字符之后」的记忆在索引里不可发现;
+   * 写记忆的那一刻最清楚这条的要点是什么 —— 钩子由作者给,不靠机器猜。
+   */
+  hook: string
   createdAt: string
   updatedAt: string
 }
 
 export interface MemoryStore {
-  /** 保存一条记忆,返回完整行。project 空串 = 全局。 */
-  save(type: MemoryType, content: string, project: string): MemoryRow
+  /** 保存一条记忆,返回完整行。project 空串 = 全局;hook 为索引行钩子(可空,投影回退正文前缀)。 */
+  save(type: MemoryType, content: string, project: string, hook?: string): MemoryRow
   /** 全文检索,范围 = 指定项目 ∪ 全局。 */
   search(query: string, project: string, limit?: number): MemoryRow[]
   /** 列出指定项目 ∪ 全局的全部记忆。 */
@@ -76,6 +82,7 @@ interface RawRow {
   type: string
   content: string
   project: string
+  hook: string
   created_at: string
   updated_at: string
 }
@@ -86,6 +93,7 @@ function toRow(r: RawRow): MemoryRow {
     type: r.type as MemoryType,
     content: r.content,
     project: r.project,
+    hook: r.hook,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -94,6 +102,15 @@ function toRow(r: RawRow): MemoryRow {
 export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
   mkdirSync(dirname(dbPath), { recursive: true })
   const db = new (getSqlite().DatabaseSync)(dbPath)
+  // 迁移:Phase 13 初版的表没有 hook 列,老库重开时补列(默认空串,投影回退前缀)。
+  // CREATE TABLE IF NOT EXISTS 对已存在的表不生效,必须显式 ALTER。
+  const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get()
+  if (hasTable) {
+    const cols = db.prepare('PRAGMA table_info(memories)').all() as Array<{ name: string }>
+    if (!cols.some((c) => c.name === 'hook')) {
+      db.exec("ALTER TABLE memories ADD COLUMN hook TEXT NOT NULL DEFAULT ''")
+    }
+  }
   // schema 幂等:IF NOT EXISTS 全套,重开同一文件直接复用。
   db.exec(`
     -- AUTOINCREMENT:id 单调、绝不复用被删的值。记忆按 id 被模型引用(对话里、
@@ -103,6 +120,7 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
       type TEXT NOT NULL CHECK(type IN ('user','project','insight','reference')),
       content TEXT NOT NULL,
       project TEXT NOT NULL DEFAULT '',
+      hook TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -125,13 +143,15 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
   `)
 
   return {
-    save(type, content, project) {
+    save(type, content, project, hook = '') {
       const now = new Date().toISOString()
       const res = db
-        .prepare('INSERT INTO memories (type, content, project, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-        .run(type, content, project, now, now)
+        .prepare(
+          'INSERT INTO memories (type, content, project, hook, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .run(type, content, project, hook, now, now)
       const id = Number(res.lastInsertRowid)
-      return { id, type, content, project, createdAt: now, updatedAt: now }
+      return { id, type, content, project, hook, createdAt: now, updatedAt: now }
     },
 
     search(query, project, limit = 10) {
@@ -203,7 +223,9 @@ export function renderMemoryMarkdown(rows: MemoryRow[]): string {
     return `${header}\n(还没有任何记忆。模型可用 Memory 工具保存。)\n`
   }
   const oneLine = (r: MemoryRow): string => {
-    const flat = r.content.replace(/\s+/g, ' ').trim()
+    // 钩子优先:作者(模型)在保存时最清楚这条记忆的要点;机械掐正文前缀会让
+    // 「要点在截断之后」的记忆在索引里不可发现。无钩子(旧数据)回退前缀截断。
+    const flat = (r.hook || r.content).replace(/\s+/g, ' ').trim()
     const capped = flat.length > PROJECTION_LINE_CAP ? flat.slice(0, PROJECTION_LINE_CAP) + '…' : flat
     const scope = r.project ? ` (${r.project})` : ''
     return `- [${r.id}] ${capped}${scope}`
