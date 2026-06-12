@@ -1,0 +1,104 @@
+/**
+ * 记忆自动巩固(Phase 13,轻量 autoDream)—— 纯函数层:门槛判定 / 提示词 / 解析。
+ *
+ * 对照:CC 的 autoDream 是四阶段子代理(自己 ls/读文件/写文件,≥24h 且 ≥5 会话);
+ * OpenClaw 的 Dreaming 是三阶段 cron + 六维评分。zuse 取轻量版:单次无工具请求,
+ * 模型读「全部记忆的清单」,输出 DELETE/SAVE 操作行,由 harness 确定性应用 ——
+ * 不给巩固代理任何工具权限,出错面收敛到「解析不出操作 = 什么都不做」。
+ *
+ * 触发门槛(shouldConsolidateMemories):投影体积接近启动注入上限才值得整理
+ * (太早整理是浪费请求),且距上次 ≥24h(防抖)。
+ */
+
+/** 距上次巩固的最小间隔。 */
+export const CONSOLIDATION_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+/** 投影体积超过注入上限的这个比例才触发(8k × 0.7 ≈ 5.6k)。 */
+export const CONSOLIDATION_PRESSURE_RATIO = 0.7
+
+/** 单次巩固最多删除的条数:解析层的安全帽,防一次坏输出清空记忆库。 */
+export const CONSOLIDATION_MAX_DELETES = 20
+
+/** 巩固输入的最小行形状(结构化定义在 tools 的 MemoryRow;core 不反向依赖)。 */
+export interface ConsolidationMemory {
+  id: number
+  type: string
+  content: string
+  hook: string
+  project: string
+  createdAt: string
+}
+
+export interface ConsolidationOps {
+  deletes: number[]
+  saves: Array<{ type: 'user' | 'project' | 'insight' | 'reference'; hook: string; content: string }>
+}
+
+/**
+ * 是否触发自动巩固。projectionChars = 当前 MEMORY.md 投影长度;
+ * indexCap = 启动注入上限(MEMORY_INDEX_CAP);lastRunAt = 上次巩固时间(ISO,无则 null)。
+ */
+export function shouldConsolidateMemories(opts: {
+  projectionChars: number
+  indexCap: number
+  lastRunAt: string | null
+  now?: number
+}): boolean {
+  const now = opts.now ?? Date.now()
+  if (opts.projectionChars < opts.indexCap * CONSOLIDATION_PRESSURE_RATIO) return false
+  if (opts.lastRunAt) {
+    const last = Date.parse(opts.lastRunAt)
+    if (Number.isFinite(last) && now - last < CONSOLIDATION_MIN_INTERVAL_MS) return false
+  }
+  return true
+}
+
+/** 巩固请求的提示词:全量记忆清单 + 操作行协议。 */
+export function buildConsolidationPrompt(memories: ConsolidationMemory[]): string {
+  const lines = memories.map((m) => {
+    const scope = m.project ? m.project : 'global'
+    const hook = m.hook ? ` 要点:${m.hook}` : ''
+    return `[${m.id}] (${m.type}, ${scope}, ${m.createdAt.slice(0, 10)})${hook} 内容:${m.content}`
+  })
+  return (
+    '下面是一个 AI 助手的长期记忆清单。请整理它:合并重复或高度相近的条目、' +
+    '删除已过时或互相矛盾的条目,让清单更精炼。规则:\n' +
+    '- 删除某条:输出一行 DELETE <id>\n' +
+    '- 合并若干条为一条新记忆:先输出新条目 SAVE <type>|<一行要点>|<完整内容>,' +
+    '再对被合并的旧条目逐条输出 DELETE <id>\n' +
+    '- type 取 user/project/insight/reference 之一\n' +
+    '- 不需要动的条目不要输出任何内容;没有可整理的就只输出 NOOP\n' +
+    '- 宁可保守:拿不准的条目一律保留\n' +
+    '只输出操作行,不要解释。\n\n' +
+    '<记忆清单>\n' +
+    lines.join('\n') +
+    '\n</记忆清单>'
+  )
+}
+
+/**
+ * 解析巩固输出为操作集。格式不匹配的行忽略;DELETE 超过安全帽时**整体放弃**
+ * (返回空操作)——一次输出敢删 20+ 条,大概率是模型跑飞了,宁可不动。
+ */
+export function parseConsolidationOps(text: string): ConsolidationOps {
+  const deletes: number[] = []
+  const saves: ConsolidationOps['saves'] = []
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    const del = /^DELETE\s+(\d+)$/.exec(line)
+    if (del) {
+      deletes.push(Number(del[1]))
+      continue
+    }
+    const save = /^SAVE\s+(user|project|insight|reference)\s*\|([^|]*)\|(.+)$/.exec(line)
+    if (save) {
+      saves.push({
+        type: save[1] as ConsolidationOps['saves'][number]['type'],
+        hook: save[2]!.trim(),
+        content: save[3]!.trim(),
+      })
+    }
+  }
+  if (deletes.length > CONSOLIDATION_MAX_DELETES) return { deletes: [], saves: [] }
+  return { deletes: [...new Set(deletes)], saves }
+}
