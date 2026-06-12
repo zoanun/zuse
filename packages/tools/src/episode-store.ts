@@ -2,8 +2,10 @@
  * 情景记忆索引(Phase 13.5)—— 历史会话 transcript 的全文检索。
  *
  * 与 memory-store(语义记忆:蒸馏后的结论)互补:这里回答「我们某天讨论过什么」
- * —— 检索的是对话原文。原始数据 = Phase 10A 落盘的自动会话文件
- * (`~/.zuse/sessions/auto/<slug>/<id>.json`),本模块不另存正文,只建 FTS 索引。
+ * —— 检索的是对话原文。真相源 = Phase 10A 落盘的自动会话文件
+ * (`~/.zuse/sessions/auto/<slug>/<id>.json`);episodes 表存被索引消息的**文本副本**
+ * (FTS5 external-content 的 snippet/查询验证都要随手读到原文),它是**可重建的缓存**
+ * —— 删掉 db 零丢失,下次 recall 按水位从 JSON 全量重建。
  *
  * 索引时机:**recall 时懒建 + 按 updatedAt 增量**(spec 13.5)。不在 autosave 时
  * 同步建 —— 那是每回合的写放大,而 recall 是低频操作;代价是首次 recall 略慢
