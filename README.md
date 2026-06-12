@@ -6,6 +6,14 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 12: Done. 检查点与回滚。影子 git(独立 --git-dir 存 `~/.zuse/snapshots/`,
+与项目 .git 完全隔离)每个用户回合开始前自动打快照,检查点随会话记录(v3)持久化、
+压缩时下标联动、/resume 跨进程带回。`/revert` 列检查点;`/revert <序号>` 先展示
+diffStat 改动范围、显式 `--yes` 确认后执行——工作区精确回到该回合开始前(改的
+复原/删的复活/新建的删掉,.gitignore 的不动)+ 对话截断到该回合前。回合出错时
+提示可用 /revert 撤销半截文件改动(有意不自动回滚)。git 不可用全程优雅降级。
+下一步:Phase 13 项目记忆。
+
 Phase 11: Done. 鲁棒性与恢复(故障注入)。审计确认 Esc 取消/流空闲守卫/429+5xx
 退避重试前期已落,本期收口:**坏 JSON tool_use 从「error 作废整回合」改为回喂
 模型自纠**——client 产出带 `invalid_args` 的 tool-use(input `{}` 占位可重放),

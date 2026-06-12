@@ -756,15 +756,24 @@ id 缺失合成兜底），agent 跳过权限闸与执行、合成 is_error tool
 - 与现有 staged 暂存的分工：暂存解决「本回合出错不落地」，本 Phase 解决「已落地的过去回合也能撤」。
 - 验证：让一个回合改了文件后再报错 → 断言 worktree 干净；再断言能把某个**已提交的**历史回合 revert 掉。
 
-### 📐 设计就绪（2026-06-12，实现待用户手写）
+### ✅ 已实现（2026-06-12）
 
-设计与 TDD 实施计划已出，实现按本 Phase 的定位**由用户手写**：
-spec [→](../specs/2026-06-12-zuse-checkpoint-revert-design.md)（影子 git 选型、
-命令级机制、SessionRecord v3、/revert 语义、与压缩/续接的交互、D1–D7 决策表）、
-plan [→](../plans/2026-06-12-zuse-checkpoint-revert.md)（四阶段 TDD 步骤 + 测试清单）。
-设计上对原开发要点的两处修正：① 仅 pre-turn 快照（流后快照不值一倍开销，D2）；
-② **否决「回合出错自动回滚 worktree」**——出错≠用户想丢半成品，改为出错时提示
-可用 /revert，把决定权还给用户（D6）。
+设计 spec [→](../specs/2026-06-12-zuse-checkpoint-revert-design.md)、plan
+[→](../plans/2026-06-12-zuse-checkpoint-revert.md)（原标注「用户手写练习」，
+用户改主意后按 plan 四阶段照常实现）。落点：**@zuse/tools `snapshot.ts`** ——
+影子 git（独立 `--git-dir` 落 `~/.zuse/snapshots/<cwd-slug>/`，与用户 .git 完全
+隔离），track = add -A + commit（--allow-empty/--no-verify/gpgsign off/gc.auto 0），
+restore = read-tree + checkout-index -af + clean -fd 三连（ignored 不动）；
+ensure/track 失败优雅降级（D5）。**SessionRecord v3** 挂 checkpoints，压缩时
+remapCheckpoints 下标联动，/resume 跨进程带回。**打点**：sendMessage 在 runAgent
+前 fire-and-forget，回合结束记录（出错回合也记，截断退化 no-op、文件回滚正好撤
+半截改动）；出错收场提示可用 /revert（D6：不自动回滚）。**/revert**：无参列表，
+带序号先 diffStat 展示范围 + 显式 --yes 确认，执行 = 文件先回 + 账本截断 +
+generation remount + FileReadTracker 清空 + autosave；restore 失败账本不动。
+设计上对原开发要点的两处修正：① 仅 pre-turn 快照（D2）；② **否决「回合出错自动
+回滚 worktree」**（D6）。顺手修 Phase 10B 遗留 bug：sendMessage 在自动压缩前取
+账本引用，压缩后本回合落在被换下的旧 Conversation 上。TDD，新增 19 用例
+（snapshot 8 + sessionStore 5 + /revert 6），887 用例全绿。
 
 ---
 
