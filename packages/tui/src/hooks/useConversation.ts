@@ -21,6 +21,11 @@ import {
   findCompactionCut,
   applyCompaction,
   summarizeForCompaction,
+  splitMemoryCandidates,
+  MEMORY_INDEX_CAP,
+  shouldConsolidateMemories,
+  buildConsolidationPrompt,
+  parseConsolidationOps,
   resolveContextWindow,
   modelNames,
   COMPACTION_THRESHOLD,
@@ -34,7 +39,15 @@ import {
   type ModelSelection,
   type ErrorCategory,
 } from '@zuse/core'
-import { getShellLabel, createSnapshotStore, type SnapshotStore } from '@zuse/tools'
+import {
+  getShellLabel,
+  createSnapshotStore,
+  cwdSlug,
+  openMemoryStore,
+  renderMemoryMarkdown,
+  applyMemoryConsolidation,
+  type SnapshotStore,
+} from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
 import {
@@ -178,9 +191,15 @@ export function useConversation({
   // 没有环境块时模型只能凭训练惯性假设 Unix，在 Windows 上张口就 pwd/ls 而报错。
   // cwd 整个会话不变，故只随它记忆;指令文件只在启动读一次(系统提示词稳定才有
   // prompt cache 命中,会话中途改 ZUSE.md 不热加载,spec D5)。
-  const systemPrompt = useMemo(
-    () =>
-      buildSystemPrompt(
+  const promptInfo = useMemo(() => {
+    const sections = loadPromptSections(os.homedir(), cwd)
+    // 记忆索引的条数(投影行以 "- [" 开头),供启动提示展示「载入了多少记忆」。
+    const memorySection = sections.find((s) => s.title.startsWith('Memory index'))
+    const memoryCount = memorySection
+      ? memorySection.content.split('\n').filter((l) => l.startsWith('- [')).length
+      : 0
+    return {
+      systemPrompt: buildSystemPrompt(
         {
           platform: process.platform,
           osVersion: os.release(),
@@ -188,10 +207,27 @@ export function useConversation({
           cwd,
           date: new Date().toISOString().slice(0, 10),
         },
-        loadPromptSections(os.homedir(), cwd),
+        sections,
       ),
-    [cwd],
-  )
+      memoryCount,
+    }
+  }, [cwd])
+  const systemPrompt = promptInfo.systemPrompt
+
+  // 启动可见性:载入了记忆索引就提示一条 —— 用户知道模型「记得」多少东西。
+  useEffect(() => {
+    if (promptInfo.memoryCount > 0) {
+      setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          { id: generateId(), role: 'system', text: `🧠 已载入记忆索引(${promptInfo.memoryCount} 条)`, isStreaming: false },
+        ],
+      }))
+    }
+    // 仅挂载时一次:memoryCount 随 cwd 的 useMemo 只算一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 首次挂载时按 settings 创建 client。settings 在整个会话生命周期内不变，
   // 所以空依赖数组即可（不用随 settings 重建）。
@@ -230,18 +266,102 @@ export function useConversation({
     const client = clientRef.current
     if (!client) throw new Error('客户端未初始化,无法压缩。')
     const before = conv.length
-    const summary = await summarizeForCompaction(client, conv.getMessages().slice(0, cut), {
+    const raw = await summarizeForCompaction(client, conv.getMessages().slice(0, cut), {
       model: client.getModel(),
       max_tokens: maxTokens,
     })
+    // 记忆冲刷(Phase 13,对照 OpenClaw memory flush):老历史即将折叠,摘要里
+    // 顺带抽取的持久事实先入库 —— 候选从摘要剥出(留着是重复噪音)。
+    const { summary, candidates } = splitMemoryCandidates(raw)
     conversationRef.current = applyCompaction(conv, summary, cut)
     // 检查点联动(Phase 12):被折叠区间的检查点失效删除,保留区间的下标重映射。
     checkpointsRef.current = remapCheckpoints(checkpointsRef.current, cut)
     // 压缩后窗口占用未知(下一回合实测),先清掉,免得旧值再次触发自动压缩。
     contextTokensRef.current = undefined
     setState((prev) => ({ ...prev, contextTokens: undefined }))
-    return `已压缩:账本 ${before} → ${conversationRef.current.length} 条消息(前 ${cut} 条折叠为摘要)。`
-  }, [maxTokens])
+
+    // 候选经 Memory 工具入库:复用满容闸/投影/user 型全局归属;失败静默(冲刷
+    // 是增值动作,绝不拖垮压缩本身)。
+    let flushed = 0
+    const memTool = registry.get('Memory')
+    if (memTool && candidates.length > 0) {
+      for (const c of candidates) {
+        try {
+          const res = await memTool.run(
+            { action: 'save', type: c.type, content: c.content, hook: c.hook },
+            { cwd: cwdRef.current, signal: new AbortController().signal, tracker: trackerRef.current, setCwd: () => {} },
+          )
+          if (!res.isError) flushed++
+        } catch {
+          // 冲刷失败不影响压缩结果
+        }
+      }
+    }
+    return (
+      `已压缩:账本 ${before} → ${conversationRef.current.length} 条消息(前 ${cut} 条折叠为摘要)` +
+      (flushed > 0 ? `;另存 ${flushed} 条记忆。` : '。')
+    )
+  }, [maxTokens, registry])
+
+  // 记忆自动巩固(Phase 13,轻量 autoDream;对照 CC autoDream / OpenClaw Dreaming):
+  // 索引接近满容(>70%)且距上次 ≥24h 时,后台发一次**无工具**请求整理记忆,
+  // 模型输出 DELETE/SAVE 操作行、harness 确定性应用 —— 不给巩固代理任何工具权限,
+  // 出错面收敛到「解析不出操作 = 什么都不做」。fire-and-forget,失败全程静默。
+  const consolidatingRef = useRef(false)
+  const maybeConsolidateMemories = useCallback(async (): Promise<void> => {
+    if (consolidatingRef.current) return
+    const client = clientRef.current
+    if (!client) return
+    consolidatingRef.current = true
+    const notify = (text: string): void =>
+      setState((prev) => ({
+        ...prev,
+        messages: [...prev.messages, { id: generateId(), role: 'system', text, isStreaming: false }],
+      }))
+    let store: ReturnType<typeof openMemoryStore> | null = null
+    try {
+      store = openMemoryStore()
+      const rows = store.all()
+      if (rows.length === 0) return
+      const projection = renderMemoryMarkdown(rows)
+      const lastRunAt = store.getMeta('consolidated_at')
+      if (
+        !shouldConsolidateMemories({
+          projectionChars: projection.length,
+          indexCap: MEMORY_INDEX_CAP,
+          lastRunAt,
+        })
+      ) {
+        return
+      }
+      // 先写水位:本次失败也 24h 内不再打扰(防抖优先于成功率)。
+      store.setMeta('consolidated_at', new Date().toISOString())
+      const prompt = buildConsolidationPrompt(rows)
+      store.close()
+      store = null // 模型请求期间不占着 sqlite 连接
+      notify('🧠 记忆索引接近满容,后台巩固中…')
+      let text = ''
+      for await (const e of client.sendMessages(
+        [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        { model: client.getModel(), max_tokens: Math.min(maxTokens, 2000) },
+      )) {
+        if (e.type === 'text-delta') text += e.text
+        else if (e.type === 'error') return
+      }
+      const ops = parseConsolidationOps(text)
+      if (ops.deletes.length === 0 && ops.saves.length === 0) {
+        notify('🧠 记忆巩固:模型判定无需调整。')
+        return
+      }
+      const { saved, deleted } = applyMemoryConsolidation(ops, cwdSlug(cwd))
+      notify(`🧠 记忆巩固完成:合并新增 ${saved} 条,删除 ${deleted} 条。`)
+    } catch {
+      // 巩固是增值动作,任何失败都不能成为新故障点。
+    } finally {
+      store?.close()
+      consolidatingRef.current = false
+    }
+  }, [cwd, maxTokens])
 
   const sendMessage = useCallback(
     async (text: string, displayText?: string, pasteFiles?: Record<number, string>, opts?: { isResend?: boolean }) => {
@@ -530,6 +650,9 @@ export function useConversation({
           }))
         }
 
+        // 记忆自动巩固检查(Phase 13):fire-and-forget,门槛不满足时是纯 no-op。
+        void maybeConsolidateMemories()
+
         // 降级:此时 for-await 已结束(client 已 return),安全地切模型/弹框。
         if (failoverDecision) {
           const cat = failoverDecision
@@ -586,7 +709,7 @@ export function useConversation({
         abortRef.current = null
       }
     },
-    [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel, compactConversation],
+    [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel, compactConversation, maybeConsolidateMemories],
   )
 
   const clear = useCallback(() => {

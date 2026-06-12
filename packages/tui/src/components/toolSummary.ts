@@ -65,6 +65,21 @@ export function toolSpecifier(name: string, input: unknown): string {
       return strField(obj, 'url') ?? fallbackJson(obj)
     case 'WebSearch':
       return strField(obj, 'query') ?? fallbackJson(obj)
+    case 'Memory': {
+      // 记忆操作可读化:save 显示要点(hook 优先),search/recall 显示检索词,
+      // delete 显示 id —— 用户一眼看出「现在在存/查什么记忆」。
+      const action = strField(obj, 'action') ?? ''
+      const detail =
+        action === 'save'
+          ? (strField(obj, 'hook') ?? strField(obj, 'content') ?? '')
+          : action === 'search' || action === 'recall'
+            ? (strField(obj, 'query') ?? '')
+            : action === 'delete'
+              ? String((obj as { id?: unknown }).id ?? '')
+              : ''
+      const capped = detail.length > SPECIFIER_MAX ? detail.slice(0, SPECIFIER_MAX) + '…' : detail
+      return capped ? `${action}: ${capped}` : action || fallbackJson(obj)
+    }
     case 'LSP': {
       const op = strField(obj, 'operation')
       const sym = strField(obj, 'symbol')
