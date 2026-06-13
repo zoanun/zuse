@@ -12,6 +12,7 @@ import { createLspTool } from './lsp/index.js'
 import { createLspInstallTool } from './lsp/install.js'
 import { LspManager } from './lsp/manager.js'
 import { createMemoryTool } from './memory.js'
+import { createSkillTool, type SkillEntry } from './skills.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel, primeShellSnapshot } from './bash.js'
@@ -25,6 +26,7 @@ export {
 } from './tmux-isolation.js'
 export { createSnapshotStore, cwdSlug, type SnapshotStore } from './snapshot.js'
 export { createMemoryTool, applyMemoryConsolidation, type ConsolidationApplyOps } from './memory.js'
+export { scanSkills, createSkillTool, SKILL_BODY_CAP, type SkillEntry } from './skills.js'
 export { openEpisodeStore, type EpisodeStore, type EpisodeHit } from './episode-store.js'
 export {
   openMemoryStore,
@@ -48,6 +50,8 @@ export interface DefaultRegistryOptions {
   lsp?: LspManager
   /** Memory 工具的项目归属(会话起始 cwd 的 slug;缺省空串 = 全局,Phase 13)。 */
   memoryProject?: string
+  /** 已扫描的技能清单(App 启动时 scanSkills 产出;非空才注册 Skill 工具,Phase 14)。 */
+  skills?: SkillEntry[]
 }
 
 /**
@@ -66,6 +70,8 @@ export function createDefaultRegistry(opts: DefaultRegistryOptions = {}): ToolRe
   registry.register(WebFetchTool)
   // Memory 无条件注册:不需要任何 key,库文件懒创建(不用记忆的会话不碰 sqlite)。
   registry.register(createMemoryTool(opts.memoryProject ?? ''))
+  // Skill 只在有技能时注册:空清单的工具是纯噪音。
+  if (opts.skills && opts.skills.length > 0) registry.register(createSkillTool(opts.skills))
   if (opts.webSearch) registry.register(createWebSearchTool(opts.webSearch))
   if (opts.lsp) {
     registry.register(createLspTool(opts.lsp))
