@@ -229,18 +229,28 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
         }
       }
 
-      // 锚点 ±N 条上下文(只查 episodes,工具消息本就不在索引里)。
-      const ctxStmt = db.prepare(
+      // 锚点 ±N 条上下文。注意必须按「被索引行的行序」取邻居,不能按原始下标差
+      // BETWEEN:msg_index 是账本原始下标,工具消息被跳过不进索引 —— 工具密集段
+      // (一轮 5 个调用占 10 个下标)按下标差开窗会一条邻居都捞不到。
+      const prevStmt = db.prepare(
         `SELECT role, text, msg_index FROM episodes
-         WHERE session_id = ? AND msg_index BETWEEN ? AND ?
-         ORDER BY msg_index`,
+         WHERE session_id = ? AND msg_index < ? ORDER BY msg_index DESC LIMIT ?`,
+      )
+      const nextStmt = db.prepare(
+        `SELECT role, text, msg_index FROM episodes
+         WHERE session_id = ? AND msg_index > ? ORDER BY msg_index ASC LIMIT ?`,
+      )
+      const anchorStmt = db.prepare(
+        `SELECT role, text, msg_index FROM episodes WHERE session_id = ? AND msg_index = ?`,
       )
       return rows.map((r) => {
-        const neighbors = ctxStmt.all(
-          r.session_id,
-          r.msg_index - RECALL_CONTEXT_WINDOW,
-          r.msg_index + RECALL_CONTEXT_WINDOW,
-        ) as unknown as Array<{ role: string; text: string; msg_index: number }>
+        type Line = { role: string; text: string; msg_index: number }
+        const prev = (
+          prevStmt.all(r.session_id, r.msg_index, RECALL_CONTEXT_WINDOW) as unknown as Line[]
+        ).reverse()
+        const next = nextStmt.all(r.session_id, r.msg_index, RECALL_CONTEXT_WINDOW) as unknown as Line[]
+        const anchor = anchorStmt.all(r.session_id, r.msg_index) as unknown as Line[]
+        const neighbors: Line[] = [...prev, ...anchor, ...next]
         const context: EpisodeContextLine[] = neighbors.map((n) => {
           const flat = n.text.replace(/\s+/g, ' ').trim()
           return {

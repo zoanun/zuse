@@ -104,6 +104,30 @@ describe('EpisodeStore.recall', () => {
     expect(store.recall('第二回合', SLUG)).toHaveLength(1)
   })
 
+  it('上下文按索引行序取,夹在中间的工具消息不缩小窗口', () => {
+    // 原始下标:0 user / 1-2 工具消息 / 3 anchor / 4 工具消息 / 5 assistant。
+    // 按原始下标差 ±2 开窗会漏掉下标 0 的前文;按行序必须前后各取到 1 条。
+    const toolMsg = {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'c', content: '工具输出噪音' }],
+    }
+    writeSession('20260602-110000-aaaa', '2026-06-02T11:00:00Z', [
+      user('前文:聊到了快照目录'),
+      toolMsg,
+      toolMsg,
+      user('锚点:影子仓库怎么清理?'),
+      toolMsg,
+      assistant('后文:目前不做 GC,记了 backlog。'),
+    ])
+    const hits = store.recall('影子仓库怎么清理', SLUG)
+    expect(hits).toHaveLength(1)
+    const ctx = hits[0]!.context
+    expect(ctx.map((c) => c.anchor)).toEqual([false, true, false])
+    expect(ctx[0]!.text).toContain('快照目录') // 原始下标差 3,仍是行序上的前一条
+    expect(ctx[2]!.text).toContain('backlog')
+    expect(ctx.some((c) => c.text.includes('工具输出噪音'))).toBe(false)
+  })
+
   it('tool_use/tool_result 块不进索引(只索引 user/assistant 的文本)', () => {
     writeSession('20260602-110000-aaaa', '2026-06-02T11:00:00Z', [
       { role: 'assistant', content: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'findstr 工具噪音' } }] },
