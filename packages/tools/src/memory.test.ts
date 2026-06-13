@@ -86,6 +86,23 @@ describe('Memory 工具', () => {
     expect(bad.output).toContain('Existing ids: 2')
   })
 
+  it('save 时反查相近旧记忆并提醒清理(写入时刻的矛盾轻推)', async () => {
+    await tool.run({ action: 'save', type: 'user', content: '用户用 nvm 管理 Node 版本' }, ctx())
+    const res = await tool.run(
+      { action: 'save', type: 'user', content: '改用 volta 管理 Node 版本,不再用 nvm' },
+      ctx(),
+    )
+    expect(res.isError).toBeFalsy()
+    expect(res.output).toContain('related')
+    expect(res.output).toContain('[1]') // 旧的 nvm 条目被点名
+    expect(res.output).toContain('delete')
+  })
+
+  it('无相近旧记忆时 save 返回保持简洁(不带 Note)', async () => {
+    const res = await tool.run({ action: 'save', type: 'user', content: '完全不相关的第一条' }, ctx())
+    expect(res.output).not.toContain('Note')
+  })
+
   it('记忆索引满容时 save 被拒绝并要求先整理(Hermes 式硬闸,不静默截断)', async () => {
     // 直接灌满库:80 条 × ~110 字符的 hook 行,投影必超 8k。
     const s = openMemoryStore(join(dir, 'memory.db'))

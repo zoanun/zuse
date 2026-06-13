@@ -210,6 +210,22 @@ Save sparingly: durable facts only (preferences, constraints, corrections) — n
           // user 型强制全局:用户是谁与当前项目无关,跨项目共享。
           const row = s.save(type as MemoryType, content, type === 'user' ? '' : project, hook)
           reproject()
+          // 写入时刻的矛盾轻推:用新内容反查相近旧记忆,列在返回里提醒清理。
+          // 实测(deepseek)模型存新记忆时不会主动想起删旧的 —— 而这一刻恰恰是
+          // 它最清楚「旧的哪条已过时」的时刻;等自动巩固要到索引快满才触发。
+          const related = s
+            .search(content, project)
+            .filter((r) => r.id !== row.id)
+            .slice(0, 3)
+          if (related.length > 0) {
+            return {
+              output:
+                `Saved memory [${row.id}] (${row.type}).\n` +
+                `ACTION REQUIRED — existing memories overlap with what you just saved:\n${related.map(formatRow).join('\n')}\n` +
+                'Review each one NOW, before responding to the user: if it is contradicted or superseded by the new memory, ' +
+                'call this tool again with action "delete" and its id. Never tell the user a memory was deleted unless you actually called delete.',
+            }
+          }
           return { output: `Saved memory [${row.id}] (${row.type}).` }
         }
 
