@@ -884,6 +884,22 @@ spec 增 §E。931 用例全绿。
 - 技能匹配触发
 - 多Agent Coordinator模式 → 抽到 **Phase 15** 单独做
 
+### ✅ 已实现(2026-06-13)
+
+对照 cc-haha src/skills(六大来源/条件激活/hooks/fork 执行/权限分级,约 4000 行)
+取轻量版,落 `packages/tools/src/skills.ts`:**SKILL.md 只认 name/description 两
+frontmatter 字段**(手写最小解析器;缺 description 回退正文首个 # 标题,全缺跳过);
+**双层发现**:`~/.zuse/skills/<名>/SKILL.md` 用户级 + `.zuse/skills` 沿 cwd 向上收集,
+内层同名整体覆盖(与 ZUSE.md 同原则);**单个 Skill 工具**暴露,技能清单拼在工具
+描述里(稳定前缀与 prompt cache 相容,不学 CC 每轮 system-reminder 重发),触发
+指引 = 匹配即先调用再作答;正文 20k 行边界截断,`${ZUSE_SKILL_DIR}` 展开为正斜杠
+绝对路径(附属文件模型 Read 按需取);空清单不注册;`/skills` 列表命令。**有意
+不做**:hooks/allowed-tools/model/fork(归 Phase 15 后评估)、paths 条件激活、
+内联 !`shell`、按技能斜杠直调(backlog)。真机验证(opencode 免费 deepseek):
+「写提交信息」→ 模型自主调 Skill → 产出严格遵循技能规范的结果。设计与不做清单
+见 spec [→](../specs/2026-06-13-zuse-skills-design.md)。TDD 新增 13 用例,
+976 用例全绿。
+
 ---
 
 ## Phase 15: 多Agent与编排

@@ -6,6 +6,13 @@ See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals an
 
 ## Status
 
+Phase 14: Done. Skills 系统。SKILL.md(frontmatter 只认 name/description,缺
+description 回退首个 # 标题)放 `~/.zuse/skills/<名>/`(用户级)或项目
+`.zuse/skills/<名>/`(项目级,内层同名覆盖,cwd 向上收集);启动扫一次,经单个
+Skill 工具暴露 —— 技能清单拼在工具描述里,模型按 description 语义匹配、先调用
+再作答;正文 20k 截断,`${ZUSE_SKILL_DIR}` 展开支持附属文件分层加载;`/skills`
+列表。真机验证模型可自主触发并遵循技能规范。下一步:Phase 15 多 Agent 与编排。
+
 Phase 13: Done. 项目记忆。三层:**常驻指令**(`~/.zuse/SYSTEM.md` 用户全局 +
 `ZUSE.md` 项目级向上逐级收集,启动时带来源标头进系统提示词,行边界截断防窗口
 爆炸);**结构化记忆**(`~/.zuse/memory.db`,node:sqlite + FTS5 trigram 中文可检,
