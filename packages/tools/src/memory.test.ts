@@ -93,14 +93,14 @@ describe('Memory 工具', () => {
       ctx(),
     )
     expect(res.isError).toBeFalsy()
-    expect(res.output).toContain('related')
+    expect(res.output).toContain('ACTION REQUIRED')
     expect(res.output).toContain('[1]') // 旧的 nvm 条目被点名
     expect(res.output).toContain('delete')
   })
 
-  it('无相近旧记忆时 save 返回保持简洁(不带 Note)', async () => {
+  it('无相近旧记忆时 save 返回保持简洁(不带清理指引)', async () => {
     const res = await tool.run({ action: 'save', type: 'user', content: '完全不相关的第一条' }, ctx())
-    expect(res.output).not.toContain('Note')
+    expect(res.output).not.toContain('ACTION REQUIRED')
   })
 
   it('记忆索引满容时 save 被拒绝并要求先整理(Hermes 式硬闸,不静默截断)', async () => {
