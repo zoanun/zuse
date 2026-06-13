@@ -47,6 +47,7 @@ import {
   renderMemoryMarkdown,
   applyMemoryConsolidation,
   type SnapshotStore,
+  type SkillEntry,
 } from '@zuse/tools'
 import type { CommandContext } from '../commands/types.js'
 import { parseInput, findCommand } from '../commands/registry.js'
@@ -81,6 +82,8 @@ interface UseConversationOptions {
   settings: ResolvedSettings
   /** --continue/--resume 预载的会话(Phase 10A)。id 沿用 = 同一会话延续写同一文件。 */
   initialSession?: { conversation: Conversation; id: string; createdAt: string; checkpoints?: SessionCheckpoint[] }
+  /** 已加载的技能清单(App 启动时扫描;供 /skills 列表,Phase 14)。 */
+  skills?: SkillEntry[]
 }
 
 interface UseConversationReturn {
@@ -137,6 +140,7 @@ export function useConversation({
   cwd,
   settings,
   initialSession,
+  skills,
 }: UseConversationOptions): UseConversationReturn {
   // 已提交的历史 —— 每个回合重新发送的权威账本。
   // 放在 ref（而非 state）里：修改它不应触发重渲染，而且我们绝不希望
@@ -912,6 +916,7 @@ export function useConversation({
         switchModel,
         openModelSelector: () => setModelSelectorOpen(true),
         registry,
+        skills: skills ?? [],
       }
       try {
         await cmd.run(ctx)
@@ -933,6 +938,7 @@ export function useConversation({
       currentProviderId,
       switchModel,
       registry,
+      skills,
     ],
   )
 

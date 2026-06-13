@@ -1,4 +1,5 @@
 import type { Conversation, ResolvedSettings, ModelSelection, ToolRegistry } from '@zuse/core'
+import type { SkillEntry } from '@zuse/tools'
 import type { SessionCheckpoint } from './sessionStore.js'
 
 /**
@@ -40,6 +41,8 @@ export interface CommandContext {
   openModelSelector: () => void
   /** 工具登记表（供 /tools 列出暴露给模型的工具，按 settings.tools 过滤后）。 */
   registry: ToolRegistry
+  /** 已加载的技能清单(启动时扫描;供 /skills 列表,Phase 14)。 */
+  skills: SkillEntry[]
 }
 
 export interface SlashCommand {

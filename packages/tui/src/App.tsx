@@ -13,7 +13,8 @@ import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
-import { createDefaultRegistry, LspManager, primeShellSnapshot, cwdSlug } from '@zuse/tools'
+import { homedir } from 'node:os'
+import { createDefaultRegistry, LspManager, primeShellSnapshot, cwdSlug, scanSkills } from '@zuse/tools'
 import type { SessionCheckpoint } from './commands/sessionStore.js'
 import type { UIMessage } from './types.js'
 
@@ -54,12 +55,16 @@ export function App({ cwd, initialSession }: AppProps) {
 
   // 工具集随 settings 构建：WebSearch 需要配置（key），故在拿到 settings 后再建 registry。
   // 用 useMemo 锁定引用，避免流式期间每个 token 重渲染都重建工具集。
+  // 技能清单:启动扫一次(用户级 ~/.zuse/skills + 项目级 .zuse/skills 向上收集),
+  // 不热加载(新技能重启生效,Phase 14)。/skills 命令与 Skill 工具共用这份。
+  const skills = useMemo(() => scanSkills(homedir(), cwd), [cwd])
+
   const registry = useMemo(() => {
     // 构建会话级 LSP 进程池，随 registry 一起在 settings 变化时重建。
     const lsp = new LspManager()
     // Memory 记忆按会话起始 cwd 归属项目(Bash cd 漂移不影响归属,Phase 13)。
-    return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp, memoryProject: cwdSlug(cwd) })
-  }, [resolved, cwd])
+    return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp, memoryProject: cwdSlug(cwd), skills })
+  }, [resolved, cwd, skills])
 
   const {
     state,
@@ -82,6 +87,7 @@ export function App({ cwd, initialSession }: AppProps) {
     cwd,
     settings: resolved,
     initialSession,
+    skills,
   })
 
   // 应用退出：Ink 的默认 Ctrl+C 退出已在入口关掉（exitOnCtrlC:false），改由这里双击退出。

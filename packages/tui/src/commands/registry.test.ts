@@ -3,6 +3,7 @@ import { ToolRegistry, type ResolvedSettings, type ModelSelection, type Conversa
 import { findCommand, editDistance, nearestMatch, buildModelOptions, listCommands } from './registry.js'
 import type { CommandContext } from './types.js'
 import type { SessionCheckpoint } from './sessionStore.js'
+import type { SkillEntry } from '@zuse/tools'
 
 // 造一个最小可用的 ResolvedSettings；只有 providers / model 与 /model 校验相关。
 function makeSettings(providers: ResolvedSettings['providers'], model?: string): ResolvedSettings {
@@ -59,6 +60,7 @@ function runModel(args: string, settings: ResolvedSettings, current: { providerI
       selectorOpened = true
     },
     registry: makeRegistry([]),
+    skills: [],
   }
   const cmd = findCommand('model')
   if (!cmd) throw new Error('model command not found')
@@ -195,7 +197,7 @@ describe('/model 切换校验', () => {
 function runCommand(
   name: string,
   args: string,
-  opts: { registry?: ToolRegistry; settings?: ResolvedSettings } = {},
+  opts: { registry?: ToolRegistry; settings?: ResolvedSettings; skills?: SkillEntry[] } = {},
 ) {
   const printed: string[] = []
   const ctx: CommandContext = {
@@ -216,6 +218,7 @@ function runCommand(
     switchModel: () => '',
     openModelSelector: () => {},
     registry: opts.registry ?? makeRegistry([]),
+    skills: opts.skills ?? [],
   }
   const cmd = findCommand(name)
   if (!cmd) throw new Error(`${name} command not found`)
@@ -250,6 +253,29 @@ describe('/tools', () => {
   it('无可用工具时给出提示', () => {
     const { printed } = runCommand('tools', '', { registry: makeRegistry([]) })
     expect(printed.join('\n')).toContain('没有暴露给模型的工具')
+  })
+})
+
+describe('/skills', () => {
+  it('无技能时给出放置路径指引', () => {
+    const { printed } = runCommand('skills', '')
+    const out = printed.join('\n')
+    expect(out).toContain('~/.zuse/skills')
+    expect(out).toContain('.zuse/skills')
+  })
+
+  it('列出技能名与描述(截断),并提示触发方式', () => {
+    const skills: SkillEntry[] = [
+      { name: 'code-review', description: '审查本地改动', dir: 'E:\\x', body: '' },
+      { name: 'deploy', description: 'd'.repeat(100), dir: 'E:\\y', body: '' },
+    ]
+    const { printed } = runCommand('skills', '', { skills })
+    const out = printed.join('\n')
+    expect(out).toContain('2 个')
+    expect(out).toContain('code-review')
+    expect(out).toContain('审查本地改动')
+    expect(out).toContain('…') // 长描述截断
+    expect(out).toContain('Skill 工具')
   })
 })
 
@@ -304,6 +330,7 @@ async function runRevert(
     switchModel: () => '',
     openModelSelector: () => {},
     registry: makeRegistry([]),
+    skills: [],
   }
   const cmd = findCommand('revert')
   if (!cmd) throw new Error('revert command not found')
@@ -365,7 +392,7 @@ describe('/revert', () => {
 describe('listCommands — 供 / 菜单消费的命令元信息', () => {
   it('投影出全部命令的名字/描述', () => {
     const names = listCommands().map((c) => c.name)
-    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'resume', 'revert', 'compact', 'model', 'tools', 'history', 'terminal-setup'])
+    expect(names).toEqual(['help', 'config', 'clear', 'save', 'load', 'resume', 'revert', 'compact', 'model', 'tools', 'skills', 'history', 'terminal-setup'])
   })
 
   it('save/load 标记为需参数；其余（含 model）为无参', () => {

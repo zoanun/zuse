@@ -312,6 +312,27 @@ const model: SlashCommand = {
   },
 }
 
+const skillsCmd: SlashCommand = {
+  name: 'skills',
+  description: '列出已加载的技能(SKILL.md)',
+  run: ({ skills, print }) => {
+    if (skills.length === 0) {
+      print(
+        '还没有加载任何技能。把技能放在 ~/.zuse/skills/<名字>/SKILL.md(用户级)或 ' +
+          '<项目>/.zuse/skills/<名字>/SKILL.md(项目级),重启后生效。',
+      )
+      return
+    }
+    const lines = [`已加载技能(${skills.length} 个,模型经 Skill 工具按需调用):`]
+    for (const s of skills) {
+      const desc = s.description.length > 60 ? s.description.slice(0, 59) + '…' : s.description
+      lines.push(`  ${s.name.padEnd(16)} ${desc}`)
+    }
+    lines.push('(对话里说「用 <技能名> 技能…」即可触发;新增技能需重启)')
+    print(lines.join('\n'))
+  },
+}
+
 const tools: SlashCommand = {
   name: 'tools',
   description: '列出暴露给模型的工具',
@@ -355,7 +376,7 @@ const terminalSetup: SlashCommand = {
 }
 
 /** 命令表。新增一个命令 = 在这里加一条（数据驱动）。 */
-const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, revert, compact, model, tools, history, terminalSetup]
+const COMMANDS: SlashCommand[] = [help, config, clear, save, load, resume, revert, compact, model, tools, skillsCmd, history, terminalSetup]
 
 /** 把原始输入拆成命令名 + 参数；若不是斜杠命令则返回 null。 */
 export function parseInput(input: string): ParsedCommand | null {
