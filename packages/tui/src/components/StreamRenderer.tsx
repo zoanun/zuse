@@ -10,6 +10,7 @@ import { padToWidth } from './userEcho.js'
 import type { ReactElement } from 'react'
 import type { UIMessage, UIToolCall } from '../types.js'
 import { Markdown } from './markdown/Markdown.js'
+import { StreamingMarkdown } from './markdown/StreamingMarkdown.js'
 
 interface StreamRendererProps {
   message: UIMessage
@@ -300,8 +301,9 @@ export function StreamRenderer({ message, cwd }: StreamRendererProps) {
     <Box flexDirection="row" marginBottom={1}>
       <Box marginRight={1}>{message.isStreaming ? <Spinner /> : <Text color="green">●</Text>}</Box>
       <Box flexDirection="column">
-        {/* 流式期间走纯文本(快、稳、不抖);定稿后重渲染成富 Markdown。 */}
-        {message.isStreaming ? <Text>{message.text}</Text> : <Markdown source={message.text} />}
+        {/* 流式期间:已封口的块走富渲染、尾块纯文本(StreamingMarkdown);
+            定稿后整体重渲染兜底(Markdown)。 */}
+        {message.isStreaming ? <StreamingMarkdown source={message.text} /> : <Markdown source={message.text} />}
         {message.usage && (
           <Text dimColor>
             输入 {message.usage.input_tokens} · 输出 {message.usage.output_tokens} tokens

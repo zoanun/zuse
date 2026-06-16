@@ -562,6 +562,30 @@ CC 的 Read 能读图片（PNG/JPG，视觉呈现给多模态模型）、PDF（`
 
 **选型已定（2026-06-07）= 自渲染（Route A）**：用 `marked.lexer()` 仅做词法分析，手写映射到原生 Ink 组件（而非 `marked-terminal`/`ink-markdown` 的预渲染定宽 ANSI 串——后者不随终端宽度 reflow）。范围 = 第二档元素集 + GFM 表格，**不做语法高亮**。流式用双态策略（流式期纯文本，`message-stop` 定稿后重渲染富文本），契合现有 `isStreaming` 字段、无需改 hook。详见 spec [`2026-06-07-zuse-markdown-rendering-design.md`](../specs/2026-06-07-zuse-markdown-rendering-design.md) 与 plan [`2026-06-07-zuse-markdown-rendering.md`](2026-06-07-zuse-markdown-rendering.md)。
 
+### ✅ 已实现（跨多 Phase 陆续落地，2026-06-16 收口）
+
+Phase 7 各子项在 Phase 8–14 开发过程中**按需穿插完成**，本次统一收口验证并标记完成。
+
+**Session 1 渲染层重构（工具块 + Edit diff + Markdown）：**
+- **工具块 CC 风格**：`toolSummary.ts`（specifier 提取 + 分类摘要纯函数）+ `figures.ts`（平台适配 `●`/`⏺`）+ `StreamRenderer.tsx` 重写 `ToolBlock`/`OutputCell`/`FileList`，骨架 `●`+`⎿`，按工具映射 OUT 摘要（Read 行数 / Glob·Grep 计数+可点击文件清单 / Edit 彩色 diff / Bash 5 行预览 + 溢出 `… +N 行`），错误态首行红色。
+- **Edit diff 渲染**：`editDiff.ts`（行级 LCS + diffStats + capDiff 10 行上限）在 `OutputCell` 的 Edit 分支渲染红删/绿增/暗上下文，`replace_all` 多处追加 `(×N)`，溢出 diff 落盘 + OSC-8 链接。
+- **Markdown 富渲染**：`packages/tui/src/components/markdown/` 目录——`layout.ts`（displayWidth / CJK wrap / 表格列宽）、`spans.ts`（内联 bold/em/del/codespan/link → Ink Text）、`inline.tsx`（递归内联 token 映射）、`blocks.tsx`（块级 dispatch：heading 彩色、paragraph、list 嵌套、code fence、blockquote `│` 前缀、hr `───`、table 制表符边框）、`table.tsx`（GFM 表格渲染）、`Markdown.tsx`（定稿入口 + 解析失败回退纯文本）、`StreamingMarkdown.tsx`（流式增量渲染：已封口块走富渲染、尾块纯文本，前缀缓存避免重复渲染）。StreamRenderer 流式期间用 `StreamingMarkdown`，定稿后切 `Markdown`。
+
+**输入层重构：**
+- **Input layer 基建**：`packages/tui/src/input/` 全套——termio 跨 chunk 状态机 tokenizer（`ansi.ts`/`csi.ts`/`tokenize.ts`）、`parseKeypress.ts`（CSI-u + modifyOtherKeys 解析、bracketed paste 聚合）、`parsedKeyToInkKey.ts`（兼容垫片）、`inputBus.ts`（订阅/分发 + isActive 门控）、`protocol.ts`（括号粘贴 + Kitty 键盘协议切换）、`stdin.ts`（raw mode 生命周期 + ESC 超时 50ms）、`InputProvider.tsx`（React Context 包装）、`useInput.ts`（替代 Ink 原生 useInput）。
+- **多行输入 + Ctrl+Enter 换行**：`InputBox.tsx` 自绘行缓冲（`textBuffer.ts`）+ 光标 + `inputKeymap.ts` 事件映射（Enter 提交 / Ctrl+Enter 换行 / 方向键 / Ctrl+A/E）；多行粘贴折叠成 `[粘贴#N · M行 · K字符]` 占位标签（`pasteFold.ts`），提交时 expand 还原全文；命令菜单 `/` 过滤 + 方向键导航。
+
+**对话框 & 选择器：**
+- **权限批准框 CC 风格**：`PermissionDialog.tsx` 从单键裁决改为 `SelectList` 四选项列表（方向键 + 回车 + Esc），文案全中文。
+- **`/model` 交互式选择器**：`ModelSelect.tsx` + `modelSelectItems.ts`——按 provider 分组 + 输入过滤 + 滚动视口 + `--save` 写盘开关（Tab 切焦）+ 不可用模型灰显标注。`SelectList.tsx` 通用可过滤选择列表组件。
+
+**可点击完整输出：**
+- `toolOutputFile.ts`（截断溢出落盘 + OSC-8 超链接 + `pruneOldTempFiles` 7 天自清理）；`pasteLabels.ts`（用户粘贴标签解析 + OSC-8 链接）；`userEcho.ts`（padToWidth 可见宽度补齐，OSC-8 转义不占列）。
+
+**TUI 文案全中文化**：App/InputBox/UsageFooter/StreamRenderer/PermissionDialog/ModelSelect 全部中文。
+
+976 用例全绿。
+
 ---
 
 > **Phase 8–12 = 一条「harness 加固轨」**：插在功能阶段（Skills/多Agent）之前。理由——skills 与多 Agent 会放大 harness 的任何弱点（编排出错时，你 debug 的是「编排逻辑 + harness 缺陷」两层叠加，理不清）。先把**错误回传 / 输出塑形 / 上下文压缩 / 故障恢复 / 回滚**这五根承重柱浇硬，再往上盖。除 Phase 10（=原「会话管理」并入压缩）外均无直接课程，机制对齐已通读的 Crush / OpenCode 源码。**起手做 Phase 8**（最自包含、单位代码学到最多、不依赖下游）。
