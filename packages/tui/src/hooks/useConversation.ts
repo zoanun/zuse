@@ -47,6 +47,7 @@ import {
   renderMemoryMarkdown,
   applyMemoryConsolidation,
   createAgentTool,
+  createScheduleWakeupTool,
   type SnapshotStore,
   type SkillEntry,
 } from '@zuse/tools'
@@ -238,6 +239,24 @@ export function useConversation({
       }),
     )
   }, [registry, settings, systemPrompt])
+
+  // ScheduleWakeup 定时器:一次只允许一个 pending,新调用覆盖旧的。
+  const wakeupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sendMessageRef = useRef<((text: string) => Promise<void>) | null>(null)
+  useMemo(() => {
+    if (registry.get('ScheduleWakeup')) return
+    registry.register(
+      createScheduleWakeupTool({
+        onSchedule: (delayMs, message) => {
+          if (wakeupTimerRef.current) clearTimeout(wakeupTimerRef.current)
+          wakeupTimerRef.current = setTimeout(() => {
+            wakeupTimerRef.current = null
+            sendMessageRef.current?.(`⏰ 定时唤醒: ${message}`)
+          }, delayMs)
+        },
+      }),
+    )
+  }, [registry])
 
   // 启动可见性:载入了记忆索引就提示一条 —— 用户知道模型「记得」多少东西。
   useEffect(() => {
@@ -736,6 +755,8 @@ export function useConversation({
     },
     [maxTokens, registry, patch, cwd, settings, systemPrompt, currentProviderId, currentModel, compactConversation, maybeConsolidateMemories],
   )
+  // ScheduleWakeup 的唤醒回调需要 sendMessage;sendMessage 是 useCallback,每次重建后同步 ref。
+  sendMessageRef.current = sendMessage
 
   const clear = useCallback(() => {
     conversationRef.current.clear()

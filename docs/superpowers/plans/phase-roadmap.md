@@ -990,7 +990,7 @@ Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 
 ---
 
-## Phase 16: 调度与自动化（Cron / Wakeup）
+## Phase 16: 调度与自动化（Cron / Wakeup） ✅
 
 ### 补充文档参考
 
@@ -1017,6 +1017,17 @@ Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 - ScheduleWakeup：相对延时的一次性唤醒
 - 触发时以 `--resume` 拉起对应会话（依赖 Phase 10 会话管理）
 - 自动化跑务必走 Phase 5 权限闸，避免无人值守下的越权
+
+### ✅ 16.1 ScheduleWakeup（2026-06-17）
+
+- `createScheduleWakeupTool` 工厂 + `ScheduleWakeupDeps` 依赖注入
+- 进程内 setTimeout 延时唤醒，到时间自动注入 user message 触发新回合
+- delaySeconds clamp [1, 3600]，一次只允许一个 pending wakeup
+- TUI 注册：useConversation 中 onSchedule 回调 + sendMessageRef
+
+### ⏭️ 16.2 Cron（定时任务表） — 跳过
+
+需要 daemon 进程或 OS 调度器集成，当前无实际需求。留给未来。
 
 ---
 

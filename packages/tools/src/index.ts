@@ -38,6 +38,7 @@ export {
   type MemoryType,
 } from './memory-store.js'
 export { createAgentTool, type AgentToolDeps } from './agent-tool.js'
+export { createScheduleWakeupTool, type ScheduleWakeupDeps } from './schedule-wakeup.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'
