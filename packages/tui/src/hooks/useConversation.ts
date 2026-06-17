@@ -46,6 +46,7 @@ import {
   openMemoryStore,
   renderMemoryMarkdown,
   applyMemoryConsolidation,
+  createAgentTool,
   type SnapshotStore,
   type SkillEntry,
 } from '@zuse/tools'
@@ -217,6 +218,20 @@ export function useConversation({
     }
   }, [cwd])
   const systemPrompt = promptInfo.systemPrompt
+
+  // Agent 工具需要运行时依赖(client / settings / systemPrompt),只在 TUI 层可得。
+  // registry 由 App.tsx 的 useMemo 在 settings 变化时重建,每次新 registry 追加注册。
+  useMemo(() => {
+    if (registry.get('Agent')) return
+    registry.register(
+      createAgentTool({
+        registry,
+        getClient: () => clientRef.current!,
+        settings,
+        getSystemPrompt: () => systemPrompt,
+      }),
+    )
+  }, [registry, settings, systemPrompt])
 
   // 启动可见性:载入了记忆索引就提示一条 —— 用户知道模型「记得」多少东西。
   useEffect(() => {
