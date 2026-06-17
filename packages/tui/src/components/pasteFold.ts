@@ -52,8 +52,8 @@ export function foldPaste(
   nextId: number,
   content: string,
 ): { buf: TextBuffer; pastes: Map<number, string>; nextId: number } {
-  // 剥除粘贴内容里可能夹带的哨兵字符,避免嵌套占位符
-  const clean = content.split(PASTE_START).join('').split(PASTE_END).join('')
+  // 剥除粘贴内容里可能夹带的哨兵字符,避免嵌套占位符;trim 去尾部空行,防止单行粘贴被误算成多行
+  const clean = content.split(PASTE_START).join('').split(PASTE_END).join('').trim()
   const id = nextId
   const span = PASTE_START + id + PASTE_END
   const text = buf.text.slice(0, buf.cursor) + span + buf.text.slice(buf.cursor)

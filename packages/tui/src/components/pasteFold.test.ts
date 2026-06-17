@@ -32,6 +32,14 @@ describe('foldPaste', () => {
     const r = foldPaste(emptyBuffer, new Map(), 1, `a\u{E000}b\u{E001}\nc`)
     expect(r.pastes.get(1)).toBe('ab\nc')
   })
+  it('trim 尾部空行:单行粘贴不会被误算成多行', () => {
+    const r = foldPaste(emptyBuffer, new Map(), 1, 'hello\n\n')
+    expect(r.pastes.get(1)).toBe('hello')
+  })
+  it('trim 首尾空白', () => {
+    const r = foldPaste(emptyBuffer, new Map(), 1, '\n  a\nb\n\n')
+    expect(r.pastes.get(1)).toBe('a\nb')
+  })
   it('在已有文本光标处插入', () => {
     const r = foldPaste({ text: 'xy', cursor: 1 }, new Map(), 3, 'p\nq')
     expect(r.buf.text).toBe(`x\u{E000}3\u{E001}y`)
