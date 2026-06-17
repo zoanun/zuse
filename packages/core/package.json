@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
+  "files": ["dist", "package.json"],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.98.0",
     "jsonc-parser": "^3.3.1",

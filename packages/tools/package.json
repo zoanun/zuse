@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
+  "files": ["dist", "package.json"],
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
     "@vscode/ripgrep": "^1.18.0",
