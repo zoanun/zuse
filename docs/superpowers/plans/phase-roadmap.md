@@ -1031,6 +1031,47 @@ Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 
 ---
 
+## V2 Roadmap（Phase 0-16 完成后的增量功能）
+
+> **日期**: 2026-06-17
+> **来源**: 对比 CC / OpenCode / OpenClaw / Hermes 的差距分析
+
+### P0 — 核心差距（优先做）
+
+| 功能 | 描述 | 参考 | 规模 |
+|------|------|------|------|
+| **MCP 协议** | Model Context Protocol 客户端，让外部工具（DB/Slack/GitHub/Playwright 等）以标准协议接入 | CC 的 MCP server 集成 | 大 |
+| **Hooks 系统** | 用户定义 pre/post 工具调用钩子（shell 命令），如"每次 Edit 前自动 lint" | CC 的 settings.json hooks | 中 |
+| **TodoWrite** | 模型自用的结构化任务追踪工具（pending/in_progress/completed） | CC 的 TodoWrite tool | 小 |
+| **记忆容量硬限** | 写入前检查 MEMORY.md 投影大小，超过阈值拒绝并提示整理 | Hermes 的 8k 容量上限 / OpenClaw 的 preview | 小 |
+
+### P1 — 重要增强
+
+| 功能 | 描述 | 参考 | 规模 |
+|------|------|------|------|
+| **Token budget** | Workflow 内的 token 预算管理，`budget.remaining()` 控制探索深度 | CC 的 Workflow budget API | 小 |
+| **结构化输出 (schema)** | 子 Agent 返回 JSON schema 校验的结构化数据，agent() 的 schema 选项 | CC 的 agent() schema opt | 中 |
+| **后台 Agent** | Agent 后台运行（run_in_background），完成后通知主循环 | CC 的 Agent run_in_background | 中 |
+
+### P2 — 按需增强
+
+| 功能 | 描述 | 参考 | 规模 |
+|------|------|------|------|
+| **Git worktree 隔离** | 并行 Agent 写文件时在独立 worktree 工作，避免冲突 | CC 的 Agent isolation:"worktree" | 中 |
+| **Cron 定时任务** | 持久化定时任务表 + OS 调度器集成 | CC 的 CronCreate/CronDelete/CronList | 中 |
+
+### P3 — 远期
+
+| 功能 | 描述 | 规模 |
+|------|------|------|
+| **Computer Use / 截图** | 多模态：截屏 + 视觉理解 + 鼠标键盘操作 | 大 |
+
+### 不做
+
+- ~~NotebookEdit~~ — 无 Jupyter 使用场景
+
+---
+
 ## 快速查阅索引
 
 ### 按知识点查课程
