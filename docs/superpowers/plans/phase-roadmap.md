@@ -974,6 +974,15 @@ frontmatter 字段**(手写最小解析器;缺 description 回退正文首个 # 
 - TUI 注册：useConversation 初始化时追加到 registry
 - toolSummary 适配：`● Agent(description)` 展示
 
+### ✅ 15.2 Workflow 编排 API（2026-06-17）
+
+- `createWorkflow(ctx)` 工厂：返回 `agent()` / `parallel()` / `pipeline()`
+- `Semaphore` 并发控制（FIFO 公平队列）
+- `parallel()`: barrier 模式，单个失败返回 null
+- `pipeline()`: 无 inter-item barrier，stage 链式执行，错误跳过后续 stage
+- `agent()`: 包装 runAgent，隔离 Conversation + 工具集裁剪
+- `maxAgents` 兜底（缺省 100）防失控循环
+
 ---
 
 ## Phase 16: 调度与自动化（Cron / Wakeup）
