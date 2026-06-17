@@ -260,3 +260,58 @@ describe('maxAgents', () => {
     expect(nulls).toHaveLength(2)
   })
 })
+
+// ── token budget ─────────────────────────────────────────────────────
+
+describe('token budget', () => {
+  it('tracks spent tokens and exposes budget API', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'ok' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 100 } },
+      ],
+    ])
+    const wf = createWorkflow({ ...makeCtx(client), tokenBudget: 500 })
+
+    expect(wf.budget.total).toBe(500)
+    expect(wf.budget.spent()).toBe(0)
+    expect(wf.budget.remaining()).toBe(500)
+
+    await wf.agent('task')
+
+    expect(wf.budget.spent()).toBe(100)
+    expect(wf.budget.remaining()).toBe(400)
+  })
+
+  it('stops agents when budget exhausted (sequential)', async () => {
+    const client = fakeClient(
+      Array.from({ length: 5 }, () => [
+        { type: 'text-delta' as const, text: 'ok' },
+        { type: 'message-stop' as const, stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 50 } },
+      ]),
+    )
+    const wf = createWorkflow({ ...makeCtx(client), tokenBudget: 120 })
+
+    const r1 = await wf.agent('a')
+    expect(r1).toBe('ok')
+    expect(wf.budget.spent()).toBe(50)
+
+    const r2 = await wf.agent('b')
+    expect(r2).toBe('ok')
+    expect(wf.budget.spent()).toBe(100)
+
+    const r3 = await wf.agent('c')
+    expect(r3).toBe('ok')
+    expect(wf.budget.spent()).toBe(150)
+
+    // Budget exhausted — direct call throws, parallel catches as null
+    const [r4] = await wf.parallel([() => wf.agent('d')])
+    expect(r4).toBeNull()
+  })
+
+  it('returns Infinity remaining when no budget set', async () => {
+    const wf = createWorkflow(makeCtx(fakeClient([])))
+    expect(wf.budget.total).toBeNull()
+    expect(wf.budget.remaining()).toBe(Infinity)
+  })
+})

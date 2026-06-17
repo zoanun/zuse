@@ -58,6 +58,8 @@ export interface WorkflowContext {
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
   concurrency?: number
   maxAgents?: number
+  /** Token 预算(output tokens)。null = 不限。agent() 每次调用累加消耗,超预算抛错。 */
+  tokenBudget?: number | null
 }
 
 export function createWorkflow(ctx: WorkflowContext) {
@@ -65,10 +67,21 @@ export function createWorkflow(ctx: WorkflowContext) {
   const sem = new Semaphore(concurrency)
   const maxAgents = ctx.maxAgents ?? DEFAULT_MAX_AGENTS
   let agentCount = 0
+  let tokensSpent = 0
+  const tokenBudget = ctx.tokenBudget ?? null
+
+  const budget = {
+    get total() { return tokenBudget },
+    spent() { return tokensSpent },
+    remaining() { return tokenBudget === null ? Infinity : Math.max(0, tokenBudget - tokensSpent) },
+  }
 
   async function agent(prompt: string, opts?: AgentOpts): Promise<string | null> {
     if (agentCount >= maxAgents) {
       throw new Error(`Workflow agent limit reached (${maxAgents})`)
+    }
+    if (tokenBudget !== null && tokensSpent >= tokenBudget) {
+      throw new Error(`Workflow token budget exhausted (${tokensSpent}/${tokenBudget})`)
     }
     agentCount++
 
@@ -123,6 +136,8 @@ export function createWorkflow(ctx: WorkflowContext) {
       })) {
         if (event.type === 'text-delta') {
           finalText += event.text
+        } else if (event.type === 'message-stop') {
+          tokensSpent += event.usage.output_tokens
         }
       }
 
@@ -165,5 +180,5 @@ export function createWorkflow(ctx: WorkflowContext) {
     )
   }
 
-  return { agent, parallel, pipeline }
+  return { agent, parallel, pipeline, budget }
 }
