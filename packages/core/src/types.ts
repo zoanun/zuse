@@ -167,6 +167,8 @@ export interface ResolvedSettings {
   webSearch?: RawWebSearchConfig
   /** 工具调用前后的钩子。 */
   hooks?: HooksConfig
+  /** MCP servers 配置。key 是 server 名，value 是启动配置。 */
+  mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string }>
 }
 
 /** 单条 hook 规则。 */

@@ -15,6 +15,7 @@ import { useConversation } from './hooks/useConversation.js'
 import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
 import { homedir } from 'node:os'
 import { createDefaultRegistry, LspManager, primeShellSnapshot, cwdSlug, scanSkills } from '@zuse/tools'
+import { McpManager } from '@zuse/core'
 import type { SessionCheckpoint } from './commands/sessionStore.js'
 import type { UIMessage } from './types.js'
 
@@ -65,6 +66,21 @@ export function App({ cwd, initialSession }: AppProps) {
     // Memory 记忆按会话起始 cwd 归属项目(Bash cd 漂移不影响归属,Phase 13)。
     return createDefaultRegistry({ webSearch: getWebSearchConfig(resolved), lsp, memoryProject: cwdSlug(cwd), skills })
   }, [resolved, cwd, skills])
+
+  // MCP servers: 启动时连接 settings 里配置的 MCP servers,工具注册到 registry。
+  useEffect(() => {
+    const servers = resolved.mcpServers
+    if (!servers || Object.keys(servers).length === 0) return
+    const mgr = new McpManager()
+    void mgr.connectAll(servers).then(({ connected, failed }) => {
+      if (connected.length > 0) mgr.registerTools(registry)
+      for (const f of failed) {
+        // eslint-disable-next-line no-console
+        console.error(`MCP server "${f.name}" failed to connect: ${f.error}`)
+      }
+    })
+    return () => { void mgr.disconnectAll() }
+  }, [resolved.mcpServers, registry])
 
   const {
     state,
