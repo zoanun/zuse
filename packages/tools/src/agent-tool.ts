@@ -12,6 +12,8 @@ export interface AgentToolDeps {
   getSystemPrompt: () => string
   sessionAllow?: string[]
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
+  /** 后台 Agent 完成后的通知回调。传入 description + 结果文本。 */
+  onBackground?: (description: string, result: string) => void
 }
 
 export function createAgentTool(deps: AgentToolDeps): Tool {
@@ -43,6 +45,10 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
           items: { type: 'string' },
           description: '可选，限定子 Agent 可用的工具名列表。默认继承全部工具。',
         },
+        runInBackground: {
+          type: 'boolean',
+          description: '可选，设为 true 后台运行。立即返回，完成后自动通知。',
+        },
       },
       required: ['prompt', 'description'],
     },
@@ -53,11 +59,12 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
     },
 
     async run(input: unknown, ctx: ToolContext) {
-      const { prompt, description, model, allowedTools } = input as {
+      const { prompt, description, model, allowedTools, runInBackground } = input as {
         prompt?: unknown
         description?: unknown
         model?: unknown
         allowedTools?: unknown
+        runInBackground?: unknown
       }
 
       if (typeof prompt !== 'string' || prompt === '') {
@@ -80,34 +87,45 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       // Build child registry: clone parent, remove Agent, apply allowedTools filter
       const childRegistry = buildChildRegistry(deps.registry, allowedTools)
 
-      const conversation = new Conversation()
-      const systemPrompt = deps.getSystemPrompt() + SUB_AGENT_SUFFIX
+      const executeSubAgent = async (): Promise<string> => {
+        const conversation = new Conversation()
+        const sysPrompt = deps.getSystemPrompt() + SUB_AGENT_SUFFIX
 
-      let finalText = ''
-      for await (const event of runAgent({
-        conversation,
-        client,
-        registry: childRegistry,
-        userText: prompt,
-        config: {
-          model: client.getModel(),
-          max_tokens: 16384,
-          system: systemPrompt,
-        },
-        cwd: ctx.cwd,
-        signal: ctx.signal,
-        maxTurns: SUB_AGENT_MAX_TURNS,
-        tracker: ctx.tracker,
-        settings: deps.settings,
-        sessionAllow: deps.sessionAllow,
-        canUseTool: deps.canUseTool,
-      })) {
-        if (event.type === 'text-delta') {
-          finalText += event.text
+        let finalText = ''
+        for await (const event of runAgent({
+          conversation,
+          client,
+          registry: childRegistry,
+          userText: prompt,
+          config: {
+            model: client.getModel(),
+            max_tokens: 16384,
+            system: sysPrompt,
+          },
+          cwd: ctx.cwd,
+          signal: ctx.signal,
+          maxTurns: SUB_AGENT_MAX_TURNS,
+          tracker: ctx.tracker,
+          settings: deps.settings,
+          sessionAllow: deps.sessionAllow,
+          canUseTool: deps.canUseTool,
+        })) {
+          if (event.type === 'text-delta') {
+            finalText += event.text
+          }
         }
+        return finalText || '(子 Agent 未产生文本输出)'
       }
 
-      return { output: finalText || '(子 Agent 未产生文本输出)' }
+      if (runInBackground === true && deps.onBackground) {
+        executeSubAgent().then(
+          (result) => deps.onBackground!(description, result),
+          () => deps.onBackground!(description, '(子 Agent 后台执行失败)'),
+        )
+        return { output: `子 Agent "${description}" 已在后台启动，完成后会自动通知。` }
+      }
+
+      return { output: await executeSubAgent() }
     },
   }
 }

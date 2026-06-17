@@ -240,6 +240,9 @@ export function useConversation({
             queueRef.current = [...queueRef.current, { id: generateId(), req, resolve }]
             setPermissionQueue(queueRef.current)
           }),
+        onBackground: (desc, result) => {
+          sendMessageRef.current?.(`🔔 后台 Agent "${desc}" 完成:\n${result}`)
+        },
       }),
     )
   }, [registry, settings, systemPrompt])

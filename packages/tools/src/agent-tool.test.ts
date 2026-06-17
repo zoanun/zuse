@@ -509,4 +509,35 @@ describe('createAgentTool', () => {
     expect(askCalled).toBe(false)
     expect(result.output).toBe('done')
   })
+
+  // ── Background Agent ─────────────────────────────────────────────────
+
+  it('returns immediately in background mode and calls onBackground when done', async () => {
+    let bgResult: { desc: string; result: string } | null = null
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'bg-done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const tool = createAgentTool({
+      registry: new ToolRegistry(),
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'sys',
+      onBackground: (desc, result) => { bgResult = { desc, result } },
+    })
+
+    const result = await tool.run(
+      { prompt: 'bg task', description: 'background test', runInBackground: true },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.output).toContain('后台启动')
+    expect(result.isError).toBeFalsy()
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(bgResult).toEqual({ desc: 'background test', result: 'bg-done' })
+  })
 })
