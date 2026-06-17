@@ -1036,22 +1036,22 @@ Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 > **日期**: 2026-06-17
 > **来源**: 对比 CC / OpenCode / OpenClaw / Hermes 的差距分析
 
-### P0 — 核心差距（优先做）
+### P0 — 核心差距 ✅
 
-| 功能 | 描述 | 参考 | 规模 |
-|------|------|------|------|
-| **MCP 协议** | Model Context Protocol 客户端，让外部工具（DB/Slack/GitHub/Playwright 等）以标准协议接入 | CC 的 MCP server 集成 | 大 |
-| **Hooks 系统** | 用户定义 pre/post 工具调用钩子（shell 命令），如"每次 Edit 前自动 lint" | CC 的 settings.json hooks | 中 |
-| **TodoWrite** | 模型自用的结构化任务追踪工具（pending/in_progress/completed） | CC 的 TodoWrite tool | 小 |
-| **记忆容量硬限** | 写入前检查 MEMORY.md 投影大小，超过阈值拒绝并提示整理 | Hermes 的 8k 容量上限 / OpenClaw 的 preview | 小 |
+| 功能 | 状态 | 日期 |
+|------|------|------|
+| **MCP 协议** | ✅ McpClient + McpManager + TUI 启动连接 | 2026-06-18 |
+| **Hooks 系统** | ✅ pre/postToolUse + settings 配置 + agent loop 集成 | 2026-06-17 |
+| **TodoWrite** | ✅ 模型自用任务追踪 + TUI 渲染 | 2026-06-17 |
+| **记忆容量硬限** | ✅ Phase 13 已实现（MEMORY_INDEX_CAP 投影检查） | 既有 |
 
-### P1 — 重要增强
+### P1 — 重要增强 ✅
 
-| 功能 | 描述 | 参考 | 规模 |
-|------|------|------|------|
-| **Token budget** | Workflow 内的 token 预算管理，`budget.remaining()` 控制探索深度 | CC 的 Workflow budget API | 小 |
-| **结构化输出 (schema)** | 子 Agent 返回 JSON schema 校验的结构化数据，agent() 的 schema 选项 | CC 的 agent() schema opt | 中 |
-| **后台 Agent** | Agent 后台运行（run_in_background），完成后通知主循环 | CC 的 Agent run_in_background | 中 |
+| 功能 | 状态 | 日期 |
+|------|------|------|
+| **Token budget** | ✅ Workflow budget API（spent/remaining/自动停止） | 2026-06-17 |
+| **结构化输出 (schema)** | ✅ agent() schema 选项 + JSON 解析 + fence 剥离 | 2026-06-17 |
+| **后台 Agent** | ✅ runInBackground 模式 + 完成通知 | 2026-06-17 |
 
 ### P2 — 按需增强
 
