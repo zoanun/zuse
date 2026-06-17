@@ -86,6 +86,8 @@ export function toolSpecifier(name: string, input: unknown): string {
       if (op && sym) return `${op} ${sym}`
       return op ?? fallbackJson(obj)
     }
+    case 'Agent':
+      return strField(obj, 'description') ?? fallbackJson(obj)
     default:
       return fallbackJson(obj)
   }
@@ -93,7 +95,7 @@ export function toolSpecifier(name: string, input: unknown): string {
 
 /** Bash 类「输出即价值」工具:输出本身就是要看的内容(Task 5 给多行预览)。 */
 function isOutputValueTool(name: string): boolean {
-  return name === 'Bash' || name === 'WebFetch' || name === 'WebSearch' || name === 'LSP'
+  return name === 'Bash' || name === 'WebFetch' || name === 'WebSearch' || name === 'LSP' || name === 'Agent'
 }
 
 /** "1 line" / "N lines" 之类的单复数;不规则复数(match→matches)传第三参。 */

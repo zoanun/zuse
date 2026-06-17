@@ -964,6 +964,16 @@ frontmatter 字段**(手写最小解析器;缺 description 回退正文首个 # 
 - 自研为主——无现成 OSS 二进制可换（与 CC 一致，多 Agent 编排是手搓）
 - **tmux pane 执行后端**（从 Phase 5.5.2 引来）：CC 用 tmux pane 跑 teammate（`swarm/backends/TmuxBackend.ts`）。若 zuse 的多 Agent 要做「每个 teammate 一个可见 pane / 后台持久执行」，在此实现 pane 后端；与 5.5.2 的 tmux 套接字隔离（`zuse-<PID>` 专属 socket）共用同一套 tmux 基建。Windows 经 `wsl -e tmux`。
 
+### ✅ 15.1 Agent Tool（2026-06-17）
+
+- `createAgentTool` 工厂 + `AgentToolDeps` 依赖注入
+- 子 Agent 隔离 Conversation + 独立 maxTurns(10) + cwd 隔离
+- model 覆盖（`providerId/modelName` 格式）
+- `allowedTools` 白名单 + Agent 递归禁止
+- 权限体系完整继承（settings + sessionAllow + canUseTool）
+- TUI 注册：useConversation 初始化时追加到 registry
+- toolSummary 适配：`● Agent(description)` 展示
+
 ---
 
 ## Phase 16: 调度与自动化（Cron / Wakeup）
