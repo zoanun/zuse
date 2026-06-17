@@ -926,7 +926,7 @@ frontmatter 字段**(手写最小解析器;缺 description 回退正文首个 # 
 
 ---
 
-## Phase 15: 多Agent与编排
+## Phase 15: 多Agent与编排 ✅
 
 ### 补充文档参考
 
@@ -982,6 +982,11 @@ frontmatter 字段**(手写最小解析器;缺 description 回退正文首个 # 
 - `pipeline()`: 无 inter-item barrier，stage 链式执行，错误跳过后续 stage
 - `agent()`: 包装 runAgent，隔离 Conversation + 工具集裁剪
 - `maxAgents` 兜底（缺省 100）防失控循环
+
+### ⏭️ 15.3 Team + SendMessage — 跳过
+
+Agent tool（supervisor）+ Workflow API（编排）已覆盖当前所有多 Agent 场景。
+Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 
 ---
 
