@@ -48,6 +48,8 @@ import {
   applyMemoryConsolidation,
   createAgentTool,
   createScheduleWakeupTool,
+  createTodoWriteTool,
+  type TodoItem,
   type SnapshotStore,
   type SkillEntry,
 } from '@zuse/tools'
@@ -120,6 +122,8 @@ interface UseConversationReturn {
   badModels: ReadonlyMap<string, ErrorCategory>
   /** 中断进行中的流式回合（Esc）。当前有回合在跑则 abort 并返回 true，否则 false。 */
   interrupt: () => boolean
+  /** 模型管理的任务列表（TodoWrite 工具更新）。 */
+  todos: TodoItem[]
 }
 
 function generateId(): string {
@@ -256,6 +260,13 @@ export function useConversation({
         },
       }),
     )
+  }, [registry])
+
+  // TodoWrite: 模型自用的任务追踪。状态由 TUI 持有,每次 onUpdate 覆盖式更新。
+  const [todos, setTodos] = useState<TodoItem[]>([])
+  useMemo(() => {
+    if (registry.get('TodoWrite')) return
+    registry.register(createTodoWriteTool({ onUpdate: setTodos }))
   }, [registry])
 
   // 启动可见性:载入了记忆索引就提示一条 —— 用户知道模型「记得」多少东西。
@@ -1001,5 +1012,6 @@ export function useConversation({
     closeModelSelector,
     badModels: badModelsRef.current,
     interrupt,
+    todos,
   }
 }

@@ -39,6 +39,7 @@ export {
 } from './memory-store.js'
 export { createAgentTool, type AgentToolDeps } from './agent-tool.js'
 export { createScheduleWakeupTool, type ScheduleWakeupDeps } from './schedule-wakeup.js'
+export { createTodoWriteTool, type TodoWriteDeps, type TodoItem, type TodoStatus } from './todo.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'

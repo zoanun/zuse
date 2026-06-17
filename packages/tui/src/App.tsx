@@ -81,6 +81,7 @@ export function App({ cwd, initialSession }: AppProps) {
     closeModelSelector,
     badModels,
     interrupt,
+    todos,
   } = useConversation({
     maxTokens: getDefaultMaxTokens(resolved),
     registry,
@@ -183,6 +184,20 @@ export function App({ cwd, initialSession }: AppProps) {
 
       {/* 实时帧：仍在流式的消息 + 输入框/对话框 + 页脚。 */}
       {live.length > 0 && <MessageList messages={live} cwd={cwd} />}
+
+      {todos.length > 0 && (
+        <Box flexDirection="column" marginBottom={1} paddingX={MSG_PAD_X}>
+          {todos.map((t: { content: string; status: string }, i: number) => {
+            const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'
+            const color = t.status === 'completed' ? 'green' : t.status === 'in_progress' ? 'cyan' : undefined
+            return (
+              <Text key={i} color={color} dimColor={t.status === 'completed'}>
+                {icon} {t.content}
+              </Text>
+            )
+          })}
+        </Box>
+      )}
 
       {exitPending && <Text color="yellow">再按一次 Ctrl+C 退出</Text>}
 
