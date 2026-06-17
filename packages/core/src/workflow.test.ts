@@ -309,6 +309,48 @@ describe('token budget', () => {
     expect(r4).toBeNull()
   })
 
+  it('returns parsed JSON when schema is provided', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: '{"name": "test", "count": 42}' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const wf = createWorkflow(makeCtx(client))
+
+    const result = await wf.agent('extract data', {
+      schema: { type: 'object', properties: { name: { type: 'string' }, count: { type: 'number' } } },
+    })
+
+    expect(result).toEqual({ name: 'test', count: 42 })
+  })
+
+  it('strips markdown fences from schema response', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: '```json\n{"ok": true}\n```' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const wf = createWorkflow(makeCtx(client))
+
+    const result = await wf.agent('test', { schema: { type: 'object' } })
+    expect(result).toEqual({ ok: true })
+  })
+
+  it('returns null for invalid JSON when schema is provided', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'not json at all' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const wf = createWorkflow(makeCtx(client))
+
+    const result = await wf.agent('test', { schema: { type: 'object' } })
+    expect(result).toBeNull()
+  })
+
   it('returns Infinity remaining when no budget set', async () => {
     const wf = createWorkflow(makeCtx(fakeClient([])))
     expect(wf.budget.total).toBeNull()

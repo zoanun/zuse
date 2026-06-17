@@ -44,6 +44,8 @@ export interface AgentOpts {
   allowedTools?: string[]
   model?: string
   maxTurns?: number
+  /** JSON Schema — 子 Agent 被指示以 JSON 回复，返回值为解析后的对象。校验失败返回 null。 */
+  schema?: Record<string, unknown>
 }
 
 export interface WorkflowContext {
@@ -115,12 +117,15 @@ export function createWorkflow(ctx: WorkflowContext) {
       }
 
       const conversation = new Conversation()
+      const effectivePrompt = opts?.schema
+        ? `${prompt}\n\nYou MUST respond with valid JSON matching this schema:\n${JSON.stringify(opts.schema, null, 2)}\n\nOutput ONLY the JSON object, no markdown fences or extra text.`
+        : prompt
       let finalText = ''
       for await (const event of runAgent({
         conversation,
         client,
         registry: childRegistry,
-        userText: prompt,
+        userText: effectivePrompt,
         config: {
           model: client.getModel(),
           max_tokens: 16384,
@@ -141,7 +146,16 @@ export function createWorkflow(ctx: WorkflowContext) {
         }
       }
 
-      return finalText || null
+      if (!finalText) return null
+      if (opts?.schema) {
+        try {
+          const cleaned = finalText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+          return JSON.parse(cleaned)
+        } catch {
+          return null
+        }
+      }
+      return finalText
     } catch {
       return null
     } finally {
