@@ -198,7 +198,225 @@ describe('createAgentTool', () => {
       { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
     )
 
-    expect(result.output).toContain('未产生文本输出')
+    expect(result.output).toBe('(子 Agent 未产生文本输出)')
+    expect(result.isError).toBeFalsy()
+  })
+
+  // ── Model override — bad format ────────────────────────────────────
+
+  it('returns error for model spec without slash', async () => {
+    const client = fakeClient([])
+    const registry = new ToolRegistry()
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    const result = await tool.run(
+      { prompt: 'do something', description: 'test', model: 'no-slash' },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.output).toContain('Invalid model format')
+  })
+
+  it('returns error for model spec with empty model name', async () => {
+    const client = fakeClient([])
+    const registry = new ToolRegistry()
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    const result = await tool.run(
+      { prompt: 'do something', description: 'test', model: 'prov/' },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.isError).toBe(true)
+    expect(result.output).toContain('Model name is empty')
+  })
+
+  // ── allowedTools — sub-agent tool-use call succeeds for whitelisted tool ──
+
+  it('allows whitelisted tool to be called by sub-agent', async () => {
+    // Turn 1: model calls Read tool
+    // Turn 2: model returns final text after seeing tool result
+    const client = fakeClient([
+      [
+        { type: 'tool-use', id: 'call_1', name: 'Read', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'read-ok' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Read',
+      description: 'read',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true,
+      run: async () => ({ output: 'file contents' }),
+    })
+    registry.register({
+      name: 'Write',
+      description: 'write',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'written' }),
+    })
+    registry.register({
+      name: 'Grep',
+      description: 'grep',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true,
+      run: async () => ({ output: 'matched' }),
+    })
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    const result = await tool.run(
+      { prompt: 'read a file', description: 'test', allowedTools: ['Read', 'Grep'] },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.output).toBe('read-ok')
+    expect(result.isError).toBeFalsy()
+  })
+
+  it('rejects tool call for tool not in allowedTools whitelist', async () => {
+    // Turn 1: model tries to call Write (not whitelisted)
+    // Turn 2: model sees "Unknown tool" error and falls back to text
+    const client = fakeClient([
+      [
+        { type: 'tool-use', id: 'call_w', name: 'Write', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'fallback-answer' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Read',
+      description: 'read',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true,
+      run: async () => ({ output: 'file contents' }),
+    })
+    registry.register({
+      name: 'Write',
+      description: 'write',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'written' }),
+    })
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    const result = await tool.run(
+      { prompt: 'write a file', description: 'test', allowedTools: ['Read'] },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    // Sub-agent should still produce output (model falls back after unknown tool error)
+    expect(result.output).toBe('fallback-answer')
+    expect(result.isError).toBeFalsy()
+  })
+
+  // ── Recursion prevention — Agent call in sub-agent gets Unknown tool ──
+
+  it('prevents sub-agent from calling Agent (recursion prevention)', async () => {
+    // Turn 1: model tries to call Agent
+    // Turn 2: model sees "Unknown tool" error and falls back to text
+    const client = fakeClient([
+      [
+        { type: 'tool-use', id: 'call_a', name: 'Agent', input: { prompt: 'nested', description: 'nope' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'no-recursion' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Agent',
+      description: 'self',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'should not be reachable' }),
+    })
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    const result = await tool.run(
+      { prompt: 'spawn sub-agent', description: 'test' },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.output).toBe('no-recursion')
+    expect(result.isError).toBeFalsy()
+  })
+
+  // ── allowedTools containing "Agent" — silently filtered ──
+
+  it('silently filters Agent from allowedTools list', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'agent-filtered' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Read',
+      description: 'read',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true,
+      run: async () => ({ output: 'file contents' }),
+    })
+    registry.register({
+      name: 'Agent',
+      description: 'self',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'should not be reachable' }),
+    })
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'you are zuse',
+    })
+
+    // Explicitly requesting Agent in allowedTools should not cause errors
+    const result = await tool.run(
+      { prompt: 'do something', description: 'test', allowedTools: ['Read', 'Agent'] },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(result.output).toBe('agent-filtered')
     expect(result.isError).toBeFalsy()
   })
 })
