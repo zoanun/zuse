@@ -1,99 +1,66 @@
 # Zuse
 
-A self-built coding agent CLI. Learning project + daily-use tool.
+从零手搓的 coding agent CLI，类似 Claude Code / Aider。学习项目，同时日常自用。
 
-See [design spec](docs/superpowers/specs/2026-05-21-zuse-design.md) for goals and roadmap.
+## 为什么造这个
 
-## Status
+- **学透原理** — 搞清楚 agent loop、tool use、上下文管理、权限模型这些东西在工程上到底怎么落地
+- **日常能用** — 用 Zuse 自己开发 Zuse（dogfooding）
+- **可扩展** — 基础稳定后可以往特定领域做专用 agent
 
-Phase 14: Done. Skills 系统。SKILL.md(frontmatter 只认 name/description,缺
-description 回退首个 # 标题)放 `~/.zuse/skills/<名>/`(用户级)或项目
-`.zuse/skills/<名>/`(项目级,内层同名覆盖,cwd 向上收集);启动扫一次,经单个
-Skill 工具暴露 —— 技能清单拼在工具描述里,模型按 description 语义匹配、先调用
-再作答;正文 20k 截断,`${ZUSE_SKILL_DIR}` 展开支持附属文件分层加载;`/skills`
-列表。真机验证模型可自主触发并遵循技能规范。下一步:Phase 15 多 Agent 与编排。
+## 技术栈
 
-Phase 13: Done. 项目记忆。三层:**常驻指令**(`~/.zuse/SYSTEM.md` 用户全局 +
-`ZUSE.md` 项目级向上逐级收集,启动时带来源标头进系统提示词,行边界截断防窗口
-爆炸);**结构化记忆**(`~/.zuse/memory.db`,node:sqlite + FTS5 trigram 中文可检,
-单库多项目,user/project/insight/reference 四类型);**Memory 工具**(模型可
-save/search/list/delete,免确认——写入面只有 zuse 自有库),save/delete 即时
-重投影 `~/.zuse/MEMORY.md` 索引(索引行用模型写的 hook 一行要点)、下次启动整体
-召回;**情景记忆** `recall`——历史会话原文全文检索(懒索引 + 按 updatedAt 增量,
-days 时间过滤,命中带会话 id 可 /resume 回看),「十天前讨论过什么」可直接问。
-源码对照(CC/OpenCode/OpenClaw/Hermes)
-增强:recall 命中带 ±2 条上下文、记忆年龄标注、压缩前记忆冲刷(摘要顺带抽取)、
-索引满容硬闸(拒绝保存逼整理)、自动巩固(满容 70%+24h 触发,单次无工具请求,
-操作行确定性应用)。下一步:Phase 14 Skills 系统。
+| 层 | 选型 |
+|---|---|
+| 语言 | TypeScript (strict) |
+| 运行时 | Node.js 22+ (Volta pin) |
+| 包管理 | pnpm workspace (monorepo) |
+| TUI | [Ink](https://github.com/vadimdemedes/ink) — React for terminal |
+| 模型 | Anthropic SDK / OpenAI 协议，通过 Provider 抽象层 |
+| 测试 | Vitest |
+| Lint | ESLint + Prettier |
 
-Phase 12: Done. 检查点与回滚。影子 git(独立 --git-dir 存 `~/.zuse/snapshots/`,
-与项目 .git 完全隔离)每个用户回合开始前自动打快照,检查点随会话记录(v3)持久化、
-压缩时下标联动、/resume 跨进程带回。`/revert` 列检查点;`/revert <序号>` 先展示
-diffStat 改动范围、显式 `--yes` 确认后执行——工作区精确回到该回合开始前(改的
-复原/删的复活/新建的删掉,.gitignore 的不动)+ 对话截断到该回合前。回合出错时
-提示可用 /revert 撤销半截文件改动(有意不自动回滚)。git 不可用全程优雅降级。
-下一步:Phase 13 项目记忆。
+## 项目结构
 
-Phase 11: Done. 鲁棒性与恢复(故障注入)。审计确认 Esc 取消/流空闲守卫/429+5xx
-退避重试前期已落,本期收口:**坏 JSON tool_use 从「error 作废整回合」改为回喂
-模型自纠**——client 产出带 `invalid_args` 的 tool-use(input `{}` 占位可重放),
-agent 跳过执行合成 is_error tool_result(回显原始串+重发指令),同轮合法调用不
-连坐;补 agent 层 max_tokens 截断告警、中断零提交测试;AnthropicClient 加 SDK
-注入口,镜像重试循环补故障注入测试。下一步:Phase 12 检查点与回滚(可选)/
-Phase 13 项目记忆。
+```
+packages/
+  core/     # agent loop、会话、权限、provider 抽象、上下文压缩
+  tools/    # 工具实现（Read/Write/Edit/Glob/Grep/Bash/WebFetch/LSP/Skills...）
+  tui/      # Ink 终端 UI、Markdown 渲染、命令菜单
+```
 
-Phase 10: Done. 会话管理与上下文压缩。自动会话按 cwd 分组存
-`~/.zuse/sessions/auto/`,每回合自动保存;`zuse --continue` 续接最新会话,
-`--resume <序号>` 指定续接,会话内 `/resume` 列表续接,`/clear` 换新会话不覆写旧
-历史。压缩:`/compact` 手动 / 占用越过上下文窗口(模型级配置,`models` 条目可写
-`{ "name", "contextWindow" }`,模型级 → provider 级 → 缺省 512K)的 80%
-自动——老回合折叠为结构化摘要,保留最近 2 个真实回合,切点永不劈开 tool_use/
-tool_result 配对;摘要失败绝不半压。下一步:Phase 11 鲁棒性与恢复。
+## 主要能力
 
-Phase 9: Done. 输出整形(Feedback Shaping)。可寻址输出(Read/Grep/Glob)维持分页+
-续读指引;不可寻址 blob 归一到 `truncate.ts`:head+tail 行边界截断、统一
-`[truncated: …]` marker。Bash 从「30k 触顶丢尾」(报错堆栈恰在尾部)改为 head 10k +
-tail 20k,截断时完整输出落盘 `~/.zuse/tool-output/`,模型用 Read/Grep 续查;流式塑形
-内存恒有界。WebFetch 共享同一模块只留头。下一步:Phase 10 会话管理与上下文压缩。
+- **Agent Loop** — 模型提出 tool call → 执行 → 结果回传 → 循环，单轮上限 50 次
+- **完整工具集** — Read / Write / Edit / Glob / Grep / Bash / WebFetch / WebSearch / LSP
+- **多 Provider** — Anthropic 原生、DashScope、DeepSeek、Ollama、vLLM；`/model` 运行时切换
+- **三层配置 + 权限** — 用户层 / 项目层 / 本地层配置，`Tool(specifier)` 规则文法四档裁决
+- **会话管理** — 自动保存、`--continue` 续接、`/resume` 列表、`/compact` 上下文压缩
+- **检查点与回滚** — 每回合自动快照（影子 git），`/revert` 精确回退工作区 + 对话
+- **项目记忆** — 常驻指令（ZUSE.md）+ 结构化记忆（SQLite FTS5）+ 历史会话全文检索
+- **Skills 系统** — 用户级 / 项目级技能目录，模型按语义自主触发
+- **流式 Markdown** — token 级增量富文本渲染
+- **鲁棒性** — 坏 JSON 自纠、429/5xx 退避重试、流空闲守卫、Esc 中断
 
-Phase 8: Done. 错误回传契约(Observation Contract)。工具交还给模型的一切都是写给
-模型读的 observation:失败不抛裸异常、不回 stack trace,带具体入参回显与**下一步
-指令**(重读文件 / 换工具 / 改入参 / 别再重试)。本期收口:Unknown tool 列可用工具
-清单;权限拒绝分两档语义(settings deny=硬护栏别重试,user deny=问用户意图);Read
-文件不存在指引 Glob、二进制拒读;Edit old_string 未命中指引重读;Bash 超时/127 点破
-原因。下一步:Phase 9 输出整形 / Phase 10 上下文压缩。
+## 快速开始
 
-Phase 6: Done. 多 provider。`ModelClient` 接口下两套手搓实现——`AnthropicClient`
-（Anthropic 原生 + DashScope 等兼容端点，含 prompt 缓存 cache_control 三断点）与
-`OpenAIClient`（OpenAI 协议：DeepSeek / 本地 Ollama / vLLM，手写 tool_call 分片累积
-与 usage 抽取）。数据驱动的 `providers` registry：加 provider = 一条配置 + 一个
-env var。`/model` 运行时切换（session 生效，`--save` 写盘），切换不清空历史。footer
-显示缓存命中。下一步：Phase 6.5 联网工具 / Phase 7 UI 打磨。
+```bash
+pnpm install
+pnpm dev          # 开发模式（热重载）
+pnpm build && pnpm start   # 构建后运行
+```
 
-Phase 5: Done. 三层配置系统（用户层 / 项目层 / 本地层），权限模型（`Tool(specifier)`
-规则文法 + `decide()` 四档裁决），`ask` 交互式批准弹框，工具暴露开关。deny 是硬护栏，
-压过 bypassPermissions。
+需要设置 `ANTHROPIC_API_KEY` 环境变量（或对应 provider 的 key）。
 
-Phase 4: Done. Full v1 toolset. `Write` (whole-file, creates parent dirs),
-`Edit` (exact-string replace, `replace_all`), `Glob` (readdir walk +
-`path.matchesGlob`, includes dotfiles, sorted by mtime), `Grep` (ripgrep via
-`@vscode/ripgrep`, respects `.gitignore`), and `Bash` (spawn via shell with cwd,
-timeout, output truncation, abort-signal kill, cross-platform process-tree
-kill). No standalone `LS` tool — like Claude Code, directory listing goes
-through `Bash(ls)`. The headline is
-**read-before-edit**: `Edit` refuses to touch a file that hasn't been `Read`,
-and refuses if the file's mtime changed since it was read (optimistic lock
-against TOCTOU). Read state lives in a session `FileReadTracker` carried on
-`ToolContext`. Next: Phase 5 — permissions (done); Phase 6 — multi-provider (done).
+## 常用命令
 
-Phase 3: Done. The agent can now use tools. A `Tool` interface + `ToolRegistry`
-in core, the Agent loop (`runAgent`: ask model → run requested tools → feed
-results back → repeat, capped at 50 turns), and the first tool — `Read` (cat -n
-style output, offset/limit). Tool calls and their results render inline in the
-transcript. Tool errors (unknown tool, thrown error) are fed back to the model as
-`is_error` results instead of crashing the turn.
+| 命令 | 说明 |
+|---|---|
+| `pnpm test` | 跑测试 |
+| `pnpm typecheck` | 类型检查 |
+| `pnpm lint` | ESLint |
+| `pnpm format` | Prettier 格式化 |
 
-Phase 2: Done. Multi-turn conversation with full context re-send each turn, a
-running token total, and the live context size in the footer (yellow past 100k).
-Slash commands: `/help`, `/clear`, `/save <name>`, `/load <name>` (sessions stored
-under `~/.zuse/sessions`).
+## 设计文档
+
+详见 [docs/superpowers/specs/](docs/superpowers/specs/)，其中 [总设计文档](docs/superpowers/specs/2026-05-21-zuse-design.md) 包含完整的目标、非目标和 roadmap。
