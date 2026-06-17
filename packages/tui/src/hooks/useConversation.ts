@@ -229,6 +229,12 @@ export function useConversation({
         getClient: () => clientRef.current!,
         settings,
         getSystemPrompt: () => systemPrompt,
+        sessionAllow: sessionAllowRef.current,
+        canUseTool: (req) =>
+          new Promise((resolve) => {
+            queueRef.current = [...queueRef.current, { id: generateId(), req, resolve }]
+            setPermissionQueue(queueRef.current)
+          }),
       }),
     )
   }, [registry, settings, systemPrompt])

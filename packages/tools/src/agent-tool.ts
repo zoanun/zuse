@@ -1,5 +1,5 @@
 import { Conversation, ToolRegistry, runAgent, createModelClient, getProviderConfig } from '@zuse/core'
-import type { ModelClient, Tool, ToolContext, ResolvedSettings } from '@zuse/core'
+import type { ModelClient, Tool, ToolContext, ResolvedSettings, PermissionRequest, PermissionVerdict } from '@zuse/core'
 
 const SUB_AGENT_MAX_TURNS = 10
 
@@ -10,6 +10,8 @@ export interface AgentToolDeps {
   getClient: () => ModelClient
   settings: ResolvedSettings
   getSystemPrompt: () => string
+  sessionAllow?: string[]
+  canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
 }
 
 export function createAgentTool(deps: AgentToolDeps): Tool {
@@ -97,6 +99,8 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
         maxTurns: SUB_AGENT_MAX_TURNS,
         tracker: ctx.tracker,
         settings: deps.settings,
+        sessionAllow: deps.sessionAllow,
+        canUseTool: deps.canUseTool,
       })) {
         if (event.type === 'text-delta') {
           finalText += event.text

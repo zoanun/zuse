@@ -419,4 +419,94 @@ describe('createAgentTool', () => {
     expect(result.output).toBe('agent-filtered')
     expect(result.isError).toBeFalsy()
   })
+
+  // ── Permission inheritance — canUseTool ──────────────────────────────
+
+  it('child agent inherits canUseTool — ask triggers callback', async () => {
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Write',
+      description: 'write',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'written' }),
+    })
+
+    const askSettings: ResolvedSettings = {
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: ['Write'], deny: [] },
+      providers: {},
+    }
+
+    let askCalled = false
+    const client = fakeClient([
+      [
+        { type: 'tool-use', id: 'w1', name: 'Write', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: askSettings,
+      getSystemPrompt: () => 'sys',
+      canUseTool: async () => { askCalled = true; return 'allow' },
+    })
+
+    await tool.run(
+      { prompt: 'write something', description: 'write test' },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(askCalled).toBe(true)
+  })
+
+  it('child agent inherits sessionAllow — pre-approved tools skip ask', async () => {
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Write',
+      description: 'write',
+      inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: 'written' }),
+    })
+
+    const askSettings: ResolvedSettings = {
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: ['Write'], deny: [] },
+      providers: {},
+    }
+
+    let askCalled = false
+    const client = fakeClient([
+      [
+        { type: 'tool-use', id: 'w1', name: 'Write', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const tool = createAgentTool({
+      registry,
+      getClient: () => client,
+      settings: askSettings,
+      getSystemPrompt: () => 'sys',
+      sessionAllow: ['Write'],
+      canUseTool: async () => { askCalled = true; return 'allow' },
+    })
+
+    const result = await tool.run(
+      { prompt: 'write something', description: 'write test' },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    expect(askCalled).toBe(false)
+    expect(result.output).toBe('done')
+  })
 })
