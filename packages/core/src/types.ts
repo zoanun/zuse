@@ -165,6 +165,22 @@ export interface ResolvedSettings {
   providers: Record<string, RawProviderConfig>
   /** WebSearch 原始配置;由 getWebSearchConfig 按需解析(同 providers 的处理方式)。 */
   webSearch?: RawWebSearchConfig
+  /** 工具调用前后的钩子。 */
+  hooks?: HooksConfig
+}
+
+/** 单条 hook 规则。 */
+export interface HookRule {
+  /** 匹配的工具名（'*' 匹配全部）。 */
+  tool: string
+  /** 要执行的 shell 命令。 */
+  command: string
+}
+
+/** hooks 配置。 */
+export interface HooksConfig {
+  preToolUse?: HookRule[]
+  postToolUse?: HookRule[]
 }
 
 /** 判定结果三态。 */

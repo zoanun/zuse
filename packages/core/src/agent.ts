@@ -6,6 +6,7 @@ import { createFileTracker } from './tool.js'
 import { decide } from './permission.js'
 import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
+import { runHooks } from './hooks.js'
 import type { Conversation } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
@@ -307,7 +308,18 @@ async function gateAndRunTool(
     if (verdict === 'allow_persist') deps.onPersistAllow(rule)
   }
 
-  return runOneTool(registry, tu, ctx)
+  const hookEnv = { toolName: tu.name, toolInput: tu.input, cwd: deps.cwd }
+  const preWarnings = runHooks(deps.settings.hooks?.preToolUse, hookEnv).warnings
+
+  const result = await runOneTool(registry, tu, ctx)
+
+  const postWarnings = runHooks(deps.settings.hooks?.postToolUse, hookEnv).warnings
+  const allWarnings = [...preWarnings, ...postWarnings]
+  if (allWarnings.length > 0) {
+    result.output += `\n[Hook warnings: ${allWarnings.join('; ')}]`
+  }
+
+  return result
 }
 
 /**
