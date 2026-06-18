@@ -198,7 +198,7 @@ describe('createAgentTool', () => {
       { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
     )
 
-    expect(result.output).toBe('(子 Agent 未产生文本输出)')
+    expect(result.output).toBe('(sub-agent produced no text output)')
     expect(result.isError).toBeFalsy()
   })
 
@@ -534,7 +534,7 @@ describe('createAgentTool', () => {
       { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
     )
 
-    expect(result.output).toContain('后台启动')
+    expect(result.output).toContain('launched in background')
     expect(result.isError).toBeFalsy()
 
     await new Promise((r) => setTimeout(r, 50))

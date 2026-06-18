@@ -132,14 +132,15 @@ export function createSkillTool(skills: SkillEntry[]): Tool {
 
   return {
     name: 'Skill',
-    description: `Load a skill: step-by-step instructions for a specific kind of task, written by the user.
-When the user's request matches one of the available skills below, invoke this tool FIRST — BEFORE answering or taking other actions — then follow the returned instructions. Never mention a skill without actually invoking it.
+    description: `Load a skill: specialized instructions for a specific kind of task, written by the user.
+Before replying, scan the skills below. If a skill matches or is even partially relevant to the user's request, you MUST invoke this tool FIRST — BEFORE answering or taking any other action. Err on the side of loading: it is always better to have context you don't need than to miss critical steps or established workflows. Load the skill even if you think you could handle the task without it — skills encode the user's preferred approach, conventions, and quality standards.
+Never mention a skill without actually invoking it.
 Available skills:
 ${listing}`,
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: '技能名(见工具描述里的清单)' },
+        name: { type: 'string', description: 'Skill name from the list in this tool\'s description' },
       },
       required: ['name'],
     },

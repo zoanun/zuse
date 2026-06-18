@@ -3,7 +3,7 @@ import type { ModelClient, Tool, ToolContext, ResolvedSettings, PermissionReques
 
 const SUB_AGENT_MAX_TURNS = 10
 
-const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured.`
+const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured. You are a leaf worker and CANNOT spawn further sub-agents.`
 
 export interface AgentToolDeps {
   registry: ToolRegistry
@@ -24,30 +24,33 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       'The sub-agent has its own conversation and tool access, and returns its final text as the result. ' +
       'Use this when: (1) a task involves broad exploration that would pollute the main context, ' +
       '(2) a sub-task can run independently, or (3) you want to use a different model for a sub-task. ' +
-      'The sub-agent cannot spawn further sub-agents.',
+      'Do NOT use for single-step work you can do in one or two tool calls — just do it directly. ' +
+      'Do NOT delegate your entire task to a single sub-agent with no added value. ' +
+      'The sub-agent cannot spawn further sub-agents. ' +
+      'For background agents: do NOT poll or sleep for status — you will be notified automatically when they finish.',
     inputSchema: {
       type: 'object',
       properties: {
         prompt: {
           type: 'string',
-          description: '子任务描述，作为子 Agent 的输入。要足够详细让子 Agent 独立完成。',
+          description: 'The sub-task description sent as input to the sub-agent. Be detailed enough for it to work independently.',
         },
         description: {
           type: 'string',
-          description: '3-10 字的短标签，用于 UI 展示。',
+          description: 'Short label (3-10 words) for UI display.',
         },
         model: {
           type: 'string',
-          description: '可选，格式 providerId/modelName。用较便宜的模型处理简单子任务。',
+          description: 'Optional. Format: providerId/modelName. Use a cheaper model for simple sub-tasks.',
         },
         allowedTools: {
           type: 'array',
           items: { type: 'string' },
-          description: '可选，限定子 Agent 可用的工具名列表。默认继承全部工具。',
+          description: 'Optional. Restrict sub-agent to these tools only. Defaults to all tools.',
         },
         runInBackground: {
           type: 'boolean',
-          description: '可选，设为 true 后台运行。立即返回，完成后自动通知。',
+          description: 'Optional. Set true to run in background. Returns immediately; you will be notified on completion.',
         },
       },
       required: ['prompt', 'description'],
@@ -114,15 +117,15 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
             finalText += event.text
           }
         }
-        return finalText || '(子 Agent 未产生文本输出)'
+        return finalText || '(sub-agent produced no text output)'
       }
 
       if (runInBackground === true && deps.onBackground) {
         executeSubAgent().then(
           (result) => deps.onBackground!(description, result),
-          () => deps.onBackground!(description, '(子 Agent 后台执行失败)'),
+          () => deps.onBackground!(description, '(sub-agent background execution failed)'),
         )
-        return { output: `子 Agent "${description}" 已在后台启动，完成后会自动通知。` }
+        return { output: `Sub-agent "${description}" launched in background. You will be notified when it finishes.` }
       }
 
       return { output: await executeSubAgent() }
