@@ -141,17 +141,22 @@ Actions:
 - recall: full-text search PAST CONVERSATION transcripts of this project (episodic memory — "what did we discuss about X?"). Requires "query"; optional "days" limits to sessions updated in the last N days. Returns matching excerpts with session ids; the user can reopen a session with /resume <id>.
 - list: list all memories visible to this project.
 - delete: remove an outdated or wrong memory by "id".
+When to save (do this proactively):
+- User corrects you or says "remember this" / "don't do that again"
+- User shares a preference, habit, or personal detail (name, role, timezone, coding style)
+- You discover a stable convention, tool quirk, or workflow specific to this project
+- You learn something from a correction that will apply to future sessions
 Save sparingly: durable facts only (preferences, constraints, corrections). Do NOT save task progress, session outcomes, completed-work logs, PR numbers, issue numbers, commit SHAs, or any artifact that will be stale in a week. If it won't matter next month, it does not belong in memory.`,
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['save', 'search', 'recall', 'list', 'delete'] },
-        type: { type: 'string', enum: [...MEMORY_TYPES], description: 'save 必填:记忆类型' },
-        content: { type: 'string', description: 'save 必填:记忆内容' },
-        hook: { type: 'string', description: 'save 可选:一行式要点,用作 MEMORY.md 索引行;内容较长时必给' },
-        query: { type: 'string', description: 'search/recall 必填:检索词' },
-        id: { type: 'number', description: 'delete 必填:记忆 id' },
-        days: { type: 'number', description: 'recall 可选:只搜最近 N 天更新过的会话' },
+        type: { type: 'string', enum: [...MEMORY_TYPES], description: 'Required for save: memory type' },
+        content: { type: 'string', description: 'Required for save: the fact to remember' },
+        hook: { type: 'string', description: 'Optional for save: one-line gist used as MEMORY.md index entry; required when content is longer than a sentence or two' },
+        query: { type: 'string', description: 'Required for search/recall: search terms' },
+        id: { type: 'number', description: 'Required for delete: memory id' },
+        days: { type: 'number', description: 'Optional for recall: only search sessions updated in the last N days' },
       },
       required: ['action'],
     },
@@ -264,12 +269,12 @@ Save sparingly: durable facts only (preferences, constraints, corrections). Do N
           // 每个命中渲染成一小块:标题行 + ±2 条上下文,锚点行用 ▶ 标记并展示命中片段。
           const lines: string[] = []
           for (const h of hits) {
-            lines.push(`[${h.at.slice(0, 16).replace('T', ' ')} 会话 ${h.sessionId}]`)
+            lines.push(`[${h.at.slice(0, 16).replace('T', ' ')} session ${h.sessionId}]`)
             for (const c of h.context) {
               lines.push(c.anchor ? `▶ ${c.role}: ${h.snippet || c.text}` : `  ${c.role}: ${c.text}`)
             }
           }
-          lines.push('(完整会话可用 /resume <会话id> 回看)')
+          lines.push('(Use /resume <session-id> to reopen the full conversation)')
           return { output: lines.join('\n') }
         }
 
