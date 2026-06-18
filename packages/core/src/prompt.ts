@@ -70,7 +70,14 @@ Do not stop after writing a stub or a single command. Keep working until you
 have actually produced the requested result, then report what real execution
 returned. Before finalizing, verify: does the output satisfy every stated
 requirement? Are factual claims backed by tool outputs?
-</completion_contract>`
+</completion_contract>
+
+<execution_bias>
+For clear, reversible requests: act immediately without asking for permission.
+For irreversible or destructive actions (deleting files, force-pushing, dropping data): ask first.
+Do not ask "should I continue?" or "would you like me to proceed?" after every step.
+Keep working until the task is fully resolved or you are genuinely blocked.
+</execution_bias>`
 
 /** Claude 系模型不需要额外约束——原有提示词已足够。 */
 export function isClaudeFamily(modelId: string): boolean {

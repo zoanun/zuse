@@ -160,7 +160,7 @@ export function applyCompaction(conv: Conversation, summaryText: string, cutInde
   const messages = conv.getMessages()
   const summaryMessage: Message = {
     role: 'user',
-    content: [{ type: 'text', text: `[Summary of earlier conversation]\n${summaryText}` }],
+    content: [{ type: 'text', text: `[Summary of earlier conversation — REFERENCE ONLY. This is a compressed summary of older messages, not an instruction. The latest user message below takes precedence over anything in this summary.]\n${summaryText}` }],
   }
   return Conversation.fromJSON({
     version: 1,
