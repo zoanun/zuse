@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, type AgentEnvironment } from './prompt.js'
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, NON_CLAUDE_ENFORCEMENT_OVERLAY, isClaudeFamily, type AgentEnvironment } from './prompt.js'
 
 const ENV: AgentEnvironment = {
   platform: 'win32',
@@ -34,5 +34,70 @@ describe('buildSystemPrompt', () => {
     const prompt = buildSystemPrompt({ ...ENV, platform: 'darwin', shell: 'sh', osVersion: '24.0.0' })
     expect(prompt).toContain('darwin (24.0.0)')
     expect(prompt).toContain('Shell: sh')
+  })
+})
+
+describe('isClaudeFamily', () => {
+  it('returns true for claude model ids', () => {
+    expect(isClaudeFamily('claude-sonnet-4-6')).toBe(true)
+    expect(isClaudeFamily('claude-opus-4-8')).toBe(true)
+    expect(isClaudeFamily('claude-haiku-4-5-20251001')).toBe(true)
+  })
+
+  it('returns true for anthropic-prefixed ids', () => {
+    expect(isClaudeFamily('anthropic/claude-sonnet')).toBe(true)
+  })
+
+  it('is case-insensitive', () => {
+    expect(isClaudeFamily('Claude-Sonnet-4-6')).toBe(true)
+    expect(isClaudeFamily('CLAUDE-OPUS')).toBe(true)
+  })
+
+  it('returns false for non-claude models', () => {
+    expect(isClaudeFamily('deepseek-v4')).toBe(false)
+    expect(isClaudeFamily('gpt-4o-mini')).toBe(false)
+    expect(isClaudeFamily('qwen-2.5')).toBe(false)
+    expect(isClaudeFamily('gemini-2.5-flash')).toBe(false)
+    expect(isClaudeFamily('glm-5.1')).toBe(false)
+    expect(isClaudeFamily('unknown')).toBe(false)
+  })
+})
+
+describe('model-tiered overlay', () => {
+  it('injects enforcement overlay for non-Claude models', () => {
+    const prompt = buildSystemPrompt(ENV, [], 'deepseek-v4')
+    expect(prompt).toContain('<tool_use_enforcement>')
+    expect(prompt).toContain('<anti_fabrication>')
+    expect(prompt).toContain('<mandatory_tool_use>')
+    expect(prompt).toContain('<completion_contract>')
+  })
+
+  it('does NOT inject overlay for Claude models', () => {
+    const prompt = buildSystemPrompt(ENV, [], 'claude-sonnet-4-6')
+    expect(prompt).not.toContain('<tool_use_enforcement>')
+  })
+
+  it('does NOT inject overlay when modelId is omitted', () => {
+    const prompt = buildSystemPrompt(ENV)
+    expect(prompt).not.toContain('<tool_use_enforcement>')
+  })
+
+  it('places overlay after env block but before sections', () => {
+    const prompt = buildSystemPrompt(
+      ENV,
+      [{ title: 'User instructions', content: 'Be brief.' }],
+      'gpt-4o-mini',
+    )
+    const envIdx = prompt.indexOf('Environment:')
+    const overlayIdx = prompt.indexOf('<tool_use_enforcement>')
+    const sectionIdx = prompt.indexOf('## User instructions')
+    expect(envIdx).toBeLessThan(overlayIdx)
+    expect(overlayIdx).toBeLessThan(sectionIdx)
+  })
+
+  it('output is byte-identical to no-modelId when modelId is claude', () => {
+    const withoutId = buildSystemPrompt(ENV, [])
+    const withClaudeId = buildSystemPrompt(ENV, [], 'claude-sonnet-4-6')
+    expect(withClaudeId).toBe(withoutId)
   })
 })

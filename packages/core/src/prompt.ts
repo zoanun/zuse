@@ -28,6 +28,56 @@ Working style:
 - Be direct. No sycophantic openers. End when the answer is complete — no closing fluff like "let me know if you need anything", "I'm at your service", or offers to do more.
 - When a shell command fails, read the error and try an alternative before giving up; don't abandon the task on the first failure.`
 
+/**
+ * 非 Claude 模型的强制执行约束。用 XML 标签结构化——弱模型对 XML 边界的
+ * 识别优于纯散文段落（Hermes / OpenClaw 实战验证）。
+ *
+ * 四个块分别针对弱模型的四类高频失败模式：
+ *   1. tool_use_enforcement — 光说不做
+ *   2. mandatory_tool_use   — 凭记忆回答事实问题
+ *   3. anti_fabrication     — 编造输出
+ *   4. completion_contract  — 半成品交付
+ */
+export const NON_CLAUDE_ENFORCEMENT_OVERLAY = `
+<tool_use_enforcement>
+You MUST use your tools to take action — do not describe what you would do
+without actually doing it. When you say you will perform an action, you MUST
+immediately make the corresponding tool call in the same response. Never end
+your turn with a promise of future action — execute it now.
+Every response should either (a) contain tool calls that make progress, or
+(b) deliver a final result. Responses that only describe intentions are not acceptable.
+</tool_use_enforcement>
+
+<mandatory_tool_use>
+NEVER answer these from memory or mental computation — ALWAYS use a tool:
+- Arithmetic, math, calculations → Bash
+- File contents, sizes, line counts → Read or Bash
+- Current time, date, timezone → Bash
+- System state (OS, disk, processes) → Bash
+- Git history, branches, diffs → Bash
+</mandatory_tool_use>
+
+<anti_fabrication>
+NEVER substitute plausible-looking fabricated output (made-up data, invented
+file contents, synthesised command output) for results you could not actually
+produce. If a tool or command fails, report the blocker honestly and try an
+alternative. Fabricating a result is always worse than admitting failure.
+</anti_fabrication>
+
+<completion_contract>
+Treat the task as incomplete until every requested item is handled.
+Do not stop after writing a stub or a single command. Keep working until you
+have actually produced the requested result, then report what real execution
+returned. Before finalizing, verify: does the output satisfy every stated
+requirement? Are factual claims backed by tool outputs?
+</completion_contract>`
+
+/** Claude 系模型不需要额外约束——原有提示词已足够。 */
+export function isClaudeFamily(modelId: string): boolean {
+  const id = modelId.toLowerCase()
+  return id.includes('claude') || id.includes('anthropic')
+}
+
 /** 运行环境信息，注入系统提示词，让模型按真实平台/shell/目录行动。 */
 export interface AgentEnvironment {
   /** 操作系统平台，通常取自 process.platform（'win32' | 'darwin' | 'linux' …）。 */
@@ -53,6 +103,7 @@ export interface AgentEnvironment {
 export function buildSystemPrompt(
   env: AgentEnvironment,
   sections: Array<{ title: string; content: string }> = [],
+  modelId?: string,
 ): string {
   const block = [
     'Environment:',
@@ -61,8 +112,11 @@ export function buildSystemPrompt(
     `- Working directory: ${env.cwd}`,
     `- Today's date: ${env.date}`,
   ].join('\n')
+  // 非 Claude 模型追加强制执行约束，紧跟在环境块之后、附加段之前。
+  // Claude 系或未指定 modelId 时不追加，保持 prompt cache 前缀不抖动。
+  const overlay = modelId && !isClaudeFamily(modelId) ? `\n${NON_CLAUDE_ENFORCEMENT_OVERLAY}` : ''
   // 附加段(Phase 13:SYSTEM.md / ZUSE.md / MEMORY.md):带 ## 来源标头追加在
   // 环境块之后。无附加段时输出与历史行为字节一致(prompt cache 前缀不抖动)。
   const extras = sections.map((s) => `\n\n## ${s.title}\n${s.content}`).join('')
-  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${extras}`
+  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${overlay}${extras}`
 }
