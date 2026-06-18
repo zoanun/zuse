@@ -65,8 +65,8 @@
 | | 结构化输出 (schema) | ✅ | ✅ | ❌ | ❌ | ❌ |
 | | Team + SendMessage | ❌ | ✅ | ❌ | ❌ | ❌ |
 | | Git worktree 隔离 | ❌ | ✅ | ❌ | ❌ | ❌ |
-| **调度** | ScheduleWakeup (延时唤醒) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| | Cron 定时任务 | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **调度** | ScheduleWakeup (延时唤醒) | ✅ | ✅ | ❌ | ✅ 心跳 | ❌ |
+| | Cron 定时任务 | ❌ | ✅ | ❌ | ✅ CronService | ❌ |
 | **协议** | MCP 客户端 | ✅ stdio | ✅ stdio+SSE | ✅ | ✅ | ✅ |
 | | MCP SSE transport | ❌ | ✅ | ✅ | ❌ | ❌ |
 | **UI** | 流式 Markdown 渲染 | ✅ | ✅ | ✅ | ❌ | ❌ |
@@ -88,7 +88,7 @@
 | **Zuse** | 68 | 57 | **84%** |
 | **CC** | 68 | 66 | **97%** |
 | **OpenCode** | 68 | 33 | **49%** |
-| **OpenClaw** | 68 | 20 | **29%** |
+| **OpenClaw** | 68 | 22 | **32%** |
 | **Hermes** | 68 | 22 | **32%** |
 
 ## Zuse 未实现项（11 项）
