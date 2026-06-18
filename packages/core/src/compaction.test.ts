@@ -111,7 +111,7 @@ describe('buildSummaryPrompt', () => {
     expect(prompt).toContain('修好了')
     expect(prompt).toContain('Read')
     expect(prompt).not.toContain('x'.repeat(1000)) // 5000 字的工具输出被截
-    expect(prompt).toContain('未完成事项') // 摘要指令包含要点清单
+    expect(prompt).toContain('Pending items') // summary instruction includes the checklist
   })
 })
 

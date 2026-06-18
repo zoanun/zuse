@@ -79,37 +79,39 @@ function renderBlock(b: Message['content'][number]): string {
   if (b.type === 'text') return b.text
   if (b.type === 'tool_use') {
     const input = JSON.stringify(b.input ?? {})
-    return `[调用工具 ${b.name}(${input.length > TOOL_EXCERPT_CHARS ? input.slice(0, TOOL_EXCERPT_CHARS) + '…' : input})]`
+    return `[Tool call: ${b.name}(${input.length > TOOL_EXCERPT_CHARS ? input.slice(0, TOOL_EXCERPT_CHARS) + '…' : input})]`
   }
   const excerpt =
     b.content.length > TOOL_EXCERPT_CHARS ? b.content.slice(0, TOOL_EXCERPT_CHARS) + '…' : b.content
-  return `[工具结果${b.is_error ? '(失败)' : ''}: ${excerpt}]`
+  return `[Tool result${b.is_error ? ' (error)' : ''}: ${excerpt}]`
 }
 
 /** 把摘要段渲染成 transcript 并附摘要指令,交模型生成结构化摘要。 */
 export function buildSummaryPrompt(messages: Message[]): string {
   const transcript = messages
-    .map((m) => `${m.role === 'user' ? '用户' : '助手'}: ${m.content.map(renderBlock).join('\n')}`)
+    .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.content.map(renderBlock).join('\n')}`)
     .join('\n\n')
   return (
-    '下面是一段对话的较早部分。请把它压缩成一份后续对话可以依赖的结构化摘要,' +
-    '用中文,涵盖:\n' +
-    '1. 任务目标与当前状态\n' +
-    '2. 关键决策与理由\n' +
-    '3. 改动过的文件清单\n' +
-    '4. 未完成事项\n' +
-    '5. 用户明确提出的约束\n' +
-    '只输出摘要本身,不要前言后语。\n\n' +
-    // 记忆冲刷(Phase 13,对照 OpenClaw memory flush 的轻量版):老历史即将被折叠,
-    // 摘要请求顺带抽取值得跨会话保留的持久事实 —— 不另起回合,零额外请求。
-    '另外:若对话中出现「跨会话仍然成立的持久事实」(用户偏好、被纠正过的做法、' +
-    '项目硬约束),在摘要末尾逐条追加,每条独占一行、最多 3 条,严格使用此格式' +
-    '(没有就不要输出任何 MEMORY 行):\n' +
-    'MEMORY: <type>|<一行要点>|<完整内容>\n' +
-    'type 取 user(用户偏好,跨项目)/project(本项目事实)/insight(经验教训)/reference(外部资源)之一。\n\n' +
-    '<对话>\n' +
+    'Below is an earlier portion of a conversation. Compress it into a structured summary ' +
+    'that the rest of the conversation can rely on, covering:\n' +
+    '1. Task goals and current status\n' +
+    '2. Key decisions and rationale\n' +
+    '3. List of files modified\n' +
+    '4. Pending items\n' +
+    '5. Constraints explicitly stated by the user\n' +
+    'Output only the summary itself — no preamble, no closing remarks.\n\n' +
+    // Memory flush (Phase 13, lightweight version of OpenClaw memory flush): old history
+    // is about to be folded; the summary request also extracts persistent facts worth
+    // keeping across sessions — no extra round-trip, zero additional requests.
+    'Additionally: if the conversation contains persistent facts that remain valid across sessions ' +
+    '(user preferences, corrected practices, hard project constraints), append them at the end of ' +
+    'the summary, one per line, up to 3 lines, strictly using this format ' +
+    '(if there are none, do not output any MEMORY lines):\n' +
+    'MEMORY: <type>|<hook>|<content>\n' +
+    'type is one of: user (user preferences, cross-project) / project (project-specific facts) / insight (lessons learned) / reference (external resources).\n\n' +
+    '<conversation>\n' +
     transcript +
-    '\n</对话>'
+    '\n</conversation>'
   )
 }
 
@@ -158,7 +160,7 @@ export function applyCompaction(conv: Conversation, summaryText: string, cutInde
   const messages = conv.getMessages()
   const summaryMessage: Message = {
     role: 'user',
-    content: [{ type: 'text', text: `[之前对话的摘要]\n${summaryText}` }],
+    content: [{ type: 'text', text: `[Summary of earlier conversation]\n${summaryText}` }],
   }
   return Conversation.fromJSON({
     version: 1,
@@ -189,8 +191,8 @@ export async function summarizeForCompaction(
   )
   for await (const e of events) {
     if (e.type === 'text-delta') text += e.text
-    else if (e.type === 'error') throw new Error(`压缩摘要失败:${e.message}`)
+    else if (e.type === 'error') throw new Error(`Compaction summary failed: ${e.message}`)
   }
-  if (text.trim() === '') throw new Error('压缩摘要失败:模型未返回内容')
+  if (text.trim() === '') throw new Error('Compaction summary failed: model returned no content')
   return text
 }
