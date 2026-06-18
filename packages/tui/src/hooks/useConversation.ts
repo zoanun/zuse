@@ -218,10 +218,11 @@ export function useConversation({
           date: new Date().toISOString().slice(0, 10),
         },
         sections,
+        currentModel,
       ),
       memoryCount,
     }
-  }, [cwd])
+  }, [cwd, currentModel])
   const systemPrompt = promptInfo.systemPrompt
 
   // Agent 工具需要运行时依赖(client / settings / systemPrompt),只在 TUI 层可得。
