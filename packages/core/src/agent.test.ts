@@ -332,6 +332,38 @@ describe('runAgent', () => {
     expect(msgs[msgs.length - 1]!.role).toBe('assistant')
   })
 
+  it('maxTurns stop message uses forceful CRITICAL text', async () => {
+    const loopScript: StreamEvent[] = [
+      { type: 'tool-use', id: 'c', name: 'echo', input: { value: 'x' } },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+    ]
+    const { client } = fakeClient([loopScript, loopScript, loopScript])
+    const conv = new Conversation()
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+        maxTurns: 2,
+      }),
+    )
+    const msgs = conv.getMessages()
+    const lastMsg = msgs[msgs.length - 1]!
+    const text = lastMsg.content[0]!
+    expect(text).toHaveProperty('type', 'text')
+    if (text.type === 'text') {
+      expect(text.text).toContain('CRITICAL')
+      expect(text.text).toContain('Do NOT attempt any more tool calls')
+    }
+  })
+
   // ——— Phase 11 故障注入 ———
 
   it('坏 JSON tool_use（invalid_args）：不执行工具，合成 is_error 回喂，循环继续', async () => {

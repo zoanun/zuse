@@ -12,6 +12,11 @@ import type { Conversation } from './conversation.js'
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
 export const DEFAULT_MAX_TURNS = 50
 
+export const MAX_TURNS_STOP_TEXT = (n: number): string =>
+  `[CRITICAL: Maximum tool turns (${n}) reached. Tools are now disabled. ` +
+  `Do NOT attempt any more tool calls. Summarize what was accomplished ` +
+  `and what remains, then end your response.]`
+
 /** 未提供 settings 时的宽松回退：全部放行（保持 Phase 4 行为，便于旧测试/无头调用）。 */
 const PERMISSIVE_SETTINGS: ResolvedSettings = {
   tools: {},
@@ -244,7 +249,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // 所以补一条助手收尾消息以保持角色交替合法，然后告警。
     staged.push({
       role: 'assistant',
-      content: [{ type: 'text', text: `[Stopped: reached max turns (${maxTurns}).]` }],
+      content: [{ type: 'text', text: MAX_TURNS_STOP_TEXT(maxTurns) }],
     })
     yield { type: 'warning', message: `Reached max turns (${maxTurns}); stopping.` }
   }
