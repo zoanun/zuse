@@ -57,22 +57,23 @@ export function shouldConsolidateMemories(opts: {
 export function buildConsolidationPrompt(memories: ConsolidationMemory[]): string {
   const lines = memories.map((m) => {
     const scope = m.project ? m.project : 'global'
-    const hook = m.hook ? ` 要点:${m.hook}` : ''
-    return `[${m.id}] (${m.type}, ${scope}, ${m.createdAt.slice(0, 10)})${hook} 内容:${m.content}`
+    const hook = m.hook ? ` hook:${m.hook}` : ''
+    return `[${m.id}] (${m.type}, ${scope}, ${m.createdAt.slice(0, 10)})${hook} content:${m.content}`
   })
   return (
-    '下面是一个 AI 助手的长期记忆清单。请整理它:合并重复或高度相近的条目、' +
-    '删除已过时或互相矛盾的条目,让清单更精炼。规则:\n' +
-    '- 删除某条:输出一行 DELETE <id>\n' +
-    '- 合并若干条为一条新记忆:先输出新条目 SAVE <type>|<一行要点>|<完整内容>,' +
-    '再对被合并的旧条目逐条输出 DELETE <id>\n' +
-    '- type 取 user/project/insight/reference 之一\n' +
-    '- 不需要动的条目不要输出任何内容;没有可整理的就只输出 NOOP\n' +
-    '- 宁可保守:拿不准的条目一律保留\n' +
-    '只输出操作行,不要解释。\n\n' +
-    '<记忆清单>\n' +
+    'Below is a long-term memory list for an AI assistant. Please tidy it up: ' +
+    'merge duplicate or highly similar entries, remove outdated or contradictory entries, ' +
+    'and make the list more concise. Rules:\n' +
+    '- To delete an entry: output DELETE <id>\n' +
+    '- To merge several entries into one new memory: first output the new entry as ' +
+    'SAVE <type>|<one-line hook>|<full content>, then output DELETE <id> for each old entry being merged\n' +
+    '- type must be one of user/project/insight/reference\n' +
+    '- Do not output anything for entries that need no changes; if nothing needs tidying, output only NOOP\n' +
+    '- When in doubt, keep the entry — be conservative\n' +
+    'Output only operation lines, no explanations.\n\n' +
+    '<memory_list>\n' +
     lines.join('\n') +
-    '\n</记忆清单>'
+    '\n</memory_list>'
   )
 }
 

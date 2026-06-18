@@ -43,8 +43,8 @@ describe('buildConsolidationPrompt', () => {
       { id: 3, type: 'user', content: '偏好中文', hook: '中文', project: '', createdAt: '2026-06-01T08:00:00Z' },
       { id: 7, type: 'project', content: '用 pnpm', hook: '', project: 'E--p-12345678', createdAt: '2026-06-02T08:00:00Z' },
     ])
-    expect(prompt).toContain('[3] (user, global, 2026-06-01) 要点:中文 内容:偏好中文')
-    expect(prompt).toContain('[7] (project, E--p-12345678, 2026-06-02) 内容:用 pnpm')
+    expect(prompt).toContain('[3] (user, global, 2026-06-01) hook:中文 content:偏好中文')
+    expect(prompt).toContain('[7] (project, E--p-12345678, 2026-06-02) content:用 pnpm')
     expect(prompt).toContain('DELETE <id>')
     expect(prompt).toContain('SAVE <type>|')
     expect(prompt).toContain('NOOP')
