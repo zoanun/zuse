@@ -211,7 +211,13 @@ export const BashTool: Tool = {
   description:
     'Run a shell command and return its combined stdout/stderr and exit code. ' +
     'Use for one-off commands (builds, tests, git). Long output keeps its head and tail ' +
-    '(the full output is saved to a file referenced in the result); commands time out.',
+    '(the full output is saved to a file referenced in the result); commands time out.\n' +
+    'IMPORTANT guidelines:\n' +
+    '- Prefer dedicated tools over Bash when one fits: Read (not cat/head/tail), ' +
+    'Edit (not sed/awk), Glob (not find/ls), Grep (not grep/rg).\n' +
+    '- Do NOT use interactive commands (git rebase -i, npm init without -y, etc.).\n' +
+    '- Do NOT prefix commands with `cd` — the working directory is already set.\n' +
+    '- Always quote file paths containing spaces with double quotes.',
   inputSchema,
   specifierFor: (input: unknown): string | null => {
     // 返回 shell 命令字符串作为限定符；无则 null。
