@@ -3,7 +3,7 @@ import type { ModelClient, Tool, ToolContext, ResolvedSettings, PermissionReques
 
 const SUB_AGENT_MAX_TURNS = 10
 
-const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Be concise and structured.`
+const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured.`
 
 export interface AgentToolDeps {
   registry: ToolRegistry

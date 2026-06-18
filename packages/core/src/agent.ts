@@ -165,7 +165,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       // 'max_tokens'（Anthropic 原生 / OpenAI 'length' 归一而来）= 回复被 max_tokens 截断，
       // 而非自然结束。告警提示本回合可能不完整，免得静默把半截回复当成最终答案。
       if (stopReason === 'max_tokens') {
-        yield { type: 'warning', message: `模型输出在 max_tokens 处被截断，本回合可能不完整。` }
+        yield { type: 'warning', message: `Model output was truncated at max_tokens. This turn's response may be incomplete.` }
       }
       clean = true
       break

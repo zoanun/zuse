@@ -10,7 +10,7 @@ import type { ResolvedSettings, PermissionRequest, PermissionVerdict } from './t
 
 const DEFAULT_MAX_AGENTS = 100
 const SUB_AGENT_MAX_TURNS = 10
-const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Be concise and structured.`
+const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured.`
 
 export class Semaphore {
   private available: number
@@ -118,7 +118,7 @@ export function createWorkflow(ctx: WorkflowContext) {
 
       const conversation = new Conversation()
       const effectivePrompt = opts?.schema
-        ? `${prompt}\n\nYou MUST respond with valid JSON matching this schema:\n${JSON.stringify(opts.schema, null, 2)}\n\nOutput ONLY the JSON object, no markdown fences or extra text.`
+        ? `${prompt}\n\nYou MUST respond with valid JSON matching this schema:\n${JSON.stringify(opts.schema, null, 2)}\n\nYour ENTIRE response must be a single valid JSON object matching the schema above. No markdown, no code fences, no explanation before or after. If you add anything besides the JSON, parsing will fail and you will need to retry.`
         : prompt
       let finalText = ''
       for await (const event of runAgent({

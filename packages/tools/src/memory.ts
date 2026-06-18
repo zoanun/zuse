@@ -141,7 +141,7 @@ Actions:
 - recall: full-text search PAST CONVERSATION transcripts of this project (episodic memory — "what did we discuss about X?"). Requires "query"; optional "days" limits to sessions updated in the last N days. Returns matching excerpts with session ids; the user can reopen a session with /resume <id>.
 - list: list all memories visible to this project.
 - delete: remove an outdated or wrong memory by "id".
-Save sparingly: durable facts only (preferences, constraints, corrections) — not transient task state, and not what the project files already record.`,
+Save sparingly: durable facts only (preferences, constraints, corrections). Do NOT save task progress, session outcomes, completed-work logs, PR numbers, issue numbers, commit SHAs, or any artifact that will be stale in a week. If it won't matter next month, it does not belong in memory.`,
     inputSchema: {
       type: 'object',
       properties: {
