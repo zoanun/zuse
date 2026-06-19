@@ -122,10 +122,8 @@ export function buildSystemPrompt(
   // Claude 系或未指定 modelId 时不追加，保持 prompt cache 前缀不抖动。
   const overlay = modelId && !isClaudeFamily(modelId) ? `\n${NON_CLAUDE_ENFORCEMENT_OVERLAY}` : ''
   // 附加段(Phase 13:SYSTEM.md / ZUSE.md / MEMORY.md):带 ## 来源标头追加在
-  // 环境块之后。这些内容会话内不变,放在日期之前以最大化 prompt cache 命中。
+  // 环境块之后。日期不在这里——改为注入到每轮用户消息前缀,使整个系统提示词
+  // 100% 稳定,永远命中 prompt cache。对齐 CC 的策略。
   const extras = sections.map((s) => `\n\n## ${s.title}\n${s.content}`).join('')
-  // 日期放在最末尾——整个会话期间只有它每天会变,前面的一切(身份+环境+overlay+
-  // 指令+记忆)都能命中缓存。对齐 Hermes 的 volatile 层策略。
-  const dateSection = env.date ? `\n\nToday's date: ${env.date}` : ''
-  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${overlay}${extras}${dateSection}`
+  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${overlay}${extras}`
 }
