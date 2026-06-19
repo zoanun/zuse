@@ -12,7 +12,7 @@ import { PermissionDialog } from './components/PermissionDialog.js'
 import { ModelSelect } from './components/ModelSelect.js'
 import { useDoublePress } from './hooks/useDoublePress.js'
 import { useConversation } from './hooks/useConversation.js'
-import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
+import { getDefaultMaxTokens, getWebSearchConfig, loadSettings, resolveContextWindow, resolveModelSelection, DEFAULT_PROVIDER_ID, type Conversation, type ResolvedSettings } from '@zuse/core'
 import { homedir } from 'node:os'
 import { createDefaultRegistry, LspManager, primeShellSnapshot, cwdSlug, scanSkills } from '@zuse/tools'
 import { McpManager } from '@zuse/core'
@@ -73,7 +73,11 @@ export function App({ cwd, initialSession }: AppProps) {
     if (!servers || Object.keys(servers).length === 0) return
     const mgr = new McpManager()
     void mgr.connectAll(servers).then(({ connected, failed }) => {
-      if (connected.length > 0) mgr.registerTools(registry)
+      if (connected.length > 0) {
+        const sel = resolveModelSelection(resolved)
+        const ctxWindow = resolveContextWindow(resolved, sel.providerId, sel.model)
+        mgr.registerTools(registry, ctxWindow)
+      }
       for (const f of failed) {
         // eslint-disable-next-line no-console
         console.error(`MCP server "${f.name}" failed to connect: ${f.error}`)
