@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
@@ -22,8 +22,8 @@ const HEAD_CHARS = 10_000
 const TAIL_CHARS = 20_000
 
 /** 截断时完整输出的落盘目录(测试经 ZUSE_TOOL_OUTPUT_DIR 注入临时目录)。 */
-function spillDir(): string {
-  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? path.join(homedir(), '.zuse', 'tool-output')
+function spillDir(cwd: string): string {
+  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? path.join(cwd, '.zuse', 'tool-output')
 }
 
 /** git-bash 相对 Git 安装根目录的两种固定布局。 */
@@ -264,7 +264,7 @@ export const BashTool: Tool = {
       const shaper = new StreamShaper({
         headChars: HEAD_CHARS,
         tailChars: TAIL_CHARS,
-        spill: { dir: spillDir(), prefix: 'bash' },
+        spill: { dir: spillDir(ctx.cwd), prefix: 'bash' },
       })
       const append = (text: string): void => shaper.append(text)
 
