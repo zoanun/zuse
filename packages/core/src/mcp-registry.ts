@@ -45,7 +45,7 @@ export class McpManager {
               return { output: result.content, isError: result.isError }
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err)
-              return { output: `MCP tool call failed: ${msg}`, isError: true }
+              return { output: `MCP tool call failed: ${msg}. Do not retry immediately — try an alternative approach, or ask the user to check the MCP server.`, isError: true }
             }
           },
         }
