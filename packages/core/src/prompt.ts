@@ -117,13 +117,15 @@ export function buildSystemPrompt(
     `- Operating system: ${env.platform}${env.osVersion ? ` (${env.osVersion})` : ''}`,
     `- Shell: ${env.shell} — the Bash tool runs commands through this shell; use its command syntax.`,
     `- Working directory: ${env.cwd}`,
-    `- Today's date: ${env.date}`,
   ].join('\n')
   // 非 Claude 模型追加强制执行约束，紧跟在环境块之后、附加段之前。
   // Claude 系或未指定 modelId 时不追加，保持 prompt cache 前缀不抖动。
   const overlay = modelId && !isClaudeFamily(modelId) ? `\n${NON_CLAUDE_ENFORCEMENT_OVERLAY}` : ''
+  // 日期单独放在 overlay 之后——不进入稳定的环境块，避免每天换日期导致
+  // prompt cache 前缀失效。CC (Claude Code) 采用同样的策略。
+  const dateSection = env.date ? `\n\nToday's date: ${env.date}` : ''
   // 附加段(Phase 13:SYSTEM.md / ZUSE.md / MEMORY.md):带 ## 来源标头追加在
   // 环境块之后。无附加段时输出与历史行为字节一致(prompt cache 前缀不抖动)。
   const extras = sections.map((s) => `\n\n## ${s.title}\n${s.content}`).join('')
-  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${overlay}${extras}`
+  return `${DEFAULT_SYSTEM_PROMPT}\n\n${block}${overlay}${dateSection}${extras}`
 }

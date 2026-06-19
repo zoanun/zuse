@@ -35,6 +35,15 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('darwin (24.0.0)')
     expect(prompt).toContain('Shell: sh')
   })
+
+  it('places date after environment block for cache stability', () => {
+    const prompt = buildSystemPrompt(ENV)
+    const envBlock = prompt.indexOf('Environment:')
+    const datePos = prompt.indexOf("Today's date:")
+    // date should come AFTER the environment block, not inside it
+    const envEnd = prompt.indexOf('Working directory:')
+    expect(datePos).toBeGreaterThan(envEnd)
+  })
 })
 
 describe('isClaudeFamily', () => {
