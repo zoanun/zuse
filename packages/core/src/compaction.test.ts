@@ -161,21 +161,20 @@ describe('summarizeForCompaction', () => {
     expect(text).toBe('摘要前半,后半')
   })
 
-  it('throws on an error event instead of returning a half summary', async () => {
+  it('falls back to deterministic summary on error event', async () => {
     const client = fakeClient([
       { type: 'text-delta', text: '半截' },
       { type: 'error', message: 'boom' },
     ])
-    await expect(
-      summarizeForCompaction(client, [user('一')], { model: 'fake', max_tokens: 100 }),
-    ).rejects.toThrow(/boom/)
+    const text = await summarizeForCompaction(client, [user('一')], { model: 'fake', max_tokens: 100 })
+    expect(text).toContain('Deterministic fallback summary')
+    expect(text).toContain('Active Task')
   })
 
-  it('throws when the model returns no text', async () => {
+  it('falls back to deterministic summary when model returns no text', async () => {
     const client = fakeClient([{ type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }])
-    await expect(
-      summarizeForCompaction(client, [user('一')], { model: 'fake', max_tokens: 100 }),
-    ).rejects.toThrow()
+    const text = await summarizeForCompaction(client, [user('一')], { model: 'fake', max_tokens: 100 })
+    expect(text).toContain('Deterministic fallback summary')
   })
 })
 

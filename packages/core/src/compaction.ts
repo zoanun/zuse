@@ -305,9 +305,60 @@ export function extractPreviousSummary(messages: Message[]): string | null {
   return text.text.slice(0, endIdx).trim()
 }
 
+const FALLBACK_SUMMARY_MAX_CHARS = 8_000
+const FALLBACK_TURN_MAX_CHARS = 700
+
 /**
- * 调当前模型生成摘要(单独请求:无工具、收紧 max_tokens)。任何失败都抛出 ——
- * 调用方保持原账本不动,绝不半压。
+ * 确定性回退摘要:不依赖 LLM,从消息列表机械提取关键信息。
+ * 质量不如 LLM 摘要,但永远成功,比"完全不压缩"好得多。
+ */
+export function buildFallbackSummary(messages: Message[]): string {
+  const userAsks: string[] = []
+  const actions: string[] = []
+  const errors: string[] = []
+
+  for (const m of messages) {
+    for (const b of m.content) {
+      if (b.type === 'text' && m.role === 'user') {
+        const trimmed = b.text.length > FALLBACK_TURN_MAX_CHARS
+          ? b.text.slice(0, FALLBACK_TURN_MAX_CHARS) + '…'
+          : b.text
+        userAsks.push(trimmed)
+      }
+      if (b.type === 'tool_use') {
+        const args = JSON.stringify(b.input)
+        const short = args.length > 120 ? args.slice(0, 120) + '…' : args
+        actions.push(`${b.name}(${short})`)
+      }
+      if (b.type === 'tool_result' && b.is_error) {
+        const excerpt = b.content.length > 200 ? b.content.slice(0, 200) + '…' : b.content
+        errors.push(excerpt)
+      }
+    }
+  }
+
+  const parts: string[] = [
+    '## Active Task',
+    userAsks.length > 0 ? userAsks[userAsks.length - 1]! : 'None.',
+    '',
+    '## Completed Actions',
+    actions.length > 0 ? actions.map((a, i) => `${i + 1}. ${a}`).join('\n') : 'None.',
+    '',
+  ]
+  if (errors.length > 0) {
+    parts.push('## Errors Encountered', errors.join('\n'), '')
+  }
+  parts.push('[Deterministic fallback summary — LLM summarization was unavailable]')
+
+  const full = parts.join('\n')
+  return full.length > FALLBACK_SUMMARY_MAX_CHARS
+    ? full.slice(0, FALLBACK_SUMMARY_MAX_CHARS) + '\n[truncated]'
+    : full
+}
+
+/**
+ * 调当前模型生成摘要(单独请求:无工具、收紧 max_tokens)。LLM 失败时回退到
+ * 确定性摘要(永远成功),绝不让压缩彻底失败。
  */
 export async function summarizeForCompaction(
   client: ModelClient,
@@ -316,23 +367,27 @@ export async function summarizeForCompaction(
   signal?: AbortSignal,
   previousSummary?: string,
 ): Promise<string> {
-  const promptText = previousSummary
-    ? buildIterativeSummaryPrompt(previousSummary, toSummarize)
-    : buildSummaryPrompt(toSummarize)
-  const request: Message[] = [
-    { role: 'user', content: [{ type: 'text', text: promptText }] },
-  ]
-  let text = ''
-  const events = client.sendMessages(
-    request,
-    { model: config.model, max_tokens: Math.min(config.max_tokens, SUMMARY_MAX_TOKENS) },
-    undefined,
-    signal,
-  )
-  for await (const e of events) {
-    if (e.type === 'text-delta') text += e.text
-    else if (e.type === 'error') throw new Error(`Compaction summary failed: ${e.message}`)
+  try {
+    const promptText = previousSummary
+      ? buildIterativeSummaryPrompt(previousSummary, toSummarize)
+      : buildSummaryPrompt(toSummarize)
+    const request: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: promptText }] },
+    ]
+    let text = ''
+    const events = client.sendMessages(
+      request,
+      { model: config.model, max_tokens: Math.min(config.max_tokens, SUMMARY_MAX_TOKENS) },
+      undefined,
+      signal,
+    )
+    for await (const e of events) {
+      if (e.type === 'text-delta') text += e.text
+      else if (e.type === 'error') throw new Error(e.message)
+    }
+    if (text.trim() === '') throw new Error('model returned no content')
+    return text
+  } catch {
+    return buildFallbackSummary(toSummarize)
   }
-  if (text.trim() === '') throw new Error('Compaction summary failed: model returned no content')
-  return text
 }
