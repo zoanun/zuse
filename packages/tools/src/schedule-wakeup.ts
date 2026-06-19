@@ -20,11 +20,11 @@ export function createScheduleWakeupTool(deps: ScheduleWakeupDeps): Tool {
       properties: {
         delaySeconds: {
           type: 'number',
-          description: `延时秒数（${MIN_DELAY}-${MAX_DELAY}），到时间后自动唤醒。`,
+          description: `Delay in seconds (${MIN_DELAY}-${MAX_DELAY}). After this time, the agent wakes up automatically.`,
         },
         message: {
           type: 'string',
-          description: '唤醒时注入的消息文本，作为新一轮对话的输入。',
+          description: 'Text injected as a user message when the wakeup fires, triggering a new agent turn.',
         },
       },
       required: ['delaySeconds', 'message'],
@@ -42,7 +42,7 @@ export function createScheduleWakeupTool(deps: ScheduleWakeupDeps): Tool {
       const clamped = Math.max(MIN_DELAY, Math.min(MAX_DELAY, Math.round(delaySeconds)))
       deps.onSchedule(clamped * 1000, message)
 
-      return { output: `已设置 ${clamped} 秒后唤醒: ${message}` }
+      return { output: `Wakeup scheduled in ${clamped}s: ${message}` }
     },
   }
 }

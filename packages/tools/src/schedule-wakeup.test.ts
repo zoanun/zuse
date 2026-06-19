@@ -13,7 +13,7 @@ describe('ScheduleWakeupTool', () => {
     const result = await tool.run({ delaySeconds: 30, message: '检查 CI' }, dummyCtx)
 
     expect(calledWith).toEqual({ delayMs: 30000, message: '检查 CI' })
-    expect(result.output).toContain('30 秒')
+    expect(result.output).toContain('30s')
     expect(result.output).toContain('检查 CI')
     expect(result.isError).toBeFalsy()
   })
