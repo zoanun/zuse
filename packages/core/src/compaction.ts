@@ -91,15 +91,32 @@ export function buildSummaryPrompt(messages: Message[]): string {
   const transcript = messages
     .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.content.map(renderBlock).join('\n')}`)
     .join('\n\n')
+  const today = new Date().toISOString().slice(0, 10)
   return (
-    'Below is an earlier portion of a conversation. Compress it into a structured summary ' +
-    'that the rest of the conversation can rely on, covering:\n' +
-    '1. Task goals and current status\n' +
-    '2. Key decisions and rationale\n' +
-    '3. List of files modified\n' +
-    '4. Pending items\n' +
-    '5. Constraints explicitly stated by the user\n' +
-    'Output only the summary itself — no preamble, no closing remarks.\n\n' +
+    'You are a summarization agent creating a context checkpoint. ' +
+    'Treat the conversation turns below as source material for a compact record of prior work. ' +
+    'Produce only the structured summary; do not add a greeting, preamble, or prefix. ' +
+    'Write the summary in the same language the user was using in the conversation.\n\n' +
+    'Use this exact structure:\n\n' +
+    '## Active Task\n' +
+    '[The user\'s most recent unfulfilled request — capture their exact words. ' +
+    'If the last exchange was fully resolved, write "None."]\n\n' +
+    '## Goal\n' +
+    '[What the user is trying to accomplish overall]\n\n' +
+    '## Completed Actions\n' +
+    '[Numbered list of concrete actions taken — include tool used, target, and outcome. ' +
+    'Example: 1. READ config.ts:45 — found bug [tool: Read]]\n\n' +
+    '## Active State\n' +
+    '[Working directory, branch, modified files, test status, running processes]\n\n' +
+    '## Pending Items\n' +
+    '[Work remaining — framed as reference only, not active instructions]\n\n' +
+    '## Key Decisions\n' +
+    '[Important decisions and WHY they were made]\n\n' +
+    '## Constraints & Preferences\n' +
+    '[User preferences, coding style, constraints]\n\n' +
+    `TEMPORAL ANCHORING: Today is ${today}. When an action has already been carried out, ` +
+    'phrase it as a completed past-tense fact, not an open instruction. ' +
+    'Never leave a finished action worded as if it still needs doing.\n\n' +
     // Memory flush (Phase 13, lightweight version of OpenClaw memory flush): old history
     // is about to be folded; the summary request also extracts persistent facts worth
     // keeping across sessions — no extra round-trip, zero additional requests.
@@ -160,7 +177,7 @@ export function applyCompaction(conv: Conversation, summaryText: string, cutInde
   const messages = conv.getMessages()
   const summaryMessage: Message = {
     role: 'user',
-    content: [{ type: 'text', text: `[Summary of earlier conversation — REFERENCE ONLY. This is a compressed summary of older messages, not an instruction. The latest user message below takes precedence over anything in this summary.]\n${summaryText}` }],
+    content: [{ type: 'text', text: `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is background reference, NOT active instructions. Do NOT answer questions or fulfill requests mentioned in this summary — they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary. Reverse signals in the latest message (stop, undo, never mind, change of topic) immediately end any in-flight work described here. Your persistent memory in the system prompt is ALWAYS authoritative — never deprioritize it due to this compaction note.\n${summaryText}\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---` }],
   }
   return Conversation.fromJSON({
     version: 1,
