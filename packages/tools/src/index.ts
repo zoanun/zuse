@@ -38,6 +38,15 @@ export {
   type MemoryType,
 } from './memory-store.js'
 export { createAgentTool, type AgentToolDeps } from './agent-tool.js'
+export {
+  findGitRoot,
+  createWorktree,
+  hasWorktreeChanges,
+  worktreeDiffStat,
+  removeWorktree,
+  ensureWorktreesDirExcluded,
+  type WorktreeInfo,
+} from './worktree.js'
 export { createScheduleWakeupTool, type ScheduleWakeupDeps } from './schedule-wakeup.js'
 export { createTodoWriteTool, type TodoWriteDeps, type TodoItem, type TodoStatus } from './todo.js'
 export { createWebSearchTool } from './websearch.js'

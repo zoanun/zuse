@@ -1,5 +1,8 @@
-import { Conversation, ToolRegistry, runAgent, createModelClient, getProviderConfig } from '@zuse/core'
+import { Conversation, ToolRegistry, runAgent, createModelClient, getProviderConfig, createFileTracker } from '@zuse/core'
 import type { ModelClient, Tool, ToolContext, ResolvedSettings, PermissionRequest, PermissionVerdict } from '@zuse/core'
+import { findGitRoot, createWorktree, hasWorktreeChanges, worktreeDiffStat, removeWorktree } from './worktree.js'
+import type { WorktreeInfo } from './worktree.js'
+import * as crypto from 'node:crypto'
 
 const SUB_AGENT_MAX_TURNS = 10
 
@@ -52,6 +55,11 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
           type: 'boolean',
           description: 'Optional. Set true to run in background. Returns immediately; you will be notified on completion.',
         },
+        isolation: {
+          type: 'string',
+          enum: ['worktree'],
+          description: 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.',
+        },
       },
       required: ['prompt', 'description'],
     },
@@ -62,12 +70,13 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
     },
 
     async run(input: unknown, ctx: ToolContext) {
-      const { prompt, description, model, allowedTools, runInBackground } = input as {
+      const { prompt, description, model, allowedTools, runInBackground, isolation } = input as {
         prompt?: unknown
         description?: unknown
         model?: unknown
         allowedTools?: unknown
         runInBackground?: unknown
+        isolation?: unknown
       }
 
       if (typeof prompt !== 'string' || prompt === '') {
@@ -75,6 +84,20 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       }
       if (typeof description !== 'string' || description === '') {
         return { output: 'Agent tool requires a non-empty "description" string.', isError: true }
+      }
+
+      // Validate isolation parameter
+      if (isolation !== undefined && isolation !== 'worktree') {
+        return { output: `Invalid isolation mode: "${String(isolation)}". Supported: "worktree".`, isError: true }
+      }
+
+      // Worktree pre-check: verify we are in a git repo before doing anything else
+      let gitRoot: string | null = null
+      if (isolation === 'worktree') {
+        gitRoot = findGitRoot(ctx.cwd)
+        if (!gitRoot) {
+          return { output: 'Cannot create worktree: not in a git repository.', isError: true }
+        }
       }
 
       // Build child client — optionally override model
@@ -91,33 +114,103 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       const childRegistry = buildChildRegistry(deps.registry, allowedTools)
 
       const executeSubAgent = async (): Promise<string> => {
-        const conversation = new Conversation()
-        const sysPrompt = deps.getSystemPrompt() + SUB_AGENT_SUFFIX
+        // Set up worktree if isolation requested
+        let worktreeInfo: WorktreeInfo | null = null
+        let effectiveCwd = ctx.cwd
+        let childTracker = ctx.tracker
 
-        let finalText = ''
-        for await (const event of runAgent({
-          conversation,
-          client,
-          registry: childRegistry,
-          userText: prompt,
-          config: {
-            model: client.getModel(),
-            max_tokens: 16384,
-            system: sysPrompt,
-          },
-          cwd: ctx.cwd,
-          signal: ctx.signal,
-          maxTurns: SUB_AGENT_MAX_TURNS,
-          tracker: ctx.tracker,
-          settings: deps.settings,
-          sessionAllow: deps.sessionAllow,
-          canUseTool: deps.canUseTool,
-        })) {
-          if (event.type === 'text-delta') {
-            finalText += event.text
+        try {
+          if (isolation === 'worktree' && gitRoot) {
+            const slug = `agent-${crypto.randomUUID().slice(0, 8)}`
+            worktreeInfo = await createWorktree(gitRoot, slug)
+            effectiveCwd = worktreeInfo.worktreePath
+            // Isolated sub-agent gets a fresh tracker (different physical files)
+            childTracker = createFileTracker()
           }
+
+          const conversation = new Conversation()
+          const sysPrompt = deps.getSystemPrompt() + SUB_AGENT_SUFFIX
+
+          let finalText = ''
+          for await (const event of runAgent({
+            conversation,
+            client,
+            registry: childRegistry,
+            userText: prompt,
+            config: {
+              model: client.getModel(),
+              max_tokens: 16384,
+              system: sysPrompt,
+            },
+            cwd: effectiveCwd,
+            signal: ctx.signal,
+            maxTurns: SUB_AGENT_MAX_TURNS,
+            tracker: childTracker,
+            settings: deps.settings,
+            sessionAllow: deps.sessionAllow,
+            canUseTool: deps.canUseTool,
+          })) {
+            if (event.type === 'text-delta') {
+              finalText += event.text
+            }
+          }
+
+          const agentText = finalText || '(sub-agent produced no text output)'
+
+          // Post-run: check worktree for changes
+          if (worktreeInfo) {
+            const changed = await hasWorktreeChanges(
+              worktreeInfo.worktreePath,
+              worktreeInfo.headCommit,
+            )
+
+            if (changed) {
+              const diffStat = await worktreeDiffStat(
+                worktreeInfo.worktreePath,
+                worktreeInfo.headCommit,
+              )
+              const metadata = [
+                '<worktree-result>',
+                '  <status>changes_detected</status>',
+                `  <worktree-path>${worktreeInfo.worktreePath}</worktree-path>`,
+                `  <branch>${worktreeInfo.worktreeBranch}</branch>`,
+                '  <diff-stat>',
+                `   ${diffStat}`,
+                '  </diff-stat>',
+                '</worktree-result>',
+              ].join('\n')
+              // Worktree is kept; null out so finally block doesn't clean it up
+              worktreeInfo = null
+              return `${metadata}\n\n${agentText}`
+            } else {
+              // No changes: clean up worktree
+              await removeWorktree(
+                worktreeInfo.worktreePath,
+                worktreeInfo.worktreeBranch,
+                worktreeInfo.gitRoot,
+              )
+              worktreeInfo = null
+              return agentText
+            }
+          }
+
+          return agentText
+        } catch (err) {
+          // On error, attempt cleanup
+          if (worktreeInfo) {
+            try {
+              await removeWorktree(
+                worktreeInfo.worktreePath,
+                worktreeInfo.worktreeBranch,
+                worktreeInfo.gitRoot,
+              )
+            } catch {
+              // Best-effort cleanup
+            }
+            worktreeInfo = null
+          }
+          throw err
         }
-        return finalText || '(sub-agent produced no text output)'
       }
 
       if (runInBackground === true && deps.onBackground) {
