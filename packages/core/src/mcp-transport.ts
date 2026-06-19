@@ -127,3 +127,272 @@ export class StdioTransport implements McpTransport {
     }
   }
 }
+
+// ── SseTransport ────────────────────────────────────────────────────
+
+/** Default timeout for waiting for the SSE `endpoint` event (ms). */
+const SSE_ENDPOINT_TIMEOUT = 10_000
+
+/** Default timeout for POST requests (ms). */
+const SSE_POST_TIMEOUT = 30_000
+
+/** Maximum reconnection attempts before giving up. */
+const MAX_RECONNECT_ATTEMPTS = 5
+
+/** Initial reconnection delay (ms). */
+const INITIAL_RECONNECT_DELAY = 1_000
+
+/** Maximum reconnection delay (ms). */
+const MAX_RECONNECT_DELAY = 30_000
+
+export class SseTransport implements McpTransport {
+  private messageHandler: ((msg: JsonRpcResponse) => void) | null = null
+  private errorHandler: ((err: Error) => void) | null = null
+  private closeHandler: (() => void) | null = null
+
+  private abortController: AbortController | null = null
+  private postAbortController: AbortController | null = null
+  private endpointUrl: string | null = null
+  private reconnectAttempts = 0
+  private reconnectDelay = INITIAL_RECONNECT_DELAY
+  private closed = false
+
+  constructor(
+    private readonly url: string,
+    private readonly headers?: Record<string, string>,
+  ) {}
+
+  async start(): Promise<void> {
+    this.closed = false
+    await this.connectSse()
+  }
+
+  send(message: JsonRpcMessage): void {
+    if (!this.endpointUrl) {
+      throw new Error('SSE endpoint not established')
+    }
+
+    const postController = new AbortController()
+    this.postAbortController = postController
+
+    const timeoutId = setTimeout(() => postController.abort(), SSE_POST_TIMEOUT)
+
+    fetch(this.endpointUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.headers,
+      },
+      body: JSON.stringify(message),
+      signal: postController.signal,
+    })
+      .then(async (response) => {
+        clearTimeout(timeoutId)
+        if (!response.ok) {
+          const body = await response.text().catch(() => '')
+          const err = new Error(`SSE POST failed: HTTP ${response.status} ${body}`)
+          // If the message had an id, the error handler will be invoked,
+          // but we also need to reject the pending request specifically.
+          // The McpClient's onError handler will handle this.
+          if (this.errorHandler) this.errorHandler(err)
+        }
+      })
+      .catch((err) => {
+        clearTimeout(timeoutId)
+        if (err instanceof Error && err.name === 'AbortError') {
+          if (this.closed) return // Expected during close()
+          if (this.errorHandler) this.errorHandler(new Error('SSE POST request timed out'))
+        } else {
+          if (this.errorHandler) this.errorHandler(err instanceof Error ? err : new Error(String(err)))
+        }
+      })
+  }
+
+  onMessage(handler: (message: JsonRpcResponse) => void): void {
+    this.messageHandler = handler
+  }
+
+  onError(handler: (error: Error) => void): void {
+    this.errorHandler = handler
+  }
+
+  onClose(handler: () => void): void {
+    this.closeHandler = handler
+  }
+
+  async close(): Promise<void> {
+    this.closed = true
+    if (this.abortController) {
+      this.abortController.abort()
+      this.abortController = null
+    }
+    if (this.postAbortController) {
+      this.postAbortController.abort()
+      this.postAbortController = null
+    }
+    this.endpointUrl = null
+  }
+
+  // ── Internal SSE connection logic ─────────────────────────────────
+
+  private async connectSse(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.abortController = new AbortController()
+
+      const timeoutId = setTimeout(() => {
+        this.abortController?.abort()
+        reject(new Error('SSE endpoint event timeout'))
+      }, SSE_ENDPOINT_TIMEOUT)
+
+      let resolved = false
+
+      this.readSseStream(
+        (eventType, data) => {
+          if (eventType === 'endpoint' && !resolved) {
+            clearTimeout(timeoutId)
+            resolved = true
+            this.endpointUrl = this.resolveEndpointUrl(data)
+            this.reconnectAttempts = 0
+            this.reconnectDelay = INITIAL_RECONNECT_DELAY
+            resolve()
+          } else if (eventType === 'message') {
+            try {
+              const msg = JSON.parse(data) as JsonRpcResponse
+              if (this.messageHandler) this.messageHandler(msg)
+            } catch {
+              /* ignore malformed JSON */
+            }
+          }
+        },
+        (err) => {
+          clearTimeout(timeoutId)
+          if (!resolved) {
+            reject(err)
+          } else {
+            // Connection dropped mid-session — trigger reconnect
+            this.handleDisconnect()
+          }
+        },
+      )
+    })
+  }
+
+  private readSseStream(
+    onEvent: (eventType: string, data: string) => void,
+    onStreamError: (err: Error) => void,
+  ): void {
+    const headers: Record<string, string> = {
+      Accept: 'text/event-stream',
+      ...this.headers,
+    }
+
+    fetch(this.url, {
+      method: 'GET',
+      headers,
+      signal: this.abortController?.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`SSE connection failed: HTTP ${response.status}`)
+        }
+
+        const reader = response.body?.getReader()
+        if (!reader) {
+          throw new Error('SSE response has no readable body')
+        }
+
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let currentEventType = 'message'
+        let currentData = ''
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            // Keep the last (potentially incomplete) line in the buffer
+            buffer = lines.pop() ?? ''
+
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                currentEventType = line.slice(6).trim()
+              } else if (line.startsWith('data:')) {
+                currentData = line.slice(5).trim()
+              } else if (line === '' && currentData) {
+                // Empty line = end of event
+                onEvent(currentEventType, currentData)
+                currentEventType = 'message'
+                currentData = ''
+              }
+            }
+          }
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            if (this.closed) return // Expected during close()
+          }
+          throw err
+        }
+
+        // Stream ended naturally
+        if (!this.closed) {
+          this.handleDisconnect()
+        }
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === 'AbortError' && this.closed) {
+          return // Expected during close()
+        }
+        onStreamError(err instanceof Error ? err : new Error(String(err)))
+      })
+  }
+
+  private resolveEndpointUrl(endpoint: string): string {
+    if (endpoint.startsWith('http://') || endpoint.startsWith('https://')) {
+      return endpoint
+    }
+    // Relative URL — resolve against base
+    const base = new URL(this.url)
+    return new URL(endpoint, base).toString()
+  }
+
+  private handleDisconnect(): void {
+    this.endpointUrl = null
+
+    // Emit close so McpClient can reject pending requests
+    if (this.closeHandler) this.closeHandler()
+
+    if (this.closed) return
+
+    // Attempt reconnection
+    this.attemptReconnect()
+  }
+
+  private attemptReconnect(): void {
+    if (this.closed) return
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      if (this.errorHandler) {
+        this.errorHandler(
+          new Error(`SSE reconnection failed after ${MAX_RECONNECT_ATTEMPTS} attempts`),
+        )
+      }
+      return
+    }
+
+    this.reconnectAttempts++
+    const delay = this.reconnectDelay
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY)
+
+    setTimeout(() => {
+      if (this.closed) return
+      this.connectSse().catch((err) => {
+        if (this.errorHandler) {
+          this.errorHandler(err instanceof Error ? err : new Error(String(err)))
+        }
+        this.attemptReconnect()
+      })
+    }, delay)
+  }
+}
