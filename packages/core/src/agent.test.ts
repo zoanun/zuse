@@ -614,6 +614,95 @@ describe('runAgent', () => {
     expect(turn2Tools.some((t) => t.name === 'late')).toBe(true)
   })
 
+  it('injects steer text into the last tool result', async () => {
+    let steerCalls = 0
+    const consumeSteer = (): string | null => {
+      steerCalls++
+      return steerCalls === 1 ? 'skip test files' : null
+    }
+
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'c1', name: 'echo', input: { value: 'a' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'ok' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const conv = new Conversation()
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+        consumeSteer,
+      }),
+    )
+
+    // The steer injection goes into staged messages (conversation), not yielded events.
+    const msgs = conv.getMessages()
+    // msgs: user, assistant(tool_use), user(tool_result), assistant(text) = 4
+    const toolResultMsg = msgs[2]!
+    expect(toolResultMsg.role).toBe('user')
+    const lastBlock = toolResultMsg.content[toolResultMsg.content.length - 1]!
+    expect(lastBlock.type).toBe('tool_result')
+    if (lastBlock.type === 'tool_result') {
+      expect(lastBlock.content).toContain('[USER MESSAGE')
+      expect(lastBlock.content).toContain('skip test files')
+    }
+  })
+
+  it('does not inject when consumeSteer returns null', async () => {
+    const consumeSteer = (): string | null => null
+
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'c1', name: 'echo', input: { value: 'a' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [
+        { type: 'text-delta', text: 'ok' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const conv = new Conversation()
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: reg,
+        userText: 'go',
+        config,
+        cwd: '.',
+        signal,
+        consumeSteer,
+      }),
+    )
+
+    const msgs = conv.getMessages()
+    const toolResultMsg = msgs[2]!
+    expect(toolResultMsg.role).toBe('user')
+    const lastBlock = toolResultMsg.content[toolResultMsg.content.length - 1]!
+    expect(lastBlock.type).toBe('tool_result')
+    if (lastBlock.type === 'tool_result') {
+      expect(lastBlock.content).not.toContain('[USER MESSAGE')
+    }
+  })
+
   it('disabled tool is denied even if the model calls it', async () => {
     const reg = new ToolRegistry(); reg.register(echoTool())
     const s: ResolvedSettings = { tools: { disabled: ['echo'] }, permissions: askSettings.permissions, providers: {} }

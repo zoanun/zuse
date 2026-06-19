@@ -86,6 +86,12 @@ export interface RunAgentOptions {
    * 缺省时 cd 仅在本回合内的后续工具间生效,回合结束后不保留。
    */
   onCwdChange?: (cwd: string) => void
+  /**
+   * Mid-turn steering: called after each tool batch completes. Returns the user's
+   * queued steer text (concatenated if multiple), or null if nothing queued.
+   * The text is appended to the last tool result before feeding back to the model.
+   */
+  consumeSteer?: () => string | null
 }
 
 interface PendingToolUse {
@@ -267,6 +273,16 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
         content: result.output,
         is_error: result.isError,
       })
+    }
+    // Mid-turn steer: if the user sent a message while tools were running,
+    // append it to the last tool result so the model sees it on the next turn.
+    const steer = opts.consumeSteer?.()
+    if (steer && resultBlocks.length > 0) {
+      const injection = `\n\n[USER MESSAGE — sent while you were working]\n${steer}\n[/USER MESSAGE]\nIMPORTANT: Address the user's message above. It takes priority over your current task. You may continue your current work after acknowledging it, or change direction if they asked you to.`
+      const last = resultBlocks[resultBlocks.length - 1]!
+      if (last.type === 'tool_result') {
+        last.content += injection
+      }
     }
     staged.push({ role: 'user', content: resultBlocks })
     // 循环：把工具结果回喂给模型
