@@ -13,6 +13,10 @@ import { writeToolOutputFile } from '../toolOutputFile.js'
 interface InputBoxProps {
   onSubmit: (text: string, displayText?: string, pasteFiles?: Record<number, string>) => void
   isDisabled: boolean
+  /** When true, input is in steer mode — shows ⚡ prefix, submits go through onSteer. */
+  isSteerMode?: boolean
+  /** Called when user submits in steer mode. */
+  onSteer?: (text: string) => void
   /** 全部可用命令的元信息，驱动 `/` 输入时的命令选择菜单。 */
   commands: CommandInfo[]
 }
@@ -37,7 +41,7 @@ interface InputModel {
  * 仿 Claude Code：输入框随内容自由增高、不封顶，且横向占满终端宽度。已完成的消息由 App
  * 用 Ink <Static> 打进终端滚动区，实时帧不再钉死终端高度，故输入框增高不会再触发重绘错位。
  */
-export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
+export function InputBox({ onSubmit, isDisabled, isSteerMode, onSteer, commands }: InputBoxProps) {
   const [model, setModel] = useState<InputModel>({
     buf: emptyBuffer,
     pastes: new Map(),
@@ -51,7 +55,7 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
 
   // 菜单候选：仅在「输入是斜杠命令起始 token」时计算；过滤逻辑见 commandMenu（已单测）。
   // 命令菜单判定仍用原始 model.buf.text（哨兵占位符不影响斜杠命令识别）。
-  const menuItems = isCommandMenuActive(model.buf.text)
+  const menuItems = !isSteerMode && isCommandMenuActive(model.buf.text)
     ? filterCommands(commands, commandMenuQuery(model.buf.text))
     : []
   // 菜单真正展开：有候选、未被 Esc 关闭、且输入框可用。
@@ -62,7 +66,18 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
   const handleSubmit = (): void => {
     // expand 还原哨兵 span 为全文；toDisplay 产出折叠展示串用于回显
     const full = expand(model.buf.text, model.pastes).trim()
-    if (full && !isDisabled) {
+    if (!full) return
+
+    // Steer mode: route through onSteer callback, skip normal submit logic.
+    if (isSteerMode && onSteer) {
+      onSteer(full)
+      setModel((m) => ({ buf: emptyBuffer, pastes: new Map(), nextId: m.nextId }))
+      setSelectedIndex(0)
+      setDismissedText(null)
+      return
+    }
+
+    if (!isDisabled) {
       let display: string | undefined
       let pasteFiles: Record<number, string> | undefined
       if (model.pastes.size > 0) {
@@ -163,7 +178,10 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
   )
 
   const showCursor = !isDisabled
-  const placeholder = isDisabled ? '等待响应…' : '输入消息…（Enter 发送，Ctrl+Enter 换行）'
+  const promptChar = isSteerMode ? '⚡' : '❯'
+  const placeholder = isSteerMode
+    ? 'steer the model…'
+    : isDisabled ? '等待响应…' : '输入消息…（Enter 发送，Ctrl+Enter 换行）'
   const isEmpty = model.buf.text.length === 0
   // 渲染用 toDisplay/toDisplayCursor 把哨兵 span 转为可见标签,再交 splitForRender 分行
   const displayText = toDisplay(model.buf.text, model.pastes)
@@ -182,7 +200,7 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
       <Text dimColor>{rule}</Text>
       {isEmpty ? (
         <Box>
-          <Text color="cyan">❯ </Text>
+          <Text color={isSteerMode ? 'yellow' : 'cyan'}>{promptChar} </Text>
           {showCursor ? <Text inverse> </Text> : <Text> </Text>}
           <Text dimColor>{placeholder}</Text>
         </Box>
@@ -190,7 +208,7 @@ export function InputBox({ onSubmit, isDisabled, commands }: InputBoxProps) {
         renderLines.map((ln, i) => (
           <Box key={i}>
             {/* 仅首行用提示符,其余续行缩进对齐 */}
-            <Text color="cyan">{i === 0 ? '❯ ' : '  '}</Text>
+            <Text color={isSteerMode ? 'yellow' : 'cyan'}>{i === 0 ? `${promptChar} ` : '  '}</Text>
             <Text>{ln.before}</Text>
             {ln.hasCursor && showCursor ? <Text inverse>{ln.cursor}</Text> : <Text>{ln.cursor}</Text>}
             <Text>{ln.after}</Text>

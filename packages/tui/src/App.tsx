@@ -89,6 +89,7 @@ export function App({ cwd, initialSession }: AppProps) {
   const {
     state,
     submit,
+    steer,
     pendingPermission,
     resolvePermission,
     permissionQueueLength,
@@ -240,7 +241,13 @@ export function App({ cwd, initialSession }: AppProps) {
           onCancel={closeModelSelector}
         />
       ) : (
-        <InputBox onSubmit={handleSubmit} isDisabled={state.isThinking} commands={commands} />
+        <InputBox
+          onSubmit={handleSubmit}
+          isDisabled={false}
+          isSteerMode={state.isThinking}
+          onSteer={steer}
+          commands={commands}
+        />
       )}
 
       {/* 页脚紧贴输入框下方、靠右显示（见 UsageFooter）。 */}
