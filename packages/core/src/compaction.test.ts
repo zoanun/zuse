@@ -4,7 +4,11 @@ import type { Message, StreamEvent, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import {
   findCompactionCut,
+  findCompactionCutByBudget,
+  estimateCompactionSavings,
   buildSummaryPrompt,
+  buildIterativeSummaryPrompt,
+  extractPreviousSummary,
   applyCompaction,
   summarizeForCompaction,
   splitMemoryCandidates,
@@ -208,5 +212,107 @@ describe('resolveContextWindow', () => {
 
   it('default is 512K (mainstream flagships are 1M-class in 2026)', () => {
     expect(DEFAULT_CONTEXT_WINDOW).toBe(512_000)
+  })
+})
+
+describe('findCompactionCutByBudget', () => {
+  it('returns null when all messages fit within budget', () => {
+    const msgs = [user('hi'), assistant('hello')]
+    expect(findCompactionCutByBudget(msgs, 10000)).toBeNull()
+  })
+
+  it('keeps recent messages within budget and compresses old ones', () => {
+    const msgs = [
+      user('old message 1'),
+      assistant('old response 1'),
+      user('old message 2'),
+      assistant('old response 2'),
+      user('recent message'),
+      assistant('recent response'),
+    ]
+    // Budget of 50 chars — should keep only the last few messages
+    const cut = findCompactionCutByBudget(msgs, 50)
+    expect(cut).not.toBeNull()
+    expect(cut!).toBeGreaterThan(0)
+    expect(cut!).toBeLessThan(msgs.length)
+  })
+
+  it('always protects at least MIN_TAIL_MESSAGES', () => {
+    const msgs = [
+      user('a'), assistant('b'),
+      user('c'), assistant('d'),
+      user('e'), assistant('f'),
+    ]
+    // Very tiny budget — should still keep MIN_TAIL_MESSAGES
+    const cut = findCompactionCutByBudget(msgs, 1)
+    expect(cut).not.toBeNull()
+    // Should keep at least 3 messages
+    expect(msgs.length - cut!).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe('estimateCompactionSavings', () => {
+  it('calculates savings ratio', () => {
+    const msgs = [
+      user('a'.repeat(1000)),
+      assistant('b'.repeat(1000)),
+      user('recent'),
+    ]
+    const { savingsRatio } = estimateCompactionSavings(msgs, 2, 200)
+    expect(savingsRatio).toBeGreaterThan(0.5)
+  })
+})
+
+describe('extractPreviousSummary', () => {
+  it('returns null for empty messages', () => {
+    expect(extractPreviousSummary([])).toBeNull()
+  })
+
+  it('returns null for non-compacted first message', () => {
+    expect(extractPreviousSummary([user('hello')])).toBeNull()
+  })
+
+  it('extracts summary from compacted first message', () => {
+    const compacted: Message = {
+      role: 'user',
+      content: [{ type: 'text', text: '[CONTEXT COMPACTION — REFERENCE ONLY] ...\nSome summary\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---' }],
+    }
+    const result = extractPreviousSummary([compacted])
+    expect(result).toContain('Some summary')
+    expect(result).not.toContain('END OF CONTEXT SUMMARY')
+  })
+
+  it('returns full text when end marker is missing', () => {
+    const compacted: Message = {
+      role: 'user',
+      content: [{ type: 'text', text: '[CONTEXT COMPACTION — REFERENCE ONLY] ...\nSome summary without end marker' }],
+    }
+    const result = extractPreviousSummary([compacted])
+    expect(result).toContain('Some summary without end marker')
+  })
+
+  it('returns null when first message is from assistant', () => {
+    expect(extractPreviousSummary([assistant('hello')])).toBeNull()
+  })
+})
+
+describe('buildIterativeSummaryPrompt', () => {
+  it('includes previous summary and new transcript', () => {
+    const prompt = buildIterativeSummaryPrompt('Old summary here', [user('new question'), assistant('new answer')])
+    expect(prompt).toContain('PREVIOUS SUMMARY:')
+    expect(prompt).toContain('Old summary here')
+    expect(prompt).toContain('NEW TURNS TO INCORPORATE:')
+    expect(prompt).toContain('new question')
+    expect(prompt).toContain('PRESERVE all existing information')
+  })
+
+  it('includes MEMORY format instructions', () => {
+    const prompt = buildIterativeSummaryPrompt('summary', [user('hi')])
+    expect(prompt).toContain('MEMORY: <type>|')
+  })
+
+  it('includes temporal anchoring', () => {
+    const prompt = buildIterativeSummaryPrompt('summary', [user('hi')])
+    expect(prompt).toContain('TEMPORAL ANCHORING:')
   })
 })

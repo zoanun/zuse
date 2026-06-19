@@ -14,6 +14,15 @@ import type { ModelClient } from './model-client.js'
 /** 压缩时保留的最近真实用户回合数。 */
 export const KEEP_RECENT_TURNS = 2
 
+/** Rough chars-per-token estimate for tail budget calculation. */
+const CHARS_PER_TOKEN = 4
+
+/** Default tail budget: fraction of the compaction threshold tokens to keep as recent context. */
+export const TAIL_BUDGET_RATIO = 0.25
+
+/** Minimum messages to always protect in the tail (even if they exceed the budget). */
+const MIN_TAIL_MESSAGES = 3
+
 /**
  * 默认上下文窗口(模型级/provider 级都未配时)。2026 年主流旗舰(Claude 主线、
  * GPT、Qwen3.7-Max、DeepSeek V4)都是 1M 档,缺省取 512k。
@@ -72,6 +81,69 @@ export function findCompactionCut(messages: Message[], keepTurns = KEEP_RECENT_T
     }
   }
   return null
+}
+
+/**
+ * Find the compaction cut point using a token budget for the tail.
+ * Walks backward from the end, accumulating estimated tokens until the budget is reached.
+ * Returns the index where the tail starts, or null if there's nothing to compress.
+ * Never cuts inside a tool_use/tool_result pair.
+ */
+export function findCompactionCutByBudget(
+  messages: Message[],
+  tailBudgetChars: number,
+): number | null {
+  // Walk backward, accumulate chars
+  let accumulated = 0
+  let cutIdx = messages.length
+  let msgCount = 0
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!
+    const chars = m.content.reduce((sum, b) => {
+      if (b.type === 'text') return sum + b.text.length
+      if (b.type === 'tool_use') return sum + JSON.stringify(b.input).length
+      if (b.type === 'tool_result') return sum + b.content.length
+      return sum
+    }, 0)
+
+    msgCount++
+    // Soft ceiling: allow up to 1.5x budget to avoid cutting inside an oversized message
+    if (accumulated + chars > tailBudgetChars * 1.5 && msgCount > MIN_TAIL_MESSAGES) {
+      break
+    }
+    accumulated += chars
+    cutIdx = i
+  }
+
+  // Ensure we don't cut inside a tool_use/tool_result pair:
+  // If the cut point is a tool_result, move it back to include the preceding assistant message
+  while (cutIdx > 0 && messages[cutIdx]?.content[0]?.type === 'tool_result') {
+    cutIdx--
+  }
+
+  // Nothing to compress if cut is at or before 0
+  return cutIdx > 0 ? cutIdx : null
+}
+
+/** Calculate approximate savings from a compaction (before vs after message count/chars). */
+export function estimateCompactionSavings(
+  beforeMessages: Message[],
+  cutIndex: number,
+  summaryLength: number,
+): { removedChars: number; summaryChars: number; savingsRatio: number } {
+  let removedChars = 0
+  for (let i = 0; i < cutIndex; i++) {
+    const m = beforeMessages[i]!
+    removedChars += m.content.reduce((sum, b) => {
+      if (b.type === 'text') return sum + b.text.length
+      if (b.type === 'tool_use') return sum + JSON.stringify(b.input).length
+      if (b.type === 'tool_result') return sum + b.content.length
+      return sum
+    }, 0)
+  }
+  const savingsRatio = removedChars > 0 ? (removedChars - summaryLength) / removedChars : 0
+  return { removedChars, summaryChars: summaryLength, savingsRatio }
 }
 
 /** 单块内容渲染成摘要 transcript 的一行(工具块给出名字与截断片段,不灌全文)。 */
@@ -187,6 +259,53 @@ export function applyCompaction(conv: Conversation, summaryText: string, cutInde
 }
 
 /**
+ * Build an iterative summary prompt: update a previous summary with new turns.
+ * Used on second+ compaction within a session to preserve accumulated context.
+ */
+export function buildIterativeSummaryPrompt(previousSummary: string, newMessages: Message[]): string {
+  const transcript = newMessages
+    .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.content.map(renderBlock).join('\n')}`)
+    .join('\n\n')
+  const today = new Date().toISOString().slice(0, 10)
+  return (
+    'You are a summarization agent updating a context checkpoint. ' +
+    'A previous compaction produced the summary below. New conversation turns have occurred since then ' +
+    'and need to be incorporated.\n\n' +
+    'PREVIOUS SUMMARY:\n' + previousSummary + '\n\n' +
+    'NEW TURNS TO INCORPORATE:\n<conversation>\n' + transcript + '\n</conversation>\n\n' +
+    'Update the summary using the same structure. PRESERVE all existing information that is still relevant. ' +
+    'ADD new completed actions to the numbered list (continue numbering). ' +
+    'Move items from "Pending Items" to "Completed Actions" when done. ' +
+    'Update "Active State" to reflect current state. ' +
+    'Remove information only if it is clearly obsolete. ' +
+    'CRITICAL: Update "## Active Task" to reflect the user\'s most recent unfulfilled input.\n\n' +
+    `TEMPORAL ANCHORING: Today is ${today}. Phrase completed actions in past tense.\n\n` +
+    'Additionally: if the new turns contain persistent facts that remain valid across sessions ' +
+    '(user preferences, corrected practices, hard project constraints), append them at the end of ' +
+    'the summary, one per line, up to 3 lines, strictly using this format ' +
+    '(if there are none, do not output any MEMORY lines):\n' +
+    'MEMORY: <type>|<hook>|<content>\n' +
+    'type is one of: user (user preferences, cross-project) / project (project-specific facts) / insight (lessons learned) / reference (external resources).\n\n' +
+    'Output only the updated summary itself — no preamble, no closing remarks.'
+  )
+}
+
+/** Check if the first message in a conversation is a compacted summary. */
+export function extractPreviousSummary(messages: Message[]): string | null {
+  if (messages.length === 0) return null
+  const first = messages[0]!
+  if (first.role !== 'user') return null
+  const text = first.content[0]
+  if (text?.type !== 'text') return null
+  if (!text.text.startsWith('[CONTEXT COMPACTION')) return null
+  // Extract the summary body (between the prefix and the end marker)
+  const endMarker = '--- END OF CONTEXT SUMMARY'
+  const endIdx = text.text.indexOf(endMarker)
+  if (endIdx === -1) return text.text
+  return text.text.slice(0, endIdx).trim()
+}
+
+/**
  * 调当前模型生成摘要(单独请求:无工具、收紧 max_tokens)。任何失败都抛出 ——
  * 调用方保持原账本不动,绝不半压。
  */
@@ -195,9 +314,13 @@ export async function summarizeForCompaction(
   toSummarize: Message[],
   config: Pick<ModelConfig, 'model' | 'max_tokens'>,
   signal?: AbortSignal,
+  previousSummary?: string,
 ): Promise<string> {
+  const promptText = previousSummary
+    ? buildIterativeSummaryPrompt(previousSummary, toSummarize)
+    : buildSummaryPrompt(toSummarize)
   const request: Message[] = [
-    { role: 'user', content: [{ type: 'text', text: buildSummaryPrompt(toSummarize) }] },
+    { role: 'user', content: [{ type: 'text', text: promptText }] },
   ]
   let text = ''
   const events = client.sendMessages(
