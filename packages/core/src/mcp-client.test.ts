@@ -3,6 +3,22 @@ import { McpManager } from './mcp-registry.js'
 import { ToolRegistry } from './tool.js'
 import { McpClient } from './mcp-client.js'
 
+describe('McpClient config detection', () => {
+  it('throws when neither command nor url is provided', async () => {
+    const client = new McpClient()
+    await expect(client.connect({})).rejects.toThrow(
+      'McpServerConfig must have either "command" (stdio) or "url" (SSE)',
+    )
+  })
+
+  it('throws when config has only non-transport fields', async () => {
+    const client = new McpClient()
+    await expect(client.connect({ args: ['--flag'] })).rejects.toThrow(
+      'McpServerConfig must have either "command" (stdio) or "url" (SSE)',
+    )
+  })
+})
+
 describe('McpManager', () => {
   it('registerTools creates Tool wrappers with mcp__ prefix', () => {
     const manager = new McpManager()

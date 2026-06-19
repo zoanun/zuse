@@ -1,13 +1,18 @@
-import { StdioTransport } from './mcp-transport.js'
+import { StdioTransport, SseTransport } from './mcp-transport.js'
 import type { McpTransport, JsonRpcRequest, JsonRpcResponse } from './mcp-transport.js'
 
 let nextId = 1
 
 export interface McpServerConfig {
-  command: string
+  // --- stdio transport ---
+  command?: string
   args?: string[]
   env?: Record<string, string>
   cwd?: string
+
+  // --- SSE transport ---
+  url?: string
+  headers?: Record<string, string>
 }
 
 export interface McpToolDef {
@@ -31,7 +36,14 @@ export class McpClient {
   }
 
   async connect(config: McpServerConfig): Promise<void> {
-    this.transport = new StdioTransport(config.command, config.args, config.env, config.cwd)
+    // Select transport based on config shape: url → SSE, command → stdio
+    if (config.url) {
+      this.transport = new SseTransport(config.url, config.headers)
+    } else if (config.command) {
+      this.transport = new StdioTransport(config.command, config.args, config.env, config.cwd)
+    } else {
+      throw new Error('McpServerConfig must have either "command" (stdio) or "url" (SSE)')
+    }
 
     // Wire up handlers
     this.transport.onMessage((msg: JsonRpcResponse) => {
