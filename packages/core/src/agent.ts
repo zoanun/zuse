@@ -1,3 +1,6 @@
+import { writeFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { homedir } from 'node:os'
 import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
 import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
@@ -16,6 +19,31 @@ export const MAX_TURNS_STOP_TEXT = (n: number): string =>
   `[CRITICAL: Maximum tool turns (${n}) reached. Tools are now disabled. ` +
   `Do NOT attempt any more tool calls. Summarize what was accomplished ` +
   `and what remains, then end your response.]`
+
+/**
+ * 工具输出落盘阈值（字符数）。超过此值的非错误工具结果截断+存文件,
+ * 上下文只保留头部+文件路径引用。对齐 CC 的 50K 策略。
+ */
+export const TOOL_OUTPUT_SPILL_THRESHOLD = 50_000
+const SPILL_HEAD_CHARS = 10_000
+
+function spillDir(): string {
+  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? join(homedir(), '.zuse', 'tool-output')
+}
+
+function spillToolOutput(output: string, toolName: string, toolId: string): string {
+  const dir = spillDir()
+  mkdirSync(dir, { recursive: true })
+  const filename = `${toolName}-${toolId}-${Date.now()}.txt`
+  const filepath = join(dir, filename)
+  writeFileSync(filepath, output, 'utf8')
+  const head = output.slice(0, SPILL_HEAD_CHARS)
+  return (
+    `${head}\n\n` +
+    `[truncated: output was ${output.length} chars; showing first ${SPILL_HEAD_CHARS}. ` +
+    `Full output saved to ${filepath} — use Read or Grep to inspect it]`
+  )
+}
 
 /** 未提供 settings 时的宽松回退：全部放行（保持 Phase 4 行为，便于旧测试/无头调用）。 */
 const PERMISSIVE_SETTINGS: ResolvedSettings = {
@@ -362,7 +390,12 @@ async function runOneTool(
   }
   try {
     const result = await tool.run(tu.input, ctx)
-    return { output: result.output, isError: result.isError ?? false }
+    const isError = result.isError ?? false
+    // 非错误的超长输出落盘:截断+存文件+路径引用,模型可用 Read/Grep 按需取。
+    const output = !isError && result.output.length > TOOL_OUTPUT_SPILL_THRESHOLD
+      ? spillToolOutput(result.output, tu.name, tu.id)
+      : result.output
+    return { output, isError }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return { output: `Tool "${tu.name}" failed: ${message}`, isError: true }
