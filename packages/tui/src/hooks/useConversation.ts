@@ -19,9 +19,13 @@ import {
   buildSystemPrompt,
   loadPromptSections,
   findCompactionCut,
+  findCompactionCutByBudget,
   applyCompaction,
   summarizeForCompaction,
   splitMemoryCandidates,
+  estimateCompactionSavings,
+  extractPreviousSummary,
+  TAIL_BUDGET_RATIO,
   MEMORY_INDEX_CAP,
   shouldConsolidateMemories,
   buildConsolidationPrompt,
@@ -178,6 +182,8 @@ export function useConversation({
   // 上一回合实测的窗口占用(input + cache 读,见 message-stop 处)。放 ref:
   // sendMessage 闭包要在下一回合开头读它判定自动压缩,state 快照会陈旧。
   const contextTokensRef = useRef<number | undefined>(undefined)
+  // 反抖动:连续低效压缩计数。连续 2 次节省 <10% 则跳过自动压缩(对齐 Hermes)。
+  const ineffectiveCompactionRef = useRef<number>(0)
   // 影子 git 快照(Phase 12):每回合开始前打检查点,/revert 据此回滚。懒建一次。
   const snapshotRef = useRef<SnapshotStore | null>(null)
   if (!snapshotRef.current) snapshotRef.current = createSnapshotStore(cwd)
@@ -320,18 +326,45 @@ export function useConversation({
   // 只换账本不动屏幕:state.messages 是显示层 scrollback,压缩前的对话仍可回看。
   const compactConversation = useCallback(async (): Promise<string> => {
     const conv = conversationRef.current
-    const cut = findCompactionCut(conv.getMessages())
+    const messages = conv.getMessages()
+
+    // Token 预算尾部保护:按上下文窗口缩放,比固定 2 回合更灵活。
+    // 有已知窗口大小时走预算路径,否则回退到固定回合数。
+    const windowSize = resolveContextWindow(
+      settings,
+      currentProviderId,
+      clientRef.current?.getModel() ?? 'unknown',
+    )
+    const tailBudgetChars = Math.round(windowSize * COMPACTION_THRESHOLD * TAIL_BUDGET_RATIO * 4)
+    const cut = findCompactionCutByBudget(messages, tailBudgetChars) ?? findCompactionCut(messages)
     if (cut === null) return '历史太短,无需压缩。'
+
     const client = clientRef.current
     if (!client) throw new Error('客户端未初始化,无法压缩。')
     const before = conv.length
-    const raw = await summarizeForCompaction(client, conv.getMessages().slice(0, cut), {
-      model: client.getModel(),
-      max_tokens: maxTokens,
-    })
+
+    // 迭代摘要:检测是否有旧摘要,有则走增量更新路径(保留旧信息+合并新回合)。
+    const previousSummary = extractPreviousSummary(messages)
+    const raw = await summarizeForCompaction(
+      client,
+      messages.slice(0, cut),
+      { model: client.getModel(), max_tokens: maxTokens },
+      undefined,
+      previousSummary ?? undefined,
+    )
+
     // 记忆冲刷(Phase 13,对照 OpenClaw memory flush):老历史即将折叠,摘要里
     // 顺带抽取的持久事实先入库 —— 候选从摘要剥出(留着是重复噪音)。
     const { summary, candidates } = splitMemoryCandidates(raw)
+
+    // 反抖动:计算本次压缩节省比。连续低效则后续自动压缩跳过。
+    const savings = estimateCompactionSavings(messages, cut, summary.length)
+    if (savings.savingsRatio < 0.1) {
+      ineffectiveCompactionRef.current++
+    } else {
+      ineffectiveCompactionRef.current = 0
+    }
+
     conversationRef.current = applyCompaction(conv, summary, cut)
     // 检查点联动(Phase 12):被折叠区间的检查点失效删除,保留区间的下标重映射。
     checkpointsRef.current = remapCheckpoints(checkpointsRef.current, cut)
@@ -357,10 +390,10 @@ export function useConversation({
       }
     }
     return (
-      `已压缩:账本 ${before} → ${conversationRef.current.length} 条消息(前 ${cut} 条折叠为摘要)` +
+      `已压缩:账本 ${before} → ${conversationRef.current.length} 条消息(前 ${cut} 条折叠为摘要,节省 ${Math.round(savings.savingsRatio * 100)}%)` +
       (flushed > 0 ? `;另存 ${flushed} 条记忆。` : '。')
     )
-  }, [maxTokens, registry])
+  }, [maxTokens, registry, settings, currentProviderId])
 
   // 记忆自动巩固(Phase 13,轻量 autoDream;对照 CC autoDream / OpenClaw Dreaming):
   // 索引接近满容(>70%)且距上次 ≥24h 时,后台发一次**无工具**请求整理记忆,
@@ -454,7 +487,7 @@ export function useConversation({
           currentProviderId,
           clientRef.current.getModel(),
         )
-        if ((contextTokensRef.current ?? 0) > windowSize * COMPACTION_THRESHOLD) {
+        if ((contextTokensRef.current ?? 0) > windowSize * COMPACTION_THRESHOLD && ineffectiveCompactionRef.current < 2) {
           const notifyCompact = (msg: string): void =>
             setState((prev) => ({
               ...prev,
