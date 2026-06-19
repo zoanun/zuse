@@ -2,6 +2,26 @@ import { McpClient, type McpServerConfig } from './mcp-client.js'
 import { ToolRegistry } from './tool.js'
 import type { Tool, JSONSchema } from './tool.js'
 
+const MCP_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous\s+instructions/i,
+  /you\s+are\s+now\s+a/i,
+  /\bsystem\s*:/i,
+  /<system>/i,
+  /<human>/i,
+  /<assistant>/i,
+  /do\s+not\s+(tell|inform|reveal)/i,
+  /forget\s+(all|everything|your)\s+(previous|prior)/i,
+]
+
+function scanMcpDescription(description: string, serverName: string, toolName: string): string {
+  for (const pattern of MCP_INJECTION_PATTERNS) {
+    if (pattern.test(description)) {
+      return `[MCP: ${serverName}] Tool ${toolName} (description sanitized — contained suspicious patterns)`
+    }
+  }
+  return `[MCP: ${serverName}] ${description}`
+}
+
 export interface McpServersConfig {
   [serverName: string]: McpServerConfig
 }
@@ -37,7 +57,7 @@ export class McpManager {
 
         const tool: Tool = {
           name: zuseToolName,
-          description: `[MCP: ${serverName}] ${toolDef.description}`,
+          description: scanMcpDescription(toolDef.description ?? '', serverName, toolDef.name),
           inputSchema: toolDef.inputSchema as JSONSchema,
           async run(input: unknown) {
             try {
