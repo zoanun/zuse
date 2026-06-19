@@ -126,6 +126,8 @@ interface UseConversationReturn {
   badModels: ReadonlyMap<string, ErrorCategory>
   /** 中断进行中的流式回合（Esc）。当前有回合在跑则 abort 并返回 true，否则 false。 */
   interrupt: () => boolean
+  /** Queue a mid-turn steer message (sent while model is working). */
+  steer: (text: string) => void
   /** 模型管理的任务列表（TodoWrite 工具更新）。 */
   todos: TodoItem[]
 }
@@ -184,6 +186,8 @@ export function useConversation({
   const contextTokensRef = useRef<number | undefined>(undefined)
   // 反抖动:连续低效压缩计数。连续 2 次节省 <10% 则跳过自动压缩(对齐 Hermes)。
   const ineffectiveCompactionRef = useRef<number>(0)
+  // Mid-turn steer queue: user messages sent while the model is working.
+  const steerQueueRef = useRef<string[]>([])
   // 影子 git 快照(Phase 12):每回合开始前打检查点,/revert 据此回滚。懒建一次。
   const snapshotRef = useRef<SnapshotStore | null>(null)
   if (!snapshotRef.current) snapshotRef.current = createSnapshotStore(cwd)
@@ -596,6 +600,13 @@ export function useConversation({
           onCwdChange: (next: string) => {
             cwdRef.current = next
           },
+          consumeSteer: () => {
+            const queue = steerQueueRef.current
+            if (queue.length === 0) return null
+            const combined = queue.join('\n')
+            queue.length = 0
+            return combined
+          },
           canUseTool: (req: PermissionRequest) =>
             new Promise<PermissionVerdict>((resolve) => {
               queueRef.current = [...queueRef.current, { id: generateId(), req, resolve }]
@@ -815,6 +826,18 @@ export function useConversation({
   )
   // ScheduleWakeup 的唤醒回调需要 sendMessage;sendMessage 是 useCallback,每次重建后同步 ref。
   sendMessageRef.current = sendMessage
+
+  const steer = useCallback((text: string) => {
+    if (text.trim() === '') return
+    steerQueueRef.current.push(text.trim())
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        { id: generateId(), role: 'system', text: `⚡ ${text.trim()}`, isStreaming: false },
+      ],
+    }))
+  }, [])
 
   const clear = useCallback(() => {
     conversationRef.current.clear()
@@ -1059,6 +1082,7 @@ export function useConversation({
     closeModelSelector,
     badModels: badModelsRef.current,
     interrupt,
+    steer,
     todos,
   }
 }
