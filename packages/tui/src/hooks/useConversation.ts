@@ -539,7 +539,7 @@ export function useConversation({
           conversation,
           client: clientRef.current,
           registry,
-          userText: `[${new Date().toISOString().slice(0, 10)}] ${text}`,
+          userText: `[${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${text}`,
           config: {
             model: clientRef.current.getModel(),
             max_tokens: maxTokens,
