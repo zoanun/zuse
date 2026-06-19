@@ -201,12 +201,16 @@ export function useConversation({
   const [clientError, setClientError] = useState<string | undefined>(undefined)
   // /model 交互式选择器是否打开；打开时 App 渲染选择器、收起输入框。
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false)
+  // 压缩计数器:每次 compaction 后自增,作为 promptInfo useMemo 的依赖,
+  // 触发系统提示词重建——拿到会话期间新写入的记忆(MEMORY.md 可能已被 Memory 工具更新)。
+  const [compactionCounter, setCompactionCounter] = useState(0)
 
   // 系统提示词在挂载时拼一次：身份提示词 + 真实运行环境（平台/shell/目录/日期）
   // + 常驻指令(SYSTEM.md/ZUSE.md/MEMORY.md,Phase 13)。
   // 没有环境块时模型只能凭训练惯性假设 Unix，在 Windows 上张口就 pwd/ls 而报错。
   // cwd 整个会话不变，故只随它记忆;指令文件只在启动读一次(系统提示词稳定才有
-  // prompt cache 命中,会话中途改 ZUSE.md 不热加载,spec D5)。
+  // prompt cache 命中,会话中途改 ZUSE.md 不热加载,spec D5)。compaction 是例外:
+  // 压缩后通过 compactionCounter 触发重算,拿到会话期间新写入的记忆。
   const promptInfo = useMemo(() => {
     const sections = loadPromptSections(os.homedir(), cwd)
     // 记忆索引的条数(投影行以 "- [" 开头),供启动提示展示「载入了多少记忆」。
@@ -228,7 +232,7 @@ export function useConversation({
       ),
       memoryCount,
     }
-  }, [cwd, currentModel])
+  }, [cwd, currentModel, compactionCounter])
   const systemPrompt = promptInfo.systemPrompt
 
   // Agent 工具需要运行时依赖(client / settings / systemPrompt),只在 TUI 层可得。
@@ -371,6 +375,12 @@ export function useConversation({
     // 压缩后窗口占用未知(下一回合实测),先清掉,免得旧值再次触发自动压缩。
     contextTokensRef.current = undefined
     setState((prev) => ({ ...prev, contextTokens: undefined }))
+
+    // Reload memory into system prompt after compaction: the Memory tool may have
+    // written new entries during this session, but the system prompt was built at
+    // mount time (or last compaction). Incrementing the counter triggers the
+    // promptInfo useMemo to re-run loadPromptSections, picking up fresh MEMORY.md.
+    setCompactionCounter((c) => c + 1)
 
     // 候选经 Memory 工具入库:复用满容闸/投影/user 型全局归属;失败静默(冲刷
     // 是增值动作,绝不拖垮压缩本身)。
