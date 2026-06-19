@@ -19,10 +19,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { sanitizeFtsQuery } from './memory-store.js'
 
-// 与 memory-store 同理:node:sqlite 经 process.getBuiltinModule 运行时取。
-function getSqlite(): typeof import('node:sqlite') {
-  return process.getBuiltinModule('node:sqlite')
-}
+import Database from 'better-sqlite3'
 
 /** 单条消息进索引的文本上限:超长粘贴不该把索引撑爆,检索靠前缀已足够定位。 */
 const MESSAGE_TEXT_CAP = 4_000
@@ -103,7 +100,7 @@ export function openEpisodeStore(opts: EpisodeStoreOptions = {}): EpisodeStore {
   const dbPath = opts.dbPath ?? defaultDbPath()
   const sessionsDir = opts.sessionsDir ?? defaultSessionsDir()
   mkdirSync(dirname(dbPath), { recursive: true })
-  const db = new (getSqlite().DatabaseSync)(dbPath)
+  const db = new Database(dbPath)
   db.exec(`
     CREATE TABLE IF NOT EXISTS episodes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

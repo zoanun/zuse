@@ -126,8 +126,9 @@ describe('hook(索引行钩子)', () => {
     store.close()
     const oldDb = join(dir, 'old.db')
     // 手工建一张 Phase 13 初版的表(无 hook 列)并塞一行。
-    const { DatabaseSync } = process.getBuiltinModule('node:sqlite')
-    const raw = new DatabaseSync(oldDb)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3')
+    const raw = new Database(oldDb)
     raw.exec(`CREATE TABLE memories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL CHECK(type IN ('user','project','insight','reference')),

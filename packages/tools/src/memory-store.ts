@@ -1,9 +1,10 @@
 /**
  * 记忆库(Phase 13B)—— SQLite + FTS5,跨会话的结构化记忆存储。
  *
- * 选型(spec D1):Node 22 内置 `node:sqlite`,零原生依赖(better-sqlite3 要
- * node-gyp,Windows 上是常见坑),FTS5 已编译进。import 时 Node 会向 stderr 打一条
- * ExperimentalWarning,无运行时开关可关 —— 已知并接受(启动期一次,先于 TUI 渲染)。
+ * 选型:better-sqlite3(成熟的原生 SQLite 绑定,FTS5 已编译进)。
+ * 早期用过 Node 22 内置 node:sqlite,但它一直是实验性 API,每次启动打
+ * ExperimentalWarning,且 Node 版本升级有 API 变更风险。better-sqlite3 的 API
+ * 更稳定,社区更成熟,虽然需要 node-gyp 编译(prebuild 覆盖了主流平台)。
  *
  * 单库多项目(spec D7):`~/.zuse/memory.db` 一个文件,`project` 列区分归属
  * (cwd-slug;空串 = 全局)。user 型记忆天然全局,跨项目共享。
@@ -18,12 +19,7 @@ import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-// 经 process.getBuiltinModule 运行时取 node:sqlite,而非静态 import:
-// ① vite/vitest 的内置模块清单早于 node:sqlite,静态导入会被当成普通包去解析而失败;
-// ② 推迟到首次开库才触发 Node 的 ExperimentalWarning(打给 stderr,无开关可关)。
-function getSqlite(): typeof import('node:sqlite') {
-  return process.getBuiltinModule('node:sqlite')
-}
+import Database from 'better-sqlite3'
 
 export type MemoryType = 'user' | 'project' | 'insight' | 'reference'
 
@@ -104,7 +100,7 @@ function toRow(r: RawRow): MemoryRow {
 
 export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
   mkdirSync(dirname(dbPath), { recursive: true })
-  const db = new (getSqlite().DatabaseSync)(dbPath)
+  const db = new Database(dbPath)
   // 迁移:Phase 13 初版的表没有 hook 列,老库重开时补列(默认空串,投影回退前缀)。
   // CREATE TABLE IF NOT EXISTS 对已存在的表不生效,必须显式 ALTER。
   const hasTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memories'").get()
