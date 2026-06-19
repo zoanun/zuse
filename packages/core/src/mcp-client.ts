@@ -1,5 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process'
-import { createInterface, type Interface } from 'node:readline'
+import { StdioTransport } from './mcp-transport.js'
+import type { McpTransport, JsonRpcRequest, JsonRpcResponse } from './mcp-transport.js'
 
 let nextId = 1
 
@@ -16,23 +16,8 @@ export interface McpToolDef {
   inputSchema: Record<string, unknown>
 }
 
-interface JsonRpcRequest {
-  jsonrpc: '2.0'
-  id: number
-  method: string
-  params?: unknown
-}
-
-interface JsonRpcResponse {
-  jsonrpc: '2.0'
-  id: number
-  result?: unknown
-  error?: { code: number; message: string; data?: unknown }
-}
-
 export class McpClient {
-  private proc: ChildProcess | null = null
-  private rl: Interface | null = null
+  private transport: McpTransport | null = null
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private serverName = ''
   private _tools: McpToolDef[] = []
@@ -46,33 +31,34 @@ export class McpClient {
   }
 
   async connect(config: McpServerConfig): Promise<void> {
-    this.proc = spawn(config.command, config.args ?? [], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...config.env },
-      cwd: config.cwd,
-      shell: true,
-    })
+    this.transport = new StdioTransport(config.command, config.args, config.env, config.cwd)
 
-    this.rl = createInterface({ input: this.proc.stdout! })
-    this.rl.on('line', (line) => {
-      try {
-        const msg = JSON.parse(line) as JsonRpcResponse
-        if (msg.id !== undefined) {
-          const p = this.pending.get(msg.id)
-          if (p) {
-            this.pending.delete(msg.id)
-            if (msg.error) p.reject(new Error(msg.error.message))
-            else p.resolve(msg.result)
-          }
+    // Wire up handlers
+    this.transport.onMessage((msg: JsonRpcResponse) => {
+      if (msg.id !== undefined) {
+        const p = this.pending.get(msg.id)
+        if (p) {
+          this.pending.delete(msg.id)
+          if (msg.error) p.reject(new Error(msg.error.message))
+          else p.resolve(msg.result)
         }
-      } catch { /* ignore non-JSON lines */ }
+      }
     })
 
-    this.proc.on('exit', () => {
+    this.transport.onClose(() => {
       for (const p of this.pending.values()) p.reject(new Error('MCP server exited'))
       this.pending.clear()
     })
 
+    this.transport.onError((_err) => {
+      // Transport-level errors are logged but not fatal by themselves.
+      // Individual request failures are handled via the pending map.
+    })
+
+    // Start transport
+    await this.transport.start()
+
+    // Initialize handshake
     const initResult = await this.request('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
@@ -102,13 +88,9 @@ export class McpClient {
   }
 
   async disconnect(): Promise<void> {
-    if (this.proc) {
-      this.proc.kill()
-      this.proc = null
-    }
-    if (this.rl) {
-      this.rl.close()
-      this.rl = null
+    if (this.transport) {
+      await this.transport.close()
+      this.transport = null
     }
     for (const p of this.pending.values()) p.reject(new Error('disconnected'))
     this.pending.clear()
@@ -120,7 +102,7 @@ export class McpClient {
       const msg: JsonRpcRequest = { jsonrpc: '2.0', id, method, params }
       this.pending.set(id, { resolve, reject })
       try {
-        this.proc!.stdin!.write(JSON.stringify(msg) + '\n')
+        this.transport!.send(msg)
       } catch (err) {
         this.pending.delete(id)
         reject(err instanceof Error ? err : new Error(String(err)))
@@ -131,8 +113,8 @@ export class McpClient {
   private notify(method: string, params?: unknown): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        const msg = { jsonrpc: '2.0', method, params }
-        this.proc!.stdin!.write(JSON.stringify(msg) + '\n')
+        const msg = { jsonrpc: '2.0' as const, method, params }
+        this.transport!.send(msg)
         resolve()
       } catch (err) {
         reject(err instanceof Error ? err : new Error(String(err)))
