@@ -127,8 +127,6 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
   const turnUsage: Usage = emptyUsage()
 
-  const toolDefs = registry.getDefinitions(settings.tools)
-
   // 会话当前工作目录。Bash 的 cd 通过 ctx.setCwd 回写到这里,既让本回合后续工具
   // 看到新目录,也通过 onCwdChange 透出给调用方以跨回合接续。
   let sessionCwd = cwd
@@ -136,6 +134,9 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   let clean = false
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    // Re-read each turn so dynamically registered tools (e.g. via McpSearch)
+    // become visible to the model on the next turn.
+    const toolDefs = registry.getDefinitions(settings.tools)
     if (signal.aborted) {
       yield { type: 'warning', message: 'Interrupted.' }
       return // 丢弃 staged —— 什么都不提交

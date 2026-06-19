@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { runAgent } from './agent.js'
 import { Conversation } from './conversation.js'
-import { ToolRegistry, type Tool } from './tool.js'
+import { ToolRegistry, type Tool, type ToolDefinition } from './tool.js'
 import type { ModelClient } from './model-client.js'
 import type { Message, StreamEvent, Usage } from './types.js'
 import type { ResolvedSettings, PermissionVerdict } from './types.js'
@@ -12,18 +12,20 @@ const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
  * 一个脚本化的 ModelClient：每次调用返回下一组预设好的事件列表。
  * 记录它收到的消息，好让我们断言 tool_result 的回喂。
  */
-function fakeClient(scripts: StreamEvent[][]): { client: ModelClient; calls: Message[][] } {
+function fakeClient(scripts: StreamEvent[][]): { client: ModelClient; calls: Message[][]; toolsCalls: Array<ToolDefinition[] | undefined> } {
   const calls: Message[][] = []
+  const toolsCalls: Array<ToolDefinition[] | undefined> = []
   let i = 0
   const client: ModelClient = {
     getModel: () => 'fake',
-    async *sendMessages(messages) {
+    async *sendMessages(messages, _config, tools) {
       calls.push(messages)
+      toolsCalls.push(tools ? [...tools] : undefined)
       const script = scripts[i++] ?? []
       for (const e of script) yield e
     },
   }
-  return { client, calls }
+  return { client, calls, toolsCalls }
 }
 
 function echoTool(): Tool {
@@ -547,6 +549,69 @@ describe('runAgent', () => {
     }))
     expect(persisted).toEqual(['echo'])
     expect(sessionAllow).toContain('echo')
+  })
+
+  it('picks up tools registered mid-loop (dynamic toolDefs)', async () => {
+    const turn1: StreamEvent[] = [
+      { type: 'tool-use', id: 'a', name: 'echo', input: { value: 'first' } },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+    ]
+    const turn2: StreamEvent[] = [
+      { type: 'tool-use', id: 'b', name: 'late', input: { value: 'hi' } },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+    ]
+    const turn3: StreamEvent[] = [
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+    ]
+    const { client, toolsCalls } = fakeClient([turn1, turn2, turn3])
+    const conv = new Conversation()
+    const reg = new ToolRegistry()
+    reg.register(echoTool())
+
+    const lateTool = {
+      name: 'late',
+      description: 'A late-registered tool',
+      inputSchema: { type: 'object' as const, properties: { value: { type: 'string' } }, required: ['value'] },
+      async run(input: unknown) {
+        return { output: `late: ${(input as { value: string }).value}` }
+      },
+    }
+
+    const events: StreamEvent[] = []
+    let firstToolDone = false
+    for await (const event of runAgent({
+      conversation: conv,
+      client,
+      registry: reg,
+      userText: 'test dynamic',
+      config,
+      cwd: '.',
+      signal,
+    })) {
+      events.push(event)
+      if (event.type === 'tool-result' && !firstToolDone) {
+        firstToolDone = true
+        reg.register(lateTool)
+      }
+    }
+
+    // The late tool result should succeed (execution uses live registry).
+    const lateResult = events.find(
+      (e) => e.type === 'tool-result' && e.name === 'late',
+    )
+    expect(lateResult).toBeTruthy()
+    if (lateResult && lateResult.type === 'tool-result') {
+      expect(lateResult.is_error).toBe(false)
+      expect(lateResult.output).toContain('late: hi')
+    }
+
+    // Critical: the model's second call must include the 'late' tool definition.
+    // If toolDefs is read only once (outside the loop), turn 2 still sends the
+    // stale list without 'late'. Moving toolDefs inside the loop fixes this.
+    expect(toolsCalls.length).toBeGreaterThanOrEqual(2)
+    const turn2Tools = toolsCalls[1]!
+    expect(turn2Tools.some((t) => t.name === 'late')).toBe(true)
   })
 
   it('disabled tool is denied even if the model calls it', async () => {
