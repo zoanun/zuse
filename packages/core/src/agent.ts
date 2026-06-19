@@ -1,6 +1,5 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
 import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
@@ -27,12 +26,12 @@ export const MAX_TURNS_STOP_TEXT = (n: number): string =>
 export const TOOL_OUTPUT_SPILL_THRESHOLD = 50_000
 const SPILL_HEAD_CHARS = 10_000
 
-function spillDir(): string {
-  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? join(homedir(), '.zuse', 'tool-output')
+function spillDir(cwd: string): string {
+  return process.env.ZUSE_TOOL_OUTPUT_DIR ?? join(cwd, '.zuse', 'tool-output')
 }
 
-function spillToolOutput(output: string, toolName: string, toolId: string): string {
-  const dir = spillDir()
+function spillToolOutput(output: string, toolName: string, toolId: string, cwd: string): string {
+  const dir = spillDir(cwd)
   mkdirSync(dir, { recursive: true })
   const filename = `${toolName}-${toolId}-${Date.now()}.txt`
   const filepath = join(dir, filename)
@@ -393,7 +392,7 @@ async function runOneTool(
     const isError = result.isError ?? false
     // 非错误的超长输出落盘:截断+存文件+路径引用,模型可用 Read/Grep 按需取。
     const output = !isError && result.output.length > TOOL_OUTPUT_SPILL_THRESHOLD
-      ? spillToolOutput(result.output, tu.name, tu.id)
+      ? spillToolOutput(result.output, tu.name, tu.id, ctx.cwd)
       : result.output
     return { output, isError }
   } catch (err) {
