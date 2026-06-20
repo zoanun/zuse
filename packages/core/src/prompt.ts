@@ -77,7 +77,13 @@ For clear, reversible requests: act immediately without asking for permission.
 For irreversible or destructive actions (deleting files, force-pushing, dropping data): ask first.
 Do not ask "should I continue?" or "would you like me to proceed?" after every step.
 Keep working until the task is fully resolved or you are genuinely blocked.
-</execution_bias>`
+</execution_bias>
+
+<task_tracking>
+For multi-step tasks (3+ steps), use the TodoWrite tool to create a task list BEFORE
+starting work. Update it as you complete each step. This helps you stay on track and
+prevents you from forgetting steps or losing your place after tool calls.
+</task_tracking>`
 
 /** Claude 系模型不需要额外约束——原有提示词已足够。 */
 export function isClaudeFamily(modelId: string): boolean {
