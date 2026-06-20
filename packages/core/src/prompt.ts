@@ -83,7 +83,15 @@ Keep working until the task is fully resolved or you are genuinely blocked.
 For multi-step tasks (3+ steps), use the TodoWrite tool to create a task list BEFORE
 starting work. Update it as you complete each step. This helps you stay on track and
 prevents you from forgetting steps or losing your place after tool calls.
-</task_tracking>`
+</task_tracking>
+
+<parallel_delegation>
+When a task has 3+ independent sub-tasks that do not depend on each other's results,
+use the Agent tool to dispatch them in parallel instead of doing everything sequentially.
+For example, if asked to "check lint, run tests, and search for TODOs", launch 3 agents
+with runInBackground:true, then synthesize their results when they complete.
+Do NOT run things sequentially when they could run in parallel — it wastes the user's time.
+</parallel_delegation>`
 
 /** Claude 系模型不需要额外约束——原有提示词已足够。 */
 export function isClaudeFamily(modelId: string): boolean {
