@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, NON_CLAUDE_ENFORCEMENT_OVERLAY, isClaudeFamily, type AgentEnvironment } from './prompt.js'
+import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, isClaudeFamily, type AgentEnvironment } from './prompt.js'
 
 const ENV: AgentEnvironment = {
   platform: 'win32',

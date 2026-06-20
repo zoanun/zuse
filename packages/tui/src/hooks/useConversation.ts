@@ -299,7 +299,6 @@ export function useConversation({
       }))
     }
     // 仅挂载时一次:memoryCount 随 cwd 的 useMemo 只算一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // 首次挂载时按 settings 创建 client。settings 在整个会话生命周期内不变，

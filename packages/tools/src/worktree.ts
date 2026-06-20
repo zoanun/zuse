@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process'
+import { execFile as execFileCb, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -29,7 +29,6 @@ export interface WorktreeInfo {
  */
 export function findGitRoot(cwd: string): string | null {
   try {
-    const { execFileSync } = require('node:child_process') as typeof import('node:child_process')
     const result = execFileSync('git', ['rev-parse', '--show-toplevel'], {
       cwd,
       timeout: 10_000,

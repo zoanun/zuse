@@ -177,11 +177,11 @@ export function createWorkflow(ctx: WorkflowContext) {
 
   async function pipeline<T>(
     items: T[],
-    ...stages: Array<(input: any, originalItem: T, index: number) => Promise<any>>
-  ): Promise<any[]> {
+    ...stages: Array<(input: unknown, originalItem: T, index: number) => Promise<unknown>>
+  ): Promise<unknown[]> {
     return Promise.all(
       items.map(async (item, index) => {
-        let current: any = item
+        let current: unknown = item
         for (const stage of stages) {
           try {
             current = await stage(current, item, index)

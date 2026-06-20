@@ -79,7 +79,6 @@ export function App({ cwd, initialSession }: AppProps) {
         mgr.registerTools(registry, ctxWindow)
       }
       for (const f of failed) {
-        // eslint-disable-next-line no-console
         console.error(`MCP server "${f.name}" failed to connect: ${f.error}`)
       }
     })

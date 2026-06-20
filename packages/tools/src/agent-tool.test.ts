@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Conversation, ToolRegistry, runAgent } from '@zuse/core'
+import { ToolRegistry } from '@zuse/core'
 import type { ModelClient, StreamEvent, Usage, ResolvedSettings } from '@zuse/core'
 import { createAgentTool } from './agent-tool.js'
 

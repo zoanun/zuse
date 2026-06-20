@@ -15,7 +15,7 @@ import type { ModelClient } from './model-client.js'
 export const KEEP_RECENT_TURNS = 2
 
 /** Rough chars-per-token estimate for tail budget calculation. */
-const CHARS_PER_TOKEN = 4
+const _CHARS_PER_TOKEN = 4
 
 /** Default tail budget: fraction of the compaction threshold tokens to keep as recent context. */
 export const TAIL_BUDGET_RATIO = 0.25

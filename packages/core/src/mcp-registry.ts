@@ -128,7 +128,6 @@ export class McpManager {
 
   /** Register a single McpSearch tool that can search and load individual MCP tools on demand. */
   private registerDeferred(registry: ToolRegistry, allTools: CollectedTool[]): number {
-    const self = this
     const toolMap = new Map<string, CollectedTool>()
     for (const entry of allTools) {
       toolMap.set(entry.zuseToolName, entry)
@@ -155,7 +154,7 @@ export class McpManager {
         },
         required: ['action'],
       },
-      async run(input: unknown) {
+      run: async (input: unknown) => {
         const { action, query, tool: toolName } = input as { action?: string; query?: string; tool?: string }
         const names = allNames.join(', ')
 
@@ -190,7 +189,7 @@ export class McpManager {
           if (registry.get(toolName)) {
             return { output: `Tool ${toolName} is already loaded and callable.` }
           }
-          registry.register(self.buildMcpTool(entry))
+          registry.register(this.buildMcpTool(entry))
           return { output: `Tool ${toolName} is now loaded and callable.` }
         }
 

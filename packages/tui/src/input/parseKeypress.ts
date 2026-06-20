@@ -9,24 +9,19 @@ import { Buffer } from 'buffer'
 import { PASTE_END, PASTE_START } from './termio/csi.js'
 import { createTokenizer, type Tokenizer } from './termio/tokenize.js'
 
-// eslint-disable-next-line no-control-regex
 const META_KEY_CODE_RE = /^(?:\x1b)([a-zA-Z0-9])$/
 
-// eslint-disable-next-line no-control-regex
 const FN_KEY_RE =
-  // eslint-disable-next-line no-control-regex
   /^(?:\x1b+)(O|N|\[|\[\[)(?:(\d+)(?:;(\d+))?([~^$])|(?:1;)?(\d+)?([a-zA-Z]))/
 
 // CSI u(kitty keyboard 协议):ESC [ 码位 [; 修饰] u
 // 例:ESC[13;2u = Shift+Enter,ESC[27u = Escape(无修饰)。
 // 修饰缺省为 1(无修饰)。
-// eslint-disable-next-line no-control-regex
 const CSI_U_RE = /^\x1b\[(\d+)(?:;(\d+))?u/
 
 // xterm modifyOtherKeys:ESC [ 27 ; 修饰 ; 码位 ~
 // 例:ESC[27;2;13~ = Shift+Enter。Ghostty/tmux/xterm/VSCode 在 modifyOtherKeys=2
 // 时发这种。注意参数顺序与 CSI u 相反(先修饰、后码位)。
-// eslint-disable-next-line no-control-regex
 const MODIFY_OTHER_KEYS_RE = /^\x1b\[27;(\d+);(\d+)~/
 
 function createPasteKey(content: string): ParsedKey {
