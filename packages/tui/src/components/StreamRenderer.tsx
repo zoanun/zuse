@@ -158,6 +158,16 @@ function OutputCell({ tool, cwd }: { tool: UIToolCall; cwd: string }): ReactElem
       <Text dimColor>{summary.text}</Text>
     )
   }
+  if (summary.kind === 'todo') {
+    return (
+      <Box flexDirection="column">
+        {summary.lines.map((line, i) => {
+          const todoColor = line.startsWith('✓') ? 'green' : line.startsWith('●') ? 'cyan' : undefined
+          return <Text key={i} color={todoColor}>{line}</Text>
+        })}
+      </Box>
+    )
+  }
   // preview:多行;Bash 类错误时整体着红,否则暗色。
   const color = tool.isError ? 'red' : undefined
   return (

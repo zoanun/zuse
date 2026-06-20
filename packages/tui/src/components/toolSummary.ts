@@ -6,6 +6,7 @@ export type OutputSummary =
   | { kind: 'preview'; lines: string[]; moreCount: number }
   | { kind: 'files'; paths: string[]; moreCount: number }
   | { kind: 'error'; text: string }
+  | { kind: 'todo'; lines: string[] }
 
 /** 匹配输出尾部的方括号状态/截断注记(可选前导 … 与多个换行)。 */
 const TRAILING_NOTE_RE = /\n+…?\[[^\]]*\]\s*$/
@@ -218,8 +219,10 @@ export function summarizeOutput(tool: UIToolCall): OutputSummary {
     case 'WebSearch':
     case 'LSP':
       return bashPreview(output, tool.isError ?? false)
-    case 'TodoWrite':
-      return bashPreview(output, false)
+    case 'TodoWrite': {
+      const body = stripTrailingNotes(output)
+      return { kind: 'todo', lines: body === '' ? [] : body.split('\n') }
+    }
     default:
       return { kind: 'line', text: `${plural(countLines(stripTrailingNotes(output)), 'line')} of output` }
   }
