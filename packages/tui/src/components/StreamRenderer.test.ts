@@ -68,14 +68,13 @@ describe('StreamRenderer 工具输出截断', () => {
 })
 
 describe('StreamRenderer user 消息双份文本', () => {
-  it('user 消息有 displayText 时渲染 displayText、不渲染 text', () => {
+  it('user 消息有 displayText 时仍渲染完整 text（不折叠）', () => {
     const out = frame({
       role: 'user',
-      text: '超长全文不该出现',
+      text: '超长全文应该出现',
       displayText: '[粘贴#1 · 9 行 · 1.0k 字符]',
     })
-    expect(out).toContain('[粘贴#1')
-    expect(out).not.toContain('超长全文不该出现')
+    expect(out).toContain('超长全文应该出现')
   })
   it('user 消息无 displayText 时回落到 text', () => {
     const out = frame({ role: 'user', text: '普通文本' })
@@ -299,45 +298,34 @@ describe('StreamRenderer Edit diff 截断行可点击', () => {
 })
 
 describe('StreamRenderer 粘贴标签 OSC-8 链接', () => {
-  it('user 消息有 displayText + pasteFiles：标签段包成 OSC-8 链接', () => {
+  it('user 消息有 displayText + pasteFiles：渲染完整文本', () => {
     const out = frame({
       role: 'user',
       text: '第一行\n第二行',
       displayText: '[粘贴#1 · 2 行 · 9 字符]',
       pasteFiles: { 1: '/tmp/zuse/paste-abc.txt' },
     })
-    // 标签文字应存在
-    expect(out).toContain('[粘贴#1')
-    // 临时文件路径应出现（OSC-8 序列含 file:// URI）
-    expect(out).toContain('paste-abc.txt')
-    expect(out).toContain(']8;;file:')
-    // 模型全文不应渲染到滚动区
-    expect(out).not.toContain('第一行')
-    expect(out).not.toContain('第二行')
+    // 完整文本应出现（不折叠为标签）
+    expect(out).toContain('第一行')
+    expect(out).toContain('第二行')
   })
 
-  it('user 消息有 displayText 但无 pasteFiles：标签退化为纯文本，不含 OSC-8 序列', () => {
+  it('user 消息有 displayText 但无 pasteFiles：渲染完整 text', () => {
     const out = frame({
       role: 'user',
-      text: '全文',
+      text: '全文内容',
       displayText: '[粘贴#1 · 2 行 · 9 字符]',
-      // 不传 pasteFiles
     })
-    // 标签文字应存在
-    expect(out).toContain('[粘贴#1')
-    // 无落盘文件 → 纯文本，不含 OSC-8 序列
-    expect(out).not.toContain(']8;;file:')
+    expect(out).toContain('全文内容')
   })
 
-  it('user 消息多段粘贴：各标签各自链接各自文件', () => {
+  it('user 消息多段粘贴：渲染完整 text', () => {
     const out = frame({
       role: 'user',
-      text: '全文',
+      text: '完整的全文内容',
       displayText: '[粘贴#1 · 2 行 · 9 字符][粘贴#2 · 3 行 · 15 字符]',
       pasteFiles: { 1: '/tmp/zuse/paste-111.txt', 2: '/tmp/zuse/paste-222.txt' },
     })
-    expect(out).toContain('paste-111.txt')
-    expect(out).toContain('paste-222.txt')
-    expect(out).toContain(']8;;file:')
+    expect(out).toContain('完整的全文内容')
   })
 })
