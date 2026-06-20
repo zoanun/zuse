@@ -33,8 +33,9 @@ describe('TodoWriteTool', () => {
       ],
     }, dummyCtx)
 
-    expect(result.output).toContain('2 completed')
-    expect(result.output).toContain('1 pending')
+    expect(result.output).toContain('2/3 completed')
+    expect(result.output).toContain('✓ a')
+    expect(result.output).toContain('○ c')
   })
 
   it('filters invalid items silently', async () => {

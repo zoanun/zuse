@@ -26,16 +26,16 @@ export function createTodoWriteTool(deps: TodoWriteDeps): Tool {
           items: {
             type: 'object',
             properties: {
-              content: { type: 'string', description: '任务描述' },
+              content: { type: 'string', description: 'Task description' },
               status: {
                 type: 'string',
                 enum: ['pending', 'in_progress', 'completed'],
-                description: '任务状态',
+                description: 'Task status',
               },
             },
             required: ['content', 'status'],
           },
-          description: '完整的任务列表（覆盖式更新）',
+          description: 'Full task list (replaces the entire list on each call)',
         },
       },
       required: ['todos'],
@@ -57,14 +57,15 @@ export function createTodoWriteTool(deps: TodoWriteDeps): Tool {
 
       deps.onUpdate(validated)
 
+      const icons: Record<TodoStatus, string> = { completed: '✓', in_progress: '●', pending: '○' }
+      const lines = validated.map((t) => `${icons[t.status]} ${t.content}`)
       const counts = {
         completed: validated.filter((t) => t.status === 'completed').length,
-        in_progress: validated.filter((t) => t.status === 'in_progress').length,
-        pending: validated.filter((t) => t.status === 'pending').length,
+        total: validated.length,
       }
 
       return {
-        output: `Todo list updated: ${counts.completed} completed, ${counts.in_progress} in progress, ${counts.pending} pending.`,
+        output: `${lines.join('\n')}\n(${counts.completed}/${counts.total} completed)`,
       }
     },
   }
