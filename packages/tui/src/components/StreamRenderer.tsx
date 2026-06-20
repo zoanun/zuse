@@ -273,8 +273,8 @@ export function StreamRenderer({ message, cwd }: StreamRendererProps) {
   // 「一拖拽就变形」)。整行底色用带样式的空格补到当前列宽:没有边框字符可拆,窗口变窄时
   // 至多把行尾空格折下去多出一截底色,不会破框。
   if (message.role === 'user') {
-    // displayText 存在时按折叠回显渲染（含 [粘贴#x] 标签），否则回落到全文
-    const lines = (message.displayText ?? message.text).split('\n')
+    // 始终显示完整原文,不折叠多行粘贴
+    const lines = message.text.split('\n')
     const pasteFiles = message.pasteFiles
     return (
       <Box flexDirection="column" marginBottom={1}>
