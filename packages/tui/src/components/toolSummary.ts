@@ -218,6 +218,8 @@ export function summarizeOutput(tool: UIToolCall): OutputSummary {
     case 'WebSearch':
     case 'LSP':
       return bashPreview(output, tool.isError ?? false)
+    case 'TodoWrite':
+      return bashPreview(output, false)
     default:
       return { kind: 'line', text: `${plural(countLines(stripTrailingNotes(output)), 'line')} of output` }
   }
