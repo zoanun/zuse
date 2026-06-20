@@ -205,7 +205,7 @@ export function App({ cwd, initialSession }: AppProps) {
       {/* 实时帧：仍在流式的消息 + 输入框/对话框 + 页脚。 */}
       {live.length > 0 && <MessageList messages={live} cwd={cwd} />}
 
-      {todos.length > 0 && (
+      {todos.length > 0 && todos.some((t: { status: string }) => t.status !== 'completed') && (
         <Box flexDirection="column" marginBottom={1} paddingX={MSG_PAD_X}>
           {todos.map((t: { content: string; status: string }, i: number) => {
             const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'
