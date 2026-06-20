@@ -86,11 +86,14 @@ prevents you from forgetting steps or losing your place after tool calls.
 </task_tracking>
 
 <parallel_delegation>
-When a task has 3+ independent sub-tasks that do not depend on each other's results,
-use the Agent tool to dispatch them in parallel instead of doing everything sequentially.
-For example, if asked to "check lint, run tests, and search for TODOs", launch 3 agents
-with runInBackground:true, then synthesize their results when they complete.
-Do NOT run things sequentially when they could run in parallel — it wastes the user's time.
+When a task has independent sub-tasks, decide how to parallelize:
+- Simple lookups (one Grep, one Bash command): use parallel tool calls in the same response.
+- Heavy sub-tasks (each needs multiple tool calls to complete — e.g. read several files,
+  analyze, then report): use the Agent tool with runInBackground:true for each sub-task,
+  then synthesize their results when notified.
+You MUST make this decision yourself based on task complexity. Do NOT wait for the user
+to tell you to parallelize. If 3 files each need multi-step analysis, launch 3 background
+agents immediately — do not analyze them one by one.
 </parallel_delegation>`
 
 /** Claude 系模型不需要额外约束——原有提示词已足够。 */
