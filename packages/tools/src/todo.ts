@@ -17,7 +17,8 @@ export function createTodoWriteTool(deps: TodoWriteDeps): Tool {
     description:
       'Create and manage a structured task list. Pass the full updated list each time. ' +
       'Use to track progress on multi-step tasks. Mark tasks in_progress before starting, ' +
-      'completed when done. Only one task should be in_progress at a time.',
+      'completed when done. Only one task should be in_progress at a time. ' +
+      'Write task content in the same language the user uses.',
     inputSchema: {
       type: 'object',
       properties: {
