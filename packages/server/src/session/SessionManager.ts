@@ -217,8 +217,8 @@ export class SessionManager {
     // NOTE on session-scope: a verdict of allow_session/allow_persist makes core's
     // gateAndRunTool push the matched rule into this.sessionAllow (the same array we
     // pass to runAgent every turn), so the rule auto-allows identical calls for the rest
-    // of the session. allow_persist's on-disk persistence is deferred to S1 (see the
-    // sessionAllow comment in submit) — for now it is functionally allow_session here.
+    // of the session. allow_persist additionally writes the rule to disk via core's
+    // default onPersistAllow (appendAllowRule), since submit does not override it.
     if (verdict !== 'allow' && verdict !== 'deny' && verdict !== 'allow_session' && verdict !== 'allow_persist') return
     const p = this.pending.get(id)
     if (!p) return
@@ -423,10 +423,8 @@ export class SessionManager {
         // NOTE: sessionAllow accumulates across turns. core's gateAndRunTool mutates the
         // SAME array we pass here (push on allow_session/allow_persist), and we pass the
         // stable this.sessionAllow every turn — so allow_session rules persist for the
-        // session. allow_persist's ON-DISK persistence (core's onPersistAllow, which
-        // runAgent defaults to appendAllowRule) is the settings/persistence layer's
-        // concern and its server wiring is deferred (S1); in this manager allow_persist
-        // currently behaves like allow_session (in-memory for the session lifetime).
+        // session. allow_persist additionally persists the rule to disk via core's default
+        // onPersistAllow (appendAllowRule), which runAgent applies since we don't override it.
         sessionAllow: this.sessionAllow,
         onCwdChange: (next: string) => {
           this.cwd = next
