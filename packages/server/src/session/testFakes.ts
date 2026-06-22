@@ -1,4 +1,5 @@
 import type { ModelClient, Message, StreamEvent } from '@zuse/core'
+import type { SnapshotStore } from './events.js'
 
 /**
  * Scripted ModelClient for tests.
@@ -30,10 +31,7 @@ export function fakeClient(
  * Minimal snapshot-store fake: track() returns incrementing hash strings;
  * restore() is a no-op. Used by SessionManager tests (Task 4+).
  */
-export function fakeSnapshotStore(): {
-  track: () => Promise<string>
-  restore: (h: string) => Promise<void>
-} {
+export function fakeSnapshotStore(): SnapshotStore {
   let n = 0
   return { track: async () => `hash${++n}`, restore: async (_h: string) => {} }
 }

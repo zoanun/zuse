@@ -50,7 +50,7 @@ import type {
  * range are remapped (− cut + 1 for the summary placeholder). Server-local mirror of
  * the TUI's remapCheckpoints (which lives in @zuse/tui and must not be imported here).
  */
-function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: number): SessionCheckpoint[] {
+export function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: number): SessionCheckpoint[] {
   return checkpoints
     .filter((c) => c.messageIndex >= cutIndex)
     .map((c) => ({ ...c, messageIndex: c.messageIndex - cutIndex + 1 }))
@@ -312,15 +312,19 @@ export class SessionManager {
     let flushed = 0
     const memTool = this.registry.get('Memory')
     if (memTool && candidates.length > 0) {
+      // Hoist per-candidate allocations: one tracker + one abort signal shared
+      // across the whole flush (these are flush-scoped, not per-save).
+      const flushTracker = createFileTracker()
+      const flushSignal = new AbortController().signal
       for (const c of candidates) {
         try {
           const res = await memTool.run(
             { action: 'save', type: c.type, content: c.content, hook: c.hook },
-            { cwd: this.cwd, signal: new AbortController().signal, tracker: createFileTracker(), setCwd: () => {} },
+            { cwd: this.cwd, signal: flushSignal, tracker: flushTracker, setCwd: () => {} },
           )
           if (!res.isError) flushed++
         } catch {
-          // Flush failure does not affect the compaction result.
+          // Flush is best-effort; one bad candidate must never break the rest.
         }
       }
     }

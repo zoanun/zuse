@@ -48,13 +48,13 @@ export interface TodoItemLite {
  * Shadow-git snapshot backend used for checkpoint/revert (Phase 12). Narrow seam:
  * the SessionManager only needs to track() a checkpoint and restore() to one. The
  * concrete implementation (@zuse/tools createSnapshotStore) has a richer surface
- * (ensure/diffStat) and returns `string | null` from track; callers adapt the
- * null-on-failure into a resolved-null via `.catch(() => null)`, so this seam
- * deliberately keeps the non-null `string` contract for what reaches the manager.
+ * (ensure/diffStat) and returns `string | null` from track. This seam mirrors
+ * that contract: track() may resolve to null when no snapshot could be taken
+ * (e.g. not a git repo / nothing to track); callers guard with `if (hash)`.
  */
 export interface SnapshotStore {
-  /** Snapshot the workspace before a turn; resolves to a commit-hash anchor. */
-  track(): Promise<string>
+  /** Snapshot the workspace before a turn; resolves to a commit-hash anchor, or null on no-op/failure. */
+  track(): Promise<string | null>
   /** Restore the workspace to a previously-tracked hash. Rejects on failure. */
   restore(hash: string): Promise<void>
 }

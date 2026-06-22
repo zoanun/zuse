@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { SessionManager } from './SessionManager.js'
+import { SessionManager, remapCheckpoints } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { Conversation, ToolRegistry } from '@zuse/core'
 import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
+import type { SessionCheckpoint } from './events.js'
 
 /**
  * A ModelClient whose turn is held open until release() is called. Lets tests
@@ -40,7 +41,7 @@ function makeManagerFromClient(client: ModelClient) {
     settings: makeSettings(),
     systemPrompt: 'SYS',
     permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-    snapshotStore: fakeSnapshotStore() as never,
+    snapshotStore: fakeSnapshotStore(),
   })
 }
 
@@ -74,7 +75,7 @@ function makeManager(scripts = [] as Parameters<typeof fakeClient>[0]) {
     settings: makeSettings(),
     systemPrompt: 'SYS',
     permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-    snapshotStore: fakeSnapshotStore() as never,
+    snapshotStore: fakeSnapshotStore(),
   })
   return { mgr, calls }
 }
@@ -148,7 +149,7 @@ describe('SessionManager permissions', () => {
         interactive: false,
         config: { defaultMode: 'default', allow: ['Bash(ls)'], ask: [], deny: [] },
       },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
     })
     const events: string[] = []
     mgr.subscribe((e) => events.push(e.type))
@@ -177,7 +178,7 @@ describe('SessionManager permissions', () => {
         interactive: false,
         config: { defaultMode: 'default', allow: ['Bash(git status*)'], ask: [], deny: [] },
       },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
     })
     const compound = 'git status && rm -rf /tmp/x'
     // @ts-expect-error
@@ -201,7 +202,7 @@ describe('SessionManager permissions', () => {
         interactive: false,
         config: { defaultMode: 'default', allow: ['Bash(*)'], ask: [], deny: ['Bash(rm*)'] },
       },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
     })
     // @ts-expect-error
     await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'rm -rf /' }, specifier: 'rm -rf /', rule: 'Bash(rm -rf /)', reason: 'ask' })).resolves.toBe('deny')
@@ -239,7 +240,7 @@ function makeManagerWith(
     settings: makeSettings(),
     systemPrompt: 'SYS',
     permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-    snapshotStore: fakeSnapshotStore() as never,
+    snapshotStore: fakeSnapshotStore(),
   })
   return { mgr, calls }
 }
@@ -388,7 +389,7 @@ describe('SessionManager failover', () => {
       settings,
       systemPrompt: 'SYS',
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       createClient: () => backup,
     })
@@ -460,7 +461,7 @@ describe('SessionManager auto-compaction', () => {
       settings: makeSettings(),
       systemPrompt: 'SYS',
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
       conversation,
     })
 
@@ -573,7 +574,7 @@ describe('SessionManager switchModel', () => {
       settings,
       systemPrompt: 'SYS',
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       createClient: () => newClient,
     })
@@ -623,7 +624,7 @@ describe('SessionManager memory flush in compact()', () => {
       settings: makeSettings(),
       systemPrompt: 'SYS',
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
-      snapshotStore: fakeSnapshotStore() as never,
+      snapshotStore: fakeSnapshotStore(),
       conversation,
     })
 
@@ -631,5 +632,43 @@ describe('SessionManager memory flush in compact()', () => {
 
     expect(memCalls).toHaveLength(1)
     expect(memCalls[0]).toMatchObject({ action: 'save', type: 'project', hook: 'build', content: 'use pnpm not npm' })
+  })
+})
+
+describe('remapCheckpoints', () => {
+  const cp = (messageIndex: number): SessionCheckpoint => ({
+    messageIndex,
+    hash: `h${messageIndex}`,
+    at: '2026-01-01T00:00:00.000Z',
+    label: `cp${messageIndex}`,
+  })
+
+  it('drops checkpoints inside the folded range [0, cut) and remaps the kept ones (− cut + 1)', () => {
+    // Checkpoints at [0, 2, 5], cut = 3.
+    //  - 0 and 2 are < cut → folded away (dropped).
+    //  - 5 is >= cut → kept, remapped to 5 - 3 + 1 = 3 (the summary placeholder shifts it).
+    const result = remapCheckpoints([cp(0), cp(2), cp(5)], 3)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.messageIndex).toBe(3)
+    // Identity-bearing fields are preserved on the survivor.
+    expect(result[0]!.hash).toBe('h5')
+    expect(result[0]!.label).toBe('cp5')
+  })
+
+  it('a checkpoint exactly at the cut index is kept and remaps to 1 (cut - cut + 1)', () => {
+    const result = remapCheckpoints([cp(3)], 3)
+    expect(result.map((c) => c.messageIndex)).toEqual([1])
+  })
+
+  it('remaps multiple survivors preserving order: [4, 7] with cut 3 → [2, 5]', () => {
+    const result = remapCheckpoints([cp(1), cp(4), cp(7)], 3)
+    // 1 dropped; 4 → 4-3+1=2; 7 → 7-3+1=5.
+    expect(result.map((c) => c.messageIndex)).toEqual([2, 5])
+  })
+
+  it('does not mutate the input checkpoints', () => {
+    const input = [cp(5)]
+    remapCheckpoints(input, 3)
+    expect(input[0]!.messageIndex).toBe(5)
   })
 })
