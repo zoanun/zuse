@@ -3,6 +3,16 @@ import {
   ToolRegistry,
   decide,
   runAgent,
+  resolveContextWindow,
+  findCompactionCut,
+  findCompactionCutByBudget,
+  summarizeForCompaction,
+  applyCompaction,
+  extractPreviousSummary,
+  splitMemoryCandidates,
+  estimateCompactionSavings,
+  COMPACTION_THRESHOLD,
+  TAIL_BUDGET_RATIO,
   type ModelClient,
   type ResolvedSettings,
   type PermissionsConfig,
@@ -109,6 +119,11 @@ export class SessionManager {
     this.emit(e)
   }
 
+  /** Test-only seam: seed contextTokens high to exercise the pre-turn auto-compaction trigger. */
+  private _setContextTokensForTest(n: number): void {
+    this.contextTokens = n
+  }
+
   setPermissionPolicy(p: PermissionPolicy): void {
     this.policy = p
   }
@@ -186,6 +201,66 @@ export class SessionManager {
   }
 
   /**
+   * Compact the conversation: summarize old history, keep recent turns verbatim.
+   * Port of the TUI's compactConversation (minus React). Replaces this.conversation
+   * with a new compacted ledger and resets contextTokens (next turn re-measures).
+   * On a too-short history it returns a message and does nothing. The summary request
+   * always succeeds (summarizeForCompaction falls back to a deterministic summary).
+   */
+  async compact(): Promise<string> {
+    const conv = this.conversation
+    const messages = conv.getMessages()
+
+    // Tail-budget protection scaled to the context window; falls back to a fixed
+    // turn count when the budget path finds no cut.
+    const windowSize = resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
+    const tailBudgetChars = Math.round(windowSize * COMPACTION_THRESHOLD * TAIL_BUDGET_RATIO * 4)
+    const cut = findCompactionCutByBudget(messages, tailBudgetChars) ?? findCompactionCut(messages)
+    if (cut === null) return 'History too short; nothing to compact.'
+
+    this.emit({ type: 'compaction-start' })
+    const before = conv.length
+
+    // TodoWrite state injected into the summary prompt so Pending Items survives.
+    const todoIcons: Record<TodoItemLite['status'], string> = { completed: '✓', in_progress: '●', pending: '○' }
+    const todoState = this.todos.length > 0
+      ? this.todos.map((t) => `${todoIcons[t.status]} ${t.content}`).join('\n')
+      : undefined
+
+    // Iterative summary: if the ledger already opens with a prior summary, update it.
+    const previousSummary = extractPreviousSummary(messages)
+    const raw = await summarizeForCompaction(
+      this.client,
+      messages.slice(0, cut),
+      { model: this.client.getModel(), max_tokens: this.maxTokens },
+      undefined,
+      previousSummary ?? undefined,
+      todoState,
+    )
+
+    const { summary, candidates } = splitMemoryCandidates(raw)
+
+    // Debounce: track savings; consecutive ineffective compactions disable auto-trigger.
+    const savings = estimateCompactionSavings(messages, cut, summary.length)
+    if (savings.savingsRatio < 0.1) this.ineffectiveCompaction++
+    else this.ineffectiveCompaction = 0
+
+    this.conversation = applyCompaction(conv, summary, cut)
+    // Window usage is unknown post-compaction (next turn measures it); clear it so the
+    // stale value cannot re-trigger auto-compaction.
+    this.contextTokens = undefined
+    this.emit({ type: 'context-update', contextTokens: undefined })
+    // NOTE: memory flush (candidates → Memory tool) is wired in Task 9.
+    // NOTE: checkpoint remap (remapCheckpoints) is wired in Task 9 (no checkpoints exist yet).
+    // NOTE: reloading MEMORY.md into systemPrompt after compaction is deferred.
+    void candidates
+
+    const msg = `Compacted: ${before} → ${this.conversation.length} messages (${Math.round(savings.savingsRatio * 100)}% saved)`
+    this.emit({ type: 'compaction-done', summaryText: summary })
+    return msg
+  }
+
+  /**
    * Run ONE user turn: drive runAgent and forward its stream as SessionEvents
    * (tool output forwarded RAW — no truncation/spill; that is the frontend's job),
    * then emit usage/context, and always emit turn-end in finally.
@@ -199,8 +274,23 @@ export class SessionManager {
     this.isThinking = true
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
 
-    // (Task 7 will insert auto-compaction here, before reading conversation.)
+    // Auto-compaction (Phase 10B): if the last turn's measured context usage crossed
+    // the window threshold, compact BEFORE sending. Skip on resend (failover): the just-
+    // failed turn added no usage and resends must be fast. A failed compaction does not
+    // block the send — we warn and proceed on the original history.
+    if (!opts?.isResend) {
+      const windowSize = resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
+      if ((this.contextTokens ?? 0) > windowSize * COMPACTION_THRESHOLD && this.ineffectiveCompaction < 2) {
+        try {
+          this.emit({ type: 'memory-notice', text: await this.compact() })
+        } catch (err) {
+          this.emit({ type: 'warning', message: `auto-compaction failed: ${err instanceof Error ? err.message : String(err)}` })
+        }
+      }
+    }
 
+    // The ledger ref must be read AFTER auto-compaction: compact() swaps this.conversation
+    // for a new instance, so reading earlier would run the turn against the stale ledger.
     const conversation = this.conversation
     const controller = new AbortController()
     this.abort = controller

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
-import { ToolRegistry } from '@zuse/core'
-import type { ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
+import { Conversation, ToolRegistry } from '@zuse/core'
+import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
 
 /**
  * A ModelClient whose turn is held open until release() is called. Lets tests
@@ -346,5 +346,72 @@ describe('SessionManager re-entrancy guard', () => {
     const turnEndIdx = types.indexOf('turn-end')
     expect(turnEndIdx).toBeGreaterThan(abortedIdx)
     expect(mgr.getState().isThinking).toBe(false)
+  })
+})
+
+describe('SessionManager auto-compaction', () => {
+  it('compacts before a turn when contextTokens exceeds the window threshold', async () => {
+    // Seed a conversation with several user/assistant turn pairs so findCompactionCut
+    // (keepTurns=2) returns a non-null cut index > 0.
+    const seed: Message[] = []
+    for (let n = 0; n < 4; n++) {
+      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+    }
+    const conversation = Conversation.fromJSON({
+      version: 1,
+      messages: seed,
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })
+
+    // scripts[0] = the summary request response (summarizeForCompaction collects text-delta);
+    // scripts[1] = the actual turn response.
+    const summaryScript: StreamEvent[] = [
+      { type: 'message-start', id: 'sum', model: 'fake-model' },
+      { type: 'text-delta', text: '## Active Task\nNone.\n## Goal\nTesting compaction.' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } },
+    ]
+    const turnScript: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } },
+    ]
+    const { client, calls } = fakeClient([summaryScript, turnScript])
+
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore() as never,
+      conversation,
+    })
+
+    // Force the pre-turn trigger: DEFAULT_CONTEXT_WINDOW=512000, threshold=0.8 → > 409600.
+    // @ts-expect-error reach a test-only seam to set contextTokens high
+    mgr._setContextTokensForTest(500_000)
+
+    const lengthBefore = mgr.getState().messageCount
+    const types: string[] = []
+    let summaryText = ''
+    mgr.subscribe((e) => {
+      types.push(e.type)
+      if (e.type === 'compaction-done') summaryText = e.summaryText
+    })
+
+    await mgr.submit('next question')
+
+    // The summary request fired before the turn request.
+    expect(calls.length).toBe(2)
+    // Compaction lifecycle events were emitted during submit.
+    expect(types).toContain('compaction-start')
+    expect(types).toContain('compaction-done')
+    expect(types).toContain('memory-notice')
+    expect(summaryText).toContain('## Active Task')
+    // Conversation was replaced with a shorter, compacted ledger.
+    expect(mgr.getState().messageCount).toBeLessThan(lengthBefore)
   })
 })
