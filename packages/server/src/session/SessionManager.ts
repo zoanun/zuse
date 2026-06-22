@@ -13,12 +13,21 @@ import {
   estimateCompactionSavings,
   COMPACTION_THRESHOLD,
   TAIL_BUDGET_RATIO,
+  createModelClient,
+  getProviderConfig,
+  modelNames,
+  resolveFailoverMode,
+  decideFailover,
+  modelKey,
+  badKeysForFailure,
   type ModelClient,
   type ResolvedSettings,
+  type ProviderConfig,
   type PermissionsConfig,
   type PermissionRequest,
   type PermissionVerdict,
   type Usage,
+  type ErrorCategory,
 } from '@zuse/core'
 import type { SessionEvent, SessionSnapshot, TodoItemLite, PendingPermissionLite } from './events.js'
 
@@ -43,6 +52,14 @@ export interface SessionManagerOptions {
   createdAt?: string
   /** Max output tokens per turn. Defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
   maxTokens?: number
+  /** Provider id this session runs against. Initialises currentProviderId. Defaults to 'unknown'. */
+  providerId?: string
+  /**
+   * Factory used to build the swapped client on failover. Defaults to core's
+   * createModelClient. Injectable so offline tests can return a scripted fake
+   * instead of a real provider client.
+   */
+  createClient?: (providerConfig: ProviderConfig, model: string) => ModelClient
 }
 
 interface Pending {
@@ -64,6 +81,9 @@ export class SessionManager {
 
   private cwd: string
   private currentProviderId = 'unknown'
+  /** Models marked bad this session: key `${providerId}/${model}` → why. Feeds decideFailover. */
+  private readonly badModels = new Map<string, ErrorCategory>()
+  private readonly createClient: (providerConfig: ProviderConfig, model: string) => ModelClient
   private abort: AbortController | null = null
   private readonly steerQueue: string[] = []
   private todos: TodoItemLite[] = []
@@ -90,6 +110,8 @@ export class SessionManager {
     this.conversation = opts.conversation ?? new Conversation()
     this.createdAt = opts.createdAt ?? new Date().toISOString()
     this.maxTokens = opts.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
+    this.currentProviderId = opts.providerId ?? 'unknown'
+    this.createClient = opts.createClient ?? createModelClient
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
     // we leave totalUsage as undefined when the conversation is brand-new (all zeros).
@@ -298,6 +320,12 @@ export class SessionManager {
     let accumulated = ''
     let assistantStarted = false
     let lastInputTokens: number | undefined
+    // Failover decision: the error branch only RECORDS the category here; the swap/
+    // resend runs after the loop ends (never re-enter runAgent inside its own for-await).
+    let failoverDecision: ErrorCategory | null = null
+    // Set right before the recursive resend so the OUTER finally does not emit a second
+    // turn-end (the nested submit already emitted one).
+    let resent = false
 
     try {
       for await (const event of runAgent({
@@ -345,10 +373,17 @@ export class SessionManager {
           case 'warning':
             this.emit({ type: 'warning', message: event.message })
             break
-          case 'error':
-            if (controller.signal.aborted) this.emit({ type: 'aborted' })
-            else this.emit({ type: 'error', message: event.message, category: event.category })
+          case 'error': {
+            if (controller.signal.aborted) { this.emit({ type: 'aborted' }); break }
+            const cat: ErrorCategory = (event.category as ErrorCategory | undefined) ?? 'other'
+            // Only consider failover when nothing has streamed yet: quota/auth/unavailable
+            // all surface at stream open. A mid-stream error only shows (resending would
+            // duplicate emitted content). Record now; act after the loop.
+            const preStream = accumulated === '' && !assistantStarted
+            if (preStream && cat !== 'other') failoverDecision = cat
+            else this.emit({ type: 'error', message: event.message, category: cat })
             break
+          }
         }
       }
 
@@ -356,16 +391,62 @@ export class SessionManager {
       this.totalUsage = conversation.totalUsage
       this.emit({ type: 'usage-update', totalUsage: this.totalUsage })
       this.emit({ type: 'context-update', contextTokens: this.contextTokens })
-      // Locals retained for Task 8 (failover preStream check).
-      void accumulated
-      void assistantStarted
+
+      // Failover: the for-await has ended (client returned), so it is safe to swap
+      // the client and resend. Port of useConversation's post-loop failover block.
+      if (failoverDecision) {
+        const cat = failoverDecision
+        const pid = this.currentProviderId
+        // The model that just failed = the client currently in use (auto chain-failover
+        // hot-swaps this.client, so getModel() is the true failed model, not a stale local).
+        const failedModel = this.client.getModel()
+        const models = modelNames(this.settings.providers[pid])
+        // Mark bad: auth invalidates the whole provider (shared key); others only this model.
+        for (const k of badKeysForFailure(pid, failedModel, cat, models)) {
+          this.badModels.set(k, k === modelKey(pid, failedModel) ? cat : 'auth')
+        }
+        const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
+        const action = decideFailover({
+          category: cat,
+          mode: resolveFailoverMode(this.settings),
+          providerId: pid,
+          models,
+          currentModel: failedModel,
+          bad: new Set(this.badModels.keys()),
+        })
+        if (action.kind === 'retry') {
+          this.emit({ type: 'failover', fromModel: failedModel, toModel: action.model, reason: reasonText })
+          // Hot-swap the client within the same provider (no persist, providerId unchanged).
+          this.client = this.createClient(getProviderConfig(this.settings, pid), action.model)
+          // The new model's window may be much smaller. The failed turn committed nothing
+          // (history unchanged), so the prior input_tokens still estimate occupancy: if it
+          // overflows the new window threshold, compact first so the resend keeps context.
+          const newWindow = resolveContextWindow(this.settings, pid, action.model)
+          if (this.contextTokens && this.contextTokens > newWindow * COMPACTION_THRESHOLD) {
+            try {
+              this.emit({ type: 'memory-notice', text: await this.compact() })
+            } catch (err) {
+              this.emit({ type: 'warning', message: `compaction before resend failed: ${err instanceof Error ? err.message : String(err)}` })
+            }
+          }
+          // The resend's runAgent reads this.client.getModel() (the new model). Resend.
+          this.abort = null
+          resent = true
+          await this.submit(text, undefined, { isResend: true })
+        } else {
+          // dialog mode / auth / no available next model: hand off to client model picker.
+          this.emit({ type: 'model-select-needed', reason: reasonText })
+        }
+      }
     } catch (err) {
       if (controller.signal.aborted) this.emit({ type: 'aborted' })
       else this.emit({ type: 'error', message: err instanceof Error ? err.message : 'unknown error' })
     } finally {
       this.isThinking = false
       this.abort = null
-      this.emit({ type: 'turn-end' })
+      // On a failover resend the nested submit already emitted turn-end; suppress the
+      // outer one to avoid a double turn-end. isThinking/abort resets are idempotent.
+      if (!resent) this.emit({ type: 'turn-end' })
     }
   }
 }

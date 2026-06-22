@@ -349,6 +349,80 @@ describe('SessionManager re-entrancy guard', () => {
   })
 })
 
+describe('SessionManager failover', () => {
+  it('auto failover: marks bad, swaps to backup, resends; exactly one turn-end (no double-emit)', async () => {
+    // Settings with provider 'p' declaring two models and auto failover mode.
+    const settings = {
+      failoverMode: 'auto',
+      providers: {
+        p: { protocol: 'anthropic', apiKey: 'test-key', models: ['primary', 'backup'] },
+      },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+
+    // PRIMARY client: yields a preStream quota error (no text emitted first).
+    const primary: ModelClient = {
+      getModel: () => 'primary',
+      async *sendMessages() {
+        yield { type: 'error', message: 'quota exceeded', category: 'quota' }
+      },
+    }
+
+    // BACKUP client: a normal short turn. Injected via the createClient seam so the
+    // failover swap never touches a real provider.
+    const backup: ModelClient = {
+      getModel: () => 'backup',
+      async *sendMessages() {
+        yield { type: 'message-start', id: 'm1', model: 'backup' }
+        yield { type: 'text-delta', text: 'recovered' }
+        yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 7, output_tokens: 3 } }
+      },
+    }
+
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client: primary,
+      registry: new ToolRegistry(),
+      settings,
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore() as never,
+      providerId: 'p',
+      createClient: () => backup,
+    })
+
+    const events: { type: string; [k: string]: unknown }[] = []
+    let recoveredText = ''
+    let backupUsage: unknown
+    mgr.subscribe((e) => {
+      events.push(e as never)
+      if (e.type === 'text-delta') recoveredText += e.text
+      if (e.type === 'message-stop') backupUsage = e.usage
+    })
+
+    await mgr.submit('hi')
+
+    const failover = events.find((e) => e.type === 'failover')
+    expect(failover).toBeDefined()
+    expect(failover).toMatchObject({ fromModel: 'primary', toModel: 'backup' })
+
+    const turnStarts = events.filter((e) => e.type === 'turn-start')
+    expect(turnStarts.length).toBe(2)
+    expect(turnStarts[0]).toMatchObject({ isResend: false })
+    expect(turnStarts[1]).toMatchObject({ isResend: true })
+
+    // CRITICAL: exactly one turn-end (no double-emit from the recursive resend).
+    expect(events.filter((e) => e.type === 'turn-end').length).toBe(1)
+
+    // The recovered (backup) turn actually ran.
+    expect(recoveredText).toBe('recovered')
+    expect(backupUsage).toMatchObject({ input_tokens: 7, output_tokens: 3 })
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+})
+
 describe('SessionManager auto-compaction', () => {
   it('compacts before a turn when contextTokens exceeds the window threshold', async () => {
     // Seed a conversation with several user/assistant turn pairs so findCompactionCut
