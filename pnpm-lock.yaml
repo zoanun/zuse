@@ -51,6 +51,15 @@ importers:
         specifier: ^6.21.0
         version: 6.26.0
 
+  packages/server:
+    dependencies:
+      '@zuse/core':
+        specifier: workspace:*
+        version: link:../core
+      '@zuse/tools':
+        specifier: workspace:*
+        version: link:../tools
+
   packages/tools:
     dependencies:
       '@mozilla/readability':

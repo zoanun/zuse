@@ -1,0 +1,21 @@
+{
+  "name": "@zuse/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "cd ../.. && vitest run packages/server/src",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "dependencies": {
+    "@zuse/core": "workspace:*",
+    "@zuse/tools": "workspace:*"
+  }
+}
