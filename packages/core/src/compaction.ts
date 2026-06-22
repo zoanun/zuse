@@ -159,11 +159,14 @@ function renderBlock(b: Message['content'][number]): string {
 }
 
 /** 把摘要段渲染成 transcript 并附摘要指令,交模型生成结构化摘要。 */
-export function buildSummaryPrompt(messages: Message[]): string {
+export function buildSummaryPrompt(messages: Message[], todoState?: string): string {
   const transcript = messages
     .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.content.map(renderBlock).join('\n')}`)
     .join('\n\n')
   const today = new Date().toISOString().slice(0, 10)
+  const todoSection = todoState
+    ? `\nCURRENT TASK LIST (from TodoWrite tool — preserve non-completed tasks verbatim in "Pending Items"):\n${todoState}\n\n`
+    : ''
   return (
     'You are a summarization agent creating a context checkpoint. ' +
     'Treat the conversation turns below as source material for a compact record of prior work. ' +
@@ -181,7 +184,8 @@ export function buildSummaryPrompt(messages: Message[]): string {
     '## Active State\n' +
     '[Working directory, branch, modified files, test status, running processes]\n\n' +
     '## Pending Items\n' +
-    '[Work remaining — framed as reference only, not active instructions]\n\n' +
+    '[Work remaining — framed as reference only, not active instructions. ' +
+    'If a TodoWrite task list is provided above, include all non-completed tasks here.]\n\n' +
     '## Key Decisions\n' +
     '[Important decisions and WHY they were made]\n\n' +
     '## Constraints & Preferences\n' +
@@ -198,6 +202,7 @@ export function buildSummaryPrompt(messages: Message[]): string {
     '(if there are none, do not output any MEMORY lines):\n' +
     'MEMORY: <type>|<hook>|<content>\n' +
     'type is one of: user (user preferences, cross-project) / project (project-specific facts) / insight (lessons learned) / reference (external resources).\n\n' +
+    todoSection +
     '<conversation>\n' +
     transcript +
     '\n</conversation>'
@@ -262,16 +267,20 @@ export function applyCompaction(conv: Conversation, summaryText: string, cutInde
  * Build an iterative summary prompt: update a previous summary with new turns.
  * Used on second+ compaction within a session to preserve accumulated context.
  */
-export function buildIterativeSummaryPrompt(previousSummary: string, newMessages: Message[]): string {
+export function buildIterativeSummaryPrompt(previousSummary: string, newMessages: Message[], todoState?: string): string {
   const transcript = newMessages
     .map((m) => `${m.role === 'user' ? 'user' : 'assistant'}: ${m.content.map(renderBlock).join('\n')}`)
     .join('\n\n')
   const today = new Date().toISOString().slice(0, 10)
+  const todoSection = todoState
+    ? `\nCURRENT TASK LIST (from TodoWrite tool — preserve non-completed tasks verbatim in "Pending Items"):\n${todoState}\n\n`
+    : ''
   return (
     'You are a summarization agent updating a context checkpoint. ' +
     'A previous compaction produced the summary below. New conversation turns have occurred since then ' +
     'and need to be incorporated.\n\n' +
     'PREVIOUS SUMMARY:\n' + previousSummary + '\n\n' +
+    todoSection +
     'NEW TURNS TO INCORPORATE:\n<conversation>\n' + transcript + '\n</conversation>\n\n' +
     'Update the summary using the same structure. PRESERVE all existing information that is still relevant. ' +
     'ADD new completed actions to the numbered list (continue numbering). ' +
@@ -312,7 +321,7 @@ const FALLBACK_TURN_MAX_CHARS = 700
  * 确定性回退摘要:不依赖 LLM,从消息列表机械提取关键信息。
  * 质量不如 LLM 摘要,但永远成功,比"完全不压缩"好得多。
  */
-export function buildFallbackSummary(messages: Message[]): string {
+export function buildFallbackSummary(messages: Message[], todoState?: string): string {
   const userAsks: string[] = []
   const actions: string[] = []
   const errors: string[] = []
@@ -345,6 +354,9 @@ export function buildFallbackSummary(messages: Message[]): string {
     actions.length > 0 ? actions.map((a, i) => `${i + 1}. ${a}`).join('\n') : 'None.',
     '',
   ]
+  if (todoState) {
+    parts.push('## Pending Items', todoState, '')
+  }
   if (errors.length > 0) {
     parts.push('## Errors Encountered', errors.join('\n'), '')
   }
@@ -366,11 +378,12 @@ export async function summarizeForCompaction(
   config: Pick<ModelConfig, 'model' | 'max_tokens'>,
   signal?: AbortSignal,
   previousSummary?: string,
+  todoState?: string,
 ): Promise<string> {
   try {
     const promptText = previousSummary
-      ? buildIterativeSummaryPrompt(previousSummary, toSummarize)
-      : buildSummaryPrompt(toSummarize)
+      ? buildIterativeSummaryPrompt(previousSummary, toSummarize, todoState)
+      : buildSummaryPrompt(toSummarize, todoState)
     const request: Message[] = [
       { role: 'user', content: [{ type: 'text', text: promptText }] },
     ]
@@ -388,6 +401,6 @@ export async function summarizeForCompaction(
     if (text.trim() === '') throw new Error('model returned no content')
     return text
   } catch {
-    return buildFallbackSummary(toSummarize)
+    return buildFallbackSummary(toSummarize, todoState)
   }
 }

@@ -281,10 +281,17 @@ export function useConversation({
   }, [registry])
 
   // TodoWrite: 模型自用的任务追踪。状态由 TUI 持有,每次 onUpdate 覆盖式更新。
+  // todosRef 镜像 state,供 compactConversation 闭包读取当前值(避免把 todos 加入依赖数组)。
   const [todos, setTodos] = useState<TodoItem[]>([])
+  const todosRef = useRef<TodoItem[]>([])
   useMemo(() => {
     if (registry.get('TodoWrite')) return
-    registry.register(createTodoWriteTool({ onUpdate: setTodos }))
+    registry.register(createTodoWriteTool({
+      onUpdate: (items) => {
+        todosRef.current = items
+        setTodos(items)
+      },
+    }))
   }, [registry])
 
   // 启动可见性:载入了记忆索引就提示一条 —— 用户知道模型「记得」多少东西。
@@ -350,6 +357,13 @@ export function useConversation({
     if (!client) throw new Error('客户端未初始化,无法压缩。')
     const before = conv.length
 
+    // TodoWrite 当前状态:注入摘要 prompt,确保压缩后 Pending Items 保留任务列表。
+    const currentTodos = todosRef.current
+    const todoIcons: Record<string, string> = { completed: '✓', in_progress: '●', pending: '○' }
+    const todoState = currentTodos.length > 0
+      ? currentTodos.map((t) => `${todoIcons[t.status]} ${t.content}`).join('\n')
+      : undefined
+
     // 迭代摘要:检测是否有旧摘要,有则走增量更新路径(保留旧信息+合并新回合)。
     const previousSummary = extractPreviousSummary(messages)
     const raw = await summarizeForCompaction(
@@ -358,6 +372,7 @@ export function useConversation({
       { model: client.getModel(), max_tokens: maxTokens },
       undefined,
       previousSummary ?? undefined,
+      todoState,
     )
 
     // 记忆冲刷(Phase 13,对照 OpenClaw memory flush):老历史即将折叠,摘要里
@@ -800,6 +815,20 @@ export function useConversation({
             // 它定义在本 useCallback 之后,放进依赖数组会 TDZ;这里是其无写盘的子集。
             clientRef.current = createModelClient(getProviderConfig(settings, pid), action.model)
             setCurrentModel(action.model)
+
+            // 新模型上下文窗口可能远小于原模型:用旧 input_tokens 估算(失败回合没提交,
+            // 对话长度不变),超出新窗口阈值则先压缩,否则整段对话溢出会让新模型丢失上下文。
+            const newWindow = resolveContextWindow(settings, pid, action.model)
+            const tokens = contextTokensRef.current
+            if (tokens && tokens > newWindow * COMPACTION_THRESHOLD) {
+              notify(`新模型上下文窗口较小(${Math.round(newWindow / 1000)}k tokens),压缩历史中…`)
+              try {
+                notify(await compactConversation())
+              } catch (compactErr) {
+                notify(`压缩失败：${compactErr instanceof Error ? compactErr.message : String(compactErr)}`)
+              }
+            }
+
             // 重发的 runAgent 用 clientRef.current.getModel() 取新模型,直接重发即可。
             abortRef.current = null
             await sendMessage(text, undefined, undefined, { isResend: true })
