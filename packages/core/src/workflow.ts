@@ -1,4 +1,7 @@
 import { cpus } from 'node:os'
+import { createHash, randomBytes } from 'node:crypto'
+import { readFileSync, appendFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { Conversation } from './conversation.js'
 import { ToolRegistry } from './tool.js'
 import type { FileReadTracker } from './tool.js'
@@ -7,6 +10,48 @@ import { createModelClient } from './model-client.js'
 import type { ModelClient } from './model-client.js'
 import { getProviderConfig } from './settings.js'
 import type { ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
+
+// ── Journal (Workflow Resume) ────────────────────────────────────────
+
+interface JournalEntry {
+  hash: string
+  prompt: string
+  opts?: Partial<AgentOpts>
+  result: unknown
+  tokens: number
+}
+
+export function generateRunId(): string {
+  return `wf_${randomBytes(6).toString('hex')}`
+}
+
+export function computeAgentHash(prompt: string, opts?: AgentOpts): string {
+  const key = {
+    prompt,
+    opts: opts
+      ? { label: opts.label, model: opts.model, maxTurns: opts.maxTurns, schema: opts.schema, allowedTools: opts.allowedTools }
+      : undefined,
+  }
+  return createHash('sha256').update(JSON.stringify(key)).digest('hex').slice(0, 16)
+}
+
+function readJournal(filePath: string): JournalEntry[] {
+  try {
+    const content = readFileSync(filePath, 'utf-8')
+    return content
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => JSON.parse(line) as JournalEntry)
+  } catch {
+    return []
+  }
+}
+
+function appendJournal(filePath: string, entry: JournalEntry): void {
+  appendFileSync(filePath, JSON.stringify(entry) + '\n', 'utf-8')
+}
+
+// ── Constants ────────────────────────────────────────────────────────
 
 const DEFAULT_MAX_AGENTS = 100
 const SUB_AGENT_MAX_TURNS = 10
@@ -62,6 +107,10 @@ export interface WorkflowContext {
   maxAgents?: number
   /** Token 预算(output tokens)。null = 不限。agent() 每次调用累加消耗,超预算抛错。 */
   tokenBudget?: number | null
+  /** Resume from a previous run: load its journal and skip matching agent() calls. */
+  resumeFromRunId?: string
+  /** Override journal directory (for tests). Default: <cwd>/.zuse/workflow-journal/ */
+  journalDir?: string
 }
 
 export function createWorkflow(ctx: WorkflowContext) {
@@ -71,6 +120,17 @@ export function createWorkflow(ctx: WorkflowContext) {
   let agentCount = 0
   let tokensSpent = 0
   const tokenBudget = ctx.tokenBudget ?? null
+
+  const runId = generateRunId()
+  const journalDir = ctx.journalDir ?? join(ctx.cwd, '.zuse', 'workflow-journal')
+  const journalPath = join(journalDir, `${runId}.jsonl`)
+
+  // Resume: load previous journal entries for sequential matching
+  const previousEntries: JournalEntry[] = ctx.resumeFromRunId
+    ? readJournal(join(journalDir, `${ctx.resumeFromRunId}.jsonl`))
+    : []
+  let journalIndex = 0
+  let journalInvalidated = false
 
   const budget = {
     get total() { return tokenBudget },
@@ -85,6 +145,25 @@ export function createWorkflow(ctx: WorkflowContext) {
     if (tokenBudget !== null && tokensSpent >= tokenBudget) {
       throw new Error(`Workflow token budget exhausted (${tokensSpent}/${tokenBudget})`)
     }
+
+    const hash = computeAgentHash(prompt, opts)
+    const seqIdx = journalIndex++
+
+    // Resume cache: sequential match — Nth call matches Nth journal entry.
+    // Once any entry mismatches, all subsequent entries are invalidated.
+    const cached = previousEntries[seqIdx]
+    if (!journalInvalidated && cached && cached.hash === hash) {
+      agentCount++
+      tokensSpent += cached.tokens
+      // Persist to new journal for future resumes
+      mkdirSync(journalDir, { recursive: true })
+      appendJournal(journalPath, cached)
+      return cached.result as string | null
+    }
+
+    // Mismatch or beyond journal: invalidate all subsequent entries
+    if (cached && cached.hash !== hash) journalInvalidated = true
+
     agentCount++
 
     const release = await sem.acquire()
@@ -121,6 +200,7 @@ export function createWorkflow(ctx: WorkflowContext) {
         ? `${prompt}\n\nYou MUST respond with valid JSON matching this schema:\n${JSON.stringify(opts.schema, null, 2)}\n\nYour ENTIRE response must be a single valid JSON object matching the schema above. No markdown, no code fences, no explanation before or after. If you add anything besides the JSON, parsing will fail and you will need to retry.`
         : prompt
       let finalText = ''
+      let resultTokens = 0
       for await (const event of runAgent({
         conversation,
         client,
@@ -142,20 +222,30 @@ export function createWorkflow(ctx: WorkflowContext) {
         if (event.type === 'text-delta') {
           finalText += event.text
         } else if (event.type === 'message-stop') {
+          resultTokens += event.usage.output_tokens
           tokensSpent += event.usage.output_tokens
         }
       }
 
-      if (!finalText) return null
-      if (opts?.schema) {
+      let result: string | null = null
+      if (!finalText) {
+        result = null
+      } else if (opts?.schema) {
         try {
           const cleaned = finalText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
-          return JSON.parse(cleaned)
+          result = JSON.parse(cleaned)
         } catch {
-          return null
+          result = null
         }
+      } else {
+        result = finalText
       }
-      return finalText
+
+      // Persist to journal for future resumes
+      mkdirSync(journalDir, { recursive: true })
+      appendJournal(journalPath, { hash, prompt, opts, result, tokens: resultTokens })
+
+      return result
     } catch {
       return null
     } finally {
@@ -194,5 +284,5 @@ export function createWorkflow(ctx: WorkflowContext) {
     )
   }
 
-  return { agent, parallel, pipeline, budget }
+  return { agent, parallel, pipeline, budget, runId }
 }

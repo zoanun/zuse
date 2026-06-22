@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { Semaphore, createWorkflow } from './workflow.js'
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { randomBytes } from 'node:crypto'
+import { Semaphore, createWorkflow, computeAgentHash } from './workflow.js'
 import { ToolRegistry } from './tool.js'
 import type { ModelClient } from './model-client.js'
 import type { StreamEvent, Usage, ResolvedSettings } from './types.js'
@@ -355,5 +359,212 @@ describe('token budget', () => {
     const wf = createWorkflow(makeCtx(fakeClient([])))
     expect(wf.budget.total).toBeNull()
     expect(wf.budget.remaining()).toBe(Infinity)
+  })
+})
+
+// ── Journal Resume ──────────────────────────────────────────────────
+
+function makeTmpJournalDir(): string {
+  const dir = join(tmpdir(), `zuse-test-journal-${randomBytes(4).toString('hex')}`)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+describe('workflow resume (journal)', () => {
+  it('returns runId from createWorkflow', () => {
+    const wf = createWorkflow(makeCtx(fakeClient([])))
+    expect(wf.runId).toMatch(/^wf_[0-9a-f]{12}$/)
+  })
+
+  it('persists agent results to journal file', async () => {
+    const journalDir = makeTmpJournalDir()
+    try {
+      const client = fakeClient([
+        [
+          { type: 'text-delta', text: 'result-a' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 50 } },
+        ],
+        [
+          { type: 'text-delta', text: 'result-b' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 30 } },
+        ],
+      ])
+      const wf = createWorkflow({ ...makeCtx(client), journalDir })
+
+      await wf.agent('task-a')
+      await wf.agent('task-b')
+
+      const journalPath = join(journalDir, `${wf.runId}.jsonl`)
+      const lines = readFileSync(journalPath, 'utf-8').trim().split('\n')
+      expect(lines).toHaveLength(2)
+
+      const entry0 = JSON.parse(lines[0])
+      expect(entry0.prompt).toBe('task-a')
+      expect(entry0.result).toBe('result-a')
+      expect(entry0.tokens).toBe(50)
+
+      const entry1 = JSON.parse(lines[1])
+      expect(entry1.prompt).toBe('task-b')
+      expect(entry1.result).toBe('result-b')
+      expect(entry1.tokens).toBe(30)
+    } finally {
+      rmSync(journalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('resumes from previous journal — matching calls return cached results', async () => {
+    const journalDir = makeTmpJournalDir()
+    try {
+      // First run: execute 2 agent calls
+      const client1 = fakeClient([
+        [
+          { type: 'text-delta', text: 'original-a' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 40 } },
+        ],
+        [
+          { type: 'text-delta', text: 'original-b' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 60 } },
+        ],
+      ])
+      const wf1 = createWorkflow({ ...makeCtx(client1), journalDir })
+      await wf1.agent('task-a')
+      await wf1.agent('task-b')
+
+      // Second run: resume — client should NOT be called (no scripts needed)
+      let clientCalled = false
+      const client2: ModelClient = {
+        getModel: () => 'fake',
+        async *sendMessages() {
+          clientCalled = true
+          yield { type: 'text-delta' as const, text: 'should-not-appear' }
+          yield { type: 'message-stop' as const, stop_reason: 'end_turn', usage: USAGE }
+        },
+      }
+      const wf2 = createWorkflow({ ...makeCtx(client2), journalDir, resumeFromRunId: wf1.runId })
+
+      const r1 = await wf2.agent('task-a')
+      const r2 = await wf2.agent('task-b')
+
+      expect(r1).toBe('original-a')
+      expect(r2).toBe('original-b')
+      expect(clientCalled).toBe(false)
+      expect(wf2.budget.spent()).toBe(100) // 40 + 60 from cached tokens
+    } finally {
+      rmSync(journalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates from changed prompt onward — re-executes changed + subsequent calls', async () => {
+    const journalDir = makeTmpJournalDir()
+    try {
+      // First run: 3 calls
+      const client1 = fakeClient([
+        [
+          { type: 'text-delta', text: 'res-1' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 10 } },
+        ],
+        [
+          { type: 'text-delta', text: 'res-2' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 20 } },
+        ],
+        [
+          { type: 'text-delta', text: 'res-3' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 30 } },
+        ],
+      ])
+      const wf1 = createWorkflow({ ...makeCtx(client1), journalDir })
+      await wf1.agent('task-1')
+      await wf1.agent('task-2')
+      await wf1.agent('task-3')
+
+      // Second run: same first call, CHANGED second call → 2nd & 3rd re-execute
+      const executedPrompts: string[] = []
+      const client2: ModelClient = {
+        getModel: () => 'fake',
+        async *sendMessages() {
+          executedPrompts.push('executed')
+          yield { type: 'text-delta' as const, text: 'new-result' }
+          yield { type: 'message-stop' as const, stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 5 } }
+        },
+      }
+      const wf2 = createWorkflow({ ...makeCtx(client2), journalDir, resumeFromRunId: wf1.runId })
+
+      const r1 = await wf2.agent('task-1')           // matches → cached
+      const r2 = await wf2.agent('task-2-CHANGED')   // hash differs → re-execute
+      const r3 = await wf2.agent('task-3')            // after mismatch → re-execute (sequential invalidation)
+
+      expect(r1).toBe('res-1')     // cached
+      expect(r2).toBe('new-result') // re-executed
+      expect(r3).toBe('new-result') // re-executed (hash matches but position after mismatch)
+      expect(executedPrompts).toHaveLength(2)
+    } finally {
+      rmSync(journalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('new calls beyond journal length execute normally', async () => {
+    const journalDir = makeTmpJournalDir()
+    try {
+      // First run: 1 call
+      const client1 = fakeClient([
+        [
+          { type: 'text-delta', text: 'cached' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 10 } },
+        ],
+      ])
+      const wf1 = createWorkflow({ ...makeCtx(client1), journalDir })
+      await wf1.agent('existing')
+
+      // Second run: resume + add a new call
+      const client2 = fakeClient([
+        [
+          { type: 'text-delta', text: 'fresh' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: { ...USAGE, output_tokens: 20 } },
+        ],
+      ])
+      const wf2 = createWorkflow({ ...makeCtx(client2), journalDir, resumeFromRunId: wf1.runId })
+
+      const r1 = await wf2.agent('existing')  // cached
+      const r2 = await wf2.agent('brand-new') // beyond journal → execute
+
+      expect(r1).toBe('cached')
+      expect(r2).toBe('fresh')
+    } finally {
+      rmSync(journalDir, { recursive: true, force: true })
+    }
+  })
+
+  it('computeAgentHash produces stable, distinct hashes', () => {
+    const h1 = computeAgentHash('prompt-a')
+    const h2 = computeAgentHash('prompt-a')
+    const h3 = computeAgentHash('prompt-b')
+    const h4 = computeAgentHash('prompt-a', { label: 'x' })
+
+    expect(h1).toBe(h2) // same input → same hash
+    expect(h1).not.toBe(h3) // different prompt → different hash
+    expect(h1).not.toBe(h4) // different opts → different hash
+    expect(h1).toMatch(/^[0-9a-f]{16}$/) // 16 hex chars
+  })
+
+  it('resumes with missing journal file — all calls execute normally', async () => {
+    const journalDir = makeTmpJournalDir()
+    try {
+      const client = fakeClient([
+        [
+          { type: 'text-delta', text: 'ok' },
+          { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+        ],
+      ])
+      const wf = createWorkflow({
+        ...makeCtx(client),
+        journalDir,
+        resumeFromRunId: 'wf_nonexistent000',
+      })
+
+      const result = await wf.agent('task')
+      expect(result).toBe('ok')
+    } finally {
+      rmSync(journalDir, { recursive: true, force: true })
+    }
   })
 })

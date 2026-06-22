@@ -14,6 +14,9 @@ dist/
 .zuse/settings.local.json
 .zuse/settings.local.jsonc
 
+# workflow resume 运行时日志（每次跑 workflow 生成，非源码）
+.zuse/workflow-journal/
+
 # logs
 *.log
 npm-debug.log*
