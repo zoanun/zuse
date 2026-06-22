@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { resolveHead, type PendingPermission } from '../permissionQueue.js'
-import { badKeysForFailure, decideFailover, modelKey } from './failoverCore.js'
+import { badKeysForFailure, decideFailover, modelKey } from '@zuse/core'
 import os from 'node:os'
 import type { UIMessage, ConversationState, UIToolCall } from '../types.js'
 import { summarizeOutput, lineSummaryHidesContent } from '../components/toolSummary.js'

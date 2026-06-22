@@ -2,7 +2,7 @@
  * 降级(failover)的纯决策逻辑,不依赖 React/ink,便于单测。
  * useConversation 在 error 事件后调用:先 badKeysForFailure 标坏,再 decideFailover 决定动作。
  */
-import type { ErrorCategory } from '@zuse/core'
+import type { ErrorCategory } from './types.js'
 
 /** key 形如 `${providerId}/${model}`,与 buildModelOptions 的标注 key 一致。 */
 export function modelKey(providerId: string, model: string): string {
