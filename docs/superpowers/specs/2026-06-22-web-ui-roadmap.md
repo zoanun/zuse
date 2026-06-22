@@ -37,7 +37,11 @@ Zuse 当前只有 TUI（`packages/tui`）。需要新增一个 **Web UI**，要�
 1. **`packages/core` 是引擎，不是 TUI。** TUI 和 Web 都是它的消费者，二者**互不依赖**。复用 core 是引用库，不构成耦合；复用 TUI 内部代码才是耦合，禁止。
 2. **`SessionManager`（F2）必须传输无关。** WS、Telegram、飞书、Cron 都只是"驱动源"，平级地调同一套 SessionManager API。任何把 WS / HTTP 概念泄漏进 SessionManager 的设计都是错的。
 
-> **关于 `useConversation.ts`**：TUI 的会话编排（failover 接线、自动压缩触发、权限队列、检查点管理、TodoWrite 状态）锁在这个 1116 行的 React hook 里。Web **不复用它**，而是在 F2 写一份框架无关的等价编排。已经是纯函数的小模块（如 `packages/tui/.../failoverCore.ts`、`packages/core/.../compaction.ts`）可直接 import。这是刻意的解耦取舍：Web 功能会大幅发散，强行共用编排反而会互相掣肘。代价是 failover/压缩等核心策略存在两份实现，需要靠各自的单测守护，发现策略级 bug 时两边都要查。
+> **解耦决策（最高优先，已定）**：TUI 的会话编排（failover 接线、自动压缩触发、权限队列、检查点管理、TodoWrite 状态）锁在 `useConversation.ts` 这个 1116 行 React hook 里。
+> - **Web 不复用它、也不把它抽出来共用**：Web 在 `packages/server` 内写一份**完全独立**的 `SessionManager`（见 F2）。TUI 与 Web 各有各的编排大脑，独立演进，互不牵制。**不做"统一大脑"，不迁移 TUI** —— 解耦的价值高于消除重复。
+> - **只共享 core 里的纯原语**：二者共享的仅限 `packages/core` 中**已是纯函数/无状态**的底层件（`runAgent`、`Conversation`、`compaction` 的摘要与切点算法、`memory-consolidation`、检查点存储）。共享这些不构成 TUI↔Web 耦合。
+> - **解耦必做的小修正**：当前在 **TUI 包内**的纯模块（如 `packages/tui/src/hooks/failoverCore.ts`）若要被 Web 共用，**必须先移到 `packages/core`**——否则 Web 依赖 TUI 包就是耦合。此类提炼下沉单独成小 spec（见 F0）。
+> - **明确接受的代价**：failover/自动压缩的**触发时机与编排序列**会有两份实现、可能漂移。缓解：把可提炼的**纯判定**（"是否该压缩"谓词、failover 序列规划）下沉 core 做成纯函数两边共用，把重复压到最薄；但**编排状态机本身保持各自独立**。
 
 ## 3. 包结构（新增）
 
@@ -55,12 +59,15 @@ Zuse 当前只有 TUI（`packages/tui`）。需要新增一个 **Web UI**，要�
 
 | # | spec | 产出 | 依赖 |
 |---|------|------|------|
-| **F2** | headless 会话编排核心 | `SessionManager`：传输无关的会话状态机——回合循环、中断、failover、自动压缩、权限请求外发、检查点、TodoWrite/usage 状态；事件发射器风格；纯单测，不碰 HTTP | core |
+| **F0** | 纯模块下沉 core（解耦前置） | 把 Web 要共用、但当前锁在 TUI 包内的纯模块迁到 `packages/core`（首批：`failoverCore.ts` 及其测试；后续按需提炼"是否该压缩"谓词、failover 序列规划等纯判定）。TUI 改 import 路径，行为不变，测试守护 | core |
 | **F1** | server 骨架 + 传输 + 鉴权 | `packages/server` daemon、WS 端点、**可插拔鉴权接口 + 本地密码门禁**（首次设口令 → 哈希存本地 → 登录发会话 cookie/JWT → 免登）、网络绑定、健康检查；先不接 agent（echo 级） | — |
-| **F3** | WS 协议 + 接线 | 定义 WS 消息协议（上行 send/interrupt/steer/permission-reply，下行 stream 事件 + 状态快照）+ 协议类型包；把 F2 接进 F1；单会话内存态 | F1,F2 |
+| **F2** | headless 会话编排核心 | **`packages/server` 内**一份完全独立的 `SessionManager`（传输无关的内部模块，与 WS/HTTP 模块隔离）：回合循环、中断、failover、自动压缩、权限请求外发、检查点、TodoWrite/usage 状态；事件发射器风格；纯单测，不碰 HTTP。复用 core 纯原语（含 F0 下沉的） | F0,F1（需 server 包已搭）|
+| **F3** | WS 协议 + 接线 | 定义 WS 消息协议（上行 send/interrupt/steer/permission-reply，下行 stream 事件 + 状态快照）+ 协议类型包；把 F2 接进 F1 的 WS 端点；单会话内存态 | F1,F2 |
 | **F4** | React 骨架 + 聊天流 | `packages/web` 应用骨架、WS 客户端、**多模态 parts 消息模型**、聊天流视图 + 富媒体渲染（markdown/代码高亮/Edit diff/mermaid/表格/图片） | F3 |
 
-> 建议构建顺序：**F2 → F1 → F3 → F4**。F2 是大脑、风险最高、可独立单测，先设计透；F1 几乎是 echo 服务器；F3 把二者焊起来；F4 渲染。F1 与 F2 无相互依赖，若并行开发可同时起。
+> 建议构建顺序：**F0 → F1 → F2 → F3 → F4**。F0 先把共享纯件下沉（否则 Web 共用会反向依赖 TUI 包 = 耦合）；F1 搭 `packages/server` 骨架（几乎是 echo 服务器，且 F2 的 `SessionManager` 要落在这个包里，故先于 F2）；F2 是大脑、风险最高、可独立单测；F3 把二者焊起来；F4 渲染。F0 与 F1 互不依赖，可并行起。
+>
+> **解耦边界重申**：`SessionManager` 落在 `packages/server` 而非 `packages/core`，是为了不诱导"TUI 也来消费它"的统一大脑回潮——它是 **Web 专属**的编排大脑。TUI 的 `useConversation` 不动、不迁移。
 
 #### 鉴权与安全决策（已定）
 
@@ -153,16 +160,18 @@ F2 的 API 不得出现 WS/HTTP/Telegram 等具体传输概念。所有驱动源
 ## 7. 推进方式
 
 1. 本总纲提交后，**逐个 spec 各自 brainstorm → 设计文档 → 实现计划**。
-2. 首个详细 spec：**F2（headless 会话编排核心）**。
-3. 地基 F1–F4 完成、主干跑通后，§4.2–4.7 各功能多数可并行推进，按需排期。
+2. 构建顺序 **F0 → F1 → F2 → F3 → F4**；F0（纯件下沉）、F1（server 骨架）较机械/轻量，轻 spec 即可。
+3. **首个详细设计 spec：F2（headless 会话编排核心）**——设计最重、风险最高，先设计透。
+4. 地基完成、主干跑通后，§4.2–4.7 各功能多数可并行推进，按需排期。
 
 ---
 
 ## 附：spec 依赖速查
 
 ```
-F2 ──┬── F1 ── F3 ── F4 ── S2,S3 / I1 / I2,I3 / V1,V2
-     │         └── M1..M7 / S1(→S4) / C2 / G4
-     ├── C1 ── C2
-     └── G1 ──┬── G2 / G3 / G4
+F0(纯件下沉) ─┐
+F1(server骨架)─┴─ F2 ──┬── F3 ── F4 ── S2,S3 / I1 / I2,I3 / V1,V2
+                       │         └── M1..M7 / S1(→S4) / C2 / G4
+                       ├── C1 ── C2
+                       └── G1 ──┬── G2 / G3 / G4
 ```
