@@ -44,6 +44,7 @@ export class SessionManager {
   private systemPrompt: string
   private policy: PermissionPolicy
   private readonly snapshotStore: SessionManagerOptions['snapshotStore']
+  private readonly createdAt: string
 
   private cwd: string
   private currentProviderId = 'unknown'
@@ -69,6 +70,7 @@ export class SessionManager {
     this.policy = opts.permissionPolicy
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
+    this.createdAt = opts.createdAt ?? new Date().toISOString()
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
     // we leave totalUsage as undefined when the conversation is brand-new (all zeros).
