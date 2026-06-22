@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { ToolRegistry } from '@zuse/core'
-import type { ResolvedSettings, Tool, ToolContext, ToolResult } from '@zuse/core'
+import type { ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
 
 function makeSettings(): ResolvedSettings {
   return {
@@ -182,5 +182,69 @@ describe('SessionManager permissions', () => {
     // Clean up
     mgr.resolvePermission(id, 'deny')
     await expect(p).resolves.toBe('deny')
+  })
+})
+
+/** Build a manager with an optional custom registry, sharing the standard fakes. */
+function makeManagerWith(
+  scripts: StreamEvent[][],
+  registry = new ToolRegistry(),
+) {
+  const { client, calls } = fakeClient(scripts)
+  const mgr = new SessionManager({
+    sessionId: 's1',
+    cwd: '/work',
+    client,
+    registry,
+    settings: makeSettings(),
+    systemPrompt: 'SYS',
+    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    snapshotStore: fakeSnapshotStore() as never,
+  })
+  return { mgr, calls }
+}
+
+describe('SessionManager turn loop', () => {
+  it('plain text turn emits turn-start, message-start, text-delta, message-stop, turn-end', async () => {
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'hello' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } },
+    ]
+    const { mgr } = makeManagerWith([script])
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+    await mgr.submit('hi')
+    expect(types).toEqual([
+      'turn-start', 'message-start', 'text-delta', 'message-stop',
+      'usage-update', 'context-update', 'turn-end',
+    ])
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('tool-result is emitted with full raw output (no truncation)', async () => {
+    const big = 'x'.repeat(5000)
+    // Turn 0: model asks for a tool (stop_reason 'tool_use' makes core run it).
+    // Turn 1: empty script -> clean stop. The tool-result is produced by core
+    // running the registered tool, not from the scripted events.
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    // readOnly tool so decide() auto-allows under defaultMode 'default' (no permission prompt).
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Bash',
+      description: 'Run a bash command',
+      inputSchema: { type: 'object', properties: { command: { type: 'string' } } },
+      readOnly: true,
+      run: async (): Promise<ToolResult> => ({ output: big }),
+    })
+    const { mgr } = makeManagerWith([script, []], registry)
+    let toolOut = ''
+    mgr.subscribe((e) => { if (e.type === 'tool-result') toolOut = e.output })
+    await mgr.submit('go')
+    expect(toolOut.length).toBe(5000)
   })
 })
