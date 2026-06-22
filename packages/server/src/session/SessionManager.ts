@@ -26,6 +26,7 @@ import {
   buildConsolidationPrompt,
   parseConsolidationOps,
   type ModelClient,
+  type FileReadTracker,
   type ResolvedSettings,
   type ProviderConfig,
   type PermissionsConfig,
@@ -124,10 +125,20 @@ export class SessionManager {
   private permSeq = 0
   /** In-memory session permission overlay (extra allow rules). Persisted across turns. */
   private readonly sessionAllow: string[] = []
+  /**
+   * ONE FileReadTracker for the whole session (matches the TUI's per-session tracker).
+   * Passed to every runAgent turn and reused for the compaction memory flush so
+   * read-before-write (the optimistic lock) survives across turns — otherwise runAgent
+   * would allocate a fresh tracker per turn (agent.ts: `opts.tracker ?? createFileTracker()`)
+   * and forget what was read last turn.
+   */
+  private readonly tracker: FileReadTracker = createFileTracker()
 
   private readonly listeners = new Set<(e: SessionEvent) => void>()
 
   constructor(opts: SessionManagerOptions) {
+    // Spec §9's "client uninitialised → emit error, reject" row is unreachable by
+    // construction: client is a required (non-null) constructor arg, so no runtime guard.
     this.sessionId = opts.sessionId
     this.cwd = opts.cwd
     this.client = opts.client
@@ -203,6 +214,11 @@ export class SessionManager {
    * verdict-first order; callers must not swap the arguments.
    */
   resolvePermission(id: string, verdict: PermissionVerdict): void {
+    // NOTE on session-scope: a verdict of allow_session/allow_persist makes core's
+    // gateAndRunTool push the matched rule into this.sessionAllow (the same array we
+    // pass to runAgent every turn), so the rule auto-allows identical calls for the rest
+    // of the session. allow_persist's on-disk persistence is deferred to S1 (see the
+    // sessionAllow comment in submit) — for now it is functionally allow_session here.
     if (verdict !== 'allow' && verdict !== 'deny' && verdict !== 'allow_session' && verdict !== 'allow_persist') return
     const p = this.pending.get(id)
     if (!p) return
@@ -312,15 +328,14 @@ export class SessionManager {
     let flushed = 0
     const memTool = this.registry.get('Memory')
     if (memTool && candidates.length > 0) {
-      // Hoist per-candidate allocations: one tracker + one abort signal shared
-      // across the whole flush (these are flush-scoped, not per-save).
-      const flushTracker = createFileTracker()
+      // Reuse the session-scoped tracker (one abort signal shared across the whole
+      // flush; the signal is flush-scoped, not per-save).
       const flushSignal = new AbortController().signal
       for (const c of candidates) {
         try {
           const res = await memTool.run(
             { action: 'save', type: c.type, content: c.content, hook: c.hook },
-            { cwd: this.cwd, signal: flushSignal, tracker: flushTracker, setCwd: () => {} },
+            { cwd: this.cwd, signal: flushSignal, tracker: this.tracker, setCwd: () => {} },
           )
           if (!res.isError) flushed++
         } catch {
@@ -403,6 +418,15 @@ export class SessionManager {
         cwd: this.cwd,
         signal: controller.signal,
         settings: this.settings,
+        // Session-scoped tracker (see field decl): keeps read-before-write across turns.
+        tracker: this.tracker,
+        // NOTE: sessionAllow accumulates across turns. core's gateAndRunTool mutates the
+        // SAME array we pass here (push on allow_session/allow_persist), and we pass the
+        // stable this.sessionAllow every turn — so allow_session rules persist for the
+        // session. allow_persist's ON-DISK persistence (core's onPersistAllow, which
+        // runAgent defaults to appendAllowRule) is the settings/persistence layer's
+        // concern and its server wiring is deferred (S1); in this manager allow_persist
+        // currently behaves like allow_session (in-memory for the session lifetime).
         sessionAllow: this.sessionAllow,
         onCwdChange: (next: string) => {
           this.cwd = next

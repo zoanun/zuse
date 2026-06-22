@@ -635,6 +635,127 @@ describe('SessionManager memory flush in compact()', () => {
   })
 })
 
+describe('SessionManager session-allow accumulation across turns', () => {
+  it('allow_session in turn 1 auto-allows the same tool in turn 2 (no second permission-request)', async () => {
+    // A non-readOnly, non-Bash tool with a null specifier → rule is the bare tool name
+    // 'Deploy'. Under defaultMode 'default', decide() classifies it 'ask', so turn 1
+    // triggers canUseTool → a permission-request. Resolving with 'allow_session' makes
+    // core's gateAndRunTool push 'Deploy' into the reused this.sessionAllow array, so in
+    // turn 2 decide() finds the rule and returns 'allow' — NO new permission-request.
+    let runCount = 0
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Deploy',
+      description: 'deploy something',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: false,
+      run: async (): Promise<ToolResult> => { runCount++; return { output: 'deployed' } },
+      // specifierFor omitted → specifier is null → rule === 'Deploy'.
+    })
+
+    // Per submit, runAgent runs two model calls: the tool_use turn then a clean stop.
+    const toolUse: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'tool-use', id: 't', name: 'Deploy', input: {} },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const stop: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    // submit #1 consumes scripts[0..1]; submit #2 consumes scripts[2..3].
+    const { mgr } = makeManagerWith([toolUse, stop, toolUse, stop], registry)
+
+    // Auto-resolve any permission-request with allow_session, and count them.
+    let permRequests = 0
+    mgr.subscribe((e) => {
+      if (e.type === 'permission-request') {
+        permRequests++
+        mgr.resolvePermission(e.id, 'allow_session')
+      }
+    })
+
+    await mgr.submit('deploy please')
+    await mgr.submit('deploy again')
+
+    // The rule was asked exactly once (turn 1); turn 2 was auto-allowed from sessionAllow.
+    expect(permRequests).toBe(1)
+    // The tool actually ran in BOTH turns (turn 2 was not denied/skipped).
+    expect(runCount).toBe(2)
+  })
+})
+
+describe('SessionManager steer', () => {
+  it('consumeSteer drains the queued steer text into the running turn', async () => {
+    // runAgent calls opts.consumeSteer() after each tool batch and injects the returned
+    // text as a follow-up user message. Queue a steer before the turn; the tool batch
+    // gives runAgent a consume point, and we assert the steered text reached the client
+    // (it appears in the messages the fake client received on the second model call) and
+    // that the queue was drained.
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Noop',
+      description: 'no-op tool',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true, // auto-allowed under defaultMode 'default' (no permission prompt)
+      run: async (): Promise<ToolResult> => ({ output: 'ok' }),
+    })
+    const toolUse: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'tool-use', id: 't', name: 'Noop', input: {} },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const stop: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { mgr, calls } = makeManagerWith([toolUse, stop], registry)
+
+    // Enqueue a steer before the turn; runAgent consumes it after the tool batch.
+    mgr.steer('extra steer text')
+    await mgr.submit('start')
+
+    // The steer text is injected into the last tool_result block's content, so on the
+    // SECOND model call the fake client receives a message containing it. Serialize all
+    // received messages and assert the steered text is present (consumeSteer drained it).
+    const serialized = JSON.stringify(calls)
+    expect(serialized).toContain('extra steer text')
+    expect(serialized).toContain('USER MESSAGE') // the steer-injection wrapper from core
+  })
+
+  it('steer drops blank/whitespace-only text (queue stays empty, nothing injected)', async () => {
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Noop',
+      description: 'no-op tool',
+      inputSchema: { type: 'object', properties: {} },
+      readOnly: true,
+      run: async (): Promise<ToolResult> => ({ output: 'ok' }),
+    })
+    const toolUse: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'tool-use', id: 't', name: 'Noop', input: {} },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const stop: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { mgr, calls } = makeManagerWith([toolUse, stop], registry)
+
+    // Only blank/whitespace steers — steer() must trim and drop them, so nothing is
+    // injected and core's steer wrapper never appears in any model call.
+    mgr.steer('   ')
+    mgr.steer('')
+    await mgr.submit('start')
+
+    expect(JSON.stringify(calls)).not.toContain('USER MESSAGE')
+  })
+})
+
 describe('remapCheckpoints', () => {
   const cp = (messageIndex: number): SessionCheckpoint => ({
     messageIndex,
