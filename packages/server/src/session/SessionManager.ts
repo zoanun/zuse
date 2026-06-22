@@ -20,6 +20,11 @@ import {
   decideFailover,
   modelKey,
   badKeysForFailure,
+  createFileTracker,
+  MEMORY_INDEX_CAP,
+  shouldConsolidateMemories,
+  buildConsolidationPrompt,
+  parseConsolidationOps,
   type ModelClient,
   type ResolvedSettings,
   type ProviderConfig,
@@ -29,7 +34,27 @@ import {
   type Usage,
   type ErrorCategory,
 } from '@zuse/core'
-import type { SessionEvent, SessionSnapshot, TodoItemLite, PendingPermissionLite } from './events.js'
+import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug } from '@zuse/tools'
+import type {
+  SessionEvent,
+  SessionSnapshot,
+  TodoItemLite,
+  PendingPermissionLite,
+  SessionCheckpoint,
+  SnapshotStore,
+} from './events.js'
+
+/**
+ * Compaction folds messages[0..cut) into a single summary message, so checkpoint
+ * indices shift: checkpoints inside the folded range are dropped, those in the kept
+ * range are remapped (− cut + 1 for the summary placeholder). Server-local mirror of
+ * the TUI's remapCheckpoints (which lives in @zuse/tui and must not be imported here).
+ */
+function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: number): SessionCheckpoint[] {
+  return checkpoints
+    .filter((c) => c.messageIndex >= cutIndex)
+    .map((c) => ({ ...c, messageIndex: c.messageIndex - cutIndex + 1 }))
+}
 
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -47,7 +72,7 @@ export interface SessionManagerOptions {
   settings: ResolvedSettings
   systemPrompt: string
   permissionPolicy: PermissionPolicy
-  snapshotStore: { track: () => Promise<string>; restore: (h: string) => Promise<void> }
+  snapshotStore: SnapshotStore
   conversation?: Conversation
   createdAt?: string
   /** Max output tokens per turn. Defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
@@ -75,7 +100,7 @@ export class SessionManager {
   private readonly settings: ResolvedSettings
   private systemPrompt: string
   private policy: PermissionPolicy
-  private readonly snapshotStore: SessionManagerOptions['snapshotStore']
+  private readonly snapshotStore: SnapshotStore
   private readonly createdAt: string
   private readonly maxTokens: number
 
@@ -87,6 +112,10 @@ export class SessionManager {
   private abort: AbortController | null = null
   private readonly steerQueue: string[] = []
   private todos: TodoItemLite[] = []
+  /** Shadow-git checkpoint anchors recorded per turn (Phase 12); drives revert(). */
+  private checkpoints: SessionCheckpoint[] = []
+  /** Guards against concurrent memory-consolidation passes (fire-and-forget). */
+  private consolidating = false
   private contextTokens: number | undefined = undefined
   private ineffectiveCompaction = 0
   private totalUsage: Usage | undefined = undefined
@@ -272,12 +301,35 @@ export class SessionManager {
     // stale value cannot re-trigger auto-compaction.
     this.contextTokens = undefined
     this.emit({ type: 'context-update', contextTokens: undefined })
-    // NOTE: memory flush (candidates → Memory tool) is wired in Task 9.
-    // NOTE: checkpoint remap (remapCheckpoints) is wired in Task 9 (no checkpoints exist yet).
-    // NOTE: reloading MEMORY.md into systemPrompt after compaction is deferred.
-    void candidates
 
-    const msg = `Compacted: ${before} → ${this.conversation.length} messages (${Math.round(savings.savingsRatio * 100)}% saved)`
+    // Checkpoint remap: applyCompaction folds [0..cut) into one summary message, so
+    // indices shift. Drop folded-range checkpoints, remap kept-range ones.
+    this.checkpoints = remapCheckpoints(this.checkpoints, cut)
+
+    // Memory flush (Phase 13): the summary request also extracted persistent facts;
+    // persist them via the Memory tool. Failure is silent — flush is value-add and must
+    // never drag down compaction itself (D5). Port of useConversation's flush block.
+    let flushed = 0
+    const memTool = this.registry.get('Memory')
+    if (memTool && candidates.length > 0) {
+      for (const c of candidates) {
+        try {
+          const res = await memTool.run(
+            { action: 'save', type: c.type, content: c.content, hook: c.hook },
+            { cwd: this.cwd, signal: new AbortController().signal, tracker: createFileTracker(), setCwd: () => {} },
+          )
+          if (!res.isError) flushed++
+        } catch {
+          // Flush failure does not affect the compaction result.
+        }
+      }
+    }
+
+    // NOTE: reloading MEMORY.md into systemPrompt after compaction is deferred (the
+    // server's systemPrompt is built by the transport/owner, not here).
+
+    const flushSuffix = flushed > 0 ? `; saved ${flushed} memories` : ''
+    const msg = `Compacted: ${before} → ${this.conversation.length} messages (${Math.round(savings.savingsRatio * 100)}% saved)${flushSuffix}`
     this.emit({ type: 'compaction-done', summaryText: summary })
     return msg
   }
@@ -314,6 +366,16 @@ export class SessionManager {
     // The ledger ref must be read AFTER auto-compaction: compact() swaps this.conversation
     // for a new instance, so reading earlier would run the turn against the stale ledger.
     const conversation = this.conversation
+
+    // Checkpoint (Phase 12): snapshot the workspace BEFORE the turn. fire-and-forget;
+    // failure degrades to no checkpoint for this turn (D5). The hash is awaited at
+    // turn end. Resends skip — the original send's snapshot is the correct anchor.
+    const checkpointIndex = conversation.length
+    const trackAt = new Date().toISOString()
+    const trackPromise: Promise<string | null> = opts?.isResend
+      ? Promise.resolve(null)
+      : this.snapshotStore.track().catch(() => null)
+
     const controller = new AbortController()
     this.abort = controller
 
@@ -392,6 +454,17 @@ export class SessionManager {
       this.emit({ type: 'usage-update', totalUsage: this.totalUsage })
       this.emit({ type: 'context-update', contextTokens: this.contextTokens })
 
+      // Record the checkpoint (Phase 12): only if track() succeeded. Even an errored
+      // turn records — the snapshot anchors "before this turn", so checkpointIndex ==
+      // ledger length and revert's truncation degrades to a no-op while the file roll-
+      // back undoes the half-finished turn. await usually returns immediately.
+      const hash = await trackPromise
+      if (hash) {
+        const label = text.replace(/\s+/g, ' ').trim().slice(0, 80)
+        this.checkpoints.push({ messageIndex: checkpointIndex, hash, at: trackAt, label })
+        this.emit({ type: 'checkpoint-recorded', id: hash, messageIndex: checkpointIndex, label })
+      }
+
       // Failover: the for-await has ended (client returned), so it is safe to swap
       // the client and resend. Port of useConversation's post-loop failover block.
       if (failoverDecision) {
@@ -438,6 +511,11 @@ export class SessionManager {
           this.emit({ type: 'model-select-needed', reason: reasonText })
         }
       }
+
+      // Memory consolidation (Phase 13, lightweight autoDream): after a real turn (not a
+      // resend that re-enters submit), maybe run a background tidy of the memory index.
+      // fire-and-forget — failure is fully silent, it must never become a new failure point.
+      if (!resent) void this.maybeConsolidateMemories()
     } catch (err) {
       if (controller.signal.aborted) this.emit({ type: 'aborted' })
       else this.emit({ type: 'error', message: err instanceof Error ? err.message : 'unknown error' })
@@ -447,6 +525,104 @@ export class SessionManager {
       // On a failover resend the nested submit already emitted turn-end; suppress the
       // outer one to avoid a double turn-end. isThinking/abort resets are idempotent.
       if (!resent) this.emit({ type: 'turn-end' })
+    }
+  }
+
+  /**
+   * Switch the active model (manual model picker / model-select-needed handoff).
+   * Rebuilds the client against the chosen provider/model. getState().model reflects
+   * client.getModel(), so no extra bookkeeping is needed. No persist — session-scoped.
+   */
+  switchModel(providerId: string, model: string): void {
+    this.client = this.createClient(getProviderConfig(this.settings, providerId), model)
+    this.currentProviderId = providerId
+  }
+
+  /**
+   * Mirror the model's todo list into session state and notify subscribers. Public
+   * seam: the SessionManager receives a pre-built registry and does not own the
+   * TodoWrite tool, so whoever constructs the registry must wire the tool's onUpdate
+   * to this method (see createTodoWriteTool({ onUpdate })). Automatic in-manager wiring
+   * is intentionally deferred to avoid the manager owning tool construction.
+   */
+  setTodos(todos: TodoItemLite[]): void {
+    this.todos = todos
+    this.emit({ type: 'todos-update', todos })
+  }
+
+  /**
+   * Revert to a checkpoint (Phase 12, /revert): roll the workspace back FIRST, then
+   * truncate the ledger — if restore() throws, the ledger must stay intact (files did
+   * not roll back, so neither can history). Drops checkpoints at/after the revert point
+   * and clears the measured context (next turn re-measures). No-op on unknown id.
+   * Mirrors useConversation's revertToCheckpoint.
+   */
+  async revert(checkpointId: string): Promise<void> {
+    const cp = this.checkpoints.find((c) => c.hash === checkpointId)
+    if (!cp) return
+    await this.snapshotStore.restore(cp.hash)
+    const conv = this.conversation
+    this.conversation = Conversation.fromJSON({
+      version: 1,
+      messages: conv.getMessages().slice(0, cp.messageIndex),
+      // Cost ledger, not window ledger: money already spent does not un-spend on revert.
+      totalUsage: conv.totalUsage,
+    })
+    // Checkpoints at/after the revert point are invalidated (incl. same-index error-turn ones).
+    this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cp.messageIndex)
+    this.contextTokens = undefined
+    this.emit({ type: 'context-update', contextTokens: undefined })
+  }
+
+  /**
+   * Background memory consolidation (Phase 13, lightweight autoDream): when the memory
+   * index is near its cap and ≥24h since the last run, send ONE tool-less request asking
+   * the model to emit DELETE/SAVE op lines, then apply them deterministically. Guarded by
+   * a consolidating flag; fully fire-and-forget — every failure is swallowed, it must
+   * never become a new failure point. Emits memory-notice instead of the TUI's UI notify.
+   * Port of useConversation's maybeConsolidateMemories (deps come from @zuse/tools + core,
+   * not @zuse/tui — server already depends on @zuse/tools).
+   */
+  private async maybeConsolidateMemories(): Promise<void> {
+    if (this.consolidating) return
+    this.consolidating = true
+    let store: ReturnType<typeof openMemoryStore> | null = null
+    try {
+      store = openMemoryStore()
+      const rows = store.all()
+      if (rows.length === 0) return
+      const projection = renderMemoryMarkdown(rows)
+      const lastRunAt = store.getMeta('consolidated_at')
+      if (!shouldConsolidateMemories({ projectionChars: projection.length, indexCap: MEMORY_INDEX_CAP, lastRunAt })) {
+        return
+      }
+      // Write the watermark first: even a failed run is debounced for 24h (debounce
+      // wins over success — we never want this to nag every turn).
+      store.setMeta('consolidated_at', new Date().toISOString())
+      const prompt = buildConsolidationPrompt(rows)
+      store.close()
+      store = null // do not hold the sqlite connection during the model request
+      this.emit({ type: 'memory-notice', text: 'Memory index near capacity; consolidating in background…' })
+      let text = ''
+      for await (const e of this.client.sendMessages(
+        [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        { model: this.client.getModel(), max_tokens: Math.min(this.maxTokens, 2000) },
+      )) {
+        if (e.type === 'text-delta') text += e.text
+        else if (e.type === 'error') return
+      }
+      const ops = parseConsolidationOps(text)
+      if (ops.deletes.length === 0 && ops.saves.length === 0) {
+        this.emit({ type: 'memory-notice', text: 'Memory consolidation: model judged no changes needed.' })
+        return
+      }
+      const { saved, deleted } = applyMemoryConsolidation(ops, cwdSlug(this.cwd))
+      this.emit({ type: 'memory-notice', text: `Memory consolidated: ${saved} merged/added, ${deleted} removed.` })
+    } catch {
+      // Consolidation is value-add; any failure must not become a new failure point.
+    } finally {
+      store?.close()
+      this.consolidating = false
     }
   }
 }

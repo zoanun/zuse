@@ -44,6 +44,38 @@ export interface TodoItemLite {
   status: 'pending' | 'in_progress' | 'completed'
 }
 
+/**
+ * Shadow-git snapshot backend used for checkpoint/revert (Phase 12). Narrow seam:
+ * the SessionManager only needs to track() a checkpoint and restore() to one. The
+ * concrete implementation (@zuse/tools createSnapshotStore) has a richer surface
+ * (ensure/diffStat) and returns `string | null` from track; callers adapt the
+ * null-on-failure into a resolved-null via `.catch(() => null)`, so this seam
+ * deliberately keeps the non-null `string` contract for what reaches the manager.
+ */
+export interface SnapshotStore {
+  /** Snapshot the workspace before a turn; resolves to a commit-hash anchor. */
+  track(): Promise<string>
+  /** Restore the workspace to a previously-tracked hash. Rejects on failure. */
+  restore(hash: string): Promise<void>
+}
+
+/**
+ * A session checkpoint (Phase 12): a shadow-git snapshot anchor captured before a
+ * user turn. /revert = restore(hash) (roll back the workspace) + truncate the
+ * ledger to messageIndex. Mirrors the TUI's SessionCheckpoint shape but defined
+ * server-local (the TUI copy lives in @zuse/tui and must not be imported here).
+ */
+export interface SessionCheckpoint {
+  /** Index of this turn's user message in the ledger (revert truncates to here). */
+  messageIndex: number
+  /** Shadow-git commit hash; the checkpoint-recorded event uses this as `id`. */
+  hash: string
+  /** ISO timestamp when the snapshot was taken. */
+  at: string
+  /** First ~80 chars of the user's message, for display. */
+  label: string
+}
+
 /** A pending permission that has been sent to the subscriber but not yet resolved. */
 export interface PendingPermissionLite {
   id: string

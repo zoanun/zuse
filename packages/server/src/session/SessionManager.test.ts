@@ -257,7 +257,7 @@ describe('SessionManager turn loop', () => {
     await mgr.submit('hi')
     expect(types).toEqual([
       'turn-start', 'message-start', 'text-delta', 'message-stop',
-      'usage-update', 'context-update', 'turn-end',
+      'usage-update', 'context-update', 'checkpoint-recorded', 'turn-end',
     ])
     expect(mgr.getState().isThinking).toBe(false)
   })
@@ -487,5 +487,149 @@ describe('SessionManager auto-compaction', () => {
     expect(summaryText).toContain('## Active Task')
     // Conversation was replaced with a shorter, compacted ledger.
     expect(mgr.getState().messageCount).toBeLessThan(lengthBefore)
+  })
+})
+
+describe('SessionManager checkpoints + revert', () => {
+  it('records a checkpoint after a turn with the snapshot hash', async () => {
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'ok' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { client } = fakeClient([script])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      // track() returns a known hash so we can assert on it.
+      snapshotStore: { track: async () => 'cp-hash-1', restore: async () => {} },
+    })
+    let recorded: { id: string; messageIndex: number; label: string } | undefined
+    mgr.subscribe((e) => {
+      if (e.type === 'checkpoint-recorded') recorded = { id: e.id, messageIndex: e.messageIndex, label: e.label }
+    })
+    await mgr.submit('do the thing')
+    expect(recorded).toMatchObject({ id: 'cp-hash-1', messageIndex: 0, label: 'do the thing' })
+  })
+
+  it('revert restores the snapshot and truncates the ledger to the checkpoint index', async () => {
+    // First turn: model asks a tool then stops, producing 3 ledger messages (user, assistant
+    // tool_use, user tool_result) + the next assistant turn. We just need length > 0 after.
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'hello there' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { client } = fakeClient([script])
+    const restored: string[] = []
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
+    })
+    await mgr.submit('first')
+    // Ledger now has at least the user + assistant messages.
+    expect(mgr.getState().messageCount).toBeGreaterThan(0)
+
+    await mgr.revert('cp-hash-1')
+    expect(restored).toEqual(['cp-hash-1'])
+    // checkpointIndex was 0 (ledger empty before the turn), so revert truncates to 0.
+    expect(mgr.getState().messageCount).toBe(0)
+    expect(mgr.getState().contextTokens).toBeUndefined()
+
+    // Reverting an unknown checkpoint is a no-op (no restore call).
+    await mgr.revert('nope')
+    expect(restored).toEqual(['cp-hash-1'])
+  })
+})
+
+describe('SessionManager switchModel', () => {
+  it('rebuilds the client and reflects the new model in getState', () => {
+    const settings = {
+      providers: { p: { protocol: 'anthropic', apiKey: 'k', models: ['a', 'b'] } },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+    const { client } = fakeClient([], 'a')
+    const newClient: ModelClient = {
+      getModel: () => 'b',
+      async *sendMessages() {},
+    }
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings,
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore() as never,
+      providerId: 'p',
+      createClient: () => newClient,
+    })
+    expect(mgr.getState().model).toBe('a')
+    mgr.switchModel('p', 'b')
+    expect(mgr.getState().model).toBe('b')
+  })
+})
+
+describe('SessionManager memory flush in compact()', () => {
+  it('invokes the Memory tool save for each MEMORY candidate the summary yields', async () => {
+    const seed: Message[] = []
+    for (let n = 0; n < 4; n++) {
+      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+    }
+    const conversation = Conversation.fromJSON({
+      version: 1,
+      messages: seed,
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })
+
+    // The summary response contains a MEMORY line in the exact format splitMemoryCandidates
+    // parses: `MEMORY: <type>|<hook>|<content>`.
+    const summaryScript: StreamEvent[] = [
+      { type: 'message-start', id: 'sum', model: 'fake-model' },
+      { type: 'text-delta', text: '## Active Task\nNone.\nMEMORY: project|build|use pnpm not npm' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } },
+    ]
+    const { client } = fakeClient([summaryScript])
+
+    // Fake Memory tool capturing run() calls.
+    const memCalls: unknown[] = []
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Memory',
+      description: 'persist memories',
+      inputSchema: { type: 'object', properties: {} },
+      run: async (input: unknown): Promise<ToolResult> => { memCalls.push(input); return { output: 'saved' } },
+    })
+
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry,
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore() as never,
+      conversation,
+    })
+
+    await mgr.compact()
+
+    expect(memCalls).toHaveLength(1)
+    expect(memCalls[0]).toMatchObject({ action: 'save', type: 'project', hook: 'build', content: 'use pnpm not npm' })
   })
 })
