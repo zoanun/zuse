@@ -12,6 +12,9 @@ import {
 } from '@zuse/core'
 import type { SessionEvent, SessionSnapshot, TodoItemLite, PendingPermissionLite } from './events.js'
 
+/** Default output token cap for a turn, used when no maxTokens option is provided. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 16384
+
 export interface PermissionPolicy {
   interactive: boolean
   config: PermissionsConfig
@@ -28,6 +31,8 @@ export interface SessionManagerOptions {
   snapshotStore: { track: () => Promise<string>; restore: (h: string) => Promise<void> }
   conversation?: Conversation
   createdAt?: string
+  /** Max output tokens per turn. Defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
+  maxTokens?: number
 }
 
 interface Pending {
@@ -45,6 +50,7 @@ export class SessionManager {
   private policy: PermissionPolicy
   private readonly snapshotStore: SessionManagerOptions['snapshotStore']
   private readonly createdAt: string
+  private readonly maxTokens: number
 
   private cwd: string
   private currentProviderId = 'unknown'
@@ -73,6 +79,7 @@ export class SessionManager {
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
     this.createdAt = opts.createdAt ?? new Date().toISOString()
+    this.maxTokens = opts.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
     // we leave totalUsage as undefined when the conversation is brand-new (all zeros).
@@ -184,6 +191,11 @@ export class SessionManager {
    * then emit usage/context, and always emit turn-end in finally.
    */
   async submit(text: string, _parts?: unknown, opts?: { isResend?: boolean }): Promise<void> {
+    // Reject EXTERNAL concurrent submits while a turn runs. An isResend call is a
+    // RECURSIVE re-entry from inside submit (failover resend) and must be allowed.
+    if (this.isThinking && !opts?.isResend) {
+      throw new Error('A turn is already in progress')
+    }
     this.isThinking = true
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
 
@@ -203,7 +215,7 @@ export class SessionManager {
         client: this.client,
         registry: this.registry,
         userText: `[${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${text}`,
-        config: { model: this.client.getModel(), max_tokens: 16384, system: this.systemPrompt },
+        config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: this.systemPrompt },
         cwd: this.cwd,
         signal: controller.signal,
         settings: this.settings,

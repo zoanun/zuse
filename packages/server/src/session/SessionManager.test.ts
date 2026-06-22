@@ -2,7 +2,47 @@ import { describe, it, expect } from 'vitest'
 import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { ToolRegistry } from '@zuse/core'
-import type { ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
+import type { ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
+
+/**
+ * A ModelClient whose turn is held open until release() is called. Lets tests
+ * observe isThinking === true mid-flight. If the AbortSignal is set once the gate
+ * releases, it yields an `error` event so SessionManager.submit drives its aborted
+ * path (submit emits 'aborted' when an error event arrives && signal.aborted).
+ */
+function gatedClient(model = 'fake-model'): { client: ModelClient; release: () => void } {
+  let release!: () => void
+  const gate = new Promise<void>((r) => {
+    release = r
+  })
+  const client: ModelClient = {
+    getModel: () => model,
+    async *sendMessages(_messages, _config, _tools, signal) {
+      await gate
+      if (signal?.aborted) {
+        yield { type: 'error', message: 'aborted', category: 'other' }
+        return
+      }
+      yield { type: 'message-start', id: 'm1', model }
+      yield { type: 'text-delta', text: 'ok' }
+      yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+    },
+  }
+  return { client, release }
+}
+
+function makeManagerFromClient(client: ModelClient) {
+  return new SessionManager({
+    sessionId: 's1',
+    cwd: '/work',
+    client,
+    registry: new ToolRegistry(),
+    settings: makeSettings(),
+    systemPrompt: 'SYS',
+    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    snapshotStore: fakeSnapshotStore() as never,
+  })
+}
 
 function makeSettings(): ResolvedSettings {
   return {
@@ -246,5 +286,65 @@ describe('SessionManager turn loop', () => {
     mgr.subscribe((e) => { if (e.type === 'tool-result') toolOut = e.output })
     await mgr.submit('go')
     expect(toolOut.length).toBe(5000)
+  })
+})
+
+describe('SessionManager re-entrancy guard', () => {
+  it('rejects an external concurrent submit while a turn is in progress', async () => {
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const p = mgr.submit('a') // do NOT await: turn is held open by the gate
+    expect(mgr.getState().isThinking).toBe(true)
+    await expect(mgr.submit('b')).rejects.toThrow(/already in progress/)
+    release()
+    await p
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('isResend bypasses the guard (no "already in progress" error)', async () => {
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const p = mgr.submit('a') // held open by the gate
+    expect(mgr.getState().isThinking).toBe(true)
+
+    // The isResend re-entry must NOT be rejected by the guard. It starts a nested
+    // runAgent that also awaits the gate; we only assert the guard did not fire.
+    let guardError: unknown
+    const resend = mgr.submit('x', undefined, { isResend: true }).catch((e) => {
+      guardError = e
+    })
+
+    // Release the gate so both the outer turn and the nested resend can complete,
+    // then settle everything to avoid hanging promises.
+    release()
+    await Promise.all([p, resend])
+
+    // The guard message must never have been thrown for the isResend call.
+    if (guardError instanceof Error) {
+      expect(guardError.message).not.toMatch(/already in progress/)
+    }
+  })
+
+  it('interrupt() aborts a turn: emits aborted then turn-end', async () => {
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+
+    const p = mgr.submit('go') // held open by the gate
+    expect(mgr.getState().isThinking).toBe(true)
+
+    // Abort while the gate still holds the turn. After release(), the gated client
+    // observes signal.aborted and yields an 'error' event, which submit surfaces as
+    // 'aborted' (error + signal.aborted).
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+
+    expect(types).toContain('aborted')
+    const abortedIdx = types.indexOf('aborted')
+    const turnEndIdx = types.indexOf('turn-end')
+    expect(turnEndIdx).toBeGreaterThan(abortedIdx)
+    expect(mgr.getState().isThinking).toBe(false)
   })
 })
