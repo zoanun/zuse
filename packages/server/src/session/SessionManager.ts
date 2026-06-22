@@ -1,10 +1,9 @@
 import {
   Conversation,
   ToolRegistry,
-  matchesRule,
+  decide,
   type ModelClient,
   type ResolvedSettings,
-  type PermissionMode,
   type PermissionsConfig,
   type PermissionRequest,
   type PermissionVerdict,
@@ -13,7 +12,6 @@ import {
 import type { SessionEvent, SessionSnapshot, TodoItemLite, PendingPermissionLite } from './events.js'
 
 export interface PermissionPolicy {
-  mode: PermissionMode
   interactive: boolean
   config: PermissionsConfig
 }
@@ -123,7 +121,13 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Resolve a pending interactive permission request.
+   * Argument order: (id, verdict) — id first. Note: the sibling TUI API uses
+   * verdict-first order; callers must not swap the arguments.
+   */
   resolvePermission(id: string, verdict: PermissionVerdict): void {
+    if (verdict !== 'allow' && verdict !== 'deny' && verdict !== 'allow_session' && verdict !== 'allow_persist') return
     const p = this.pending.get(id)
     if (!p) return
     this.pending.delete(id)
@@ -134,11 +138,21 @@ export class SessionManager {
   /** Provided to runAgent. Only invoked for 'ask'-classified tool calls. Must be concurrency-safe. */
   private canUseTool = (req: PermissionRequest): Promise<PermissionVerdict> => {
     if (!this.policy.interactive) {
-      const allowed = this.policy.config.allow.some((rule) =>
-        matchesRule(rule, req.toolName, req.specifier, this.cwd),
-      )
-      return Promise.resolve(allowed ? 'allow' : 'deny')
+      // Non-interactive: delegate to core's canonical decide() so that:
+      // - Bash compound commands are subcommand-split (no prefix-bypass of "safe && evil")
+      // - deny list is honored (deny has higher priority than allow)
+      // - defaultMode / bypassPermissions are respected
+      // No human is attached, so anything not auto-allowed (ask) becomes deny.
+      const tool = this.registry.get(req.toolName)
+      if (!tool) return Promise.resolve('deny')
+      const settings = { ...this.settings, permissions: this.policy.config }
+      const { decision } = decide(tool, req.specifier, settings, [], this.cwd)
+      return Promise.resolve(decision === 'allow' ? 'allow' : 'deny')
     }
+    // Interactive: park the request; a connected client will resolve it via resolvePermission().
+    // NOTE: pending requests are NOT torn down when a client disconnects — by design, a
+    // dropped client's request stays pending and is resolved on reconnect. Teardown is
+    // intentionally deferred to the session-lifecycle / transport layer.
     const id = `perm-${++this.permSeq}`
     return new Promise<PermissionVerdict>((resolve) => {
       this.pending.set(id, { req, resolve })
