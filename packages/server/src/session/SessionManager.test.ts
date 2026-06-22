@@ -47,3 +47,49 @@ describe('SessionManager skeleton', () => {
     expect(seen).toEqual(['warning'])
   })
 })
+
+describe('SessionManager permissions', () => {
+  it('interactive: ask emits permission-request and resolves on resolvePermission', async () => {
+    const { mgr } = makeManager()
+    const events: string[] = []
+    mgr.subscribe((e) => events.push(e.type))
+    // @ts-expect-error reach private canUseTool for unit test
+    const p = mgr.canUseTool({ toolName: 'Bash', input: { command: 'ls' }, specifier: 'ls', rule: 'Bash(ls)', reason: 'ask' })
+    const pendingId = mgr.getState().pendingPermissions[0]?.id
+    expect(pendingId).toBeDefined()
+    expect(events).toContain('permission-request')
+    mgr.resolvePermission(pendingId!, 'allow')
+    await expect(p).resolves.toBe('allow')
+    expect(mgr.getState().pendingPermissions).toEqual([])
+  })
+
+  it('interactive: two concurrent asks resolve independently', async () => {
+    const { mgr } = makeManager()
+    // @ts-expect-error
+    const p1 = mgr.canUseTool({ toolName: 'Bash', input: { command: 'a' }, specifier: 'a', rule: 'Bash(a)', reason: 'ask' })
+    // @ts-expect-error
+    const p2 = mgr.canUseTool({ toolName: 'Bash', input: { command: 'b' }, specifier: 'b', rule: 'Bash(b)', reason: 'ask' })
+    const ids = mgr.getState().pendingPermissions.map((x) => x.id)
+    expect(ids.length).toBe(2)
+    mgr.resolvePermission(ids[1]!, 'deny')
+    mgr.resolvePermission(ids[0]!, 'allow')
+    await expect(p1).resolves.toBe('allow')
+    await expect(p2).resolves.toBe('deny')
+  })
+
+  it('non-interactive: ask is decided deterministically without emitting a request', async () => {
+    const { mgr } = makeManager()
+    mgr.setPermissionPolicy({
+      mode: 'default',
+      interactive: false,
+      config: { defaultMode: 'default', allow: ['Bash(ls)'], ask: [], deny: [] },
+    })
+    const events: string[] = []
+    mgr.subscribe((e) => events.push(e.type))
+    // @ts-expect-error
+    await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'ls' }, specifier: 'ls', rule: 'Bash(ls)', reason: 'ask' })).resolves.toBe('allow')
+    // @ts-expect-error
+    await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'rm' }, specifier: 'rm', rule: 'Bash(rm)', reason: 'ask' })).resolves.toBe('deny')
+    expect(events).not.toContain('permission-request')
+  })
+})

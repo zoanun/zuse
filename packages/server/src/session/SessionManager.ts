@@ -1,6 +1,7 @@
 import {
   Conversation,
   ToolRegistry,
+  matchesRule,
   type ModelClient,
   type ResolvedSettings,
   type PermissionMode,
@@ -120,5 +121,28 @@ export class SessionManager {
       pendingPermissions,
       messageCount: this.conversation.length,
     }
+  }
+
+  resolvePermission(id: string, verdict: PermissionVerdict): void {
+    const p = this.pending.get(id)
+    if (!p) return
+    this.pending.delete(id)
+    p.resolve(verdict)
+    this.emit({ type: 'permission-resolved', id, verdict })
+  }
+
+  /** Provided to runAgent. Only invoked for 'ask'-classified tool calls. Must be concurrency-safe. */
+  private canUseTool = (req: PermissionRequest): Promise<PermissionVerdict> => {
+    if (!this.policy.interactive) {
+      const allowed = this.policy.config.allow.some((rule) =>
+        matchesRule(rule, req.toolName, req.specifier, this.cwd),
+      )
+      return Promise.resolve(allowed ? 'allow' : 'deny')
+    }
+    const id = `perm-${++this.permSeq}`
+    return new Promise<PermissionVerdict>((resolve) => {
+      this.pending.set(id, { req, resolve })
+      this.emit({ type: 'permission-request', id, req })
+    })
   }
 }
