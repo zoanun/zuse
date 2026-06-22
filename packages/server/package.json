@@ -7,7 +7,6 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "cd ../.. && vitest run packages/server/src",
     "typecheck": "tsc --noEmit"
   },
   "files": [
