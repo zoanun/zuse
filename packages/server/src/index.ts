@@ -1,1 +1,5 @@
 export const SERVER_PACKAGE = '@zuse/server'
+export { SessionManager, remapCheckpoints } from './session/SessionManager.js'
+export type { SessionManagerOptions, PermissionPolicy } from './session/SessionManager.js'
+export { SessionRegistry } from './session/SessionRegistry.js'
+export type { SessionEvent, SessionSnapshot, TodoItemLite, PendingPermissionLite, SnapshotStore, SessionCheckpoint } from './session/events.js'
