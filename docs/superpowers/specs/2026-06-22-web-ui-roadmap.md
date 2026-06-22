@@ -56,11 +56,20 @@ Zuse 当前只有 TUI（`packages/tui`）。需要新增一个 **Web UI**，要�
 | # | spec | 产出 | 依赖 |
 |---|------|------|------|
 | **F2** | headless 会话编排核心 | `SessionManager`：传输无关的会话状态机——回合循环、中断、failover、自动压缩、权限请求外发、检查点、TodoWrite/usage 状态；事件发射器风格；纯单测，不碰 HTTP | core |
-| **F1** | server 骨架 + 传输 + 鉴权 | `packages/server` daemon、WS 端点、token 鉴权、网络绑定、健康检查；先不接 agent（echo 级） | — |
+| **F1** | server 骨架 + 传输 + 鉴权 | `packages/server` daemon、WS 端点、**可插拔鉴权接口 + 本地密码门禁**（首次设口令 → 哈希存本地 → 登录发会话 cookie/JWT → 免登）、网络绑定、健康检查；先不接 agent（echo 级） | — |
 | **F3** | WS 协议 + 接线 | 定义 WS 消息协议（上行 send/interrupt/steer/permission-reply，下行 stream 事件 + 状态快照）+ 协议类型包；把 F2 接进 F1；单会话内存态 | F1,F2 |
 | **F4** | React 骨架 + 聊天流 | `packages/web` 应用骨架、WS 客户端、**多模态 parts 消息模型**、聊天流视图 + 富媒体渲染（markdown/代码高亮/Edit diff/mermaid/表格/图片） | F3 |
 
 > 建议构建顺序：**F2 → F1 → F3 → F4**。F2 是大脑、风险最高、可独立单测，先设计透；F1 几乎是 echo 服务器；F3 把二者焊起来；F4 渲染。F1 与 F2 无相互依赖，若并行开发可同时起。
+
+#### 鉴权与安全决策（已定）
+
+- **需求收敛**：单用户，只需"一个登录检查"，不做多租户。
+- **F1 内做可插拔鉴权接口 + 本地密码门禁**：首次设口令、哈希存本地、登录发会话凭证、之后免登。零外部依赖、离线可用。OAuth 经评估为单人场景的过度设计（引入外部 IdP 依赖、与 local-first 冲突），暂不做；将来如需，按 provider 插到鉴权接口上，不动地基。
+
+| # | spec | 说明 | 依赖 |
+|---|------|------|------|
+| **A2** | TLS / 隧道（远程访问前置） | 远程访问必须加密，否则明文 HTTP 下凭证与对话内容可被同网段嗅探。自签证书，或文档化经 Cloudflare Tunnel / tailscale（隧道方案顺带免掉 TLS 配置与公网回调） | F1 |
 
 ### 4.2 多会话 / 多项目
 
@@ -75,8 +84,8 @@ Zuse 当前只有 TUI（`packages/tui`）。需要新增一个 **Web UI**，要�
 
 | # | spec | 说明 | 依赖 |
 |---|------|------|------|
-| M1 | memory 浏览/编辑 | 列表、查看、增删改 core 记忆库 | F3 |
-| M2 | system prompt 查看 + 多套切换 | 查看当前生效 prompt、维护多套、运行时切换 | F3 |
+| M1 | memory 增删改查 | 对 core 记忆库完整 CRUD：列表/搜索、查看、新增、编辑、删除 | F3 |
+| M2 | system prompt 增删改查 + 多套切换 | 对 prompt 多套完整 CRUD：查看当前生效、列表、新增、编辑、删除、运行时切换 | F3 |
 | M3 | skill 查看 | 列出已加载 skill、查看内容/触发条件 | F3 |
 | M4 | MCP 管理 | server 列表/健康/启停、查看其工具、增删配置 | F3 |
 | M5 | usage 仪表盘 | 实时 token/成本、按会话/模型聚合 | F3 |
