@@ -7,9 +7,8 @@ import { SESSION_COOKIE } from '../config.js'
 export interface RequestHandlerDeps {
   auth: AuthProvider
   devPage: boolean
+  tokenTtlSec: number
 }
-
-const COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 30
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -101,7 +100,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
           serializeCookie(SESSION_COOKIE, deps.auth.issueToken(), {
             httpOnly: true,
             sameSite: 'Lax',
-            maxAgeSec: COOKIE_MAX_AGE_SEC,
+            maxAgeSec: deps.tokenTtlSec,
             secure: false,
             path: '/',
           }),
