@@ -27,6 +27,8 @@ export interface SnapshotStore {
 /**
  * A session checkpoint (Phase 12): a shadow-git snapshot anchor captured before a
  * user turn. /revert = restore(hash) + truncate the ledger to messageIndex.
+ * Mirrors the TUI's SessionCheckpoint shape but defined server-local — the TUI
+ * copy lives in @zuse/tui and must not be imported here (decoupling boundary).
  */
 export interface SessionCheckpoint {
   /** Index of this turn's user message in the ledger (revert truncates to here). */
