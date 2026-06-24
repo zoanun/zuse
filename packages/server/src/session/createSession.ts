@@ -47,6 +47,8 @@ export function createSession(cwd: string, deps: CreateSessionDeps = {}): Sessio
   const client = deps.client ?? createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
 
   const home = homedir()
+  // 注：LSP（Lsp/LspInstall）与 MCP 工具 F3 不接 —— 比 TUI registry 少这几样。
+  // 它们需各自的进程池/连接生命周期管理，留作 follow-up；F3 单会话能真聊不依赖它们。
   const registry = createDefaultRegistry({
     webSearch: getWebSearchConfig(settings),
     memoryProject: cwdSlug(cwd),
