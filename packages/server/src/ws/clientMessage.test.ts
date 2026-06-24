@@ -67,4 +67,20 @@ describe('applyClientMessage', () => {
     await Promise.resolve()
     expect(err).toHaveBeenCalledWith('A turn is already in progress')
   })
+
+  it('reports a synchronous switch-model failure (unconfigured provider) instead of throwing', () => {
+    const mgr = fakeMgr()
+    mgr.switchModel = vi.fn(() => { throw new Error('Provider "nope" is not configured') })
+    const err = vi.fn()
+    expect(() => applyClientMessage(mgr, JSON.stringify({ type: 'switch-model', providerId: 'nope', model: 'x' }), err)).not.toThrow()
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('not configured'))
+  })
+
+  it('errors on an invalid permission-reply verdict', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'permission-reply', id: 'p1', verdict: 'maybe' }), err)
+    expect(mgr.resolvePermission).not.toHaveBeenCalled()
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('invalid "verdict"'))
+  })
 })

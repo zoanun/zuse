@@ -30,30 +30,40 @@ export function applyClientMessage(
     return
   }
 
-  switch (msg.type) {
-    case 'send':
-      if (typeof msg.text !== 'string') { sendError('send: "text" must be a string'); return }
-      mgr.submit(msg.text).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
-      return
-    case 'interrupt':
-      mgr.interrupt()
-      return
-    case 'steer':
-      if (typeof msg.text !== 'string') { sendError('steer: "text" must be a string'); return }
-      mgr.steer(msg.text)
-      return
-    case 'permission-reply':
-      if (typeof msg.id !== 'string') { sendError('permission-reply: "id" must be a string'); return }
-      mgr.resolvePermission(msg.id, msg.verdict)
-      return
-    case 'switch-model':
-      if (typeof msg.providerId !== 'string' || typeof msg.model !== 'string') {
-        sendError('switch-model: "providerId" and "model" must be strings')
+  try {
+    switch (msg.type) {
+      case 'send':
+        if (typeof msg.text !== 'string') { sendError('send: "text" must be a string'); return }
+        mgr.submit(msg.text).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        return
+      case 'interrupt':
+        mgr.interrupt()
+        return
+      case 'steer':
+        if (typeof msg.text !== 'string') { sendError('steer: "text" must be a string'); return }
+        mgr.steer(msg.text)
+        return
+      case 'permission-reply': {
+        if (typeof msg.id !== 'string') { sendError('permission-reply: "id" must be a string'); return }
+        const VALID_VERDICTS = ['allow', 'deny', 'allow_session', 'allow_persist']
+        if (!VALID_VERDICTS.includes(msg.verdict as string)) {
+          sendError('permission-reply: invalid "verdict"')
+          return
+        }
+        mgr.resolvePermission(msg.id, msg.verdict)
         return
       }
-      mgr.switchModel(msg.providerId, msg.model)
-      return
-    default:
-      sendError(`unknown message type: ${(msg as { type: string }).type}`)
+      case 'switch-model':
+        if (typeof msg.providerId !== 'string' || typeof msg.model !== 'string') {
+          sendError('switch-model: "providerId" and "model" must be strings')
+          return
+        }
+        mgr.switchModel(msg.providerId, msg.model)
+        return
+      default:
+        sendError(`unknown message type: ${(msg as { type: string }).type}`)
+    }
+  } catch (err) {
+    sendError(err instanceof Error ? err.message : String(err))
   }
 }
