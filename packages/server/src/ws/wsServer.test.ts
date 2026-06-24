@@ -109,6 +109,42 @@ describe('ws wiring', () => {
     ws.close()
   })
 
+  it('a send frame drives a turn and streams event frames', async () => {
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'pong' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { server, cookie } = await makeServer([script])
+    const ws = new WebSocket(wsUrl(server.url), { headers: { cookie } })
+    const frames: ServerMessage[] = []
+    await new Promise((r) => ws.on('open', r))
+    ws.on('message', (d) => frames.push(JSON.parse(d.toString()) as ServerMessage))
+
+    ws.send(JSON.stringify({ type: 'send', text: 'ping' }))
+    await new Promise((r) => setTimeout(r, 50))
+
+    const hasTextDelta = frames.some(
+      (f) => f.type === 'event' && f.event.type === 'text-delta' && f.event.text === 'pong',
+    )
+    expect(hasTextDelta).toBe(true)
+    ws.close()
+  })
+
+  it('a malformed uplink frame yields an error frame', async () => {
+    const { server, cookie } = await makeServer()
+    const ws = new WebSocket(wsUrl(server.url), { headers: { cookie } })
+    const frames: ServerMessage[] = []
+    await new Promise((r) => ws.on('open', r))
+    ws.on('message', (d) => frames.push(JSON.parse(d.toString()) as ServerMessage))
+
+    ws.send('not json')
+    await new Promise((r) => setTimeout(r, 50))
+
+    expect(frames.some((f) => f.type === 'error' && f.message.includes('invalid JSON'))).toBe(true)
+    ws.close()
+  })
+
   it('rejects an unauthenticated client', async () => {
     const { server } = await makeServer()
     const ws = new WebSocket(wsUrl(server.url))

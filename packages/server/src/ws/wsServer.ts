@@ -6,6 +6,7 @@ import type { SessionRegistry } from '../session/SessionRegistry.js'
 import type { ServerMessage } from '@zuse/protocol'
 import { parseCookies } from '../http/cookies.js'
 import { SESSION_COOKIE, DEFAULT_SESSION_ID } from '../config.js'
+import { applyClientMessage } from './clientMessage.js'
 
 export interface WsServerDeps {
   auth: AuthProvider
@@ -50,8 +51,9 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
       const unsub = mgr.subscribe((e) => sendJson(ws, { type: 'event', event: e }))
       sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
 
-      ws.on('message', (_data, _isBinary) => {
-        // Uplink dispatch wired in Task 5. Binary frames are reserved for V1 (audio).
+      ws.on('message', (data, isBinary) => {
+        if (isBinary) return // binary frames reserved for V1 (audio)
+        applyClientMessage(mgr, data.toString(), (message) => sendJson(ws, { type: 'error', message }))
       })
       ws.on('close', unsub)
     })
