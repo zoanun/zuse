@@ -42,7 +42,11 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
         return
       }
 
-      // Live events → event frames. Snapshot first so a late joiner has current state.
+      // Live events → event frames, then a one-shot snapshot of current state.
+      // NOTE: subscribe-then-snapshot can interleave a live delta ahead of the
+      // snapshot if a turn is already in flight at connect. Acceptable for F3
+      // (single in-memory session, no turn running at connect in practice);
+      // revisit when multi-client mid-turn join becomes real (S1/S2).
       const unsub = mgr.subscribe((e) => sendJson(ws, { type: 'event', event: e }))
       sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
 
@@ -55,6 +59,9 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
 
   return {
     closeAll() {
+      // terminate() does not synchronously fire 'close', so per-connection unsub
+      // may not run here — fine because the whole session registry is torn down
+      // with the process. Revisit if a SessionManager ever outlives a restart.
       for (const client of wss.clients) client.terminate()
     },
   }
