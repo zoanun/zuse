@@ -42,6 +42,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   const cfg = {
     ...defaultConfig(),
+    cwd: process.env.INIT_CWD ?? process.cwd(),
     ...(args.port !== undefined ? { port: args.port } : {}),
     ...(args.host !== undefined ? { host: args.host } : {}),
   }
