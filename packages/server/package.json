@@ -43,6 +43,7 @@
   "devDependencies": {
     "@types/ws": "^8.5.12",
     "@zuse/core": "workspace:*",
+    "@zuse/protocol": "workspace:*",
     "@zuse/tools": "workspace:*"
   }
 }
