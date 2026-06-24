@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "zuse-server": "./dist/bin.js"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
@@ -15,6 +18,10 @@
   ],
   "dependencies": {
     "@zuse/core": "workspace:*",
-    "@zuse/tools": "workspace:*"
+    "@zuse/tools": "workspace:*",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12"
   }
 }
