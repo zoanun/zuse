@@ -27,6 +27,7 @@ packages/
   core/     # agent loop、会话、权限、provider 抽象、上下文压缩
   tools/    # 工具实现（Read/Write/Edit/Glob/Grep/Bash/WebFetch/LSP/Skills...）
   tui/      # Ink 终端 UI、Markdown 渲染、命令菜单
+  server/   # Web UI 后端（实验中）：headless 会话编排 + HTTP/WS 服务器 + 本地密码鉴权
 ```
 
 ## 主要能力
@@ -61,6 +62,55 @@ pnpm build && pnpm start   # 构建后运行
 | `pnpm lint` | ESLint |
 | `pnpm format` | Prettier 格式化 |
 
+## Web UI 服务器（实验中）
+
+`packages/server`（`@zuse/server`）是一个**与 TUI 解耦**的 Web 后端：常驻 HTTP/WS 服务器 + 本地密码门禁 + headless 会话编排（`SessionManager`，传输无关）。本机为主、可远程访问、单用户。
+
+> 当前进度：**F1 已完成** —— 鉴权 + 鉴权后的 `/ws`（目前是 echo）+ 一个内联 dev 测试页。把 agent 真正接进 `/ws`（F3）和真正的 React 前端（F4）还在路上，所以现在是**半成品**。
+
+### 本地运行
+
+```bash
+npx tsx packages/server/src/bin.ts        # 起服务，默认 127.0.0.1:4180
+# 浏览器打开 http://127.0.0.1:4180/ → 首次设密码 → 登录 → WS echo 控制台
+```
+
+或跑构建产物：
+
+```bash
+pnpm -C packages/server build             # tsup 构建到 dist/（按目录，与包名无关）
+node packages/server/dist/bin.js          # 也可加 --port <n> --host <h>
+```
+
+- 默认仅绑回环 `127.0.0.1`；远程访问需显式 `--host 0.0.0.0`，且**务必加 TLS/隧道**（明文 HTTP 暴露到网络不安全）。
+- 鉴权：首次设密码（scrypt 哈希存 `~/.zuse/web-auth.json`），登录后发 HMAC 签名的会话 cookie，服务重启不掉线。`--set-password` 可单独设密码。
+
+### 打包与发布（npm）
+
+`@zuse/server` 已配置成**自包含可发布包**（tsup 把 `@zuse/core` + `@zuse/tools` bundle 进 `dist/`，第三方库作普通依赖）：
+
+```bash
+pnpm -C packages/server build             # 产出 dist/{index.js, bin.js, index.d.ts}
+cd packages/server && npm pack            # 本地验证 tarball（仅含 dist + package.json）
+```
+
+发布到 npm（**当前 `package.json` 里的发布名 `@zouyj/zuse-server` 是占位符，发布前改成你自己的 npm 用户名/scope**）：
+
+```bash
+# 1. 改 packages/server/package.json 的 "name" 为你的 scope，如 @你的用户名/zuse-server
+# 2. pnpm -F <你的名字> build
+# 3. npm login && cd packages/server && npm publish   # scoped 公开已配 access:public
+```
+
+发布后即可全局安装运行：
+
+```bash
+npm install -g @你的用户名/zuse-server
+zuse-server                               # 起服务，浏览器打开 http://127.0.0.1:4180/
+```
+
+> 建议等 F3/F4 让它成为真正可用的工具后再发布到公共 registry。
+
 ## 设计文档
 
-详见 [docs/superpowers/specs/](docs/superpowers/specs/)，其中 [总设计文档](docs/superpowers/specs/2026-05-21-zuse-design.md) 包含完整的目标、非目标和 roadmap。
+详见 [docs/superpowers/specs/](docs/superpowers/specs/)，其中 [总设计文档](docs/superpowers/specs/2026-05-21-zuse-design.md) 包含完整的目标、非目标和 roadmap。Web UI 程序的分解见 [Web UI 路线图总纲](docs/superpowers/specs/2026-06-22-web-ui-roadmap.md)。
