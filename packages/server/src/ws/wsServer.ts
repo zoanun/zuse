@@ -5,7 +5,7 @@ import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies } from '../http/cookies.js'
 import { SESSION_COOKIE } from '../config.js'
 
-export function attachWsServer(httpServer: http.Server, deps: { auth: AuthProvider }): void {
+export function attachWsServer(httpServer: http.Server, deps: { auth: AuthProvider }): { closeAll(): void } {
   const wss = new WebSocketServer({ noServer: true })
 
   httpServer.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
@@ -26,4 +26,10 @@ export function attachWsServer(httpServer: http.Server, deps: { auth: AuthProvid
       ws.on('message', (data) => ws.send(`echo: ${data.toString()}`))
     })
   })
+
+  return {
+    closeAll() {
+      for (const client of wss.clients) client.terminate()
+    },
+  }
 }

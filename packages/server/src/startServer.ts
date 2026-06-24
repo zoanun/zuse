@@ -8,7 +8,7 @@ import type { ServerConfig } from './config.js'
 export async function startServer(cfg: ServerConfig): Promise<{ url: string; close(): Promise<void> }> {
   const auth = new LocalPasswordAuth(new PasswordStore(cfg.authDir), cfg.tokenTtlSec)
   const httpServer = createServer(makeRequestHandler({ auth, devPage: true, tokenTtlSec: cfg.tokenTtlSec }))
-  attachWsServer(httpServer, { auth })
+  const ws = attachWsServer(httpServer, { auth })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
   const port = typeof addr === 'object' && addr ? addr.port : cfg.port
@@ -17,6 +17,10 @@ export async function startServer(cfg: ServerConfig): Promise<{ url: string; clo
   }
   return {
     url: `http://${cfg.host}:${port}`,
-    close: () => new Promise<void>((resolve) => httpServer.close(() => resolve())),
+    close: () => new Promise<void>((resolve) => {
+      httpServer.close(() => resolve())
+      ws.closeAll()
+      httpServer.closeAllConnections()
+    }),
   }
 }
