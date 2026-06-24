@@ -1,0 +1,67 @@
+import { describe, it, expect } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { StreamEvent } from '@zuse/core'
+import { createSession } from './createSession.js'
+import { fakeClient, fakeSnapshotStore } from './testFakes.js'
+import type { SessionEvent } from './events.js'
+
+function tmp(): string {
+  return mkdtempSync(join(tmpdir(), 'zuse-sess-'))
+}
+
+describe('createSession', () => {
+  it('wires a working session: a plain submit streams events end-to-end', async () => {
+    const dir = tmp()
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'hi there' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { client } = fakeClient([script])
+    const mgr = createSession(dir, { client, snapshotStore: fakeSnapshotStore() })
+    const events: SessionEvent[] = []
+    mgr.subscribe((e) => events.push(e))
+
+    await mgr.submit('hello')
+
+    const types = events.map((e) => e.type)
+    expect(types).toContain('turn-start')
+    expect(types).toContain('text-delta')
+    expect(types).toContain('turn-end')
+    expect(mgr.getState().isThinking).toBe(false)
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('registers TodoWrite wired to setTodos (todos-update emitted)', async () => {
+    const dir = tmp()
+    const scripts: StreamEvent[][] = [
+      [
+        { type: 'message-start', id: 'm1', model: 'fake-model' },
+        { type: 'tool-use', id: 't1', name: 'TodoWrite', input: { todos: [{ content: 'do x', status: 'pending' }] } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+      [
+        { type: 'message-start', id: 'm2', model: 'fake-model' },
+        { type: 'text-delta', text: 'done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+    ]
+    const { client } = fakeClient(scripts)
+    const mgr = createSession(dir, { client, snapshotStore: fakeSnapshotStore() })
+    const todoEvents: Extract<SessionEvent, { type: 'todos-update' }>[] = []
+    mgr.subscribe((e) => {
+      // TodoWrite is NOT readOnly → classified 'ask'; interactive policy parks it. Auto-allow.
+      if (e.type === 'permission-request') mgr.resolvePermission(e.id, 'allow')
+      if (e.type === 'todos-update') todoEvents.push(e)
+    })
+
+    await mgr.submit('make a plan')
+
+    expect(todoEvents).toHaveLength(1)
+    expect(todoEvents[0]!.todos[0]!.content).toBe('do x')
+    expect(todoEvents[0]!.todos[0]!.status).toBe('pending')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

@@ -2,6 +2,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const SESSION_COOKIE = 'zuse_session'
+/** F3 单会话的固定 id;多会话 id 生成留 S1。 */
+export const DEFAULT_SESSION_ID = 'default'
 
 export interface ServerConfig {
   host: string
