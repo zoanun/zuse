@@ -1,4 +1,7 @@
 export const SERVER_PACKAGE = '@zuse/server'
+export { startServer } from './startServer.js'
+export { defaultConfig, SESSION_COOKIE } from './config.js'
+export type { ServerConfig } from './config.js'
 export { SessionManager, remapCheckpoints } from './session/SessionManager.js'
 export type { SessionManagerOptions, PermissionPolicy } from './session/SessionManager.js'
 export { SessionRegistry } from './session/SessionRegistry.js'
