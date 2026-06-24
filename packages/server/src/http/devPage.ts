@@ -51,7 +51,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
 </section>
 
 <section id="ws-section" style="display:none">
-  <h2>WebSocket echo console</h2>
+  <h2>WebSocket chat console</h2>
   <div id="conn-state">disconnected</div>
   <ul id="msg-list"></ul>
   <div class="ws-input">
@@ -110,7 +110,20 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       appendMsg('sys', '[connected]');
     });
     ws.addEventListener('message', function (ev) {
-      appendMsg('recv', '← ' + ev.data);
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { appendMsg('recv', '← ' + ev.data); return; }
+      if (msg.type === 'snapshot') {
+        appendMsg('sys', '[snapshot] model=' + msg.snapshot.model + ' msgs=' + msg.snapshot.messageCount);
+      } else if (msg.type === 'error') {
+        appendMsg('sys', '[error] ' + msg.message);
+      } else if (msg.type === 'event') {
+        var e = msg.event;
+        if (e.type === 'text-delta') appendMsg('recv', e.text);
+        else if (e.type === 'tool-use') appendMsg('sys', '[tool-use] ' + e.name);
+        else if (e.type === 'tool-result') appendMsg('sys', '[tool-result] ' + e.name + (e.is_error ? ' (error)' : ''));
+        else if (e.type === 'permission-request') appendMsg('sys', '[permission-request] ' + e.id + ' — reply via {"type":"permission-reply","id":"' + e.id + '","verdict":"allow"}');
+        else appendMsg('sys', '[' + e.type + ']');
+      }
     });
     ws.addEventListener('close', function () {
       el('conn-state').textContent = 'disconnected';
@@ -126,7 +139,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     var inp = el('ws-input');
     var val = inp.value.trim();
     if (!val || !ws || ws.readyState !== 1) return;
-    ws.send(val);
+    ws.send(JSON.stringify({ type: 'send', text: val }));
     appendMsg('sent', '→ ' + val);
     inp.value = '';
   });
