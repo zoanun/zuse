@@ -3,6 +3,7 @@ import { VERSION } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
+import { DEV_PAGE_HTML } from './devPage.js'
 
 export interface RequestHandlerDeps {
   auth: AuthProvider
@@ -120,11 +121,11 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       return sendJson(res, 200, { ok: true })
     }
 
-    // GET / — dev page placeholder (real page wired in Task 9)
+    // GET / — inline dev test page (throwaway; real SPA wired in F4)
     if (method === 'GET' && path === '/') {
       if (deps.devPage) {
-        res.writeHead(200, { 'content-type': 'text/html' })
-        return void res.end('<!doctype html><title>zuse</title>dev page pending')
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return void res.end(DEV_PAGE_HTML)
       }
       return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
     }
