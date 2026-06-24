@@ -1,27 +1,48 @@
 {
-  "name": "@zuse/server",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@zouyj/zuse-server",
+  "version": "0.1.0",
+  "private": false,
   "type": "module",
   "bin": {
     "zuse-server": "./dist/bin.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
+    "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
   "files": [
-    "dist",
-    "package.json"
+    "dist"
   ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@zuse/core": "workspace:*",
-    "@zuse/tools": "workspace:*",
+    "@anthropic-ai/sdk": "^0.98.0",
+    "@mozilla/readability": "^0.6.0",
+    "@vscode/ripgrep": "^1.18.0",
+    "better-sqlite3": "^12.11.1",
+    "jsdom": "^29.1.1",
+    "jsonc-parser": "^3.3.1",
+    "openai": "^6.42.0",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2",
+    "undici": "^6.21.0",
+    "vscode-jsonrpc": "9.0.0",
+    "vscode-languageserver-protocol": "3.18.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.5.12"
+    "@types/ws": "^8.5.12",
+    "@zuse/core": "workspace:*",
+    "@zuse/tools": "workspace:*"
   }
 }

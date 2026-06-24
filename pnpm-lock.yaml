@@ -53,12 +53,42 @@ importers:
 
   packages/server:
     dependencies:
-      '@zuse/core':
-        specifier: workspace:*
-        version: link:../core
-      '@zuse/tools':
-        specifier: workspace:*
-        version: link:../tools
+      '@anthropic-ai/sdk':
+        specifier: ^0.98.0
+        version: 0.98.0
+      '@mozilla/readability':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@vscode/ripgrep':
+        specifier: ^1.18.0
+        version: 1.18.0
+      better-sqlite3:
+        specifier: ^12.11.1
+        version: 12.11.1
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      openai:
+        specifier: ^6.42.0
+        version: 6.42.0(ws@8.21.0)
+      turndown:
+        specifier: ^7.2.4
+        version: 7.2.4
+      turndown-plugin-gfm:
+        specifier: ^1.0.2
+        version: 1.0.2
+      undici:
+        specifier: ^6.21.0
+        version: 6.26.0
+      vscode-jsonrpc:
+        specifier: 9.0.0
+        version: 9.0.0
+      vscode-languageserver-protocol:
+        specifier: 3.18.0
+        version: 3.18.0
       ws:
         specifier: ^8.18.0
         version: 8.21.0
@@ -66,6 +96,12 @@ importers:
       '@types/ws':
         specifier: ^8.5.12
         version: 8.18.1
+      '@zuse/core':
+        specifier: workspace:*
+        version: link:../core
+      '@zuse/tools':
+        specifier: workspace:*
+        version: link:../tools
 
   packages/tools:
     dependencies:
