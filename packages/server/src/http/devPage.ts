@@ -52,7 +52,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     padding: 18px 14px; border-right: 1px solid var(--line); background: var(--ground);
   }
   .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 650; letter-spacing: 0.01em; }
-  .mark { width: 14px; height: 14px; border-radius: 4px; rotate: 45deg; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 0 14px var(--accent-glow); }
+  .mark { width: 24px; height: 24px; border-radius: 7px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-style: italic; font-size: 14px; box-shadow: 0 0 14px var(--accent-glow); }
   .eyebrow { font: 600 9px/1 var(--mono); letter-spacing: 0.22em; color: var(--faint); text-transform: uppercase; padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; }
   .side-btn { display: flex; align-items: center; gap: 9px; width: 100%; justify-content: flex-start; background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 13.5px; padding: 10px 13px; border-radius: 12px; }
   .side-btn:hover { background: var(--surface-2); filter: none; }
@@ -104,22 +104,36 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
 
   /* ── chat ────────────────────────────────────────────────── */
   .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-  .stream { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 26px; width: 100%; max-width: var(--col); margin: 0 auto; padding: 30px 20px 26px; }
+  .stream { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 26px; width: 100%; padding: 30px 7% 26px; }
   .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 
   /* assistant: avatar + plain prose */
   .msg.agent { flex-direction: row; align-items: flex-start; gap: 13px; align-self: stretch; max-width: 100%; }
-  .av { width: 28px; height: 28px; border-radius: 8px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: 0 2px 8px var(--accent-glow); }
+  .av { width: 28px; height: 28px; border-radius: 8px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-style: italic; font-size: 16px; box-shadow: 0 2px 8px var(--accent-glow); }
   .msg.agent .body { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-top: 3px; }
   .msg.agent .name { font-size: 13px; font-weight: 650; color: var(--text); }
-  .msg.agent .text { font-size: 15px; line-height: 1.72; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+  .msg.agent .text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
 
   /* user: soft neutral bubble, right */
   .msg.you { align-self: flex-end; max-width: 80%; }
   .msg.you .bubble { background: var(--user-bubble); border-radius: 20px; padding: 10px 16px; font-size: 15px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
 
-  .caret { display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 1px; border-radius: 1px; background: var(--accent); animation: blink 1s steps(2, start) infinite; }
-  @keyframes blink { 50% { opacity: 0; } }
+  /* markdown rendered inside assistant messages */
+  .text h1, .text h2, .text h3, .text h4, .text h5, .text h6 { line-height: 1.3; margin: 16px 0 8px; font-weight: 650; }
+  .text h1 { font-size: 1.4em; } .text h2 { font-size: 1.22em; } .text h3 { font-size: 1.08em; } .text h4 { font-size: 1em; }
+  .text p { margin: 9px 0; }
+  .text ul, .text ol { margin: 9px 0; padding-left: 1.5em; }
+  .text li { margin: 3px 0; }
+  .text code { font-family: var(--mono); font-size: 0.88em; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
+  .text pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
+  .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; white-space: pre; }
+  .text table { border-collapse: collapse; margin: 10px 0; font-size: 13.5px; display: block; overflow-x: auto; }
+  .text th, .text td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+  .text th { background: var(--surface-2); font-weight: 650; }
+  .text blockquote { border-left: 3px solid var(--accent-border); padding-left: 12px; color: var(--muted); margin: 9px 0; }
+  .text a { color: var(--accent); text-decoration: underline; }
+  .text hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
+  .text > :first-child { margin-top: 0; } .text > :last-child { margin-bottom: 0; }
 
   .tool { align-self: stretch; margin-left: 41px; max-width: calc(100% - 41px); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; }
   .tool .head { color: var(--accent); font-weight: 600; }
@@ -146,7 +160,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .thinking .dots i:nth-child(3) { animation-delay: 0.32s; }
   @keyframes bob { 0%, 80%, 100% { transform: translateY(0); opacity: 0.45; } 40% { transform: translateY(-4px); opacity: 1; } }
 
-  .composer-wrap { width: 100%; max-width: var(--col); margin: 0 auto; padding: 0 20px 18px; }
+  .composer-wrap { width: 100%; padding: 0 7% 18px; }
   .composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); transition: border-color 0.12s, box-shadow 0.12s; }
   .composer:focus-within { border-color: var(--accent-border); box-shadow: 0 2px 14px var(--shadow), 0 0 0 3px var(--accent-soft); }
   .composer textarea { flex: 1; resize: none; border: none; background: transparent; padding: 9px 0; min-height: 24px; max-height: 168px; line-height: 1.5; font-size: 15px; }
@@ -181,7 +195,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
 <div class="shell" id="shell">
   <div class="backdrop" id="backdrop"></div>
   <aside class="sidebar" id="sidebar" hidden>
-    <div class="brand"><span class="mark"></span> zuse</div>
+    <div class="brand"><span class="mark">Z</span> zuse</div>
     <button class="side-btn" id="clear-btn">＋&nbsp; New chat</button>
     <div class="side-note">One in-memory dev session. History isn't persisted here yet — “New chat” just clears the view.</div>
     <div class="side-foot">
@@ -194,7 +208,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     <div class="main-header">
       <div class="mh-left">
         <button class="icon-btn menu-btn" id="menu-btn" title="Menu" aria-label="Open sidebar">☰</button>
-        <div class="brand mh-brand"><span class="mark"></span> zuse</div>
+        <div class="brand mh-brand"><span class="mark">Z</span> zuse</div>
         <span class="chip" id="chip-model" hidden></span>
         <span class="chip" id="chip-ctx" hidden></span>
         <span class="chip" id="chip-conn" hidden></span>
@@ -233,9 +247,86 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   function trunc(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + ' … (+' + (s.length - n) + ' chars)' : s; }
   function safeJson(o) { try { return JSON.stringify(o); } catch (e) { return String(o); } }
 
+  // ── minimal self-contained markdown renderer ─────────────────
+  // No literal backticks/backslashes/newlines below (this whole page is one
+  // template literal) — backtick & newline come from String.fromCharCode, and
+  // every regex uses character classes (e.g. [*]) instead of escapes.
+  var BT = String.fromCharCode(96);
+  var NL = String.fromCharCode(10);
+  function escapeHtml(s) { return String(s).replace(/[&]/g, '&amp;').replace(/[<]/g, '&lt;').replace(/[>]/g, '&gt;'); }
+  function mdInline(s) {
+    s = s.replace(new RegExp(BT + '([^' + BT + ']+)' + BT, 'g'), '<code>$1</code>');
+    s = s.replace(/[*][*]([^*]+)[*][*]/g, '<strong>$1</strong>');
+    s = s.replace(/[_][_]([^_]+)[_][_]/g, '<strong>$1</strong>');
+    s = s.replace(/[*]([^*]+)[*]/g, '<em>$1</em>');
+    s = s.replace(/[~][~]([^~]+)[~][~]/g, '<del>$1</del>');
+    s = s.replace(/[[]([^]]*)[]][(]([^)]*)[)]/g, function (m, t, u) {
+      var safe = /^(https?:|mailto:|[/]|[#])/i.test(u) ? u : '#';
+      return '<a href="' + safe + '" target="_blank" rel="noopener">' + t + '</a>';
+    });
+    return s;
+  }
+  function splitRow(line) {
+    var t = line.trim();
+    if (t.charAt(0) === '|') t = t.slice(1);
+    if (t.charAt(t.length - 1) === '|') t = t.slice(0, -1);
+    return t.split('|').map(function (c) { return c.trim(); });
+  }
+  function isTableSep(line) { var t = line.trim(); return t.indexOf('-') >= 0 && /^[ |:-]+$/.test(t); }
+  function allSame(s, ch) { for (var k = 0; k < s.length; k++) { if (s.charAt(k) !== ch) return false; } return true; }
+  function fenced(line) { return line.replace(/^ +/, '').slice(0, 3) === BT + BT + BT; }
+  function blockStart(line) {
+    return /^ *(#{1,6}) /.test(line) || /^ *[-*+] /.test(line) || /^ *[0-9]+[.] /.test(line) ||
+      /^ *> ?/.test(line) || fenced(line) || line.indexOf('|') >= 0;
+  }
+  function mdToHtml(src) {
+    var lines = escapeHtml(src).split(NL);
+    var out = [], i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (fenced(line)) {
+        i++; var code = [];
+        while (i < lines.length && !fenced(lines[i])) { code.push(lines[i]); i++; }
+        i++;
+        out.push('<pre><code>' + code.join(NL) + '</code></pre>'); continue;
+      }
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        var header = splitRow(line); i += 2; var rows = [];
+        while (i < lines.length && lines[i].indexOf('|') >= 0 && lines[i].trim() !== '') { rows.push(splitRow(lines[i])); i++; }
+        var th = header.map(function (h) { return '<th>' + mdInline(h) + '</th>'; }).join('');
+        var tb = rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + mdInline(c) + '</td>'; }).join('') + '</tr>'; }).join('');
+        out.push('<table><thead><tr>' + th + '</tr></thead><tbody>' + tb + '</tbody></table>'); continue;
+      }
+      var hm = line.match(/^(#{1,6}) (.*)$/);
+      if (hm) { var lvl = hm[1].length; out.push('<h' + lvl + '>' + mdInline(hm[2]) + '</h' + lvl + '>'); i++; continue; }
+      var tl = line.trim();
+      if (tl.length >= 3 && (allSame(tl, '-') || allSame(tl, '*') || allSame(tl, '_'))) { out.push('<hr>'); i++; continue; }
+      if (/^ *> ?/.test(line)) {
+        var bq = [];
+        while (i < lines.length && /^ *> ?/.test(lines[i])) { bq.push(lines[i].replace(/^ *> ?/, '')); i++; }
+        out.push('<blockquote>' + mdInline(bq.join('<br>')) + '</blockquote>'); continue;
+      }
+      if (/^ *[-*+] /.test(line)) {
+        var items = [];
+        while (i < lines.length && /^ *[-*+] /.test(lines[i])) { items.push(lines[i].replace(/^ *[-*+] /, '')); i++; }
+        out.push('<ul>' + items.map(function (it) { return '<li>' + mdInline(it) + '</li>'; }).join('') + '</ul>'); continue;
+      }
+      if (/^ *[0-9]+[.] /.test(line)) {
+        var oi = [];
+        while (i < lines.length && /^ *[0-9]+[.] /.test(lines[i])) { oi.push(lines[i].replace(/^ *[0-9]+[.] /, '')); i++; }
+        out.push('<ol>' + oi.map(function (it) { return '<li>' + mdInline(it) + '</li>'; }).join('') + '</ol>'); continue;
+      }
+      if (tl === '') { i++; continue; }
+      var para = [line]; i++;
+      while (i < lines.length && lines[i].trim() !== '' && !blockStart(lines[i])) { para.push(lines[i]); i++; }
+      out.push('<p>' + mdInline(para.join('<br>')) + '</p>');
+    }
+    return out.join('');
+  }
+
   var stream, input, sendBtn, stopBtn, statusline;
   var ws = null, conn = 'down', thinking = false;
-  var currentText = null, currentCaret = null, thinkingEl = null;
+  var currentText = null, currentMd = '', thinkingEl = null;
   var lastCtx, lastUsage;
   var toolCards = {}, permCards = {};
 
@@ -274,7 +365,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     stream.textContent = '';
     var e = make('div', 'empty'); e.id = 'empty'; e.textContent = 'Ask zuse anything to get started.';
     stream.appendChild(e);
-    toolCards = {}; permCards = {}; currentText = null; currentCaret = null; thinkingEl = null;
+    toolCards = {}; permCards = {}; currentText = null; currentMd = ''; thinkingEl = null;
   }
 
   function addUser(text) {
@@ -283,26 +374,25 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     var b = make('div', 'bubble'); b.textContent = text; m.appendChild(b);
     stream.appendChild(m); scroll(); return m;
   }
+  function avatar() { var a = make('div', 'av'); a.textContent = 'Z'; return a; }
   function startAgent() {
     clearEmpty(); removeThinking();
     var m = make('div', 'msg agent');
-    m.appendChild(make('div', 'av'));
+    m.appendChild(avatar());
     var body = make('div', 'body');
     var nm = make('div', 'name'); nm.textContent = 'zuse'; body.appendChild(nm);
-    var tx = make('div', 'text');
-    currentText = make('span'); tx.appendChild(currentText);
-    currentCaret = make('span', 'caret'); tx.appendChild(currentCaret);
-    body.appendChild(tx); m.appendChild(body);
-    stream.appendChild(m); scroll();
+    currentText = make('div', 'text');
+    body.appendChild(currentText); m.appendChild(body);
+    stream.appendChild(m); currentMd = ''; scroll();
   }
-  function appendDelta(s) { if (!currentText) startAgent(); currentText.textContent += s; scroll(); }
-  function endAgent() { if (currentCaret) { currentCaret.remove(); currentCaret = null; } currentText = null; }
+  function appendDelta(s) { if (!currentText) startAgent(); currentMd += s; currentText.innerHTML = mdToHtml(currentMd); scroll(); }
+  function endAgent() { if (currentText) currentText.innerHTML = mdToHtml(currentMd); currentText = null; currentMd = ''; }
 
   function showThinking() {
     if (!thinking) return;
     removeThinking();
     thinkingEl = make('div', 'msg agent thinking');
-    thinkingEl.appendChild(make('div', 'av'));
+    thinkingEl.appendChild(avatar());
     var d = make('div', 'dots'); d.appendChild(make('i')); d.appendChild(make('i')); d.appendChild(make('i'));
     thinkingEl.appendChild(d);
     stream.appendChild(thinkingEl); scroll();
