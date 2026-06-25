@@ -12,6 +12,13 @@ describe('Markdown', () => {
     expect(container.querySelectorAll('input[type=checkbox]').length).toBe(2)
   })
 
+  it('renders single newlines as line breaks (chat-style)', () => {
+    // The model often writes status lines separated by plain newlines (no "- " list).
+    // remark-breaks turns those soft breaks into <br> so they do not collapse onto one line.
+    const { container } = render(<Markdown text={'✓ one\n● two\n○ three'} />)
+    expect(container.querySelectorAll('br').length).toBe(2)
+  })
+
   it('drops the bullet on list items that lead with a status glyph (✓/●/○)', () => {
     const { container } = render(<Markdown text={'- ✓ done\n- ● doing\n- ○ todo'} />)
     const items = container.querySelectorAll('li')

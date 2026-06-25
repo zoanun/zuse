@@ -1,5 +1,6 @@
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
 
 // GFM only recognises [ ] and [x]. The model also emits [-]/[~]/[/] for "in progress",
@@ -34,7 +35,7 @@ const components: Components = {
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="text">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={components}>
         {text}
       </ReactMarkdown>
     </div>
