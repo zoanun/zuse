@@ -190,6 +190,11 @@ export class SessionManager {
     this.policy = p
   }
 
+  /** 当前模型的上下文窗口大小(token);供前端算 ctx 占用百分比。 */
+  private ctxWindow(): number {
+    return resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
+  }
+
   getState(): SessionSnapshot {
     const pendingPermissions: PendingPermissionLite[] = [...this.pending.entries()].map(([id, p]) => ({
       id,
@@ -202,6 +207,7 @@ export class SessionManager {
       cwd: this.cwd,
       totalUsage: this.totalUsage,
       contextTokens: this.contextTokens,
+      contextWindow: this.ctxWindow(),
       todos: this.todos,
       pendingPermissions,
       messageCount: this.conversation.length,
@@ -316,7 +322,7 @@ export class SessionManager {
     // Window usage is unknown post-compaction (next turn measures it); clear it so the
     // stale value cannot re-trigger auto-compaction.
     this.contextTokens = undefined
-    this.emit({ type: 'context-update', contextTokens: undefined })
+    this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
 
     // Checkpoint remap: applyCompaction folds [0..cut) into one summary message, so
     // indices shift. Drop folded-range checkpoints, remap kept-range ones.
@@ -478,7 +484,7 @@ export class SessionManager {
       this.contextTokens = lastInputTokens ?? this.contextTokens
       this.totalUsage = conversation.totalUsage
       this.emit({ type: 'usage-update', totalUsage: this.totalUsage })
-      this.emit({ type: 'context-update', contextTokens: this.contextTokens })
+      this.emit({ type: 'context-update', contextTokens: this.contextTokens, contextWindow: this.ctxWindow() })
 
       // Record the checkpoint (Phase 12): only if track() succeeded. Even an errored
       // turn records — the snapshot anchors "before this turn", so checkpointIndex ==
@@ -597,7 +603,7 @@ export class SessionManager {
     // Checkpoints at/after the revert point are invalidated (incl. same-index error-turn ones).
     this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cp.messageIndex)
     this.contextTokens = undefined
-    this.emit({ type: 'context-update', contextTokens: undefined })
+    this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
   }
 
   /**

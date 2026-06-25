@@ -345,7 +345,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   var stream, input, sendBtn, stopBtn, statusline;
   var ws = null, conn = 'down', thinking = false;
   var currentText = null, currentMd = '', thinkingEl = null;
-  var lastCtx, lastUsage;
+  var lastCtx, lastUsage, lastWindow;
   var toolCards = {}, permCards = {};
 
   // ── theme toggle (always available) ──────────────────────────
@@ -476,7 +476,11 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   function setModel(m) { var c = el('chip-model'); if (m) { c.hidden = false; c.textContent = 'model ' + m; } }
   function setCtx() {
     var c = el('chip-ctx'); var parts = [];
-    if (lastCtx !== null && lastCtx !== undefined) parts.push('ctx ' + fmt(lastCtx));
+    if (lastCtx !== null && lastCtx !== undefined) {
+      var s = 'ctx ' + fmt(lastCtx);
+      if (lastWindow) s += ' / ' + fmt(lastWindow) + ' · ' + Math.round((lastCtx / lastWindow) * 100) + '%';
+      parts.push(s);
+    }
     if (lastUsage) parts.push('tok ' + fmt((lastUsage.input_tokens || 0) + (lastUsage.output_tokens || 0)));
     if (parts.length) { c.hidden = false; c.textContent = parts.join(' · '); }
   }
@@ -525,7 +529,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
 
     if (msg.type === 'snapshot') {
       var s = msg.snapshot;
-      setModel(s.model); lastCtx = s.contextTokens; lastUsage = s.totalUsage; setCtx();
+      setModel(s.model); lastCtx = s.contextTokens; lastWindow = s.contextWindow; lastUsage = s.totalUsage; setCtx();
       if (s.cwd) el('chip-conn').title = 'cwd: ' + s.cwd;
       if (s.todos) renderTodos(s.todos);
       if (s.isThinking) setThinking(true);
@@ -544,7 +548,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       case 'tool-result': addToolResult(e.id, e.output, e.is_error); break;
       case 'message-stop': endAgent(); showThinking(); break;
       case 'usage-update': lastUsage = e.totalUsage; setCtx(); break;
-      case 'context-update': lastCtx = e.contextTokens; setCtx(); break;
+      case 'context-update': lastCtx = e.contextTokens; lastWindow = e.contextWindow; setCtx(); break;
       case 'permission-request': addPermission(e.id, e.req); break;
       case 'permission-resolved': resolvePerm(e.id, e.verdict); break;
       case 'todos-update': renderTodos(e.todos); break;

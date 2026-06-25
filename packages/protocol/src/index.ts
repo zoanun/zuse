@@ -34,7 +34,7 @@ export type SessionEvent =
   | { type: 'turn-start'; isResend: boolean }
   | { type: 'turn-end' }
   | { type: 'usage-update'; totalUsage: Usage | undefined }
-  | { type: 'context-update'; contextTokens: number | undefined }
+  | { type: 'context-update'; contextTokens: number | undefined; contextWindow: number | undefined }
   | { type: 'permission-request'; id: string; req: PermissionRequest }
   | { type: 'permission-resolved'; id: string; verdict: PermissionVerdict }
   | { type: 'compaction-start' }
@@ -57,6 +57,7 @@ export interface SessionSnapshot {
   cwd: string
   totalUsage: Usage | undefined
   contextTokens: number | undefined
+  contextWindow: number | undefined
   todos: TodoItemLite[]
   pendingPermissions: PendingPermissionLite[]
   messageCount: number

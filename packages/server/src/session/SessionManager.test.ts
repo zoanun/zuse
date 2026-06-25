@@ -793,3 +793,12 @@ describe('remapCheckpoints', () => {
     expect(input[0]!.messageIndex).toBe(5)
   })
 })
+
+describe('context window in snapshot', () => {
+  it('getState includes a positive contextWindow', () => {
+    const { mgr } = makeManagerWith([])
+    const snap = mgr.getState()
+    expect(typeof snap.contextWindow).toBe('number')
+    expect((snap.contextWindow ?? 0)).toBeGreaterThan(0)
+  })
+})
