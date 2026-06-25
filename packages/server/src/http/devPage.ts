@@ -77,6 +77,8 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .chip[hidden] { display: none; }
   .icon-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; width: 30px; height: 30px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
   .icon-btn:hover { background: var(--surface-2); color: var(--text); filter: none; }
+  .menu-btn { display: none; }
+  .backdrop { display: none; }
 
   /* ── auth card ───────────────────────────────────────────── */
   .auth-card { max-width: 372px; width: 100%; margin: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px; box-shadow: 0 12px 40px var(--shadow); }
@@ -162,15 +164,22 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   [hidden] { display: none !important; }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
   @media (max-width: 820px) {
-    .shell { height: 100vh; margin: 0; border: none; border-radius: 0; }
-    .sidebar { display: none; }
+    .menu-btn { display: grid; }
     .mh-brand { display: flex; }
+    .sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 30;
+      transform: translateX(-100%); transition: transform 0.22s ease; box-shadow: 0 0 50px var(--shadow);
+    }
+    .shell.menu-open .sidebar { transform: translateX(0); }
+    .backdrop { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.42); z-index: 20; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+    .shell.menu-open .backdrop { opacity: 1; pointer-events: auto; }
   }
   @media (max-width: 560px) { .msg.you { max-width: 90%; } .tool, .perm { margin-left: 0; max-width: 100%; } }
 </style>
 </head>
 <body>
-<div class="shell">
+<div class="shell" id="shell">
+  <div class="backdrop" id="backdrop"></div>
   <aside class="sidebar" id="sidebar" hidden>
     <div class="brand"><span class="mark"></span> zuse</div>
     <button class="side-btn" id="clear-btn">＋&nbsp; New chat</button>
@@ -184,6 +193,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   <div class="main">
     <div class="main-header">
       <div class="mh-left">
+        <button class="icon-btn menu-btn" id="menu-btn" title="Menu" aria-label="Open sidebar">☰</button>
         <div class="brand mh-brand"><span class="mark"></span> zuse</div>
         <span class="chip" id="chip-model" hidden></span>
         <span class="chip" id="chip-ctx" hidden></span>
@@ -240,6 +250,15 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       try { localStorage.setItem('zuse-theme', next); } catch (e) {}
       tb.textContent = themeGlyph();
     });
+  }());
+
+  // ── mobile sidebar drawer (open via ☰, close on backdrop / Esc) ──
+  function closeMenu() { var sh = el('shell'); if (sh) sh.classList.remove('menu-open'); }
+  (function () {
+    var mb = el('menu-btn'), bd = el('backdrop'), sh = el('shell');
+    if (mb && sh) mb.addEventListener('click', function () { sh.classList.toggle('menu-open'); });
+    if (bd) bd.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeMenu(); });
   }());
 
   // ── health ────────────────────────────────────────────────
@@ -434,7 +453,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 168) + 'px';
     });
-    var cb = el('clear-btn'); if (cb) cb.addEventListener('click', clearStream);
+    var cb = el('clear-btn'); if (cb) cb.addEventListener('click', function () { clearStream(); closeMenu(); });
   }
 
   function showChat() {
