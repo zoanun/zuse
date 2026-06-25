@@ -160,6 +160,17 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .thinking .dots i:nth-child(3) { animation-delay: 0.32s; }
   @keyframes bob { 0%, 80%, 100% { transform: translateY(0); opacity: 0.45; } 40% { transform: translateY(-4px); opacity: 1; } }
 
+  .todos { margin: 0 7% 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; max-height: 36vh; overflow-y: auto; }
+  .todos .th { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 9px; display: flex; justify-content: space-between; }
+  .todos .ti { display: flex; gap: 9px; align-items: flex-start; font-size: 14px; line-height: 1.5; margin: 5px 0; color: var(--text); }
+  .todos .ti .ic { flex: none; width: 15px; text-align: center; }
+  .todos .ti.todo { color: var(--muted); }
+  .todos .ti.todo .ic { color: var(--faint); }
+  .todos .ti.doing { font-weight: 650; }
+  .todos .ti.doing .ic { color: var(--accent); }
+  .todos .ti.done { color: var(--muted); text-decoration: line-through; }
+  .todos .ti.done .ic { color: var(--good); }
+
   .composer-wrap { width: 100%; padding: 0 7% 18px; }
   .composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); transition: border-color 0.12s, box-shadow 0.12s; }
   .composer:focus-within { border-color: var(--accent-border); box-shadow: 0 2px 14px var(--shadow), 0 0 0 3px var(--accent-soft); }
@@ -222,6 +233,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       <div class="stream" id="stream">
         <div class="empty" id="empty">Ask zuse anything to get started.</div>
       </div>
+      <div class="todos" id="todos-panel" hidden></div>
       <div class="composer-wrap">
         <div class="composer">
           <textarea id="input" rows="1" placeholder="Message zuse…"></textarea>
@@ -372,6 +384,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     var e = make('div', 'empty'); e.id = 'empty'; e.textContent = 'Ask zuse anything to get started.';
     stream.appendChild(e);
     toolCards = {}; permCards = {}; currentText = null; currentMd = ''; thinkingEl = null;
+    renderTodos([]);
   }
 
   function addUser(text) {
@@ -414,6 +427,26 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     (card || stream).appendChild(r); showThinking(); scroll();
   }
   function addNote(text, kind) { clearEmpty(); var n = make('div', 'note' + (kind ? ' ' + kind : '')); n.textContent = text; stream.appendChild(n); scroll(); }
+
+  // Live task plan from the agent's TodoWrite tool (pending / in_progress / completed).
+  function renderTodos(todos) {
+    var p = el('todos-panel'); if (!p) return;
+    if (!todos || !todos.length) { p.hidden = true; p.textContent = ''; return; }
+    p.hidden = false; p.textContent = '';
+    var done = todos.filter(function (t) { return t.status === 'completed'; }).length;
+    var h = make('div', 'th');
+    var l = make('span'); l.textContent = 'Tasks'; h.appendChild(l);
+    var r = make('span'); r.textContent = done + ' / ' + todos.length; h.appendChild(r);
+    p.appendChild(h);
+    todos.forEach(function (t) {
+      var cls = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
+      var row = make('div', 'ti ' + cls);
+      var ic = make('span', 'ic'); ic.textContent = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○';
+      row.appendChild(ic);
+      var c = make('span'); c.textContent = t.content; row.appendChild(c);
+      p.appendChild(row);
+    });
+  }
 
   function addPermission(id, req) {
     clearEmpty(); removeThinking();
@@ -494,6 +527,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       var s = msg.snapshot;
       setModel(s.model); lastCtx = s.contextTokens; lastUsage = s.totalUsage; setCtx();
       if (s.cwd) el('chip-conn').title = 'cwd: ' + s.cwd;
+      if (s.todos) renderTodos(s.todos);
       if (s.isThinking) setThinking(true);
       if (s.pendingPermissions) s.pendingPermissions.forEach(function (p) { addPermission(p.id, p.req); });
       return;
@@ -513,6 +547,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       case 'context-update': lastCtx = e.contextTokens; setCtx(); break;
       case 'permission-request': addPermission(e.id, e.req); break;
       case 'permission-resolved': resolvePerm(e.id, e.verdict); break;
+      case 'todos-update': renderTodos(e.todos); break;
       case 'turn-end': setThinking(false); break;
       case 'failover': addNote('failover: ' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn'); setModel(e.toModel); break;
       case 'model-select-needed': addNote('model selection needed: ' + e.reason, 'warn'); break;
