@@ -26,6 +26,11 @@ export function createWsClient(opts: WsClientOptions): WsClient {
   let timer: ReturnType<typeof setTimeout> | null = null
 
   function connect(): void {
+    // Tear down any prior socket/timer first so a re-entrant connect() (e.g. React
+    // StrictMode double-invoking the effect in dev) can't leak a socket or spawn a
+    // second reconnect loop. Detach onclose so the old socket can't reschedule.
+    if (timer) { clearTimeout(timer); timer = null }
+    if (ws) { ws.onclose = null; ws.close() }
     closed = false
     opts.onStatus('connecting')
     ws = make(opts.url)
@@ -49,7 +54,7 @@ export function createWsClient(opts: WsClientOptions): WsClient {
 
   return {
     connect,
-    send(msg: ClientMessage) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)) },
-    close() { closed = true; if (timer) clearTimeout(timer); if (ws) ws.close() },
+    send(msg: ClientMessage) { if (ws && ws.readyState === 1 /* OPEN */) ws.send(JSON.stringify(msg)) },
+    close() { closed = true; if (timer) { clearTimeout(timer); timer = null }; if (ws) ws.close() },
   }
 }

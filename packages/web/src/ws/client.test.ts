@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import type { ServerMessage } from '@zuse/protocol'
 import { createWsClient } from './client.js'
 
@@ -56,5 +56,28 @@ describe('createWsClient', () => {
     expect(statuses).toContain('connecting')
     ws.onopen!(); expect(statuses).toContain('live')
     ws.close(); expect(statuses).toContain('down')
+  })
+
+  it('connect() while already connected tears down the prior socket', () => {
+    const sockets: FakeWS[] = []
+    const client = createWsClient({
+      url: 'ws://x/ws',
+      onMessage: () => {},
+      onStatus: () => {},
+      makeSocket: (u) => { const s = new FakeWS(u); sockets.push(s); return s as unknown as WebSocket },
+    })
+    client.connect(); sockets[0]!.onopen!()
+    client.connect()
+    expect(sockets).toHaveLength(2)
+    expect(sockets[0]!.readyState).toBe(3) // old socket was closed
+  })
+
+  it('send() before the socket is open is a no-op', () => {
+    let ws!: FakeWS
+    const client = createWsClient({ url: 'ws://x/ws', onMessage: () => {}, onStatus: () => {}, makeSocket: (u) => { ws = new FakeWS(u); return ws as unknown as WebSocket } })
+    client.connect()
+    ws.readyState = 0 // CONNECTING
+    client.send({ type: 'send', text: 'hi' })
+    expect(ws.sent).toHaveLength(0)
   })
 })
