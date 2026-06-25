@@ -12,6 +12,8 @@ export interface ServerConfig {
   tokenTtlSec: number
   /** 会话工作目录(会话起始 cwd)。bin 传 INIT_CWD;缺省 process.cwd()。 */
   cwd: string
+  /** 已构建的 web 目录(packages/web/dist);undefined → 回落到 dev page。 */
+  webDir?: string
 }
 
 export function defaultConfig(): ServerConfig {
@@ -21,5 +23,6 @@ export function defaultConfig(): ServerConfig {
     authDir: join(homedir(), '.zuse'),
     tokenTtlSec: 60 * 60 * 24 * 30,
     cwd: process.cwd(),
+    webDir: process.env.ZUSE_WEBDIR,
   }
 }

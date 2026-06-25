@@ -1,4 +1,6 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
+import { readFile, stat } from 'node:fs/promises'
+import { join, normalize, extname } from 'node:path'
 import { VERSION } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
@@ -9,9 +11,27 @@ export interface RequestHandlerDeps {
   auth: AuthProvider
   devPage: boolean
   tokenTtlSec: number
+  webDir?: string
 }
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json; charset=utf-8',
+}
+
+async function tryServeFile(res: ServerResponse, abs: string): Promise<boolean> {
+  try {
+    const s = await stat(abs)
+    if (!s.isFile()) return false
+    const buf = await readFile(abs)
+    res.writeHead(200, { 'content-type': MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream' })
+    res.end(buf)
+    return true
+  } catch { return false }
+}
 
 function sendJson(res: ServerResponse, status: number, obj: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' })
@@ -121,8 +141,17 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       return sendJson(res, 200, { ok: true })
     }
 
-    // GET / — inline dev test page (throwaway; real SPA wired in F4)
-    if (method === 'GET' && path === '/') {
+    // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.
+    if (method === 'GET') {
+      if (deps.webDir) {
+        // Resolve within webDir; reject traversal.
+        const rel = normalize(path).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '')
+        const abs = join(deps.webDir, rel)
+        if (abs.startsWith(deps.webDir)) {
+          if (path !== '/' && (await tryServeFile(res, abs))) return
+          if (await tryServeFile(res, join(deps.webDir, 'index.html'))) return
+        }
+      }
       if (deps.devPage) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         return void res.end(DEV_PAGE_HTML)

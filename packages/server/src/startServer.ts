@@ -1,4 +1,6 @@
 import { createServer } from 'node:http'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import { PasswordStore } from './auth/passwordStore.js'
 import { LocalPasswordAuth } from './auth/authProvider.js'
 import { makeRequestHandler } from './http/server.js'
@@ -11,6 +13,11 @@ import type { SessionManager } from './session/SessionManager.js'
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
   session?: SessionManager
+}
+
+function defaultWebDir(): string {
+  // packages/server/src/startServer.ts → ../../web/dist = packages/web/dist
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'dist')
 }
 
 export async function startServer(
@@ -30,7 +37,7 @@ export async function startServer(
     console.warn(`[zuse-server] session 构建失败:${sessionErr}(/ws 将回 error,health/login 仍可用)`)
   }
 
-  const httpServer = createServer(makeRequestHandler({ auth, devPage: true, tokenTtlSec: cfg.tokenTtlSec }))
+  const httpServer = createServer(makeRequestHandler({ auth, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, registry, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
