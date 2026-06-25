@@ -10,5 +10,7 @@ export function ToolCall({ use, result }: { use: Extract<Part, { kind: 'tool-use
   )
 }
 
-function safeJson(o: unknown): string { try { return JSON.stringify(o) } catch { return String(o) } }
+// JSON.stringify returns the value `undefined` (not a string) for undefined/functions/symbols;
+// the `?? String(o)` guard turns those into a real string so trunc() can't throw on .length.
+function safeJson(o: unknown): string { try { return JSON.stringify(o) ?? String(o) } catch { return String(o) } }
 function trunc(s: string, n: number): string { return s.length > n ? s.slice(0, n) + ' … (+' + (s.length - n) + ' chars)' : s }

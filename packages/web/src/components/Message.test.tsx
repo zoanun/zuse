@@ -22,4 +22,28 @@ describe('Message', () => {
     expect(screen.getByText(/⚙ Bash/)).toBeInTheDocument()
     expect(screen.getByText('a b c')).toBeInTheDocument()
   })
+
+  it('does not crash when a tool-use has undefined input', () => {
+    // JSON.stringify(undefined) === undefined; safeJson must coalesce to a string.
+    expect(() => render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'tool-use', id: 't1', name: 'Noop', input: undefined },
+    ] }} />)).not.toThrow()
+    expect(screen.getByText(/⚙ Noop/)).toBeInTheDocument()
+    expect(screen.getByText('undefined')).toBeInTheDocument()
+  })
+
+  it('renders an orphan tool-result without a matching tool-use', () => {
+    render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'tool-result', id: 't9', output: 'lonely', isError: false },
+    ] }} />)
+    expect(screen.getByText('lonely')).toBeInTheDocument()
+  })
+
+  it('marks an error tool-result with the err class', () => {
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'tool-use', id: 't1', name: 'Bash', input: {} },
+      { kind: 'tool-result', id: 't1', output: 'boom', isError: true },
+    ] }} />)
+    expect(container.querySelector('.result.err')).not.toBeNull()
+  })
 })
