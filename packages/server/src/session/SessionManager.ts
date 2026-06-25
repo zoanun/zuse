@@ -286,9 +286,19 @@ export class SessionManager {
     // writing into the conversation/usage/checkpoints we are about to throw away.
     this.interrupt()
 
+    // Settle any parked permission prompts with 'deny' BEFORE dropping them. interrupt()'s
+    // abort signal does not reach canUseTool's awaited promise, so merely clearing this.pending
+    // would orphan the resolve handle and hang the aborted turn's async stack forever (its
+    // finally never runs → this.abort stays dirty). Resolving 'deny' lets the gate return a
+    // decline so the turn unwinds naturally against the already-aborted signal.
+    for (const [id, p] of this.pending) {
+      p.resolve('deny')
+      this.emit({ type: 'permission-resolved', id, verdict: 'deny' })
+    }
+    this.pending.clear()
+
     this.conversation = new Conversation()
     this.todos = []
-    this.pending.clear()
     this.totalUsage = undefined
     this.contextTokens = undefined
     this.checkpoints = []

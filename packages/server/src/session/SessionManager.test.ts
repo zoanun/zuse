@@ -830,6 +830,26 @@ describe('SessionManager reset ("New chat")', () => {
     expect(todosUpdate).toBeDefined()
     expect(todosUpdate?.todos).toEqual([])
   })
+
+  it('settles parked permission prompts with deny instead of orphaning them', async () => {
+    const { mgr } = makeManager()
+    const events: SessionEvent[] = []
+    mgr.subscribe((e) => events.push(e))
+    // @ts-expect-error reach private canUseTool to park a permission request
+    const p = mgr.canUseTool({ toolName: 'Bash', input: { command: 'rm x' }, specifier: 'rm x', rule: 'Bash(rm x)', reason: 'ask' })
+    expect(mgr.getState().pendingPermissions.length).toBe(1)
+
+    mgr.reset()
+
+    // The awaited promise must settle (to 'deny') — not hang forever — and the
+    // pending map must be empty, with a permission-resolved emitted.
+    await expect(p).resolves.toBe('deny')
+    expect(mgr.getState().pendingPermissions).toEqual([])
+    const resolved = events.find(
+      (e): e is Extract<SessionEvent, { type: 'permission-resolved' }> => e.type === 'permission-resolved',
+    )
+    expect(resolved?.verdict).toBe('deny')
+  })
 })
 
 describe('context window in snapshot', () => {
