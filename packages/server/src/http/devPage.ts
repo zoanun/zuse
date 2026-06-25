@@ -17,8 +17,8 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   }
   /* Warm, paper-like light theme (Claude-ish). */
   :root[data-theme="light"] {
-    --ground: #F3F1EC; --surface: #FFFFFF; --surface-2: #F4F2EC; --user-bubble: #EFEDE6;
-    --line: #E6E2D9; --text: #2A2824; --muted: #6E6A61; --faint: #A7A296;
+    --ground: #E8E3D8; --surface: #FFFFFF; --surface-2: #F3F1EA; --user-bubble: #EEEBE3;
+    --line: #E0DBD0; --text: #2A2824; --muted: #6E6A61; --faint: #A29D90;
     --accent: #6B57E0; --accent-2: #8B7BF0;
     --accent-soft: rgba(107, 87, 224, 0.10); --accent-border: rgba(107, 87, 224, 0.28); --accent-glow: rgba(107, 87, 224, 0.28);
     --on-accent: #FFFFFF; --shadow: rgba(40, 38, 34, 0.10); --header-bg: rgba(255, 255, 255, 0.82);
@@ -43,9 +43,8 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
 
   /* ── framed app shell ────────────────────────────────────── */
   .shell {
-    max-width: 1120px; height: calc(100vh - 40px); margin: 20px auto; display: flex;
-    background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
-    box-shadow: 0 16px 50px var(--shadow); overflow: hidden;
+    height: 100vh; display: flex;
+    background: var(--surface); overflow: hidden;
   }
 
   .sidebar {
