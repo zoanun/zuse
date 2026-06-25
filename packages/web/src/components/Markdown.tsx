@@ -7,6 +7,11 @@ import rehypeHighlight from 'rehype-highlight'
 // mirroring the TodosPanel. Recognised [ ]/[x] items are untouched (their first child is
 // the GFM <input>, not a string, so they never match here).
 const IN_PROGRESS = /^\[[-~/]\]\s+/
+// The model sometimes writes task lists using literal status glyphs as the bullet
+// (✓ / ● / ○ …). Those are plain list items, so the browser ALSO draws its default
+// disc → a doubled "• ✓ text". When a line already leads with a status glyph, drop the
+// disc (the glyph is the marker) by tagging it task-list-item (list-style: none).
+const STATUS_GLYPH = /^[✓✔☑●◐○◯☐]\s/
 const components: Components = {
   li(props) {
     const { children } = props
@@ -17,6 +22,9 @@ const components: Components = {
       if (m) {
         const rest = [first.slice(m[0].length), ...kids.slice(1)]
         return <li className="task-list-item in-progress"><span className="tl-ip">●</span>{rest}</li>
+      }
+      if (STATUS_GLYPH.test(first)) {
+        return <li className="task-list-item">{children}</li>
       }
     }
     return <li>{children}</li>
