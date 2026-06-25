@@ -1,8 +1,8 @@
 import type { PendingPermissionLite, PermissionVerdict } from '@zuse/protocol'
 
 export function PermissionCard({ pending, onReply }: { pending: PendingPermissionLite; onReply: (id: string, verdict: PermissionVerdict) => void }) {
-  const req = pending.req as { toolName?: string; specifier?: string }
-  const spec = (req.toolName ?? 'tool') + (req.specifier ? ' · ' + req.specifier : '')
+  const req = pending.req
+  const spec = req.toolName + (req.specifier ? ' · ' + req.specifier : '')
   return (
     <div className="perm">
       <div className="q">Allow this action?</div>

@@ -13,6 +13,33 @@ describe('Composer', () => {
     expect(ta.value).toBe('')
   })
 
+  it('does not send on Shift+Enter (newline)', () => {
+    const onSend = vi.fn()
+    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('Message zuse…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'hello' } })
+    fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('does not send whitespace-only input', () => {
+    const onSend = vi.fn()
+    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('Message zuse…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '   ' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('does not send the Enter that confirms an IME composition', () => {
+    const onSend = vi.fn()
+    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('Message zuse…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '你好' } })
+    fireEvent.keyDown(ta, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('shows Stop and fires onStop when disabled (thinking)', () => {
     const onStop = vi.fn()
     render(<Composer disabled={true} onSend={() => {}} onStop={onStop} />)

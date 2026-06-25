@@ -24,7 +24,11 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
             e.target.style.height = 'auto'
             e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'
           }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+          onKeyDown={(e) => {
+            // !isComposing: don't treat the Enter that confirms an IME candidate
+            // (Chinese/Japanese input) as a send — it would fire a half-composed message.
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
+          }}
         />
         {disabled ? <button className="ghost" onClick={onStop}>Stop</button> : null}
         <button className="send-btn" aria-label="Send message" onClick={submit} disabled={disabled}>↑</button>
