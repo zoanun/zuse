@@ -72,6 +72,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .text ul, .text ol { margin: 9px 0; padding-left: 1.5em; }
 .text li { margin: 3px 0; }
 .text li.task-list-item { list-style: none; }
+.text li.in-progress { list-style: none; display: flex; gap: 8px; align-items: baseline; }
+.text li.in-progress .tl-ip { color: var(--accent); font-size: 0.7em; line-height: 1.7; flex: none; }
 .text code { font-family: var(--mono); font-size: 0.88em; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
 .text pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
 .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; }

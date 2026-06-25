@@ -3,10 +3,14 @@ import type { TodoItemLite, PendingPermissionLite, Usage } from '@zuse/protocol'
 export type Part =
   | { kind: 'text'; text: string }
   | { kind: 'tool-use'; id: string; name: string; input: unknown }
-  | { kind: 'tool-result'; id: string; output: string; isError: boolean }
+  | { kind: 'tool-result'; id: string; name: string; output: string; isError: boolean }
 
-export interface Message { id: string; role: 'user' | 'assistant'; parts: Part[] }
-export interface Notice { id: string; text: string; kind: 'info' | 'warn' | 'error' }
+export interface Message {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  parts: Part[]
+  noticeKind?: 'info' | 'warn' | 'error'   // only set for role:'system'
+}
 export type Connection = 'connecting' | 'live' | 'down'
 
 export interface AppState {
@@ -19,5 +23,4 @@ export interface AppState {
   totalUsage?: Usage
   thinking: boolean
   connection: Connection
-  notices: Notice[]
 }

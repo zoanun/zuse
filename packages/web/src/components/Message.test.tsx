@@ -17,10 +17,25 @@ describe('Message', () => {
   it('renders a tool call with its result', () => {
     render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
-      { kind: 'tool-result', id: 't1', output: 'a b c', isError: false },
+      { kind: 'tool-result', id: 't1', name: 'Bash', output: 'a b c', isError: false },
     ] }} />)
     expect(screen.getByText(/⚙ Bash/)).toBeInTheDocument()
     expect(screen.getByText('a b c')).toBeInTheDocument()
+  })
+
+  it('renders a system notice with the kind class', () => {
+    const { container } = render(<Message msg={{ id: 'n0', role: 'system', parts: [{ kind: 'text', text: 'boom' }], noticeKind: 'error' }} />)
+    const note = container.querySelector('.note.bad')
+    expect(note).not.toBeNull()
+    expect(note?.textContent).toBe('boom')
+  })
+
+  it('suppresses TodoWrite tool calls (shown in the TodosPanel instead)', () => {
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'tool-use', id: 't1', name: 'TodoWrite', input: { todos: [] } },
+      { kind: 'tool-result', id: 't1', name: 'TodoWrite', output: 'ok', isError: false },
+    ] }} />)
+    expect(container.querySelector('.tool')).toBeNull()
   })
 
   it('does not crash when a tool-use has undefined input', () => {
@@ -34,7 +49,7 @@ describe('Message', () => {
 
   it('renders an orphan tool-result without a matching tool-use', () => {
     render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
-      { kind: 'tool-result', id: 't9', output: 'lonely', isError: false },
+      { kind: 'tool-result', id: 't9', name: 'tool', output: 'lonely', isError: false },
     ] }} />)
     expect(screen.getByText('lonely')).toBeInTheDocument()
   })
@@ -42,7 +57,7 @@ describe('Message', () => {
   it('marks an error tool-result with the err class', () => {
     const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Bash', input: {} },
-      { kind: 'tool-result', id: 't1', output: 'boom', isError: true },
+      { kind: 'tool-result', id: 't1', name: 'Bash', output: 'boom', isError: true },
     ] }} />)
     expect(container.querySelector('.result.err')).not.toBeNull()
   })

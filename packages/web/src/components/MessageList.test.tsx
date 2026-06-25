@@ -1,37 +1,36 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MessageList } from './MessageList.js'
-import type { Notice } from '../state/types.js'
+import type { Message } from '../state/types.js'
 
 describe('MessageList', () => {
-  it('shows the empty state when there are no messages or notices', () => {
-    render(<MessageList messages={[]} notices={[]} thinking={false} />)
+  it('shows the empty state when there are no messages', () => {
+    render(<MessageList messages={[]} thinking={false} />)
     expect(screen.getByText('Ask zuse anything to get started.')).toBeInTheDocument()
   })
 
   it('hides the empty state once a message exists', () => {
     render(<MessageList
       messages={[{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }]}
-      notices={[]}
       thinking={false}
     />)
     expect(screen.queryByText('Ask zuse anything to get started.')).toBeNull()
   })
 
-  it('maps notice kinds to their classes (error→bad, warn→warn, info→live)', () => {
-    const notices: Notice[] = [
-      { id: 'n0', text: 'boom', kind: 'error' },
-      { id: 'n1', text: 'careful', kind: 'warn' },
-      { id: 'n2', text: 'fyi', kind: 'info' },
+  it('renders system notice messages with their kind classes (error→bad, warn→warn, info→live)', () => {
+    const messages: Message[] = [
+      { id: 'n0', role: 'system', parts: [{ kind: 'text', text: 'boom' }], noticeKind: 'error' },
+      { id: 'n1', role: 'system', parts: [{ kind: 'text', text: 'careful' }], noticeKind: 'warn' },
+      { id: 'n2', role: 'system', parts: [{ kind: 'text', text: 'fyi' }], noticeKind: 'info' },
     ]
-    const { container } = render(<MessageList messages={[]} notices={notices} thinking={false} />)
+    const { container } = render(<MessageList messages={messages} thinking={false} />)
     expect(container.querySelector('.note.bad')?.textContent).toBe('boom')
     expect(container.querySelector('.note.warn')?.textContent).toBe('careful')
     expect(container.querySelector('.note.live')?.textContent).toBe('fyi')
   })
 
   it('renders a thinking indicator when thinking', () => {
-    const { container } = render(<MessageList messages={[]} notices={[]} thinking={true} />)
+    const { container } = render(<MessageList messages={[]} thinking={true} />)
     expect(container.querySelector('.thinking')).not.toBeNull()
   })
 })

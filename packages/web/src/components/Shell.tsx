@@ -18,11 +18,11 @@ export function Shell() {
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
-      <Sidebar onNewChat={() => { dispatch({ kind: 'reset' }); setMenuOpen(false) }} />
+      <Sidebar onNewChat={() => { send({ type: 'reset-session' }); dispatch({ kind: 'reset' }); setMenuOpen(false) }} />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />
         <main className="chat">
-          <MessageList messages={state.messages} notices={state.notices} thinking={state.thinking} />
+          <MessageList messages={state.messages} thinking={state.thinking} />
           {state.pendingPermissions.length > 0 ? (
             <div className="perm-wrap">
               {state.pendingPermissions.map((p) => <PermissionCard key={p.id} pending={p} onReply={onReply} />)}

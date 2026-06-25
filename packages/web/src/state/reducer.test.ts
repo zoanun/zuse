@@ -36,7 +36,7 @@ describe('reduce', () => {
     ])
     expect(s.messages[0]!.parts).toEqual([
       { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
-      { kind: 'tool-result', id: 't1', output: 'files', isError: false },
+      { kind: 'tool-result', id: 't1', name: 'Bash', output: 'files', isError: false },
     ])
   })
 
@@ -67,12 +67,12 @@ describe('reduce', () => {
     expect(s.messages).toHaveLength(1)
   })
 
-  it('routes failover/warning/error to notices', () => {
+  it('routes failover/warning/error to inline system messages', () => {
     const s = run([
       { kind: 'server', msg: ev({ type: 'warning', message: 'careful' }) },
       { kind: 'server', msg: { type: 'error', message: 'boom' } },
     ])
-    expect(s.notices.map((n) => n.kind)).toEqual(['warn', 'error'])
+    expect(s.messages.filter((m) => m.role === 'system').map((m) => m.noticeKind)).toEqual(['warn', 'error'])
   })
 
   it('connection action updates connection', () => {
