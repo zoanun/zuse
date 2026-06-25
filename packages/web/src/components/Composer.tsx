@@ -1,0 +1,34 @@
+import { useRef, useState } from 'react'
+
+export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSend: (text: string) => void; onStop: () => void }) {
+  const [value, setValue] = useState('')
+  const taRef = useRef<HTMLTextAreaElement>(null)
+
+  function submit() {
+    const v = value.trim()
+    if (!v || disabled) return
+    onSend(v); setValue('')
+    if (taRef.current) taRef.current.style.height = 'auto'
+  }
+  return (
+    <div className="composer-wrap">
+      <div className="composer">
+        <textarea
+          ref={taRef}
+          rows={1}
+          placeholder="Message zuse…"
+          value={value}
+          disabled={disabled}
+          onChange={(e) => {
+            setValue(e.target.value)
+            e.target.style.height = 'auto'
+            e.target.style.height = Math.min(e.target.scrollHeight, 168) + 'px'
+          }}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+        />
+        {disabled ? <button className="ghost" onClick={onStop}>Stop</button> : null}
+        <button className="send-btn" aria-label="Send message" onClick={submit} disabled={disabled}>↑</button>
+      </div>
+    </div>
+  )
+}
