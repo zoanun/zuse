@@ -274,6 +274,34 @@ export class SessionManager {
   }
 
   /**
+   * "New chat": forget the conversation and ALL transient turn state while keeping the
+   * environment (model client, tool registry, settings, systemPrompt, cwd, provider). Any
+   * in-flight turn is interrupted first so it stops dirtying state we are about to clear.
+   * After clearing, emits a todos-update with an empty list so connected clients drop their
+   * todos panel; future snapshots will report messageCount 0, so no extra event is needed
+   * for the conversation itself (the frontend resets its message view locally).
+   */
+  reset(): void {
+    // Abort any running turn BEFORE clearing — an in-progress turn would otherwise keep
+    // writing into the conversation/usage/checkpoints we are about to throw away.
+    this.interrupt()
+
+    this.conversation = new Conversation()
+    this.todos = []
+    this.pending.clear()
+    this.totalUsage = undefined
+    this.contextTokens = undefined
+    this.checkpoints = []
+    this.steerQueue.length = 0
+    this.sessionAllow.length = 0
+    this.badModels.clear()
+    this.ineffectiveCompaction = 0
+    this.isThinking = false
+
+    this.emit({ type: 'todos-update', todos: [] })
+  }
+
+  /**
    * Compact the conversation: summarize old history, keep recent turns verbatim.
    * Port of the TUI's compactConversation (minus React). Replaces this.conversation
    * with a new compacted ledger and resets contextTokens (next turn re-measures).

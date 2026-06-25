@@ -7,6 +7,7 @@ function fakeMgr(): SessionManagerLike & {
   steer: ReturnType<typeof vi.fn>
   resolvePermission: ReturnType<typeof vi.fn>
   switchModel: ReturnType<typeof vi.fn>
+  reset: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -14,6 +15,7 @@ function fakeMgr(): SessionManagerLike & {
     steer: vi.fn(),
     resolvePermission: vi.fn(),
     switchModel: vi.fn(),
+    reset: vi.fn(),
   }
 }
 
@@ -37,6 +39,14 @@ describe('applyClientMessage', () => {
     expect(mgr.steer).toHaveBeenCalledWith('go')
     expect(mgr.resolvePermission).toHaveBeenCalledWith('p1', 'allow')
     expect(mgr.switchModel).toHaveBeenCalledWith('anthropic', 'x')
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('dispatches reset-session to reset (no payload required)', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'reset-session' }), err)
+    expect(mgr.reset).toHaveBeenCalledTimes(1)
     expect(err).not.toHaveBeenCalled()
   })
 

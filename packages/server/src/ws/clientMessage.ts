@@ -4,7 +4,7 @@ import type { ClientMessage } from '@zuse/protocol'
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type SessionManagerLike = Pick<
   SessionManager,
-  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel'
+  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset'
 >
 
 /**
@@ -59,6 +59,9 @@ export function applyClientMessage(
           return
         }
         mgr.switchModel(msg.providerId, msg.model)
+        return
+      case 'reset-session':
+        mgr.reset()
         return
       default:
         sendError(`unknown message type: ${(msg as { type: string }).type}`)

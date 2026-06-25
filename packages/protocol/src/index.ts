@@ -70,6 +70,7 @@ export type ClientMessage =
   | { type: 'steer'; text: string }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
   | { type: 'switch-model'; providerId: string; model: string }
+  | { type: 'reset-session' }
 
 /** 下行 server → client。 */
 export type ServerMessage =

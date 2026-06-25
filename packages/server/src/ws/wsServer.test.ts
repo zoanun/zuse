@@ -145,6 +145,24 @@ describe('ws wiring', () => {
     ws.close()
   })
 
+  it('rejects a WS upgrade without a valid session cookie (401)', async () => {
+    const { server } = await makeServer()
+    // Connect WITHOUT a cookie header — the harness only mints a cookie via login,
+    // it does not auto-inject one, so the upgrade hits the missing-cookie 401 path.
+    const ws = new WebSocket(wsUrl(server.url))
+    const status = await new Promise<number>((resolve, reject) => {
+      // ws surfaces a non-101 upgrade response as 'unexpected-response' carrying the
+      // HTTP status. The server writes "401 Unauthorized" then destroys the socket, so
+      // some ws versions instead emit 'error' (socket torn down) — treat that as a 401
+      // as well, since the intent is "not authorized, the socket never opened".
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0))
+      ws.on('error', () => resolve(401))
+      ws.on('open', () => { ws.close(); reject(new Error('should not open')) })
+    })
+    expect(status).toBe(401)
+    ws.close()
+  })
+
   it('rejects an unauthenticated client', async () => {
     const { server } = await makeServer()
     const ws = new WebSocket(wsUrl(server.url))

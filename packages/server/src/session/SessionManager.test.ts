@@ -3,7 +3,7 @@ import { SessionManager, remapCheckpoints } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { Conversation, ToolRegistry } from '@zuse/core'
 import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
-import type { SessionCheckpoint } from './events.js'
+import type { SessionCheckpoint, SessionEvent } from './events.js'
 
 /**
  * A ModelClient whose turn is held open until release() is called. Lets tests
@@ -791,6 +791,44 @@ describe('remapCheckpoints', () => {
     const input = [cp(5)]
     remapCheckpoints(input, 3)
     expect(input[0]!.messageIndex).toBe(5)
+  })
+})
+
+describe('SessionManager reset ("New chat")', () => {
+  it('clears todos/usage/context, zeroes messageCount, and emits an empty todos-update', async () => {
+    // Run a real turn so totalUsage/contextTokens and the conversation are populated,
+    // then assert reset() wipes them back to a brand-new state.
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'hi' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 } },
+    ]
+    const { mgr } = makeManagerWith([script])
+    await mgr.submit('first')
+
+    mgr.setTodos([{ content: 'task A', status: 'pending' }])
+    expect(mgr.getState().todos.length).toBeGreaterThan(0)
+    expect(mgr.getState().messageCount).toBeGreaterThan(0)
+    expect(mgr.getState().totalUsage).toBeDefined()
+    expect(mgr.getState().contextTokens).toBeDefined()
+
+    // Subscribe AFTER seeding so we only observe the reset-driven emission.
+    const events: SessionEvent[] = []
+    mgr.subscribe((e) => events.push(e))
+
+    mgr.reset()
+
+    const s = mgr.getState()
+    expect(s.todos).toEqual([])
+    expect(s.messageCount).toBe(0)
+    expect(s.totalUsage).toBeUndefined()
+    expect(s.contextTokens).toBeUndefined()
+
+    const todosUpdate = events.find(
+      (e): e is Extract<SessionEvent, { type: 'todos-update' }> => e.type === 'todos-update',
+    )
+    expect(todosUpdate).toBeDefined()
+    expect(todosUpdate?.todos).toEqual([])
   })
 })
 
