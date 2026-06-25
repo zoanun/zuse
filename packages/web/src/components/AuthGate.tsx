@@ -6,6 +6,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>('checking')
   const [msg, setMsg] = useState('')
   const [pw, setPw] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     fetch('/api/auth/status').then((r) => r.json()).then((d) => {
@@ -17,12 +18,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (phase === 'checking') return <div className="auth-card"><p>checking…</p></div>
 
   async function submit(path: string) {
-    setMsg('')
-    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) })
-    if (r.ok) {
-      if (path.endsWith('/setup')) { setMsg('Password set — reloading…'); setTimeout(() => location.reload(), 600) }
-      else setPhase('ready')
-    } else setMsg(r.status === 401 ? 'Incorrect password' : 'error ' + r.status)
+    if (busy) return // guard against double-submit (Enter + click)
+    setMsg(''); setBusy(true)
+    try {
+      const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      if (r.ok) {
+        if (path.endsWith('/setup')) { setMsg('Password set — reloading…'); setTimeout(() => location.reload(), 600) }
+        else setPhase('ready')
+      } else setMsg(r.status === 401 ? 'Incorrect password' : 'error ' + r.status)
+    } catch (e) {
+      setMsg('Network error — ' + String((e as Error)?.message ?? e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const isSetup = phase === 'setup'
@@ -37,8 +45,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
               onChange={(e) => setPw(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void submit(isSetup ? '/api/auth/setup' : '/api/auth/login') }} />
           </div>
-          <button style={{ marginTop: 14, width: '100%' }} onClick={() => void submit(isSetup ? '/api/auth/setup' : '/api/auth/login')}>
-            {isSetup ? 'Set password' : 'Log in'}
+          <button style={{ marginTop: 14, width: '100%' }} disabled={busy} onClick={() => void submit(isSetup ? '/api/auth/setup' : '/api/auth/login')}>
+            {busy ? 'Working…' : isSetup ? 'Set password' : 'Log in'}
           </button>
           <div className="msg-error">{msg}</div>
         </>
