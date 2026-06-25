@@ -1,45 +1,57 @@
 // DEV TEST PAGE — replaced by the real SPA in F4
 export const DEV_PAGE_HTML: string = `<!doctype html>
 <!-- DEV TEST PAGE — replaced by the real SPA in F4 -->
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>zuse — DEV TEST PAGE</title>
+<script>(function () { try { var t = localStorage.getItem('zuse-theme'); document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light'); } catch (e) {} }());</script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --ground: #0E1626;
-    --surface: #152034;
-    --surface-2: #1B2942;
-    --line: #243349;
-    --text: #DCE3F0;
-    --muted: #8492AD;
-    --faint: #5C6883;
-    --accent: #8B9CFF;
-    --accent-2: #B7A0FF;
-    --accent-soft: rgba(139, 156, 255, 0.13);
-    --good: #5BD0A0;
-    --warn: #E5B567;
-    --bad: #F0827A;
     --sans: -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
     --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "Courier New", monospace;
     --radius: 14px;
+  }
+  :root[data-theme="dark"] {
+    --ground: #0E1626; --surface: #152034; --surface-2: #1B2942; --line: #243349;
+    --text: #DCE3F0; --muted: #8492AD; --faint: #5C6883;
+    --accent: #8B9CFF; --accent-2: #B7A0FF;
+    --accent-soft: rgba(139, 156, 255, 0.13); --accent-border: rgba(139, 156, 255, 0.35); --accent-glow: rgba(139, 156, 255, 0.5);
+    --on-accent: #0B1020;
+    --good: #5BD0A0; --warn: #E5B567; --bad: #F0827A;
+  }
+  :root[data-theme="light"] {
+    --ground: #F4F6FB; --surface: #FFFFFF; --surface-2: #EDF1F8; --line: #DCE3EF;
+    --text: #1B2333; --muted: #5C6883; --faint: #97A1B5;
+    --accent: #5B6CF0; --accent-2: #7A5AF0;
+    --accent-soft: rgba(91, 108, 240, 0.12); --accent-border: rgba(91, 108, 240, 0.40); --accent-glow: rgba(91, 108, 240, 0.30);
+    --on-accent: #FFFFFF;
+    --good: #1E9E6A; --warn: #B5791F; --bad: #D8453B;
   }
 
   html, body { height: 100%; }
   body {
     font-family: var(--sans);
     color: var(--text);
-    background:
-      radial-gradient(1100px 560px at 82% -12%, rgba(139, 156, 255, 0.10), transparent 60%),
-      radial-gradient(900px 520px at -5% 112%, rgba(183, 160, 255, 0.06), transparent 55%),
-      var(--ground);
+    background: var(--ground);
     background-attachment: fixed;
     min-height: 100%;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    transition: background-color 0.2s, color 0.2s;
+  }
+  :root[data-theme="dark"] body {
+    background-image:
+      radial-gradient(1100px 560px at 82% -12%, rgba(139, 156, 255, 0.10), transparent 60%),
+      radial-gradient(900px 520px at -5% 112%, rgba(183, 160, 255, 0.06), transparent 55%);
+  }
+  :root[data-theme="light"] body {
+    background-image:
+      radial-gradient(1100px 560px at 82% -12%, rgba(91, 108, 240, 0.06), transparent 60%),
+      radial-gradient(900px 520px at -5% 112%, rgba(122, 90, 240, 0.04), transparent 55%);
   }
 
   .app { max-width: 920px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 20px; }
@@ -56,7 +68,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .mark {
     width: 13px; height: 13px; border-radius: 3px; rotate: 45deg;
     background: linear-gradient(135deg, var(--accent), var(--accent-2));
-    box-shadow: 0 0 16px rgba(139, 156, 255, 0.5);
+    box-shadow: 0 0 16px var(--accent-glow);
   }
   .eyebrow {
     font: 600 10px/1 var(--mono); letter-spacing: 0.22em; color: var(--faint);
@@ -95,9 +107,14 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   button {
     font-family: var(--sans); font-size: 14px; font-weight: 600; cursor: pointer;
     border: 1px solid transparent; border-radius: 10px; padding: 11px 17px;
-    background: var(--accent); color: #0B1020; transition: filter 0.12s, opacity 0.12s;
+    background: var(--accent); color: var(--on-accent); transition: filter 0.12s, opacity 0.12s;
   }
   button:hover { filter: brightness(1.08); }
+  .icon-btn {
+    background: var(--surface); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 6px 10px; font-size: 14px; line-height: 1; cursor: pointer; font-weight: 400;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text); filter: none; }
   button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
   button.ghost { background: transparent; border-color: var(--line); color: var(--text); }
   button.ghost:hover { background: var(--surface-2); filter: none; }
@@ -118,7 +135,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .msg.agent .bubble { background: var(--surface); border: 1px solid var(--line); border-top-left-radius: 4px; }
   .msg.you { align-self: flex-end; align-items: flex-end; }
   .msg.you .role { color: var(--accent); }
-  .msg.you .bubble { background: var(--accent-soft); border: 1px solid rgba(139, 156, 255, 0.35); border-top-right-radius: 4px; }
+  .msg.you .bubble { background: var(--accent-soft); border: 1px solid var(--accent-border); border-top-right-radius: 4px; }
 
   .caret { display: inline-block; width: 7px; height: 1.05em; vertical-align: -2px; margin-left: 2px; border-radius: 1px; background: var(--accent); animation: blink 1s steps(2, start) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -174,6 +191,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   <header class="topbar">
     <div class="brand"><span class="mark"></span> zuse <span class="eyebrow">DEV TEST PAGE</span></div>
     <div class="stats">
+      <button class="icon-btn" id="theme-btn" title="Toggle light / dark" aria-label="Toggle light or dark theme">☾</button>
       <span class="chip" id="chip-health">health…</span>
       <span class="chip" id="chip-model" hidden></span>
       <span class="chip" id="chip-ctx" hidden></span>
@@ -215,6 +233,19 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   var currentText = null, currentCaret = null, thinkingEl = null;
   var lastCtx, lastUsage;
   var toolCards = {}, permCards = {};
+
+  // ── theme toggle (works on every view, incl. login) ──────────
+  function themeGlyph() { return document.documentElement.getAttribute('data-theme') === 'light' ? '☾' : '☀'; }
+  (function () {
+    var tb = el('theme-btn'); if (!tb) return;
+    tb.textContent = themeGlyph();
+    tb.addEventListener('click', function () {
+      var next = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('zuse-theme', next); } catch (e) {}
+      tb.textContent = themeGlyph();
+    });
+  }());
 
   // ── health (always available) ────────────────────────────────
   fetch('/healthz').then(function (r) { return r.json(); }).then(function (d) {
