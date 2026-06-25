@@ -5,6 +5,10 @@ beforeEach(() => { localStorage.clear(); document.documentElement.removeAttribut
 
 describe('theme', () => {
   it('defaults to light', () => { expect(getTheme()).toBe('light') })
+  it('reflects a pre-set data-theme attribute (the preload path)', () => {
+    document.documentElement.setAttribute('data-theme', 'dark')
+    expect(getTheme()).toBe('dark')
+  })
   it('toggles and persists + sets attribute', () => {
     const next = toggleTheme()
     expect(next).toBe('dark')
