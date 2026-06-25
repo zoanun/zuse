@@ -108,10 +108,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 
   /* assistant: avatar + plain prose */
-  .msg.agent { flex-direction: row; align-items: flex-start; gap: 13px; align-self: stretch; max-width: 100%; }
-  .av { width: 28px; height: 28px; border-radius: 8px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-style: italic; font-size: 16px; box-shadow: 0 2px 8px var(--accent-glow); }
-  .msg.agent .body { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding-top: 3px; }
-  .msg.agent .name { font-size: 13px; font-weight: 650; color: var(--text); }
+  .msg.agent { align-self: stretch; max-width: 100%; }
   .msg.agent .text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
 
   /* user: soft neutral bubble, right */
@@ -124,6 +121,9 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .text p { margin: 9px 0; }
   .text ul, .text ol { margin: 9px 0; padding-left: 1.5em; }
   .text li { margin: 3px 0; }
+  .text ul.tasklist { list-style: none; padding-left: 0.2em; }
+  .text li.task { display: flex; align-items: flex-start; gap: 8px; }
+  .text li.task input { margin: 4px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
   .text code { font-family: var(--mono); font-size: 0.88em; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
   .text pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
   .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; white-space: pre; }
@@ -135,7 +135,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .text hr { border: none; border-top: 1px solid var(--line); margin: 16px 0; }
   .text > :first-child { margin-top: 0; } .text > :last-child { margin-bottom: 0; }
 
-  .tool { align-self: stretch; margin-left: 41px; max-width: calc(100% - 41px); background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; }
+  .tool { align-self: stretch; max-width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; }
   .tool .head { color: var(--accent); font-weight: 600; }
   .tool .args { color: var(--muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
   .tool .result { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
@@ -146,7 +146,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   .note.bad { color: var(--bad); }
   .note.live { color: var(--accent); }
 
-  .perm { align-self: stretch; margin-left: 41px; max-width: calc(100% - 41px); background: var(--surface); border: 1px solid var(--accent-border); border-radius: 14px; padding: 14px; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .perm { align-self: stretch; max-width: 100%; background: var(--surface); border: 1px solid var(--accent-border); border-radius: 14px; padding: 14px; box-shadow: 0 0 0 3px var(--accent-soft); }
   .perm .q { font-size: 14px; font-weight: 650; margin-bottom: 5px; }
   .perm .spec { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-word; margin-bottom: 13px; }
   .perm .actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -260,7 +260,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     s = s.replace(/[_][_]([^_]+)[_][_]/g, '<strong>$1</strong>');
     s = s.replace(/[*]([^*]+)[*]/g, '<em>$1</em>');
     s = s.replace(/[~][~]([^~]+)[~][~]/g, '<del>$1</del>');
-    s = s.replace(/[[]([^]]*)[]][(]([^)]*)[)]/g, function (m, t, u) {
+    s = s.replace(/[[](.*?)][(](.*?)[)]/g, function (m, t, u) {
       var safe = /^(https?:|mailto:|[/]|[#])/i.test(u) ? u : '#';
       return '<a href="' + safe + '" target="_blank" rel="noopener">' + t + '</a>';
     });
@@ -277,7 +277,7 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   function fenced(line) { return line.replace(/^ +/, '').slice(0, 3) === BT + BT + BT; }
   function blockStart(line) {
     return /^ *(#{1,6}) /.test(line) || /^ *[-*+] /.test(line) || /^ *[0-9]+[.] /.test(line) ||
-      /^ *> ?/.test(line) || fenced(line) || line.indexOf('|') >= 0;
+      /^ *&gt; ?/.test(line) || fenced(line) || line.indexOf('|') >= 0;
   }
   function mdToHtml(src) {
     var lines = escapeHtml(src).split(NL);
@@ -301,15 +301,21 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
       if (hm) { var lvl = hm[1].length; out.push('<h' + lvl + '>' + mdInline(hm[2]) + '</h' + lvl + '>'); i++; continue; }
       var tl = line.trim();
       if (tl.length >= 3 && (allSame(tl, '-') || allSame(tl, '*') || allSame(tl, '_'))) { out.push('<hr>'); i++; continue; }
-      if (/^ *> ?/.test(line)) {
+      if (/^ *&gt; ?/.test(line)) {
         var bq = [];
-        while (i < lines.length && /^ *> ?/.test(lines[i])) { bq.push(lines[i].replace(/^ *> ?/, '')); i++; }
+        while (i < lines.length && /^ *&gt; ?/.test(lines[i])) { bq.push(lines[i].replace(/^ *&gt; ?/, '')); i++; }
         out.push('<blockquote>' + mdInline(bq.join('<br>')) + '</blockquote>'); continue;
       }
       if (/^ *[-*+] /.test(line)) {
         var items = [];
         while (i < lines.length && /^ *[-*+] /.test(lines[i])) { items.push(lines[i].replace(/^ *[-*+] /, '')); i++; }
-        out.push('<ul>' + items.map(function (it) { return '<li>' + mdInline(it) + '</li>'; }).join('') + '</ul>'); continue;
+        var isTask = false;
+        var lis = items.map(function (it) {
+          var tm = it.match(/^[[]([ xX])] (.*)$/);
+          if (tm) { isTask = true; var ck = tm[1] === ' ' ? '' : ' checked'; return '<li class="task"><input type="checkbox" disabled' + ck + '> <span>' + mdInline(tm[2]) + '</span></li>'; }
+          return '<li>' + mdInline(it) + '</li>';
+        }).join('');
+        out.push('<ul' + (isTask ? ' class="tasklist"' : '') + '>' + lis + '</ul>'); continue;
       }
       if (/^ *[0-9]+[.] /.test(line)) {
         var oi = [];
@@ -374,15 +380,11 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     var b = make('div', 'bubble'); b.textContent = text; m.appendChild(b);
     stream.appendChild(m); scroll(); return m;
   }
-  function avatar() { var a = make('div', 'av'); a.textContent = 'Z'; return a; }
   function startAgent() {
     clearEmpty(); removeThinking();
     var m = make('div', 'msg agent');
-    m.appendChild(avatar());
-    var body = make('div', 'body');
-    var nm = make('div', 'name'); nm.textContent = 'zuse'; body.appendChild(nm);
     currentText = make('div', 'text');
-    body.appendChild(currentText); m.appendChild(body);
+    m.appendChild(currentText);
     stream.appendChild(m); currentMd = ''; scroll();
   }
   function appendDelta(s) { if (!currentText) startAgent(); currentMd += s; currentText.innerHTML = mdToHtml(currentMd); scroll(); }
@@ -392,7 +394,6 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     if (!thinking) return;
     removeThinking();
     thinkingEl = make('div', 'msg agent thinking');
-    thinkingEl.appendChild(avatar());
     var d = make('div', 'dots'); d.appendChild(make('i')); d.appendChild(make('i')); d.appendChild(make('i'));
     thinkingEl.appendChild(d);
     stream.appendChild(thinkingEl); scroll();
