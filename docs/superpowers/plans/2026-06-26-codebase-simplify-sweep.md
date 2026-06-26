@@ -6,9 +6,27 @@
 > **不审**: `*.test.*`、`dist`、生成物;`packages/server/src/http/devPage.ts`(655 行一次性 dev HTML 字符串,即将被真 SPA 取代,无审价值)。
 
 ## 进度
-- [x] **protocol**(111 行,纯 type-only):内联看过,无逻辑/无重复,无可清理。
-- [x] **web**(921 行,作单片):4 角度已跑,发现待应用(见下"web 待办")。
-- [ ] core(6 片) · tools(6 片) · tui(7 片) · server(3 片)
+- [x] **protocol**(纯 type-only):无可清理。
+- [x] **web**(单片):已审 + 已应用(memo Message/插件 hoist/TodosPanel 查表/partsText)。
+- [x] **core/tools/tui/server 22 片**:审查扇出完成(workflow `wf_b5884e81-40d`,22 代理、83 条发现,全量在 `tasks/wfrtbtqc3.output`)。
+
+## 扫描结果(2026-06-26)
+83 条发现,绝大多数是**稳定旧码上**的低severity小项 / 跨包"抽公共 util" / 行为敏感处。按 `/simplify` 质量栏(改质量、不改行为、不为清理而冒险),**应用了高置信安全子集**,其余 triaged-deferred。
+
+**已应用(commit 232c869,core+server;web 在 b973e1a):**
+- core compaction `messageChars()` 去重(2 处逐字重复,high)
+- core settings 三处 dedupe 循环化;hooks `HOOK_TIMEOUT_MS` 常量;openai-client 类型谓词 filter + `map(b=>b.text)`
+- server `steer()` 去重 trim
+- web:`React.memo(Message)`+稳定 onRevert(热路径)、Markdown 插件 hoist、TodosPanel 查表、partsText 抽取
+
+**deferred(不应用,理由分类):**
+- **行为敏感 / 关键路径**(改了可能微妙改变行为,stable 码不冒险):agent.ts 每回合 `[...base,...staged]` spread(O(N²),需重构热路径)、bash-security extractQuotedContent 冗余判断(安全相关)、parseKeypress ParsedKey 工厂、hooks 选择性 env(hook 可能依赖全 env)、read.ts 用 clampPositiveInt(改校验语义)、tui clampIndex 复用(无单测、夹取语义)。
+- **跨包/新模块抽取**(churn 大、引入跨包耦合,收益边际):`ensureError`/`toErrorMessage`(9 处 err 转换)、web fetch-seam、`capAtLineBoundary`(core↔tools)、时间戳格式 util、`flattenWhitespace`/`capLine`。
+- **精细文件**:workflow.ts(resume 日志 + 已知 tsc 债)的 mkdirSync/模型解析。
+- **微优化/nitpick**:todo 计数、commandMenu rank 预算、SessionManager checkpoint Map 索引(checkpoints 通常很小)、各种"魔数→常量"。
+- 这些全部留作可选 follow-up,需要时按文件单独处理。
+
+> 注:`workflow.test.ts` 仍有 4 处预存 tsc 类型错(`c9d6192` 带入,vitest 通过、仅 typecheck 报),与本轮无关,另修。
 
 ## 切片清单
 
