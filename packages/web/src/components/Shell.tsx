@@ -21,9 +21,6 @@ export function Shell() {
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
       <Sidebar
           onNewChat={() => { send({ type: 'reset-session' }); dispatch({ kind: 'reset' }); setMenuOpen(false) }}
-          checkpoints={state.checkpoints}
-          thinking={state.thinking}
-          onRevert={onRevert}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />

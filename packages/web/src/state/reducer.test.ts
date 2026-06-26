@@ -80,7 +80,7 @@ describe('reduce', () => {
     expect(reduce(initialState, { kind: 'connection', status: 'live' }).connection).toBe('live')
   })
 
-  it('applySnapshot rebuilds messages and sets checkpoints', () => {
+  it('applySnapshot rebuilds messages (checkpoints list ignored on client)', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 2,
@@ -99,7 +99,6 @@ describe('reduce', () => {
       { kind: 'text', text: 'hi' },
       { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
     ], checkpointId: undefined })
-    expect(s.checkpoints).toEqual([{ id: 'cp1', label: 'after hello' }])
   })
 
   it('applySnapshot carries checkpointId onto user messages', () => {
@@ -114,11 +113,6 @@ describe('reduce', () => {
     expect(s.messages[0]!.checkpointId).toBe('cpA')
   })
 
-  it('checkpoint-recorded appends to checkpoints', () => {
-    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 3, label: 'after step 3' }) })
-    expect(s.checkpoints).toEqual([{ id: 'cp2', label: 'after step 3' }])
-  })
-
   it('checkpoint-recorded attaches e.id to the last user message lacking a checkpointId', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'first' },
@@ -129,7 +123,6 @@ describe('reduce', () => {
     const users = s.messages.filter((m) => m.role === 'user')
     expect(users[0]!.checkpointId).toBe('cp1')
     expect(users[1]!.checkpointId).toBe('cp2')
-    expect(s.checkpoints).toEqual([{ id: 'cp1', label: 'turn 1' }, { id: 'cp2', label: 'turn 2' }])
   })
 
   it('reverted adds an info notice', () => {

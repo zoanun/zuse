@@ -2,7 +2,7 @@ import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart } from 
 import type { AppState, Connection, Part } from './types.js'
 
 export const initialState: AppState = {
-  messages: [], todos: [], pendingPermissions: [], checkpoints: [],
+  messages: [], todos: [], pendingPermissions: [],
   thinking: false, connection: 'connecting',
 }
 
@@ -59,7 +59,6 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
     messages: s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId })),
-    checkpoints: s.checkpoints,
   }
 }
 
@@ -94,7 +93,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
         const m = msgs[i]!
         if (m.role === 'user' && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
       }
-      return { ...state, messages: msgs, checkpoints: [...state.checkpoints, { id: e.id, label: e.label }] }
+      return { ...state, messages: msgs }
     }
     case 'reverted': return withNotice(state, 'reverted to checkpoint', 'info')
     default: return state
