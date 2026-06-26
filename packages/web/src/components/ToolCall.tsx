@@ -1,10 +1,10 @@
 import type { Part } from '../state/types.js'
 
 export function ToolCall({ use, result }: { use: Extract<Part, { kind: 'tool-use' }>; result?: Extract<Part, { kind: 'tool-result' }> }) {
-  const { head, body } = describe(use)
+  const { name, tag, head, body } = describe(use)
   return (
     <div className="tool">
-      <div className="head">⚙ {use.name}{head ? <span className="tool-file">{head}</span> : null}</div>
+      <div className="head">⚙ {name ?? use.name}{tag ? <span className="tool-tag">{tag}</span> : null}{head ? <span className="tool-file">{head}</span> : null}</div>
       {body?.kind === 'diff'
         ? body.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
         : body?.kind === 'code'
@@ -31,15 +31,30 @@ const PRIMARY_ARG: Record<string, string> = {
   WebFetch: 'url', WebSearch: 'query', Skill: 'name', LspInstall: 'lang',
 }
 
+/** The descriptor that drives a tool card: optional name override + source tag, head, body. */
+interface Desc { name?: string; tag?: string; head: string | null; body: Body }
+
 /**
- * Decide how a tool-use renders: the muted `head` after the tool name, and the `body` below.
- * Each tool surfaces its real arguments (a diff, the file content, the command, the query…)
- * instead of escaped JSON; the raw-JSON args remain the fallback for anything unrecognised.
+ * Decide how a tool-use renders: an optional display `name`/source `tag`, the muted `head`
+ * after the tool name, and the `body` below. Each tool surfaces its real arguments (a diff,
+ * the file content, the command, the query…) instead of escaped JSON; the raw-JSON args
+ * remain the fallback for anything unrecognised.
  */
-function describe(use: Extract<Part, { kind: 'tool-use' }>): { head: string | null; body: Body } {
+function describe(use: Extract<Part, { kind: 'tool-use' }>): Desc {
   const inp = (use.input ?? {}) as Record<string, unknown>
   const str = (k: string): string | undefined => (typeof inp[k] === 'string' ? (inp[k] as string) : undefined)
-  const json = (): { head: null; body: Body } => ({ head: null, body: { kind: 'json', text: safeJson(use.input) } })
+  const json = (): Desc => ({ head: null, body: { kind: 'json', text: safeJson(use.input) } })
+
+  // MCP tools are registered as `mcp__<server>__<tool>`: show the clean tool name with a
+  // "MCP · <server>" badge and pretty-print the (arbitrary) args instead of the mangled name.
+  if (use.name.startsWith('mcp__')) {
+    const rest = use.name.slice('mcp__'.length)
+    const sep = rest.indexOf('__')
+    const server = sep >= 0 ? rest.slice(0, sep) : ''
+    const tool = sep >= 0 ? rest.slice(sep + 2) : rest
+    const pretty = prettyJson(use.input)
+    return { name: tool, tag: server ? `MCP · ${server}` : 'MCP', head: null, body: pretty ? code(pretty) : null }
+  }
 
   // Edit / MultiEdit → file in head + line diff.
   const edits = editsFrom(use)
@@ -71,11 +86,24 @@ function describe(use: Extract<Part, { kind: 'tool-use' }>): { head: string | nu
       const sym = str('symbol')
       return { head: sym ? `${op}: ${sym}` : op, body: null }
     }
+    case 'McpSearch': {
+      const action = str('action')
+      if (!action) return json()
+      const arg = str('query') ?? str('tool')
+      return { head: arg ? `${action}: ${arg}` : action, body: null }
+    }
     default: return json()
   }
 }
 
 const code = (text: string, cls = 'write-body'): Body => ({ kind: 'code', text, cls })
+
+// Pretty-print MCP args (2-space indent) so arbitrary tool inputs read as JSON instead of one
+// cramped line; '' for an empty/absent object so the card shows just the name + tag.
+function prettyJson(o: unknown): string {
+  if (!o || typeof o !== 'object' || Object.keys(o as object).length === 0) return ''
+  try { return JSON.stringify(o, null, 2) ?? '' } catch { return '' }
+}
 
 /** A computed diff for one Edit (or each edit of a MultiEdit). */
 function EditDiff({ lines }: { lines: DiffLine[] }) {

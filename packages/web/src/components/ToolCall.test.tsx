@@ -105,6 +105,30 @@ describe('ToolCall', () => {
     expect(screen.getByText('definition: ToolCall')).toBeInTheDocument()
   })
 
+  it('renders an MCP tool with a clean name, a MCP·server badge, and pretty args', () => {
+    const { container } = render(
+      <ToolCall use={use('mcp__playwright__browser_click', { selector: '#go', timeout: 5000 })} />,
+    )
+    // mangled name → clean tool name + source badge, no `mcp__` prefix left in the head
+    const headText = container.querySelector('.head')?.textContent ?? ''
+    expect(headText).toContain('browser_click')
+    expect(headText).not.toContain('mcp__')
+    expect(screen.getByText('MCP · playwright')).toBeInTheDocument()
+    // args are pretty-printed (multi-line), not the cramped single-line .args
+    const body = container.querySelector('.write-body')
+    expect(body?.textContent).toContain('"selector"')
+    expect(body?.textContent).toContain('\n')
+    expect(container.querySelector('.args')).toBeNull()
+  })
+
+  it('renders an MCP tool with no args as just name + badge (no body)', () => {
+    const { container } = render(<ToolCall use={use('mcp__github__list_repos', {})} />)
+    expect(container.querySelector('.head')?.textContent).toContain('list_repos')
+    expect(screen.getByText('MCP · github')).toBeInTheDocument()
+    expect(container.querySelector('.write-body')).toBeNull()
+    expect(container.querySelector('.args')).toBeNull()
+  })
+
   it('falls back to raw-JSON args for unrecognised tools', () => {
     const { container } = render(<ToolCall use={use('SomethingNew', { foo: 'bar' })} />)
     expect(container.querySelector('.edit-diff')).toBeNull()

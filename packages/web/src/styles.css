@@ -132,6 +132,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tool .result { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
 .tool .result.err { color: var(--bad); }
 .tool-file { color: var(--muted); font-weight: 400; margin-left: 8px; }
+.tool-tag { margin-left: 8px; padding: 1px 7px; font: 600 10px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 6px; vertical-align: 1px; }
 .edit-diff { margin: 7px 0 0; padding: 8px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
 .edit-diff .dl { display: flex; padding: 0 10px; white-space: pre; }
 .edit-diff .dl-sign { flex: none; width: 1.2em; opacity: 0.7; user-select: none; }
