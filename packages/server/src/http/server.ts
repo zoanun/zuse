@@ -175,7 +175,45 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!id) {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing session id' } })
       }
-      await deps.service.delete(id)
+      // safeId (inside service.delete) throws synchronously on a malformed id.
+      // Catch it here so a bad id is a clean 400 rather than an unhandled
+      // rejection (the handler is invoked as `void handle()` — a throw would
+      // hang the client).
+      try {
+        await deps.service.delete(id)
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid session id' } })
+      }
+      return sendJson(res, 200, { ok: true })
+    }
+
+    // PATCH /api/sessions/<id> — rename title (auth-gated)
+    if (method === 'PATCH' && path.startsWith('/api/sessions/')) {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const id = decodeURIComponent(path.slice('/api/sessions/'.length))
+      if (!id) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing session id' } })
+      }
+      let body: { title?: unknown } | undefined
+      try {
+        body = (await readJsonBody(req)) as { title?: unknown }
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const title = body?.title
+      // Reject missing/non-string/empty titles (no empty/blank titles allowed).
+      if (typeof title !== 'string' || title.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty title' } })
+      }
+      // safeId (inside service.rename) throws synchronously on a malformed id —
+      // catch → 400 rather than hang (see DELETE above).
+      try {
+        await deps.service.rename(id, title)
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid session id' } })
+      }
       return sendJson(res, 200, { ok: true })
     }
 

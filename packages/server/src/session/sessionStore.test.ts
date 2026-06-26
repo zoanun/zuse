@@ -131,6 +131,15 @@ describe('saveSession / loadSession', () => {
     const loaded = await loadSession(dir, rec.id)
     expect(loaded?.title).toBe('Updated title')
   })
+
+  it('round-trips the titleManual flag (manual title survives save→load)', async () => {
+    const dir = tempDir()
+    const rec = makeRecord({ title: 'Hand-picked name', titleManual: true })
+    await saveSession(dir, rec)
+    const loaded = await loadSession(dir, rec.id)
+    expect(loaded?.titleManual).toBe(true)
+    expect(loaded?.title).toBe('Hand-picked name')
+  })
 })
 
 // ---------------------------------------------------------------------------

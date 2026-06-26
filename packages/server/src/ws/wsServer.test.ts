@@ -180,6 +180,18 @@ describe('ws wiring', () => {
     ws.close()
   })
 
+  it('a malformed ?session= id yields an error frame (does not hang)', async () => {
+    const { server, cookie } = await makeServer()
+    // `..%2ffoo` decodes to `../foo` → safeId throws inside getOrLoad. The IIFE's
+    // try/catch must turn that into an error frame rather than an unhandled
+    // rejection that leaves the socket hanging.
+    const ws = new WebSocket(`${wsUrl(server.url)}?session=..%2ffoo`, { headers: { cookie } })
+    const msg = await firstMessage(ws)
+    expect(msg.type).toBe('error')
+    if (msg.type === 'error') expect(msg.message).toBe('invalid session id')
+    ws.close()
+  })
+
   it('a malformed uplink frame yields an error frame', async () => {
     const { server, cookie } = await makeServer()
     const ws = new WebSocket(wsUrl(server.url), { headers: { cookie } })

@@ -43,6 +43,12 @@ export class SessionService {
   private readonly persisting = new Set<string>()
   /** Set when a persist was requested while one was already in flight (coalesce). */
   private readonly persistAgain = new Set<string>()
+  /** Per-id autosave unsubscribe fn (from mgr.subscribe), so delete() can stop it. */
+  private readonly unsubs = new Map<string, () => void>()
+  /** Ids that have been deleted — blocks an in-flight persist from rewriting the file. */
+  private readonly tombstones = new Set<string>()
+  /** Per-id manually-set titles (via rename) — wins over deriveTitle in persist(). */
+  private readonly manualTitles = new Map<string, string>()
 
   constructor(opts: SessionServiceOpts) {
     this.dir = opts.dir
@@ -73,6 +79,10 @@ export class SessionService {
       checkpoints: rec.checkpoints,
       createdAt: rec.createdAt,
     })
+    // Re-seed the manual title from disk so a restart doesn't lose it (and so the
+    // next autosave won't overwrite it with deriveTitle).
+    if (rec.titleManual) this.manualTitles.set(id, rec.title)
+    this.tombstones.delete(id) // reusing this id is legal again
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)
     return mgr
@@ -86,6 +96,7 @@ export class SessionService {
     const id = newSessionId()
     const cwd = opts?.cwd ?? this.cwd
     const mgr = this.createSession({ sessionId: id, cwd })
+    this.tombstones.delete(id) // (re)using this id is legal
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)
     // Persist an initial record so disk (the list source-of-truth) knows it exists.
@@ -100,6 +111,7 @@ export class SessionService {
    * through createSession (which would build real settings/model).
    */
   async adopt(id: string, mgr: SessionManager, title = 'New chat'): Promise<void> {
+    this.tombstones.delete(id) // (re)using this id is legal
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)
     await this.persist(id, mgr, title)
@@ -112,8 +124,40 @@ export class SessionService {
 
   /** Drop the live manager AND the on-disk record. */
   async delete(id: string): Promise<void> {
+    // Stop autosave first so no turn-end fired after this can re-persist the file.
+    this.unsubs.get(id)?.()
+    this.unsubs.delete(id)
     this.registry.remove(id)
+    // Tombstone the id: any persist already awaiting saveSession() early-returns
+    // before the write, closing the in-flight-persist resurrection race.
+    this.tombstones.add(id)
+    this.persistAgain.delete(id) // drop any pending trailing save for this id
+    this.manualTitles.delete(id)
     await deleteSession(this.dir, id)
+  }
+
+  /**
+   * Rename a session's title and persist it as a *manual* title (so subsequent
+   * autosave won't overwrite it via deriveTitle). Works whether the session is
+   * live or only on disk.
+   */
+  async rename(id: string, title: string): Promise<void> {
+    this.manualTitles.set(id, title)
+    const live = this.registry.get(id)
+    if (live) {
+      // Live manager → go through the normal persist path (picks up the manual title).
+      await this.persist(id, live)
+      return
+    }
+    // Not live → edit the disk record directly without spinning up a manager.
+    const rec = await loadSession(this.dir, id)
+    if (!rec) return
+    await saveSession(this.dir, {
+      ...rec,
+      title,
+      titleManual: true,
+      updatedAt: new Date().toISOString(),
+    })
   }
 
   // -------------------------------------------------------------------------
@@ -121,11 +165,14 @@ export class SessionService {
   // -------------------------------------------------------------------------
 
   private wireAutosave(id: string, mgr: SessionManager): void {
-    mgr.subscribe((e) => {
+    // Keep the unsubscribe fn so delete() can stop autosave (otherwise a stray
+    // turn-end could re-persist a just-deleted session — the "resurrection" bug).
+    const unsub = mgr.subscribe((e) => {
       if (e.type === 'turn-end' || e.type === 'checkpoint-recorded') {
         void this.persist(id, mgr)
       }
     })
+    this.unsubs.set(id, unsub)
   }
 
   /**
@@ -134,10 +181,15 @@ export class SessionService {
    * in-flight guard coalesces overlapping requests (last-write-wins via a single
    * trailing re-run) so concurrent turn-end + checkpoint events don't race.
    *
-   * `forcedTitle` is only passed by create() for the initial record; normal
-   * autosave recomputes the title from the conversation each time.
+   * `forcedTitle` is only passed by create()/adopt() for the initial record;
+   * normal autosave recomputes the title from the conversation each time, unless
+   * a manual title (set via rename) has pinned it.
    */
   private async persist(id: string, mgr: SessionManager, forcedTitle?: string): Promise<void> {
+    // A delete tombstoned this id — never write the file back (the post-delete
+    // autosave path). A second check sits right before saveSession() below to
+    // also close the in-flight race (delete landing during our own await).
+    if (this.tombstones.has(id)) return
     if (this.persisting.has(id)) {
       // A save is already running for this id — mark that another is needed and bail.
       this.persistAgain.add(id)
@@ -146,10 +198,14 @@ export class SessionService {
     this.persisting.add(id)
     try {
       const snap = mgr.getConversation().toJSON()
+      // Title priority: explicit create/adopt seed > manual rename > derived.
+      // (forcedTitle is only the initial 'New chat', so no conflict with a manual title.)
+      const manual = this.manualTitles.get(id)
       const rec: SessionRecord = {
         version: 1,
         id,
-        title: forcedTitle ?? deriveTitle(snap.messages),
+        title: forcedTitle ?? manual ?? deriveTitle(snap.messages),
+        titleManual: this.manualTitles.has(id),
         cwd: mgr.getState().cwd,
         model: mgr.getModelId(),
         createdAt: mgr.getCreatedAt(),
@@ -158,6 +214,10 @@ export class SessionService {
         totalUsage: snap.totalUsage,
         checkpoints: mgr.getCheckpoints(),
       }
+      // Re-check after building the record: if delete() tombstoned this id while
+      // we were synchronously assembling rec, bail before the write so we don't
+      // resurrect the just-deleted file.
+      if (this.tombstones.has(id)) return
       await saveSession(this.dir, rec)
     } catch {
       // Autosave is best-effort; a failed write must never surface to the turn.

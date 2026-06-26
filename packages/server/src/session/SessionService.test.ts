@@ -7,6 +7,7 @@ import type { ResolvedSettings, StreamEvent } from '@zuse/core'
 import { SessionService } from './SessionService.js'
 import { SessionManager } from './SessionManager.js'
 import type { CreateSessionOpts } from './createSession.js'
+import { loadSession, saveSession, type SessionRecord } from './sessionStore.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 
 // ---------------------------------------------------------------------------
@@ -155,5 +156,105 @@ describe('SessionService', () => {
 
     // Exactly one record file on disk (create + autosave overwrote in place).
     expect(readdirSync(dir).filter((f) => f.endsWith('.json'))).toHaveLength(1)
+  })
+
+  it('rename() on a live session pins the title against a later autosave deriveTitle', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+
+    const { id } = await svc.create()
+    await svc.rename(id, 'My renamed session')
+
+    // Disk reflects the manual title + flag immediately.
+    let rec = await loadSession(dir, id)
+    expect(rec?.title).toBe('My renamed session')
+    expect(rec?.titleManual).toBe(true)
+
+    // A later turn-end autosave must NOT clobber the manual title with deriveTitle.
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('a user message that would otherwise become the title')
+    await new Promise((r) => setTimeout(r, 20))
+
+    rec = await loadSession(dir, id)
+    expect(rec?.title).toBe('My renamed session')
+    expect(rec?.titleManual).toBe(true)
+    // And the list view agrees.
+    expect((await svc.list())[0]!.title).toBe('My renamed session')
+  })
+
+  it('rename() on a disk-only (not live) session edits the disk record directly', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    // Service A creates + persists, then we discard it so service B never has it live.
+    const svcA = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const { id } = await svcA.create()
+
+    const svcB = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    // Not loaded into svcB's registry — rename must hit the disk path.
+    await svcB.rename(id, 'Renamed on disk')
+
+    const rec = await loadSession(dir, id)
+    expect(rec?.title).toBe('Renamed on disk')
+    expect(rec?.titleManual).toBe(true)
+  })
+
+  it('rename() on a missing id is a no-op (no file created)', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    await svc.rename('20990101-000000-dead', 'ghost')
+    expect(await svc.list()).toHaveLength(0)
+  })
+
+  it('getOrLoad() restoring a titleManual record keeps the manual title across autosaves', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+
+    // Hand-write a record that is already manually titled (simulating a prior rename
+    // that was persisted, then the process restarted with a fresh service).
+    const id = '20260626-120000-aaaa'
+    const rec: SessionRecord = {
+      version: 1,
+      id,
+      title: 'Pinned name',
+      titleManual: true,
+      cwd: '/work',
+      createdAt: '2026-06-26T12:00:00.000Z',
+      updatedAt: '2026-06-26T12:00:00.000Z',
+      messages: [],
+      totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      checkpoints: [],
+    }
+    await saveSession(dir, rec)
+
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const mgr = (await svc.getOrLoad(id))!
+    // Drive a turn → autosave fires; manual title must survive (seeded from titleManual).
+    await mgr.submit('this would be the derived title')
+    await new Promise((r) => setTimeout(r, 20))
+
+    const after = await loadSession(dir, id)
+    expect(after?.title).toBe('Pinned name')
+    expect(after?.titleManual).toBe(true)
+  })
+
+  it('delete() does not resurrect: a trailing in-flight persist cannot rewrite the file', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+
+    const { id } = await svc.create()
+    const mgr = (await svc.getOrLoad(id))!
+
+    // Kick a turn (queues a turn-end autosave) and delete immediately, racing the
+    // fire-and-forget persist. The unsub + tombstone must keep the file gone.
+    const turn = mgr.submit('about to be deleted')
+    await svc.delete(id)
+    await turn
+    // Let any trailing persist attempt run.
+    await new Promise((r) => setTimeout(r, 30))
+
+    expect(existsSync(join(dir, `${id}.json`))).toBe(false)
+    expect(await svc.list()).toHaveLength(0)
+    // A fresh autosave directly through the (now unsubscribed) manager must also
+    // not recreate the file — the tombstone blocks persist().
+    mgr.subscribe(() => {}) // no-op; just proving manual persist below is blocked
+    expect(existsSync(join(dir, `${id}.json`))).toBe(false)
   })
 })

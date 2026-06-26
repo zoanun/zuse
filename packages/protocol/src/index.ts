@@ -26,6 +26,16 @@ export interface SnapshotMessage {
 /** 检查点轻量摘要。 */
 export interface CheckpointLite { id: string; label: string }
 
+/** 会话列表项的轻量元数据（权威源；server 的 sessionStore.ts `import type` 复用）。 */
+export interface SessionMeta {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  cwd: string
+  messageCount: number
+}
+
 /** 轻量 todo —— 与 server 内部状态镜像。 */
 export interface TodoItemLite {
   content: string

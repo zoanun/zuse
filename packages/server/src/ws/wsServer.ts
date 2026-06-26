@@ -55,7 +55,16 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
           sendJson(ws, { type: 'error', message: `session unavailable: ${deps.sessionErr}` })
           return
         }
-        const mgr = await deps.service.getOrLoad(sessionId)
+        let mgr: SessionManager | null
+        try {
+          mgr = await deps.service.getOrLoad(sessionId)
+        } catch {
+          // safeId throws synchronously on a malformed/traversal id. Without this
+          // catch the rejection is unhandled and the socket hangs forever; instead
+          // send an error frame (and do not wireSocket).
+          sendJson(ws, { type: 'error', message: 'invalid session id' })
+          return
+        }
         if (!mgr) {
           sendJson(ws, { type: 'error', message: `session unavailable: no session "${sessionId}"` })
           return

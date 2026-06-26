@@ -117,4 +117,60 @@ describe('/api/sessions REST', () => {
     const after = await (await fetch(`${base}/api/sessions`, { headers: { cookie } })).json() as Array<{ id: string }>
     expect(after.map((s) => s.id)).not.toContain(id)
   })
+
+  it('PATCH renames a session and the new title shows up in GET /api/sessions', async () => {
+    const cookie = await authCookie()
+    const { id } = await (await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie } })).json() as { id: string }
+
+    const patched = await fetch(`${base}/api/sessions/${id}`, {
+      method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Renamed via PATCH' }),
+    })
+    expect(patched.status).toBe(200)
+    expect(await patched.json()).toEqual({ ok: true })
+
+    const list = await (await fetch(`${base}/api/sessions`, { headers: { cookie } })).json() as Array<{ id: string; title: string }>
+    expect(list.find((s) => s.id === id)?.title).toBe('Renamed via PATCH')
+  })
+
+  it('PATCH unauthenticated → 401', async () => {
+    const res = await fetch(`${base}/api/sessions/whatever`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  it('PATCH with a missing title → 400', async () => {
+    const cookie = await authCookie()
+    const { id } = await (await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie } })).json() as { id: string }
+    const res = await fetch(`${base}/api/sessions/${id}`, {
+      method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH with an empty / blank title → 400', async () => {
+    const cookie = await authCookie()
+    const { id } = await (await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie } })).json() as { id: string }
+    const empty = await fetch(`${base}/api/sessions/${id}`, {
+      method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ title: '   ' }),
+    })
+    expect(empty.status).toBe(400)
+  })
+
+  it('DELETE with a malformed id → 400 (not 500 / not hung)', async () => {
+    const cookie = await authCookie()
+    // `..%2ffoo` decodes to `../foo` → safeId rejects it.
+    const res = await fetch(`${base}/api/sessions/..%2ffoo`, { method: 'DELETE', headers: { cookie } })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
+
+  it('PATCH with a malformed id → 400 (not 500 / not hung)', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/sessions/..%2ffoo`, {
+      method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'x' }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
 })

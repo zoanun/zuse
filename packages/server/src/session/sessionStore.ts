@@ -1,7 +1,13 @@
 import { mkdir, writeFile, rename, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Message, Usage } from '@zuse/core'
+import type { SessionMeta } from '@zuse/protocol'
 import type { SessionCheckpoint } from './events.js'
+
+// SessionMeta lives in @zuse/protocol (the single source-of-truth shape shared
+// with the web client). Re-export it here so existing import sites under
+// @zuse/server keep working unchanged.
+export type { SessionMeta } from '@zuse/protocol'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -11,6 +17,9 @@ export interface SessionRecord {
   version: 1
   id: string
   title: string
+  /** True when the title was set manually via rename() — keeps autosave's
+   *  deriveTitle from clobbering a user-chosen title. */
+  titleManual?: boolean
   cwd: string
   model?: string
   createdAt: string
@@ -18,15 +27,6 @@ export interface SessionRecord {
   messages: Message[]
   totalUsage: Usage
   checkpoints: SessionCheckpoint[]
-}
-
-export interface SessionMeta {
-  id: string
-  title: string
-  createdAt: string
-  updatedAt: string
-  cwd: string
-  messageCount: number
 }
 
 // ---------------------------------------------------------------------------
