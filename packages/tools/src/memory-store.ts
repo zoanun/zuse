@@ -48,6 +48,11 @@ export interface MemoryStore {
   search(query: string, project: string, limit?: number): MemoryRow[]
   /** 列出指定项目 ∪ 全局的全部记忆。 */
   list(project: string): MemoryRow[]
+  /**
+   * 原地更新一条记忆(保 id/createdAt 不变,刷新 updatedAt;FTS 由 memories_au 触发器同步)。
+   * 只改传入的字段;未命中(无此 id)返回 null,否则查回整行返回。
+   */
+  update(id: number, fields: { type?: MemoryType; content?: string; hook?: string; project?: string }): MemoryRow | null
   /** 删除;未命中返回 false。 */
   remove(id: number): boolean
   /** 全量(MEMORY.md 投影用),id 升序。 */
@@ -195,6 +200,36 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
         .prepare(`SELECT * FROM memories WHERE project = ? OR project = '' ORDER BY id`)
         .all(project) as unknown as RawRow[]
       return rows.map(toRow)
+    },
+
+    update(id, fields) {
+      // 动态拼 SET 子句:只改传入的字段,updated_at 永远刷新。空 fields 也至少刷 updated_at,
+      // 仍以 changes 判存在性(WHERE id=? 命中即 changes>0,未命中 0 → null)。
+      const sets: string[] = []
+      const params: unknown[] = []
+      if (fields.type !== undefined) {
+        sets.push('type = ?')
+        params.push(fields.type)
+      }
+      if (fields.content !== undefined) {
+        sets.push('content = ?')
+        params.push(fields.content)
+      }
+      if (fields.hook !== undefined) {
+        sets.push('hook = ?')
+        params.push(fields.hook)
+      }
+      if (fields.project !== undefined) {
+        sets.push('project = ?')
+        params.push(fields.project)
+      }
+      sets.push('updated_at = ?')
+      params.push(new Date().toISOString())
+      params.push(id)
+      const res = db.prepare(`UPDATE memories SET ${sets.join(', ')} WHERE id = ?`).run(...(params as never[]))
+      if (Number(res.changes) === 0) return null
+      const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as RawRow
+      return toRow(row)
     },
 
     remove(id) {

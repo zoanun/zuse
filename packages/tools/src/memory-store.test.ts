@@ -74,6 +74,42 @@ describe('MemoryStore', () => {
     expect(store.search('要删的', '')).toHaveLength(0) // FTS 同步删除
   })
 
+  it('update 改 content/type/hook:行更新、updatedAt 变、FTS 命中新内容且不命中旧', async () => {
+    const row = store.save('project', 'compaction 阈值是 80%', 'p', '旧钩子')
+    const before = row.updatedAt
+    // 确保时间戳确实推进(ISO 毫秒级):等 ≥2ms。
+    await new Promise((r) => setTimeout(r, 5))
+
+    const updated = store.update(row.id, {
+      type: 'insight',
+      content: 'compaction 阈值改成 90%',
+      hook: '新钩子',
+    })
+    expect(updated).not.toBeNull()
+    expect(updated!.id).toBe(row.id)
+    expect(updated!.type).toBe('insight')
+    expect(updated!.content).toBe('compaction 阈值改成 90%')
+    expect(updated!.hook).toBe('新钩子')
+    expect(updated!.createdAt).toBe(row.createdAt) // createdAt 不变
+    expect(updated!.updatedAt).not.toBe(before) // updatedAt 刷新
+
+    // FTS 命中新内容、不再命中旧内容(memories_au 触发器同步)。
+    expect(store.search('90%', 'p').map((r) => r.id)).toContain(row.id)
+    expect(store.search('80%', 'p')).toHaveLength(0)
+  })
+
+  it('update 只改传入字段,其余保留', () => {
+    const row = store.save('user', '原内容', '', '原钩子')
+    const updated = store.update(row.id, { content: '新内容' })
+    expect(updated!.content).toBe('新内容')
+    expect(updated!.type).toBe('user') // 未传 → 保留
+    expect(updated!.hook).toBe('原钩子') // 未传 → 保留
+  })
+
+  it('update 未知 id 返回 null', () => {
+    expect(store.update(99999, { content: 'x' })).toBeNull()
+  })
+
   it('all 返回全量(投影用),按 id 升序', () => {
     store.save('user', 'a', '')
     store.save('project', 'b', 'p')

@@ -7,10 +7,13 @@ import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
+import type { MemoryService } from '../memory/MemoryService.js'
+import { MEMORY_TYPES, type MemoryType } from '@zuse/tools'
 
 export interface RequestHandlerDeps {
   auth: AuthProvider
   service: SessionService
+  memory: MemoryService
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -213,6 +216,95 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty title' } })
       }
       return runIdScoped(res, () => deps.service.rename(id, title))
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/memory — Memory CRUD (M1), all auth-gated.
+    // -----------------------------------------------------------------------
+
+    // GET /api/memory — list / search (auth-gated). query ?project=&q=&limit=
+    if (method === 'GET' && path === '/api/memory') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const project = url.searchParams.has('project') ? url.searchParams.get('project') ?? '' : undefined
+      const q = url.searchParams.get('q') ?? undefined
+      const limitRaw = url.searchParams.get('limit')
+      const limit = limitRaw != null && /^\d+$/.test(limitRaw) ? Number(limitRaw) : undefined
+      return sendJson(res, 200, deps.memory.list({ project, q, limit }))
+    }
+
+    // POST /api/memory — create (auth-gated). body {type, content, project?, hook?}
+    if (method === 'POST' && path === '/api/memory') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      let body: { type?: unknown; content?: unknown; project?: unknown; hook?: unknown } | undefined
+      try {
+        body = (await readJsonBody(req)) as typeof body
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const type = body?.type
+      const content = body?.content
+      // type 必须是四类之一;content 非空。
+      if (typeof type !== 'string' || !MEMORY_TYPES.includes(type as MemoryType)) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid memory type' } })
+      }
+      if (typeof content !== 'string' || content.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty content' } })
+      }
+      const project = typeof body?.project === 'string' ? body.project : undefined
+      const hook = typeof body?.hook === 'string' ? body.hook : undefined
+      return sendJson(res, 200, deps.memory.create({ type: type as MemoryType, content, project, hook }))
+    }
+
+    // PATCH /api/memory/<id> — update (auth-gated). non-numeric id → 400; unknown id → 404.
+    if (method === 'PATCH' && path.startsWith('/api/memory/')) {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const idStr = path.slice('/api/memory/'.length)
+      if (!/^\d+$/.test(idStr)) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid memory id' } })
+      }
+      const id = Number(idStr)
+      let body: { type?: unknown; content?: unknown; hook?: unknown; project?: unknown } | undefined
+      try {
+        body = (await readJsonBody(req)) as typeof body
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      // Only forward fields of the right shape; type (if given) must be valid.
+      const fields: { type?: MemoryType; content?: string; hook?: string; project?: string } = {}
+      if (body?.type !== undefined) {
+        if (typeof body.type !== 'string' || !MEMORY_TYPES.includes(body.type as MemoryType)) {
+          return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid memory type' } })
+        }
+        fields.type = body.type as MemoryType
+      }
+      if (typeof body?.content === 'string') fields.content = body.content
+      if (typeof body?.hook === 'string') fields.hook = body.hook
+      if (typeof body?.project === 'string') fields.project = body.project
+      const updated = deps.memory.update(id, fields)
+      if (!updated) {
+        return sendJson(res, 404, { error: { code: 'not_found', message: 'Memory not found' } })
+      }
+      return sendJson(res, 200, updated)
+    }
+
+    // DELETE /api/memory/<id> — remove (auth-gated). non-numeric id → 400.
+    if (method === 'DELETE' && path.startsWith('/api/memory/')) {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const idStr = path.slice('/api/memory/'.length)
+      if (!/^\d+$/.test(idStr)) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid memory id' } })
+      }
+      // Unmatched id is not an error (idempotent delete) — return ok:false, still 200.
+      const ok = deps.memory.remove(Number(idStr))
+      return sendJson(res, 200, { ok })
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.
