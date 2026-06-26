@@ -1,8 +1,24 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { Composer } from './Composer.js'
 
 describe('Composer', () => {
+  it('auto-focuses the textarea on mount', () => {
+    render(<Composer disabled={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('Message zuse…')
+    expect(document.activeElement).toBe(ta)
+  })
+
+  it('refocuses the textarea when disabled transitions from true to false (reply finishes)', () => {
+    const { rerender } = render(<Composer disabled={true} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('Message zuse…')
+    // While disabled the textarea cannot hold focus; re-enable it
+    act(() => {
+      rerender(<Composer disabled={false} onSend={() => {}} onStop={() => {}} />)
+    })
+    expect(document.activeElement).toBe(ta)
+  })
+
   it('sends on Enter and clears', () => {
     const onSend = vi.fn()
     render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)

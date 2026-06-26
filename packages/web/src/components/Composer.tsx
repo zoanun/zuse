@@ -1,14 +1,28 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSend: (text: string) => void; onStop: () => void }) {
   const [value, setValue] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
 
+  // Focus on mount
+  useEffect(() => {
+    taRef.current?.focus()
+  }, [])
+
+  // Refocus when the reply finishes (disabled: true → false)
+  useEffect(() => {
+    if (!disabled) taRef.current?.focus()
+  }, [disabled])
+
   function submit() {
     const v = value.trim()
     if (!v || disabled) return
     onSend(v); setValue('')
-    if (taRef.current) taRef.current.style.height = 'auto'
+    if (taRef.current) {
+      taRef.current.style.height = 'auto'
+      // Refocus after send so the user can type the next message immediately
+      taRef.current.focus()
+    }
   }
   return (
     <div className="composer-wrap">
