@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
 import type { ClientMessage, SessionMeta } from '@zuse/protocol'
 import { reduce, initialState, type Action } from './reducer.js'
 import type { AppState } from './types.js'
@@ -83,7 +83,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; client.close() }
   }, [])
 
-  const send = (msg: ClientMessage) => clientRef.current?.send(msg)
+  // Stable identity (clientRef never changes) so memoized consumers — e.g.
+  // React.memo(Message) via Shell's onRevert — aren't invalidated every render.
+  const send = useCallback((msg: ClientMessage) => clientRef.current?.send(msg), [])
 
   // Point the WS at `id`, clear local state, remember it, and refresh the list.
   // Shared by newSession (after creating one) and switchSession.

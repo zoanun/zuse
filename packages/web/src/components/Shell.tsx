@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { PermissionVerdict } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
@@ -14,7 +14,8 @@ export function Shell() {
 
   const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
-  const onRevert = (checkpointId: string) => send({ type: 'revert', checkpointId })
+  // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
+  const onRevert = useCallback((checkpointId: string) => send({ type: 'revert', checkpointId }), [send])
 
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>

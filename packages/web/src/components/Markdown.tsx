@@ -13,6 +13,10 @@ const IN_PROGRESS = /^\[[-~/]\]\s+/
 // disc → a doubled "• ✓ text". When a line already leads with a status glyph, drop the
 // disc (the glyph is the marker) by tagging it task-list-item (list-style: none).
 const STATUS_GLYPH = /^[✓✔☑●◐○◯☐]\s/
+// Hoisted so they keep a stable identity across renders (new arrays each render
+// would make react-markdown reprocess on every parent re-render — e.g. per delta).
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks]
+const REHYPE_PLUGINS = [rehypeHighlight]
 const components: Components = {
   li(props) {
     const { children } = props
@@ -35,7 +39,7 @@ const components: Components = {
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="text">
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]} components={components}>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
         {text}
       </ReactMarkdown>
     </div>

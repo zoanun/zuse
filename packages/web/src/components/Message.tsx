@@ -1,17 +1,24 @@
-import type { ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 
-export function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId: string) => void }) {
+/** Concatenate the text of all text parts (ignores tool parts). */
+function partsText(parts: Part[]): string {
+  return parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
+}
+
+// memo: while streaming, the store re-renders on every delta but only the last
+// message's identity changes — memo lets the unchanged messages skip re-rendering
+// (and re-parsing their markdown). Relies on a stable `onRevert` (see Shell).
+export const Message = memo(function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId: string) => void }) {
   if (msg.role === 'system') {
     const kind = msg.noticeKind
     const cls = kind === 'error' ? 'bad' : kind === 'warn' ? 'warn' : 'live'
-    const text = msg.parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
-    return <div className={'note ' + cls}>{text}</div>
+    return <div className={'note ' + cls}>{partsText(msg.parts)}</div>
   }
   if (msg.role === 'user') {
-    const text = msg.parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
+    const text = partsText(msg.parts)
     const cp = msg.checkpointId
     return (
       <div className="msg you">
@@ -35,7 +42,7 @@ export function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId:
       <div className="text-wrap">{renderParts(msg.parts)}</div>
     </div>
   )
-}
+})
 
 function RevertIcon() {
   // Circular counterclockwise "restore" arrow (Bootstrap arrow-counterclockwise).
