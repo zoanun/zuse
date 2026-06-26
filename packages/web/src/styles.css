@@ -71,7 +71,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 .msg.agent { align-self: stretch; max-width: 100%; }
 .msg.you { align-self: flex-end; max-width: 80%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
+.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; opacity: 0.5; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
 .msg.you:hover .msg-revert, .msg-revert:focus-visible { opacity: 1; }
 .msg-revert:hover { color: var(--text); background: var(--surface-2); }
 .msg.you .bubble { background: var(--user-bubble); border-radius: 20px; padding: 10px 16px; font-size: 15px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
