@@ -113,6 +113,38 @@ describe('reduce', () => {
     expect(s.messages[0]!.checkpointId).toBe('cpA')
   })
 
+  it('applySnapshot folds tool-result-only user turns into the preceding assistant message', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'do it' }] },
+        { role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'Read', input: { file_path: 'a.md' } }] },
+        // API ledger carries the tool result as a role:'user' message — must NOT be a bubble
+        { role: 'user', parts: [{ kind: 'tool-result', id: 't1', name: '', output: 'contents', isError: false }] },
+      ],
+      checkpoints: [],
+    } } })
+    // 2 messages: the real user turn + the assistant turn (now holding the tool-result)
+    expect(s.messages).toHaveLength(2)
+    expect(s.messages.some((m) => m.role === 'user' && m.parts.length === 0)).toBe(false)
+    expect(s.messages[1]!.role).toBe('assistant')
+    expect(s.messages[1]!.parts).toEqual([
+      { kind: 'tool-use', id: 't1', name: 'Read', input: { file_path: 'a.md' } },
+      { kind: 'tool-result', id: 't1', name: '', output: 'contents', isError: false },
+    ])
+  })
+
+  it('applySnapshot drops an empty user turn (only unmappable blocks) — no blank bubble', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
+      messages: [{ role: 'user', parts: [] }],
+      checkpoints: [],
+    } } })
+    expect(s.messages).toHaveLength(0)
+  })
+
   it('checkpoint-recorded attaches e.id to the last user message lacking a checkpointId', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'first' },
