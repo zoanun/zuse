@@ -9,7 +9,7 @@ import { PermissionCard } from './PermissionCard.js'
 import { Composer } from './Composer.js'
 
 export function Shell() {
-  const { state, send, dispatch, newSession } = useStore()
+  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
 
   const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
@@ -20,7 +20,12 @@ export function Shell() {
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
       <Sidebar
+          sessions={sessions}
+          currentSessionId={currentSessionId}
           onNewChat={() => { void newSession(); setMenuOpen(false) }}
+          onSwitch={(id) => { void switchSession(id); setMenuOpen(false) }}
+          onDelete={(id) => { void removeSession(id) }}
+          onRename={(id, title) => { void rename(id, title) }}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />

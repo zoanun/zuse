@@ -88,7 +88,8 @@ describe('StoreProvider session bootstrap', () => {
     render(<StoreProvider><Consumer /></StoreProvider>)
 
     await waitFor(() => expect(opened.some((u) => u.includes('session=sess-saved'))).toBe(true))
-    expect(fetchFn).not.toHaveBeenCalled()
+    // Bootstrap may GET /api/sessions to populate the sidebar, but must NOT POST a new session.
+    expect(fetchFn).not.toHaveBeenCalledWith('/api/sessions', expect.objectContaining({ method: 'POST' }))
   })
 
   it('New chat POSTs a new session, stores it, reconnects to it, and clears local state', async () => {
@@ -111,5 +112,107 @@ describe('StoreProvider session bootstrap', () => {
     expect(store['zuse.sessionId']).toBe('sess-fresh')
     expect(opened.some((u) => u.includes('session=sess-fresh'))).toBe(true)
     expect(captured!.state.messages).toHaveLength(0) // reset cleared local state
+  })
+})
+
+// --- Session list: refresh / switch / remove -----------------------------
+
+const meta = (id: string, over: Partial<{ title: string; updatedAt: string; messageCount: number }> = {}) => ({
+  id, title: over.title ?? '', createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: over.updatedAt ?? '2026-01-01T00:00:00Z', cwd: '/', messageCount: over.messageCount ?? 0,
+})
+
+describe('StoreProvider session list', () => {
+  it('refreshSessions populates sessions from listSessions (GET /api/sessions)', async () => {
+    const opened: string[] = []
+    vi.stubGlobal('WebSocket', makeFakeWs(opened))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    const list = [meta('sess-a', { title: 'Alpha' }), meta('sess-b', { title: 'Beta' })]
+    mockFetch(async (url) => (url === '/api/sessions' ? okJson(list) : okJson({ id: 'x' })))
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    // bootstrap calls refreshSessions; wait for it to land
+    await waitFor(() => expect(captured!.sessions).toHaveLength(2))
+    expect(captured!.sessions.map((s) => s.id)).toEqual(['sess-a', 'sess-b'])
+    expect(captured!.currentSessionId).toBe('sess-a')
+  })
+
+  it('switchSession reconnects to the new id, resets local state, no-ops on current', async () => {
+    const opened: string[] = []
+    vi.stubGlobal('WebSocket', makeFakeWs(opened))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    mockFetch(async (url) => (url === '/api/sessions' ? okJson([meta('sess-a'), meta('sess-b')]) : okJson({ id: 'x' })))
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    await waitFor(() => expect(opened.some((u) => u.includes('session=sess-a'))).toBe(true))
+
+    act(() => { captured!.dispatch({ kind: 'user-send', id: 'u-1', text: 'hi' }) })
+    expect(captured!.state.messages).toHaveLength(1)
+
+    await act(async () => { await captured!.switchSession('sess-b') })
+    expect(opened.some((u) => u.includes('session=sess-b'))).toBe(true)
+    expect(captured!.currentSessionId).toBe('sess-b')
+    expect(captured!.state.messages).toHaveLength(0) // reset
+
+    const openedCount = opened.length
+    await act(async () => { await captured!.switchSession('sess-b') }) // same id → no-op
+    expect(opened.length).toBe(openedCount)
+  })
+
+  it('removeSession deleting the current session switches to the newest other', async () => {
+    const opened: string[] = []
+    vi.stubGlobal('WebSocket', makeFakeWs(opened))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    const fn = mockFetch(async (url, init) => {
+      if (url === '/api/sessions') return okJson([meta('sess-a'), meta('sess-b')])
+      if ((init?.method) === 'DELETE') return okJson({ ok: true })
+      return okJson({ id: 'x' })
+    })
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    await waitFor(() => expect(captured!.sessions).toHaveLength(2))
+
+    await act(async () => { await captured!.removeSession('sess-a') })
+    expect(fn).toHaveBeenCalledWith('/api/sessions/sess-a', expect.objectContaining({ method: 'DELETE' }))
+    expect(captured!.currentSessionId).toBe('sess-b')
+    expect(opened.some((u) => u.includes('session=sess-b'))).toBe(true)
+  })
+
+  it('removeSession deleting the last session falls back to newSession()', async () => {
+    const opened: string[] = []
+    vi.stubGlobal('WebSocket', makeFakeWs(opened))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    const fn = mockFetch(async (url, init) => {
+      if (url === '/api/sessions' && (init?.method ?? 'GET') === 'GET') return okJson([meta('sess-a')])
+      if (url === '/api/sessions' && init?.method === 'POST') return okJson({ id: 'sess-created' })
+      if (init?.method === 'DELETE') return okJson({ ok: true })
+      return okJson({ id: 'x' })
+    })
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    await waitFor(() => expect(captured!.sessions).toHaveLength(1))
+
+    await act(async () => { await captured!.removeSession('sess-a') })
+    expect(fn).toHaveBeenCalledWith('/api/sessions', expect.objectContaining({ method: 'POST' }))
+    expect(captured!.currentSessionId).toBe('sess-created')
+    expect(opened.some((u) => u.includes('session=sess-created'))).toBe(true)
+  })
+
+  it('rename PATCHes then refreshes the list', async () => {
+    const opened: string[] = []
+    vi.stubGlobal('WebSocket', makeFakeWs(opened))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    const fn = mockFetch(async (url, init) => {
+      if (url === '/api/sessions') return okJson([meta('sess-a', { title: 'Renamed' })])
+      return okJson({ ok: true })
+    })
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    await waitFor(() => expect(captured!.sessions).toHaveLength(1))
+
+    await act(async () => { await captured!.rename('sess-a', 'Renamed') })
+    expect(fn).toHaveBeenCalledWith('/api/sessions/sess-a', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ title: 'Renamed' }),
+    }))
   })
 })
