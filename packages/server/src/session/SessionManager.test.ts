@@ -150,6 +150,55 @@ describe('SessionManager snapshot projection', () => {
     expect(s.checkpoints).toEqual([])
     expect(s.messageCount).toBe(3)
   })
+
+  it('strips the injected timestamp prefix from user text but not assistant text', () => {
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: '[2026-06-26 12:34] hello' }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'text', text: '[2026-06-26 12:34] not a real prefix' }] })
+
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      conversation,
+    })
+
+    const s = mgr.getState()
+    // User text: leading timestamp prefix stripped (one occurrence only).
+    expect(s.messages[0]!.parts).toEqual([{ kind: 'text', text: 'hello' }])
+    // Assistant text: left untouched even though it looks like a prefix.
+    expect(s.messages[1]!.parts).toEqual([{ kind: 'text', text: '[2026-06-26 12:34] not a real prefix' }])
+  })
+
+  it('attaches checkpointId to the message at the matching ledger index, undefined otherwise', () => {
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: 'first turn' }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'text', text: 'reply' }] })
+
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      conversation,
+      checkpoints: [{ messageIndex: 0, hash: 'cp-h', at: '2026-06-26T12:34:00.000Z', label: 'first turn' }],
+    })
+
+    const s = mgr.getState()
+    expect(s.messages[0]!.checkpointId).toBe('cp-h')
+    expect(s.messages[1]!.checkpointId).toBeUndefined()
+  })
 })
 
 describe('SessionManager permissions', () => {

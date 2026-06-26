@@ -16,7 +16,12 @@ export type SnapshotPart =
   | { kind: 'tool-result'; id: string; name: string; output: string; isError: boolean }
 
 /** 快照消息（用于检查点时间轴恢复）。 */
-export interface SnapshotMessage { role: 'user' | 'assistant'; parts: SnapshotPart[] }
+export interface SnapshotMessage {
+  role: 'user' | 'assistant'
+  parts: SnapshotPart[]
+  /** 若本条用户消息开启了某次 turn，则带上该 turn 检查点的 hash（供前端渲染逐条 revert）。 */
+  checkpointId?: string
+}
 
 /** 检查点轻量摘要。 */
 export interface CheckpointLite { id: string; label: string }

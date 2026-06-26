@@ -76,6 +76,8 @@ export interface SessionManagerOptions {
   permissionPolicy: PermissionPolicy
   snapshotStore: SnapshotStore
   conversation?: Conversation
+  /** Pre-seed checkpoint anchors (e.g. restored from persistence, or for tests). Defaults to []. */
+  checkpoints?: SessionCheckpoint[]
   createdAt?: string
   /** Max output tokens per turn. Defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
   maxTokens?: number
@@ -149,6 +151,7 @@ export class SessionManager {
     this.policy = opts.permissionPolicy
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
+    this.checkpoints = opts.checkpoints ?? []
     this.createdAt = opts.createdAt ?? new Date().toISOString()
     this.maxTokens = opts.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
     this.currentProviderId = opts.providerId ?? 'unknown'
@@ -225,11 +228,18 @@ export class SessionManager {
    * carry no tool name in the core ContentBlock, so name is '' here.
    */
   private projectMessages(): SnapshotMessage[] {
-    return this.conversation.getMessages().map(({ role, content }) => {
+    return this.conversation.getMessages().map(({ role, content }, i) => {
       const parts: SnapshotPart[] = []
       for (const block of content) {
         if (block.type === 'text') {
-          parts.push({ kind: 'text', text: block.text })
+          // Fix A: submit() prefixes the model's userText with `[YYYY-MM-DD HH:MM] `; that
+          // prefix lives in the committed ledger, so restoring user messages from the snapshot
+          // would surface it (the live path renders raw text). Strip exactly that one leading
+          // pattern, and only from user text — never touch assistant text.
+          const text = role === 'user'
+            ? block.text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '')
+            : block.text
+          parts.push({ kind: 'text', text })
         } else if (block.type === 'tool_use') {
           parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
         } else if (block.type === 'tool_result') {
@@ -240,7 +250,11 @@ export class SessionManager {
         }
         // Unknown block kinds are intentionally skipped.
       }
-      return { role, parts }
+      // Fix B: a checkpoint anchors before a user turn, so its messageIndex == this user
+      // message's ledger index. Attach the hash so the web can render a per-message revert.
+      // Match by index regardless of role (only user turns will match by construction).
+      const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
+      return { role, parts, checkpointId }
     })
   }
 
