@@ -9,6 +9,18 @@ import type { PermissionRequest, PermissionVerdict, Usage } from '@zuse/core'
 
 export type { PermissionRequest, PermissionVerdict, Usage } from '@zuse/core'
 
+/** 快照消息的单个内容片段（镜像 web 侧 Part 形状；tool-result 用 isError，非 is_error）。 */
+export type SnapshotPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool-use'; id: string; name: string; input: unknown }
+  | { kind: 'tool-result'; id: string; name: string; output: string; isError: boolean }
+
+/** 快照消息（用于检查点时间轴恢复）。 */
+export interface SnapshotMessage { role: 'user' | 'assistant'; parts: SnapshotPart[] }
+
+/** 检查点轻量摘要。 */
+export interface CheckpointLite { id: string; label: string }
+
 /** 轻量 todo —— 与 server 内部状态镜像。 */
 export interface TodoItemLite {
   content: string
@@ -48,6 +60,7 @@ export type SessionEvent =
   | { type: 'error'; message: string; category?: string }
   | { type: 'aborted' }
   | { type: 'model-select-needed'; reason: string }
+  | { type: 'reverted'; checkpointId: string }
 
 /** 连上时发给晚加入订阅者的全量状态快照。 */
 export interface SessionSnapshot {
@@ -61,6 +74,8 @@ export interface SessionSnapshot {
   todos: TodoItemLite[]
   pendingPermissions: PendingPermissionLite[]
   messageCount: number
+  messages: SnapshotMessage[]
+  checkpoints: CheckpointLite[]
 }
 
 /** 上行 client → server。 */
@@ -71,6 +86,7 @@ export type ClientMessage =
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
+  | { type: 'revert'; checkpointId: string }
 
 /** 下行 server → client。 */
 export type ServerMessage =
