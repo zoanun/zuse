@@ -3,15 +3,48 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
+import { ToolRegistry } from '@zuse/core'
+import type { ResolvedSettings } from '@zuse/core'
 import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
+import { SessionService } from '../session/SessionService.js'
+import { SessionManager } from '../session/SessionManager.js'
+import type { CreateSessionOpts } from '../session/createSession.js'
+import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
 import { makeRequestHandler } from './server.js'
+
+// A fake createSession that builds a real SessionManager around a fake client —
+// no real settings/model/network. Mirrors SessionService.test.ts.
+function makeSettings(): ResolvedSettings {
+  return {
+    providers: {},
+    tools: {},
+    permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+  } as unknown as ResolvedSettings
+}
+function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
+  const { client } = fakeClient([])
+  return new SessionManager({
+    sessionId: opts.sessionId,
+    cwd: opts.cwd,
+    client,
+    registry: new ToolRegistry(),
+    settings: makeSettings(),
+    systemPrompt: 'SYS',
+    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
+    conversation: opts.conversation,
+    checkpoints: opts.checkpoints,
+    createdAt: opts.createdAt,
+  })
+}
 
 let dir: string, srv: Server, base: string
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
-  srv = createServer(makeRequestHandler({ auth, devPage: false, tokenTtlSec: 3600 }))
+  const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
+  srv = createServer(makeRequestHandler({ auth, service, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -19,6 +52,13 @@ beforeEach(async () => {
 afterEach(async () => { await new Promise<void>((r) => srv.close(() => r())); rmSync(dir, { recursive: true, force: true }) })
 
 const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } })
+
+// Setup + login, returning the `name=value` cookie pair for authed requests.
+async function authCookie(): Promise<string> {
+  await fetch(`${base}/api/auth/setup`, json({ password: 'pw' }))
+  const login = await fetch(`${base}/api/auth/login`, json({ password: 'pw' }))
+  return (login.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+}
 
 describe('http server', () => {
   it('GET /healthz → 200 ok', async () => {
@@ -44,5 +84,37 @@ describe('http server', () => {
   it('setup twice → 409', async () => {
     await fetch(`${base}/api/auth/setup`, json({ password: 'pw' }))
     expect((await fetch(`${base}/api/auth/setup`, json({ password: 'x' }))).status).toBe(409)
+  })
+})
+
+describe('/api/sessions REST', () => {
+  it('unauthenticated GET /api/sessions → 401', async () => {
+    const res = await fetch(`${base}/api/sessions`)
+    expect(res.status).toBe(401)
+  })
+
+  it('authed CRUD: create → list shows it → delete → list drops it', async () => {
+    const cookie = await authCookie()
+
+    // POST /api/sessions → 200 {id}
+    const created = await fetch(`${base}/api/sessions`, { method: 'POST', headers: { cookie } })
+    expect(created.status).toBe(200)
+    const { id } = await created.json() as { id: string }
+    expect(id).toBeTruthy()
+
+    // GET /api/sessions includes the new id
+    const listed = await fetch(`${base}/api/sessions`, { headers: { cookie } })
+    expect(listed.status).toBe(200)
+    const list = await listed.json() as Array<{ id: string }>
+    expect(list.map((s) => s.id)).toContain(id)
+
+    // DELETE /api/sessions/<id> → 200 {ok:true}
+    const deleted = await fetch(`${base}/api/sessions/${id}`, { method: 'DELETE', headers: { cookie } })
+    expect(deleted.status).toBe(200)
+    expect(await deleted.json()).toEqual({ ok: true })
+
+    // GET no longer includes it
+    const after = await (await fetch(`${base}/api/sessions`, { headers: { cookie } })).json() as Array<{ id: string }>
+    expect(after.map((s) => s.id)).not.toContain(id)
   })
 })

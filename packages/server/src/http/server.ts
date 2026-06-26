@@ -6,9 +6,11 @@ import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
+import type { SessionService } from '../session/SessionService.js'
 
 export interface RequestHandlerDeps {
   auth: AuthProvider
+  service: SessionService
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -138,6 +140,42 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       }
       res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, '', { maxAgeSec: 0, path: '/' }))
+      return sendJson(res, 200, { ok: true })
+    }
+
+    // GET /api/sessions — list (auth-gated)
+    if (method === 'GET' && path === '/api/sessions') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      return sendJson(res, 200, await deps.service.list())
+    }
+
+    // POST /api/sessions — create (auth-gated)
+    if (method === 'POST' && path === '/api/sessions') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      let body: { cwd?: string; title?: string } | undefined
+      try {
+        body = (await readJsonBody(req)) as { cwd?: string; title?: string }
+      } catch {
+        body = undefined // tolerate empty / non-JSON body
+      }
+      const { id } = await deps.service.create({ cwd: body?.cwd, title: body?.title })
+      return sendJson(res, 200, { id })
+    }
+
+    // DELETE /api/sessions/<id> — delete (auth-gated)
+    if (method === 'DELETE' && path.startsWith('/api/sessions/')) {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const id = decodeURIComponent(path.slice('/api/sessions/'.length))
+      if (!id) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing session id' } })
+      }
+      await deps.service.delete(id)
       return sendJson(res, 200, { ok: true })
     }
 

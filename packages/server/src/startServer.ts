@@ -47,7 +47,7 @@ export async function startServer(
     console.warn(`[zuse-server] session 构建失败:${sessionErr}(/ws 将回 error,health/login 仍可用)`)
   }
 
-  const httpServer = createServer(makeRequestHandler({ auth, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

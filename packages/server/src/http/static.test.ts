@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { makeRequestHandler } from './server.js'
 import type { AuthProvider } from '../auth/authProvider.js'
+import type { SessionService } from '../session/SessionService.js'
 
 const fakeAuth = { verifyToken: () => true, isConfigured: async () => true } as unknown as AuthProvider
+// Minimal fake — these tests never hit the /api/sessions routes.
+const fakeService = { list: async () => [], create: async () => ({ id: 'x' }), delete: async () => {} } as unknown as SessionService
 let dir: string, server: Server, base: string
 
 async function start(webDir?: string): Promise<void> {
-  server = createServer(makeRequestHandler({ auth: fakeAuth, devPage: true, tokenTtlSec: 3600, webDir }))
+  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, devPage: true, tokenTtlSec: 3600, webDir }))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const a = server.address()
   base = 'http://127.0.0.1:' + (typeof a === 'object' && a ? a.port : 0)
