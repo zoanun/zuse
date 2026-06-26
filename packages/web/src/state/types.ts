@@ -1,4 +1,4 @@
-import type { TodoItemLite, PendingPermissionLite, Usage } from '@zuse/protocol'
+import type { TodoItemLite, PendingPermissionLite, Usage, CheckpointLite } from '@zuse/protocol'
 
 export type Part =
   | { kind: 'text'; text: string }
@@ -17,6 +17,7 @@ export interface AppState {
   messages: Message[]
   todos: TodoItemLite[]
   pendingPermissions: PendingPermissionLite[]
+  checkpoints: CheckpointLite[]
   model?: string
   contextTokens?: number
   contextWindow?: number

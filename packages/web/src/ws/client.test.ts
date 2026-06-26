@@ -28,7 +28,7 @@ describe('createWsClient', () => {
     })
     client.connect()
     ws.onopen!()
-    ws.onmessage!({ data: JSON.stringify({ type: 'snapshot', snapshot: { sessionId: 'd', isThinking: false, model: 'm', cwd: '/', totalUsage: undefined, contextTokens: 1, contextWindow: 2, todos: [], pendingPermissions: [], messageCount: 0 } }) })
+    ws.onmessage!({ data: JSON.stringify({ type: 'snapshot', snapshot: { sessionId: 'd', isThinking: false, model: 'm', cwd: '/', totalUsage: undefined, contextTokens: 1, contextWindow: 2, todos: [], pendingPermissions: [], messageCount: 0, messages: [], checkpoints: [] } }) })
     expect(got).toHaveLength(1)
     expect(got[0]!.type).toBe('snapshot')
   })

@@ -1,8 +1,8 @@
-import type { ServerMessage, SessionEvent, SessionSnapshot } from '@zuse/protocol'
+import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart } from '@zuse/protocol'
 import type { AppState, Connection, Part } from './types.js'
 
 export const initialState: AppState = {
-  messages: [], todos: [], pendingPermissions: [],
+  messages: [], todos: [], pendingPermissions: [], checkpoints: [],
   thinking: false, connection: 'connecting',
 }
 
@@ -42,6 +42,12 @@ function appendText(state: AppState, text: string): AppState {
   return appendPart(state, { kind: 'text', text })
 }
 
+function mapPart(p: SnapshotPart): Part {
+  if (p.kind === 'text') return { kind: 'text', text: p.text }
+  if (p.kind === 'tool-use') return { kind: 'tool-use', id: p.id, name: p.name, input: p.input }
+  return { kind: 'tool-result', id: p.id, name: p.name, output: p.output, isError: p.isError }
+}
+
 function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   return {
     ...state,
@@ -52,6 +58,8 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     todos: s.todos,
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
+    messages: s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart) })),
+    checkpoints: s.checkpoints,
   }
 }
 
@@ -78,6 +86,8 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
     case 'aborted': return withNotice({ ...state, thinking: false }, 'stopped', 'warn')
+    case 'checkpoint-recorded': return { ...state, checkpoints: [...state.checkpoints, { id: e.id, label: e.label }] }
+    case 'reverted': return withNotice(state, 'reverted to checkpoint', 'info')
     default: return state
   }
 }

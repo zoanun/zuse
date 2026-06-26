@@ -56,15 +56,16 @@ describe('reduce', () => {
     expect(s2.pendingPermissions).toHaveLength(0)
   })
 
-  it('snapshot initialises stats and keeps messages', () => {
+  it('snapshot initialises stats and replaces messages from snapshot', () => {
     const withMsg = reduce(initialState, { kind: 'user-send', id: 'u1', text: 'hi' })
     const s = reduce(withMsg, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 0,
+      messages: [], checkpoints: [],
     } } })
     expect(s.model).toBe('claude')
     expect(s.contextWindow).toBe(1000)
-    expect(s.messages).toHaveLength(1)
+    expect(s.messages).toHaveLength(0)
   })
 
   it('routes failover/warning/error to inline system messages', () => {
@@ -77,5 +78,40 @@ describe('reduce', () => {
 
   it('connection action updates connection', () => {
     expect(reduce(initialState, { kind: 'connection', status: 'live' }).connection).toBe('live')
+  })
+
+  it('applySnapshot rebuilds messages and sets checkpoints', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 2,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
+        { role: 'assistant', parts: [
+          { kind: 'text', text: 'hi' },
+          { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+        ] },
+      ],
+      checkpoints: [{ id: 'cp1', label: 'after hello' }],
+    } } })
+    expect(s.messages).toHaveLength(2)
+    expect(s.messages[0]).toEqual({ id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'hello' }] })
+    expect(s.messages[1]).toEqual({ id: 'h1', role: 'assistant', parts: [
+      { kind: 'text', text: 'hi' },
+      { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    ] })
+    expect(s.checkpoints).toEqual([{ id: 'cp1', label: 'after hello' }])
+  })
+
+  it('checkpoint-recorded appends to checkpoints', () => {
+    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 3, label: 'after step 3' }) })
+    expect(s.checkpoints).toEqual([{ id: 'cp2', label: 'after step 3' }])
+  })
+
+  it('reverted adds an info notice', () => {
+    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'reverted', checkpointId: 'cp1' }) })
+    const notices = s.messages.filter((m) => m.role === 'system')
+    expect(notices).toHaveLength(1)
+    expect(notices[0]!.noticeKind).toBe('info')
+    expect(notices[0]!.parts[0]).toEqual({ kind: 'text', text: 'reverted to checkpoint' })
   })
 })
