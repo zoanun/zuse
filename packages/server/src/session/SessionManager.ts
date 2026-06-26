@@ -199,6 +199,22 @@ export class SessionManager {
     return resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
   }
 
+  getConversation(): Conversation {
+    return this.conversation
+  }
+
+  getCheckpoints(): SessionCheckpoint[] {
+    return [...this.checkpoints]
+  }
+
+  getCreatedAt(): string {
+    return this.createdAt
+  }
+
+  getModelId(): string {
+    return this.client.getModel()
+  }
+
   getState(): SessionSnapshot {
     const pendingPermissions: PendingPermissionLite[] = [...this.pending.entries()].map(([id, p]) => ({
       id,

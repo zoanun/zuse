@@ -961,3 +961,86 @@ describe('context window in snapshot', () => {
     expect((snap.contextWindow ?? 0)).toBeGreaterThan(0)
   })
 })
+
+describe('SessionManager persistence accessors', () => {
+  it('getConversation() returns the seeded conversation with its messages', () => {
+    const conversation = Conversation.fromJSON({
+      version: 1,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello from seed' }] }],
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      conversation,
+    })
+    const msgs = mgr.getConversation().getMessages()
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]).toMatchObject({ role: 'user', content: [{ type: 'text', text: 'hello from seed' }] })
+  })
+
+  it('getCheckpoints() returns the seeded checkpoints and is a defensive copy', () => {
+    const { client } = fakeClient([])
+    const checkpoints: SessionCheckpoint[] = [
+      { messageIndex: 0, hash: 'h1', at: '2026-01-01T00:00:00Z', label: 'hi' },
+    ]
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      checkpoints,
+    })
+
+    const first = mgr.getCheckpoints()
+    expect(first).toEqual([{ messageIndex: 0, hash: 'h1', at: '2026-01-01T00:00:00Z', label: 'hi' }])
+
+    // Mutating the returned array must NOT affect subsequent calls (defensive copy).
+    first.push({ messageIndex: 99, hash: 'phantom', at: '2026-01-01T00:00:00Z', label: 'extra' })
+    const second = mgr.getCheckpoints()
+    expect(second).toHaveLength(1)
+    expect(second[0]!.hash).toBe('h1')
+  })
+
+  it('getCreatedAt() returns the explicitly passed createdAt value', () => {
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      createdAt: '2026-03-15T10:00:00.000Z',
+    })
+    expect(mgr.getCreatedAt()).toBe('2026-03-15T10:00:00.000Z')
+  })
+
+  it('getModelId() returns the model from the injected client', () => {
+    const { client } = fakeClient([], 'test-model-xyz')
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+    })
+    expect(mgr.getModelId()).toBe('test-model-xyz')
+  })
+})
