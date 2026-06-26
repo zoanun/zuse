@@ -45,20 +45,22 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
 const components: Components = {
   pre: CodeBlock,
   li(props) {
-    const { children } = props
+    const { children, className } = props
     const kids = Array.isArray(children) ? children : [children]
     const first = kids[0]
     if (typeof first === 'string') {
       const m = first.match(IN_PROGRESS)
       if (m) {
         const rest = [first.slice(m[0].length), ...kids.slice(1)]
-        return <li className="task-list-item in-progress"><span className="tl-ip">●</span>{rest}</li>
+        // in-progress: solid square + center dot (themed; matches the Tasks panel).
+        return <li className="task-list-item in-progress"><span className="cbx doing" aria-hidden="true" />{rest}</li>
       }
       if (STATUS_GLYPH.test(first)) {
         return <li className="task-list-item">{children}</li>
       }
     }
-    return <li>{children}</li>
+    // Preserve GFM's `task-list-item` class so [x]/[ ] keep the styled checkbox.
+    return <li className={className}>{children}</li>
   },
 }
 
