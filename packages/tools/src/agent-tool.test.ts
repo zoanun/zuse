@@ -70,8 +70,13 @@ describe('createAgentTool', () => {
     expect(result.output).toContain('prompt')
   })
 
-  it('returns error when description is missing', async () => {
-    const client = fakeClient([])
+  it('derives a label from the prompt when description is omitted (still runs)', async () => {
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'sub-result' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
     const registry = new ToolRegistry()
     const tool = createAgentTool({
       registry,
@@ -81,12 +86,12 @@ describe('createAgentTool', () => {
     })
 
     const result = await tool.run(
-      { prompt: 'find something' },
+      { prompt: 'find something' }, // no description supplied
       { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
     )
 
-    expect(result.isError).toBe(true)
-    expect(result.output).toContain('description')
+    expect(result.isError).toBeFalsy()
+    expect(result.output).toBe('sub-result')
   })
 
   it('excludes Agent tool from child registry', async () => {

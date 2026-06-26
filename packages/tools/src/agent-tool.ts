@@ -82,9 +82,11 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       if (typeof prompt !== 'string' || prompt === '') {
         return { output: 'Agent tool requires a non-empty "prompt" string.', isError: true }
       }
-      if (typeof description !== 'string' || description === '') {
-        return { output: 'Agent tool requires a non-empty "description" string.', isError: true }
-      }
+      // `description` is only a short UI label. Models often send a full prompt but omit it —
+      // derive one from the prompt rather than failing an otherwise-valid dispatch.
+      const label = typeof description === 'string' && description.trim() !== ''
+        ? description
+        : prompt.trim().replace(/\s+/g, ' ').slice(0, 60)
 
       // Validate isolation parameter
       if (isolation !== undefined && isolation !== 'worktree') {
@@ -215,10 +217,10 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
 
       if (runInBackground === true && deps.onBackground) {
         executeSubAgent().then(
-          (result) => deps.onBackground!(description, result),
-          () => deps.onBackground!(description, '(sub-agent background execution failed)'),
+          (result) => deps.onBackground!(label, result),
+          () => deps.onBackground!(label, '(sub-agent background execution failed)'),
         )
-        return { output: `Sub-agent "${description}" launched in background. You will be notified when it finishes.` }
+        return { output: `Sub-agent "${label}" launched in background. You will be notified when it finishes.` }
       }
 
       return { output: await executeSubAgent() }
