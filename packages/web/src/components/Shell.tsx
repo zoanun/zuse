@@ -18,7 +18,12 @@ export function Shell() {
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
-      <Sidebar onNewChat={() => { send({ type: 'reset-session' }); dispatch({ kind: 'reset' }); setMenuOpen(false) }} />
+      <Sidebar
+          onNewChat={() => { send({ type: 'reset-session' }); dispatch({ kind: 'reset' }); setMenuOpen(false) }}
+          checkpoints={state.checkpoints}
+          thinking={state.thinking}
+          onRevert={(checkpointId) => send({ type: 'revert', checkpointId })}
+        />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />
         <main className="chat">

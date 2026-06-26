@@ -31,6 +31,13 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .side-btn:hover { background: var(--surface-2); }
 .side-note { font-size: 12px; color: var(--faint); line-height: 1.55; padding: 0 2px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.side-label { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
+.ckpt-list { display: flex; flex-direction: column; gap: 4px; }
+.ckpt-empty { font-size: 12px; color: var(--faint); padding: 0 2px; }
+.ckpt-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ckpt-label { font-size: 12.5px; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ckpt-confirm { display: flex; gap: 4px; flex: none; }
+.ckpt-btn { padding: 4px 9px; font-size: 12px; border-radius: 8px; flex: none; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .main-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(8px); }
