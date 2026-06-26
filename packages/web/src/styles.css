@@ -203,7 +203,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .mem-item:hover { background: var(--surface-2); }
 .mem-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .mem-meta { flex: none; display: flex; align-items: center; gap: 7px; }
-.mem-tag { font: 500 10.5px/1 var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px 7px; }
+.mem-tag { font: 500 10.5px/1 var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px 7px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-tag-global { color: var(--faint); }
 .mem-time { font: 500 11px/1 var(--mono); color: var(--faint); white-space: nowrap; }
 .mem-actions { flex: none; display: flex; gap: 2px; }
@@ -221,6 +221,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .mem-field-label { font: 600 10px/1.3 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
 .mem-opt { font-weight: 400; letter-spacing: 0; text-transform: none; }
 .mem-field select { background: var(--surface); border: 1px solid var(--line); color: var(--text); font-family: var(--sans); font-size: 13.5px; padding: 8px 10px; border-radius: 10px; outline: none; }
+.mem-project-forced { font-size: 12.5px; color: var(--muted); padding: 7px 10px; background: var(--surface); border: 1px dashed var(--line); border-radius: 10px; }
 .mem-form-actions { display: flex; gap: 8px; }
 .mem-form-actions button { padding: 8px 16px; font-size: 13px; }
 .mem-form-actions button:disabled { opacity: 0.5; cursor: default; }

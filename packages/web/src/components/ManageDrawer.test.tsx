@@ -8,6 +8,7 @@ vi.mock('../state/manageApi.js', () => ({
   createMemory: vi.fn(async () => ({})),
   updateMemory: vi.fn(async () => ({})),
   deleteMemory: vi.fn(async () => undefined),
+  listProjects: vi.fn(async () => []),
 }))
 
 import { listMemory } from '../state/manageApi.js'

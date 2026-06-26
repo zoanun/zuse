@@ -47,6 +47,12 @@ export interface MemoryItem {
   updatedAt: string
 }
 
+/** A known project: its memory `project` slug (cwd-slug) ↔ the real working directory. */
+export interface ProjectInfo {
+  slug: string
+  cwd: string
+}
+
 /** 轻量 todo —— 与 server 内部状态镜像。 */
 export interface TodoItemLite {
   content: string

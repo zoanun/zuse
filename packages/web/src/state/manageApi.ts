@@ -1,4 +1,4 @@
-import type { MemoryItem } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -47,4 +47,10 @@ export async function updateMemory(id: number, body: UpdateMemoryBody): Promise<
 /** DELETE /api/memory/<id>. Throws on non-ok. */
 export async function deleteMemory(id: number): Promise<void> {
   await request(memoryPath(id), { method: 'DELETE' }, 'delete memory')
+}
+
+/** GET /api/projects → known {slug, cwd} pairs (for the project picker labels). Throws on non-ok. */
+export async function listProjects(): Promise<ProjectInfo[]> {
+  const r = await request('/api/projects', {}, 'list projects')
+  return (await r.json()) as ProjectInfo[]
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MemoryItem } from '@zuse/protocol'
-import { listMemory, createMemory, updateMemory, deleteMemory } from '../state/manageApi.js'
+import type { MemoryItem, ProjectInfo } from '@zuse/protocol'
+import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 
@@ -62,6 +62,12 @@ function useMemoryData(active: boolean) {
 function MemoryContainer({ active }: { active: boolean }) {
   const mem = useMemoryData(active)
   const [projectFilter, setProjectFilter] = useState('')
+  // Known {slug, cwd} so the project picker shows real directory names, not the slug.
+  const [projectInfos, setProjectInfos] = useState<ProjectInfo[]>([])
+  useEffect(() => {
+    if (!active) return
+    listProjects().then(setProjectInfos).catch(() => { /* labels just fall back to the slug */ })
+  }, [active])
   return (
     <MemoryPanel
       items={mem.items}
@@ -71,6 +77,7 @@ function MemoryContainer({ active }: { active: boolean }) {
       onQueryChange={mem.setQuery}
       projectFilter={projectFilter}
       onProjectFilterChange={setProjectFilter}
+      projectInfos={projectInfos}
       onCreate={mem.onCreate}
       onUpdate={mem.onUpdate}
       onDelete={mem.onDelete}

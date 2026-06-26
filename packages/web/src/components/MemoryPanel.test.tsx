@@ -20,6 +20,7 @@ function renderPanel(over: Partial<Parameters<typeof MemoryPanel>[0]> = {}) {
     onQueryChange: vi.fn(),
     projectFilter: '',
     onProjectFilterChange: vi.fn(),
+    projectInfos: [{ slug: 'zuse', cwd: 'E:/ai-study/zuse' }],
     onCreate: vi.fn(),
     onUpdate: vi.fn(),
     onDelete: vi.fn(),
@@ -43,7 +44,8 @@ describe('MemoryPanel', () => {
 
   it('shows project tag and a global tag for empty project', () => {
     renderPanel()
-    expect(screen.getAllByText('zuse').length).toBeGreaterThan(0)
+    // tag shows the real working-directory path (mapped from the slug), not the slug
+    expect(screen.getAllByText('E:/ai-study/zuse').length).toBeGreaterThan(0)
     expect(screen.getByText('global')).toBeInTheDocument()
   })
 

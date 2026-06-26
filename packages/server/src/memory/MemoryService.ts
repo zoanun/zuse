@@ -51,17 +51,25 @@ export class MemoryService {
     return store.all()
   }
 
-  /** 新增一条记忆;project 缺省 `''`(全局)。 */
+  /**
+   * 新增一条记忆;project 缺省 `''`(全局)。
+   * 不变量:`user` 型恒为全局(用户是谁与项目无关)——与 Memory 工具一致,强制 `project=''`。
+   */
   create(fields: { type: MemoryType; content: string; project?: string; hook?: string }): MemoryItem {
-    return this.getStore().save(fields.type, fields.content, fields.project ?? '', fields.hook)
+    const project = fields.type === 'user' ? '' : fields.project ?? ''
+    return this.getStore().save(fields.type, fields.content, project, fields.hook)
   }
 
-  /** 原地更新;未命中返回 null(透传 store.update)。 */
+  /**
+   * 原地更新;未命中返回 null。同 create 的不变量:若把类型改成 `user`(或本就是 user 由前端带上),
+   * 强制 `project=''`,不让 user 记忆挂到某个项目上。
+   */
   update(
     id: number,
     fields: { type?: MemoryType; content?: string; hook?: string; project?: string },
   ): MemoryItem | null {
-    return this.getStore().update(id, fields)
+    const f = fields.type === 'user' ? { ...fields, project: '' } : fields
+    return this.getStore().update(id, f)
   }
 
   /** 删除;未命中返回 false(透传 store.remove)。 */

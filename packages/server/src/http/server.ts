@@ -8,7 +8,8 @@ import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
-import { MEMORY_TYPES, type MemoryType } from '@zuse/tools'
+import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
+import type { ProjectInfo } from '@zuse/protocol'
 
 export interface RequestHandlerDeps {
   auth: AuthProvider
@@ -305,6 +306,18 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       // Unmatched id is not an error (idempotent delete) — return ok:false, still 200.
       const ok = deps.memory.remove(Number(idStr))
       return sendJson(res, 200, { ok })
+    }
+
+    // GET /api/projects — known {slug, cwd} pairs, so the memory project picker can
+    // show real directory names instead of the opaque cwd-slug. Derived from session cwds.
+    if (method === 'GET' && path === '/api/projects') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const bySlug = new Map<string, string>()
+      for (const m of await deps.service.list()) bySlug.set(cwdSlug(m.cwd), m.cwd)
+      const projects: ProjectInfo[] = [...bySlug].map(([slug, cwd]) => ({ slug, cwd }))
+      return sendJson(res, 200, projects)
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

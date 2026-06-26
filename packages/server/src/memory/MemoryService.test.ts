@@ -46,6 +46,18 @@ describe('MemoryService', () => {
     expect(svc.list().map((m) => m.id)).not.toContain(a.id)
   })
 
+  it('user 型恒为全局:create/update 强制 project=\'\'(即便传了 project)', () => {
+    // create:user 型即使带 project 也落成全局
+    const u = svc.create({ type: 'user', content: '用户是谁', project: 'some-project' })
+    expect(u.project).toBe('')
+    // update:把一条 project 记忆改成 user 型 → project 被清空
+    const p = svc.create({ type: 'project', content: '项目事实', project: 'p' })
+    expect(p.project).toBe('p')
+    const changed = svc.update(p.id, { type: 'user', project: 'p' })
+    expect(changed!.type).toBe('user')
+    expect(changed!.project).toBe('')
+  })
+
   it('update 未知 id 返回 null;remove 未命中返回 false', () => {
     expect(svc.update(99999, { content: 'x' })).toBeNull()
     expect(svc.remove(99999)).toBe(false)
