@@ -9,7 +9,8 @@ export function PermissionCard({ pending, onReply }: { pending: PendingPermissio
       <div className="spec">{spec}</div>
       <div className="actions">
         <button onClick={() => onReply(pending.id, 'allow')}>Allow</button>
-        <button className="ghost" onClick={() => onReply(pending.id, 'allow_session')}>Always</button>
+        <button className="ghost" onClick={() => onReply(pending.id, 'allow_session')} title="Allow for this session">Session</button>
+        <button className="ghost" onClick={() => onReply(pending.id, 'allow_persist')} title="Allow and save to settings">Always</button>
         <button className="ghost" onClick={() => onReply(pending.id, 'deny')}>Deny</button>
       </div>
     </div>
