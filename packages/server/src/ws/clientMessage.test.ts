@@ -8,6 +8,7 @@ function fakeMgr(): SessionManagerLike & {
   resolvePermission: ReturnType<typeof vi.fn>
   switchModel: ReturnType<typeof vi.fn>
   reset: ReturnType<typeof vi.fn>
+  revert: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -16,6 +17,7 @@ function fakeMgr(): SessionManagerLike & {
     resolvePermission: vi.fn(),
     switchModel: vi.fn(),
     reset: vi.fn(),
+    revert: vi.fn(async () => {}),
   }
 }
 
@@ -48,6 +50,22 @@ describe('applyClientMessage', () => {
     applyClientMessage(mgr, JSON.stringify({ type: 'reset-session' }), err)
     expect(mgr.reset).toHaveBeenCalledTimes(1)
     expect(err).not.toHaveBeenCalled()
+  })
+
+  it('dispatches revert to mgr.revert with the checkpointId', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'revert', checkpointId: 'cp-1' }), err)
+    expect(mgr.revert).toHaveBeenCalledWith('cp-1')
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('errors on a revert frame without a string checkpointId', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'revert' }), err)
+    expect(mgr.revert).not.toHaveBeenCalled()
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('checkpointId'))
   })
 
   it('errors on invalid JSON', () => {

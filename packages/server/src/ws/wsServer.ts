@@ -16,7 +16,13 @@ export interface WsServerDeps {
 }
 
 function sendJson(ws: WebSocket, msg: ServerMessage): void {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+  // Guard the send: a throwing/failed send on one connection must not break the
+  // manager's emit loop (which fans out to every subscriber) or other connections.
+  try {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+  } catch {
+    // Dropped/failing socket — ignore; the manager and peers carry on.
+  }
 }
 
 export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { closeAll(): void } {
@@ -48,7 +54,14 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
       // snapshot if a turn is already in flight at connect. Acceptable for F3
       // (single in-memory session, no turn running at connect in practice);
       // revisit when multi-client mid-turn join becomes real (S1/S2).
-      const unsub = mgr.subscribe((e) => sendJson(ws, { type: 'event', event: e }))
+      const unsub = mgr.subscribe((e) => {
+        // Forward the event, then — for a revert — re-push a fresh snapshot so this
+        // connection re-syncs to the truncated conversation/checkpoints. Snapshot-after-
+        // event is fine: the reducer treats `reverted` as just a notice, and the snapshot
+        // carries the authoritative post-revert state.
+        sendJson(ws, { type: 'event', event: e })
+        if (e.type === 'reverted') sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
+      })
       sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
 
       ws.on('message', (data, isBinary) => {

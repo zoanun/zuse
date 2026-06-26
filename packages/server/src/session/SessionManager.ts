@@ -672,6 +672,10 @@ export class SessionManager {
     this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cp.messageIndex)
     this.contextTokens = undefined
     this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
+    // Notify clients a revert happened so they can re-sync (wsServer re-pushes a fresh
+    // snapshot on this event). Emitted only on the success path — the unknown-id case
+    // early-returned above without touching any state.
+    this.emit({ type: 'reverted', checkpointId })
   }
 
   /**

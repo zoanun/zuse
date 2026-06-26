@@ -585,6 +585,8 @@ describe('SessionManager checkpoints + revert', () => {
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
       snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
     })
+    const reverted: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'reverted') reverted.push(e.checkpointId) })
     await mgr.submit('first')
     // Ledger now has at least the user + assistant messages.
     expect(mgr.getState().messageCount).toBeGreaterThan(0)
@@ -594,10 +596,13 @@ describe('SessionManager checkpoints + revert', () => {
     // checkpointIndex was 0 (ledger empty before the turn), so revert truncates to 0.
     expect(mgr.getState().messageCount).toBe(0)
     expect(mgr.getState().contextTokens).toBeUndefined()
+    // A successful revert emits a `reverted` event carrying the checkpoint id.
+    expect(reverted).toEqual(['cp-hash-1'])
 
-    // Reverting an unknown checkpoint is a no-op (no restore call).
+    // Reverting an unknown checkpoint is a no-op (no restore call, no `reverted` event).
     await mgr.revert('nope')
     expect(restored).toEqual(['cp-hash-1'])
+    expect(reverted).toEqual(['cp-hash-1'])
   })
 })
 

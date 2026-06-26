@@ -131,6 +131,53 @@ describe('ws wiring', () => {
     ws.close()
   })
 
+  it('a revert frame emits a reverted event AND re-pushes a fresh (truncated) snapshot', async () => {
+    // One scripted turn so the conversation grows and a checkpoint is recorded. The
+    // injected fakeSnapshotStore.track() returns 'hash1' for the first (and only) turn,
+    // so that is the checkpoint id we revert to.
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'hello there' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { server, cookie, session } = await makeServer([script])
+    const ws = new WebSocket(wsUrl(server.url), { headers: { cookie } })
+    const frames: ServerMessage[] = []
+    await new Promise((r) => ws.on('open', r))
+    ws.on('message', (d) => frames.push(JSON.parse(d.toString()) as ServerMessage))
+
+    // Drive a turn DIRECTLY to record a checkpoint at index 0 (ledger empty before it),
+    // then confirm the conversation grew.
+    await session.submit('first')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(session.getState().messageCount).toBeGreaterThan(0)
+    const countBefore = session.getState().messageCount
+
+    // Send the revert up the socket; checkpointIndex 0 means revert truncates to 0.
+    ws.send(JSON.stringify({ type: 'revert', checkpointId: 'hash1' }))
+    await new Promise((r) => setTimeout(r, 50))
+
+    // A `reverted` event frame arrived carrying the checkpoint id.
+    const revertedEvent = frames.find(
+      (f): f is Extract<ServerMessage, { type: 'event' }> =>
+        f.type === 'event' && f.event.type === 'reverted',
+    )
+    expect(revertedEvent).toBeDefined()
+    if (revertedEvent && revertedEvent.event.type === 'reverted') {
+      expect(revertedEvent.event.checkpointId).toBe('hash1')
+    }
+
+    // A fresh snapshot frame was re-pushed AFTER the revert, with the truncated ledger.
+    const snapshots = frames.filter(
+      (f): f is Extract<ServerMessage, { type: 'snapshot' }> => f.type === 'snapshot',
+    )
+    const lastSnapshot = snapshots[snapshots.length - 1]
+    expect(lastSnapshot).toBeDefined()
+    expect(lastSnapshot!.snapshot.messages.length).toBeLessThan(countBefore)
+    expect(lastSnapshot!.snapshot.messageCount).toBe(0)
+    ws.close()
+  })
+
   it('a malformed uplink frame yields an error frame', async () => {
     const { server, cookie } = await makeServer()
     const ws = new WebSocket(wsUrl(server.url), { headers: { cookie } })
