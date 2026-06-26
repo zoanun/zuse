@@ -45,16 +45,14 @@ function useMemoryData(active: boolean) {
   }, [active, debouncedQuery, reloadTick])
 
   const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
+  // Every mutation does the same thing: run it, refetch on success, surface the error on failure.
+  const mutate = useCallback((p: Promise<unknown>) => {
+    p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [refetch])
 
-  const onCreate = useCallback((body: CreateMemoryBody) => {
-    createMemory(body).then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refetch])
-  const onUpdate = useCallback((id: number, body: UpdateMemoryBody) => {
-    updateMemory(id, body).then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refetch])
-  const onDelete = useCallback((id: number) => {
-    deleteMemory(id).then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refetch])
+  const onCreate = useCallback((body: CreateMemoryBody) => mutate(createMemory(body)), [mutate])
+  const onUpdate = useCallback((id: number, body: UpdateMemoryBody) => mutate(updateMemory(id, body)), [mutate])
+  const onDelete = useCallback((id: number) => mutate(deleteMemory(id)), [mutate])
 
   return { items, loading, error, query, setQuery, onCreate, onUpdate, onDelete }
 }

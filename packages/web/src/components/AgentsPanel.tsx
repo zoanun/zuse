@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { Message, Part } from '../state/types.js'
 
 type AgentStatus = 'done' | 'doing' | 'failed'
@@ -49,7 +50,7 @@ function currentTurn(messages: Message[]): Message[] {
 
 export function AgentsPanel({ messages }: { messages: Message[] }) {
   // Scope to the current turn so finished turns' agents never linger alongside new ones.
-  const agents = collectAgents(currentTurn(messages))
+  const agents = useMemo(() => collectAgents(currentTurn(messages)), [messages])
   const running = agents.filter((a) => a.status === 'doing').length
   // 完成才消失: show only while a sub-agent is still running; once all have returned/failed,
   // the panel clears (their results remain on the inline tool cards in the chat).
