@@ -76,6 +76,7 @@ export type SessionEvent =
   | { type: 'aborted' }
   | { type: 'model-select-needed'; reason: string }
   | { type: 'reverted'; checkpointId: string }
+  | { type: 'title-changed'; title: string }
 
 /** 连上时发给晚加入订阅者的全量状态快照。 */
 export interface SessionSnapshot {

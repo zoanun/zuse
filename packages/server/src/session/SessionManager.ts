@@ -27,7 +27,6 @@ import {
   parseConsolidationOps,
   generateSessionTitle,
   type ModelClient,
-  type Message,
   type FileReadTracker,
   type ResolvedSettings,
   type ProviderConfig,
@@ -98,6 +97,8 @@ export interface SessionManagerOptions {
    */
   titleClient?: ModelClient
   titleModel?: string
+  /** True when a title already exists (restored manual/generated record) → don't auto-generate. */
+  titleAlreadySet?: boolean
 }
 
 interface Pending {
@@ -125,6 +126,10 @@ export class SessionManager {
   /** Small-model client + model for title generation; undefined when smallModel unset. */
   private readonly titleClient: ModelClient | undefined
   private readonly titleModel: string | undefined
+  /** A title exists (generated or manual) → don't auto-generate again. */
+  private titleSettled = false
+  /** A title-generation call is in flight → don't start a second one. */
+  private titlePending = false
   private abort: AbortController | null = null
   private readonly steerQueue: string[] = []
   private todos: TodoItemLite[] = []
@@ -170,6 +175,7 @@ export class SessionManager {
     this.createClient = opts.createClient ?? createModelClient
     this.titleClient = opts.titleClient
     this.titleModel = opts.titleModel
+    this.titleSettled = !!opts.titleAlreadySet
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
     // we leave totalUsage as undefined when the conversation is brand-new (all zeros).
@@ -230,16 +236,38 @@ export class SessionManager {
   }
 
   /**
-   * Generate a concise session title with the small model from the first user
-   * message. Returns null when no small model is configured, when there is no
-   * user text yet, or when the model call fails — the caller then keeps its
-   * deterministic fallback title. Fire-and-forget; never throws.
+   * Kick off small-model title generation from the first user message text, ONCE
+   * per session. Triggered by submit() the moment the message is sent — it runs in
+   * parallel with the turn (no wait for the assistant reply) and, on success, emits
+   * `title-changed` so connected clients update live. Fire-and-forget; never throws.
+   *
+   * Guarded by titleSettled (a title already exists — incl. restored sessions) and
+   * titlePending (a call is in flight). A failed/empty generation leaves titleSettled
+   * false so a later message can retry; deriveTitle remains the persisted fallback.
    */
-  async generateTitle(signal?: AbortSignal): Promise<string | null> {
-    if (!this.titleClient || !this.titleModel) return null
-    const firstUserText = firstUserMessageText(this.conversation.getMessages())
-    if (!firstUserText) return null
-    return generateSessionTitle(this.titleClient, this.titleModel, firstUserText, signal)
+  private kickTitleGeneration(text: string): void {
+    if (this.titleSettled || this.titlePending) return
+    if (!this.titleClient || !this.titleModel) return
+    if (!text.trim()) return
+    this.titlePending = true
+    void (async () => {
+      try {
+        const title = await generateSessionTitle(this.titleClient!, this.titleModel!, text)
+        if (title) {
+          this.titleSettled = true
+          this.emit({ type: 'title-changed', title })
+        }
+      } catch {
+        // value-add only; never surface
+      } finally {
+        this.titlePending = false
+      }
+    })()
+  }
+
+  /** Test/seed hook: mark the title as already set so submit() won't auto-generate. */
+  markTitleSettled(): void {
+    this.titleSettled = true
   }
 
   getState(): SessionSnapshot {
@@ -497,6 +525,11 @@ export class SessionManager {
     }
     this.isThinking = true
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
+
+    // Title generation fires the moment a message is sent (not on turn-end): generate
+    // from this text in parallel with the turn, so the sidebar title updates without
+    // waiting for the assistant reply. Guarded to run once per session; resends skip.
+    if (!opts?.isResend) this.kickTitleGeneration(text)
 
     // Auto-compaction (Phase 10B): if the last turn's measured context usage crossed
     // the window threshold, compact BEFORE sending. Skip on resend (failover): the just-
@@ -786,22 +819,4 @@ export class SessionManager {
       this.consolidating = false
     }
   }
-}
-
-/**
- * First USER message's text, with submit()'s `[YYYY-MM-DD HH:MM] ` prefix stripped.
- * Returns '' when there is no user text yet (mirrors SessionService.deriveTitle's scan,
- * but returns the raw text for the title model rather than a 'New chat' fallback).
- */
-function firstUserMessageText(messages: Message[]): string {
-  for (const m of messages) {
-    if (m.role !== 'user') continue
-    for (const block of m.content) {
-      if (block.type === 'text') {
-        const text = block.text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '').trim()
-        if (text) return text
-      }
-    }
-  }
-  return ''
 }

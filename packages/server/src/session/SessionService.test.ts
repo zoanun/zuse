@@ -52,6 +52,7 @@ function fakeCreateSessionFactory(scriptsById: Record<string, StreamEvent[][]> =
       conversation: opts.conversation,
       checkpoints: opts.checkpoints,
       createdAt: opts.createdAt,
+      titleAlreadySet: opts.titleAlreadySet,
     })
   }
 }
@@ -286,6 +287,7 @@ function fakeCreateSessionFactoryWithTitle(titleText: string, titleCalls: Record
       conversation: opts.conversation,
       checkpoints: opts.checkpoints,
       createdAt: opts.createdAt,
+      titleAlreadySet: opts.titleAlreadySet,
       titleClient: {
         getModel: () => 'small',
         async *sendMessages(m, c, t, s) {
@@ -299,7 +301,7 @@ function fakeCreateSessionFactoryWithTitle(titleText: string, titleCalls: Record
 }
 
 describe('SessionService — small-model title', () => {
-  it('generates a title on the first turn-end, pins it (titleGenerated), and survives later autosaves', async () => {
+  it('generates a title the moment the first message is sent (not on reply), pins it, survives later autosaves', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const calls: Record<string, number> = {}
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('精简标题', calls) })
@@ -316,11 +318,26 @@ describe('SessionService — small-model title', () => {
     expect((await svc.list())[0]!.title).toBe('精简标题')
     expect(calls[id]).toBe(1)
 
-    // A second turn must NOT regenerate the title.
+    // A second message must NOT regenerate the title.
     await mgr.submit('第二句')
     await new Promise((r) => setTimeout(r, 40))
     expect(calls[id]).toBe(1)
     expect((await loadSession(dir, id))?.title).toBe('精简标题')
+  })
+
+  it('emits a title-changed event carrying the generated title', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const calls: Record<string, number> = {}
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('事件标题', calls) })
+    const { id } = await svc.create()
+    const mgr = (await svc.getOrLoad(id))!
+
+    const titles: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'title-changed') titles.push(e.title) })
+    await mgr.submit('hello there')
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(titles).toEqual(['事件标题'])
   })
 
   it('a manual rename overrides a generated title (titleGenerated cleared)', async () => {
@@ -341,7 +358,7 @@ describe('SessionService — small-model title', () => {
     expect(rec?.titleGenerated).toBe(false)
   })
 
-  it('getOrLoad() restoring a titleGenerated record does not regenerate', async () => {
+  it('getOrLoad() restoring a non-empty / titleGenerated record does not regenerate', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const calls: Record<string, number> = {}
     const id = '20260626-130000-bbbb'
@@ -361,12 +378,16 @@ describe('SessionService — small-model title', () => {
     expect((await loadSession(dir, id))?.title).toBe('已生成的标题')
   })
 
-  it('generateTitle() is a no-op (null) when no small model is configured', async () => {
+  it('no small model → no title generated, falls back to deriveTitle', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
     const { id } = await svc.create()
     const mgr = (await svc.getOrLoad(id))!
-    await mgr.submit('hello')
-    expect(await mgr.generateTitle()).toBeNull()
+    await mgr.submit('hello world first line')
+    await new Promise((r) => setTimeout(r, 40))
+
+    const rec = await loadSession(dir, id)
+    expect(rec?.titleGenerated).toBeFalsy()
+    expect(rec?.title).toBe('hello world first line')   // deterministic deriveTitle fallback
   })
 })

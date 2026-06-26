@@ -34,9 +34,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const clientRef = useRef<WsClient | null>(null)
   const [sessions, setSessions] = useState<SessionMeta[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => getSessionId() ?? '')
-  // Keep the latest sessions list reachable from callbacks without re-binding them.
+  // Keep the latest sessions list + current id reachable from the (once-bound) WS
+  // onMessage closure without re-creating the client.
   const sessionsRef = useRef<SessionMeta[]>([])
   sessionsRef.current = sessions
+  const currentIdRef = useRef<string>(currentSessionId)
+  currentIdRef.current = currentSessionId
 
   const refreshSessions = async (): Promise<void> => {
     try { setSessions(await listSessions()) } catch { /* best-effort */ }
@@ -49,8 +52,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       url: wsUrl(getSessionId() ?? ''),
       onMessage: (m) => {
         dispatch({ kind: 'server', msg: m })
-        // First message of a brand-new session lands → its auto-derived title
-        // changes from 'New chat'; refresh the list so the sidebar reflects it.
+        if (m.type === 'event' && m.event.type === 'title-changed') {
+          // The event carries the new title — patch the current session's row in place.
+          // (Re-fetching here would race the server's async persist and could read the
+          // old title; the event value is authoritative for the UI.)
+          const title = m.event.title
+          setSessions((prev) => prev.map((s) => (s.id === currentIdRef.current ? { ...s, title } : s)))
+        }
+        // Turn end → refresh for message-count + the deterministic fallback title.
         if (m.type === 'event' && m.event.type === 'turn-end') void refreshSessions()
       },
       onStatus: (s) => dispatch({ kind: 'connection', status: s }),

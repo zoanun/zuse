@@ -36,6 +36,8 @@ export interface CreateSessionOpts {
   client?: ModelClient
   /** 注入用：测试可传假快照存储。缺省 createSnapshotStore(cwd)。 */
   snapshotStore?: SnapshotStore
+  /** 恢复用：已有标题(manual/generated 或非空会话)→ 不再自动生成标题。 */
+  titleAlreadySet?: boolean
 }
 
 /**
@@ -117,6 +119,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     createdAt: opts.createdAt,
     titleClient,
     titleModel,
+    titleAlreadySet: opts.titleAlreadySet,
   })
   return mgr
 }
