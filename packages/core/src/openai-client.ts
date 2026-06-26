@@ -27,8 +27,8 @@ export function toOpenAIMessages(
     }
 
     const text = m.content
-      .filter((b) => b.type === 'text')
-      .map((b) => (b.type === 'text' ? b.text : ''))
+      .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+      .map((b) => b.text)
       .join('')
     // 类型谓词 filter 让 TS 把 toolUses 收窄为 tool_use 块数组，下面 map 即可直接取 id/name/input。
     const toolUses = m.content.filter(

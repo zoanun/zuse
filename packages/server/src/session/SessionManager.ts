@@ -375,8 +375,9 @@ export class SessionManager {
 
   /** Queue a mid-turn steer message; runAgent consumes it after each tool batch. */
   steer(text: string): void {
-    if (text.trim() === '') return
-    this.steerQueue.push(text.trim())
+    const trimmed = text.trim()
+    if (trimmed === '') return
+    this.steerQueue.push(trimmed)
   }
 
   /** Abort the in-flight turn, if any. Returns true if a turn was aborted. */

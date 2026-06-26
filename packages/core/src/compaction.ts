@@ -100,12 +100,7 @@ export function findCompactionCutByBudget(
 
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!
-    const chars = m.content.reduce((sum, b) => {
-      if (b.type === 'text') return sum + b.text.length
-      if (b.type === 'tool_use') return sum + JSON.stringify(b.input).length
-      if (b.type === 'tool_result') return sum + b.content.length
-      return sum
-    }, 0)
+    const chars = messageChars(m)
 
     msgCount++
     // Soft ceiling: allow up to 1.5x budget to avoid cutting inside an oversized message
@@ -126,6 +121,16 @@ export function findCompactionCutByBudget(
   return cutIdx > 0 ? cutIdx : null
 }
 
+/** Approx character weight of one message's content blocks (text + tool I/O). */
+function messageChars(m: Message): number {
+  return m.content.reduce((sum, b) => {
+    if (b.type === 'text') return sum + b.text.length
+    if (b.type === 'tool_use') return sum + JSON.stringify(b.input).length
+    if (b.type === 'tool_result') return sum + b.content.length
+    return sum
+  }, 0)
+}
+
 /** Calculate approximate savings from a compaction (before vs after message count/chars). */
 export function estimateCompactionSavings(
   beforeMessages: Message[],
@@ -134,13 +139,7 @@ export function estimateCompactionSavings(
 ): { removedChars: number; summaryChars: number; savingsRatio: number } {
   let removedChars = 0
   for (let i = 0; i < cutIndex; i++) {
-    const m = beforeMessages[i]!
-    removedChars += m.content.reduce((sum, b) => {
-      if (b.type === 'text') return sum + b.text.length
-      if (b.type === 'tool_use') return sum + JSON.stringify(b.input).length
-      if (b.type === 'tool_result') return sum + b.content.length
-      return sum
-    }, 0)
+    removedChars += messageChars(beforeMessages[i]!)
   }
   const savingsRatio = removedChars > 0 ? (removedChars - summaryLength) / removedChars : 0
   return { removedChars, summaryChars: summaryLength, savingsRatio }

@@ -3,6 +3,9 @@ import type { HookRule } from './types.js'
 
 export type HookPhase = 'preToolUse' | 'postToolUse'
 
+/** Max wall-clock a single hook command may run before it's killed. */
+const HOOK_TIMEOUT_MS = 10000
+
 export interface HookEnv {
   toolName: string
   toolInput: unknown
@@ -25,7 +28,7 @@ export function runHooks(
     try {
       execSync(rule.command, {
         cwd: env.cwd,
-        timeout: 10000,
+        timeout: HOOK_TIMEOUT_MS,
         stdio: 'pipe',
         env: {
           ...process.env,
