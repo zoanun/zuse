@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -53,4 +53,36 @@ export async function deleteMemory(id: number): Promise<void> {
 export async function listProjects(): Promise<ProjectInfo[]> {
   const r = await request('/api/projects', {}, 'list projects')
   return (await r.json()) as ProjectInfo[]
+}
+
+// --- Personas (M2) ---
+
+const personaPath = (id: string): string => '/api/personas/' + encodeURIComponent(id)
+
+/** GET /api/personas → { personas, activeId }. Throws on non-ok. */
+export async function listPersonas(): Promise<PersonasState> {
+  const r = await request('/api/personas', {}, 'list personas')
+  return (await r.json()) as PersonasState
+}
+
+/** POST /api/personas → the created PersonaItem. Throws on non-ok. */
+export async function createPersona(body: { name: string; content: string }): Promise<PersonaItem> {
+  const r = await request('/api/personas', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'create persona')
+  return (await r.json()) as PersonaItem
+}
+
+/** PATCH /api/personas/<id> → the updated PersonaItem. Throws on non-ok. */
+export async function updatePersona(id: string, body: { name?: string; content?: string }): Promise<PersonaItem> {
+  const r = await request(personaPath(id), { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'update persona')
+  return (await r.json()) as PersonaItem
+}
+
+/** DELETE /api/personas/<id>. Throws on non-ok. */
+export async function deletePersona(id: string): Promise<void> {
+  await request(personaPath(id), { method: 'DELETE' }, 'delete persona')
+}
+
+/** POST /api/personas/activate with {id} (null clears). Throws on non-ok. */
+export async function activatePersona(id: string | null): Promise<void> {
+  await request('/api/personas/activate', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ id }) }, 'activate persona')
 }

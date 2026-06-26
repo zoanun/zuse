@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MemoryItem, ProjectInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem } from '@zuse/protocol'
 import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
+import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
+import { PersonasPanel } from './PersonasPanel.js'
 
 export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage'
 
 interface NavEntry { id: ManagePanel; label: string; enabled: boolean }
 const NAV: NavEntry[] = [
   { id: 'memory', label: 'Memory', enabled: true },
-  { id: 'prompts', label: 'Prompts', enabled: false },
+  { id: 'prompts', label: 'Personas', enabled: true },
   { id: 'skills', label: 'Skills', enabled: false },
   { id: 'mcp', label: 'MCP', enabled: false },
   { id: 'usage', label: 'Usage', enabled: false },
@@ -83,6 +85,55 @@ function MemoryContainer({ active }: { active: boolean }) {
   )
 }
 
+/** Owns the persona fetch+state lifecycle: load on open, refetch after mutations. */
+function usePersonaData(active: boolean) {
+  const [personas, setPersonas] = useState<PersonaItem[]>([])
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const reqSeq = useRef(0)
+
+  useEffect(() => {
+    if (!active) return
+    const seq = ++reqSeq.current
+    setLoading(true)
+    setError(null)
+    listPersonas()
+      .then((s) => { if (seq === reqSeq.current) { setPersonas(s.personas); setActiveId(s.activeId); setLoading(false) } })
+      .catch((e: unknown) => { if (seq === reqSeq.current) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } })
+  }, [active, reloadTick])
+
+  const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
+  const mutate = useCallback((p: Promise<unknown>) => {
+    p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [refetch])
+
+  return {
+    personas, activeId, loading, error,
+    onCreate: useCallback((b: { name: string; content: string }) => mutate(createPersona(b)), [mutate]),
+    onUpdate: useCallback((id: string, b: { name?: string; content?: string }) => mutate(updatePersona(id, b)), [mutate]),
+    onDelete: useCallback((id: string) => mutate(deletePersona(id)), [mutate]),
+    onActivate: useCallback((id: string | null) => mutate(activatePersona(id)), [mutate]),
+  }
+}
+
+function PersonasContainer({ active }: { active: boolean }) {
+  const p = usePersonaData(active)
+  return (
+    <PersonasPanel
+      personas={p.personas}
+      activeId={p.activeId}
+      loading={p.loading}
+      error={p.error}
+      onCreate={p.onCreate}
+      onUpdate={p.onUpdate}
+      onDelete={p.onDelete}
+      onActivate={p.onActivate}
+    />
+  )
+}
+
 export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Props) {
   // Close on Escape while open.
   useEffect(() => {
@@ -116,6 +167,8 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Prop
           <div className="manage-panel">
             {activePanel === 'memory'
               ? <MemoryContainer active={open && activePanel === 'memory'} />
+              : activePanel === 'prompts'
+              ? <PersonasContainer active={open && activePanel === 'prompts'} />
               : <div className="mem-empty">Coming soon.</div>}
           </div>
         </div>

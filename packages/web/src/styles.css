@@ -220,6 +220,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .mem-search-clear:hover { color: var(--text); background: var(--surface-2); }
 .mem-project-filter { flex: none; background: var(--surface); border: 1px solid var(--line); color: var(--text); font-family: var(--sans); font-size: 13px; padding: 8px 10px; border-radius: 10px; outline: none; }
 .mem-new { flex: none; padding: 8px 12px; font-size: 13px; }
+/* Personas (M2) */
+.persona-hint { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
+.persona-toggle { flex: none; width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--faint); cursor: pointer; }
+.persona-toggle.on { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
+.mem-item.persona-active { border-left: 2px solid var(--accent); padding-left: 8px; }
 .mem-error { background: var(--surface-2); border: 1px solid var(--bad); color: var(--bad); font-size: 12.5px; padding: 8px 11px; border-radius: 10px; margin-bottom: 10px; }
 .mem-empty { color: var(--faint); font-size: 13.5px; padding: 12px 2px; }
 .mem-group { margin-bottom: 16px; }

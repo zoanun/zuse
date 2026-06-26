@@ -9,9 +9,14 @@ vi.mock('../state/manageApi.js', () => ({
   updateMemory: vi.fn(async () => ({})),
   deleteMemory: vi.fn(async () => undefined),
   listProjects: vi.fn(async () => []),
+  listPersonas: vi.fn(async () => ({ personas: [], activeId: null })),
+  createPersona: vi.fn(async () => ({})),
+  updatePersona: vi.fn(async () => ({})),
+  deletePersona: vi.fn(async () => undefined),
+  activatePersona: vi.fn(async () => undefined),
 }))
 
-import { listMemory } from '../state/manageApi.js'
+import { listMemory, listPersonas } from '../state/manageApi.js'
 
 function renderDrawer(over: Partial<Parameters<typeof ManageDrawer>[0]> = {}) {
   const props = {
@@ -29,12 +34,19 @@ beforeEach(() => { vi.clearAllMocks() })
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('ManageDrawer', () => {
-  it('renders the nav with Memory active and other items disabled (soon)', () => {
+  it('renders the nav with Memory active; Personas enabled; others disabled (soon)', () => {
     renderDrawer()
     const memBtn = screen.getByRole('button', { name: /Memory/ })
     expect(memBtn.className).toContain('active')
-    expect((screen.getByRole('button', { name: /Prompts/ }) as HTMLButtonElement).disabled).toBe(true)
+    // Personas (the M2 panel) is now enabled, not "soon".
+    expect((screen.getByRole('button', { name: /Personas/ }) as HTMLButtonElement).disabled).toBe(false)
+    // Skills/MCP/Usage are still placeholders.
     expect(screen.getAllByText('soon').length).toBeGreaterThan(0)
+  })
+
+  it('loads personas via listPersonas when switched to the Personas panel', async () => {
+    renderDrawer({ activePanel: 'prompts' })
+    await waitFor(() => expect(listPersonas).toHaveBeenCalled())
   })
 
   it('loads memory via listMemory when open on the memory panel', async () => {
