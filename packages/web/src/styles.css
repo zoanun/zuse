@@ -100,6 +100,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .text code { font-family: var(--mono); font-size: 0.88em; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
 .text pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
 .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
+.code-wrap { position: relative; margin: 10px 0; }
+.code-wrap pre { margin: 0; }
+.code-copy { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s, color .15s, border-color .15s; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 6px; cursor: pointer; z-index: 1; }
+.code-wrap:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
+.code-copy:hover { color: var(--text); border-color: var(--accent); }
 .text table { border-collapse: collapse; margin: 10px 0; font-size: 13.5px; display: block; overflow-x: auto; }
 .text th, .text td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .text th { background: var(--surface-2); font-weight: 650; }

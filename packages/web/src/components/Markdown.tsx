@@ -1,3 +1,4 @@
+import { useRef, useState, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -17,7 +18,32 @@ const STATUS_GLYPH = /^[✓✔☑●◐○◯☐]\s/
 // would make react-markdown reprocess on every parent re-render — e.g. per delta).
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks]
 const REHYPE_PLUGINS = [rehypeHighlight]
+// Wrap each fenced code block (<pre>) with a hover-reveal "Copy" button. The code
+// text is read from the rendered <pre>'s textContent on click, so it works
+// regardless of how rehype-highlight split the tokens into child spans.
+function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const ref = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const copy = (): void => {
+    const text = ref.current?.textContent ?? ''
+    if (!text) return
+    void navigator.clipboard?.writeText(text).then(
+      () => { setCopied(true); setTimeout(() => setCopied(false), 1500) },
+      () => {},
+    )
+  }
+  return (
+    <div className="code-wrap">
+      <button type="button" className="code-copy" onClick={copy} aria-label="Copy code">
+        {copied ? '✓ Copied' : 'Copy'}
+      </button>
+      <pre ref={ref} {...rest} />
+    </div>
+  )
+}
+
 const components: Components = {
+  pre: CodeBlock,
   li(props) {
     const { children } = props
     const kids = Array.isArray(children) ? children : [children]
