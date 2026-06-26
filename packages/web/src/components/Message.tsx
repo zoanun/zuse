@@ -38,12 +38,11 @@ export function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId:
 }
 
 function RevertIcon() {
-  // Counterclockwise curved undo/revert arrow.
+  // Circular counterclockwise "restore" arrow (Bootstrap arrow-counterclockwise).
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 7v6h6" />
-      <path d="M3 13a9 9 0 1 0 3-7.7L3 7" />
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" d="M8 3a5 5 0 1 1-4.546 2.914.5.5 0 0 0-.908-.417A6 6 0 1 0 8 2z" />
+      <path d="M8 4.466V.534a.25.25 0 0 0-.41-.192L5.23 2.308a.25.25 0 0 0 0 .384l2.36 1.966A.25.25 0 0 0 8 4.466" />
     </svg>
   )
 }
