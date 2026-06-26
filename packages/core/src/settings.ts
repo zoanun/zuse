@@ -85,6 +85,7 @@ export function findProjectRoot(): string {
 /** 单层文件的原始（未补默认值）形状，全部可选。 */
 interface RawSettings {
   model?: string
+  smallModel?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string
@@ -152,6 +153,7 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   }
   for (const layer of layers) {
     if (layer.model !== undefined) out.model = layer.model
+    if (layer.smallModel !== undefined) out.smallModel = layer.smallModel
     if (layer.maxTokens !== undefined) out.maxTokens = layer.maxTokens
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey
@@ -261,6 +263,19 @@ export function resolveFailoverMode(settings: ResolvedSettings): 'dialog' | 'aut
 export function resolveModelSelection(settings: ResolvedSettings): ModelSelection {
   const raw = settings.model
   if (!raw) return { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODEL }
+  const slash = raw.indexOf('/')
+  if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
+  return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }
+}
+
+/**
+ * 解析 settings.smallModel（小模型,用于标题生成等廉价任务）。未配置则返回 null
+ * （调用方据此回退,不启用小模型）。只在第一个 `/` 处切分 → 模型名里的 `/`
+ * （如 siliconflow/Qwen/Qwen2.5-7B-Instruct）合法。裸字符串走默认 provider。
+ */
+export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSelection | null {
+  const raw = settings.smallModel
+  if (!raw) return null
   const slash = raw.indexOf('/')
   if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
   return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }

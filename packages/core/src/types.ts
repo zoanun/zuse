@@ -153,6 +153,8 @@ export interface WebSearchConfig {
 /** 三层合并、补默认值后的最终设置。供 TUI 与 agent 使用。 */
 export interface ResolvedSettings {
   model?: string
+  /** 小模型(廉价辅助任务,如会话标题生成):`<providerId>/<model>`,缺省则不启用。 */
+  smallModel?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string

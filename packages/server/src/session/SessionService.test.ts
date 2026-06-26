@@ -258,3 +258,115 @@ describe('SessionService', () => {
     expect(existsSync(join(dir, `${id}.json`))).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Small-model title generation
+// ---------------------------------------------------------------------------
+
+const titleStop: StreamEvent = { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+
+/**
+ * Like fakeCreateSessionFactory, but each built manager also gets a small-model
+ * titleClient that yields `titleText` for its single title call. `titleCalls`
+ * (keyed by session id) lets a test count how many times the title model ran.
+ */
+function fakeCreateSessionFactoryWithTitle(titleText: string, titleCalls: Record<string, number>) {
+  return (opts: CreateSessionOpts): SessionManager => {
+    const { client } = fakeClient([])
+    const title = fakeClient([[{ type: 'text-delta', text: titleText }, titleStop]], 'small')
+    return new SessionManager({
+      sessionId: opts.sessionId,
+      cwd: opts.cwd,
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
+      conversation: opts.conversation,
+      checkpoints: opts.checkpoints,
+      createdAt: opts.createdAt,
+      titleClient: {
+        getModel: () => 'small',
+        async *sendMessages(m, c, t, s) {
+          titleCalls[opts.sessionId] = (titleCalls[opts.sessionId] ?? 0) + 1
+          yield* title.client.sendMessages(m, c, t, s)
+        },
+      },
+      titleModel: 'small',
+    })
+  }
+}
+
+describe('SessionService — small-model title', () => {
+  it('generates a title on the first turn-end, pins it (titleGenerated), and survives later autosaves', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const calls: Record<string, number> = {}
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('精简标题', calls) })
+
+    const { id } = await svc.create()
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('一段很啰嗦很长的第一句用户消息，本不该直接当标题')
+    await new Promise((r) => setTimeout(r, 40))
+
+    const rec = await loadSession(dir, id)
+    expect(rec?.title).toBe('精简标题')          // generated title won over deriveTitle
+    expect(rec?.titleGenerated).toBe(true)
+    expect(rec?.titleManual).toBeFalsy()
+    expect((await svc.list())[0]!.title).toBe('精简标题')
+    expect(calls[id]).toBe(1)
+
+    // A second turn must NOT regenerate the title.
+    await mgr.submit('第二句')
+    await new Promise((r) => setTimeout(r, 40))
+    expect(calls[id]).toBe(1)
+    expect((await loadSession(dir, id))?.title).toBe('精简标题')
+  })
+
+  it('a manual rename overrides a generated title (titleGenerated cleared)', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const calls: Record<string, number> = {}
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('机器标题', calls) })
+
+    const { id } = await svc.create()
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('first message')
+    await new Promise((r) => setTimeout(r, 40))
+    expect((await loadSession(dir, id))?.titleGenerated).toBe(true)
+
+    await svc.rename(id, '手动命名')
+    const rec = await loadSession(dir, id)
+    expect(rec?.title).toBe('手动命名')
+    expect(rec?.titleManual).toBe(true)
+    expect(rec?.titleGenerated).toBe(false)
+  })
+
+  it('getOrLoad() restoring a titleGenerated record does not regenerate', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const calls: Record<string, number> = {}
+    const id = '20260626-130000-bbbb'
+    await saveSession(dir, {
+      version: 1, id, title: '已生成的标题', titleGenerated: true, cwd: '/work',
+      createdAt: '2026-06-26T13:00:00.000Z', updatedAt: '2026-06-26T13:00:00.000Z',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      checkpoints: [],
+    })
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('不该出现', calls) })
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('another message')
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(calls[id] ?? 0).toBe(0)                 // never asked the model again
+    expect((await loadSession(dir, id))?.title).toBe('已生成的标题')
+  })
+
+  it('generateTitle() is a no-op (null) when no small model is configured', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const { id } = await svc.create()
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('hello')
+    expect(await mgr.generateTitle()).toBeNull()
+  })
+})

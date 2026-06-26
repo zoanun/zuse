@@ -3,6 +3,7 @@ import {
   loadSettings,
   installProxy,
   resolveModelSelection,
+  resolveSmallModelSelection,
   getProviderConfig,
   getWebSearchConfig,
   createModelClient,
@@ -55,6 +56,23 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
   const sel = resolveModelSelection(settings)
   const client = opts.client ?? createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
 
+  // 小模型(标题生成等):仅当配置了 settings.smallModel 且其 provider 有可用 key 时构建。
+  // 任意一步失败都降级为"无小模型"(generateTitle 变 no-op、回退截断标题),绝不阻断会话构建。
+  // 注入了 fake client 的离线测试不建真实小模型客户端。
+  let titleClient: ModelClient | undefined
+  let titleModel: string | undefined
+  if (!opts.client) {
+    const smallSel = resolveSmallModelSelection(settings)
+    if (smallSel) {
+      try {
+        titleClient = createModelClient(getProviderConfig(settings, smallSel.providerId), smallSel.model)
+        titleModel = smallSel.model
+      } catch (err) {
+        console.warn(`[zuse-server] smallModel 不可用,标题将回退截断:${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+  }
+
   const home = homedir()
   // 注：LSP（Lsp/LspInstall）与 MCP 工具 F3 不接 —— 比 TUI registry 少这几样。
   // 它们需各自的进程池/连接生命周期管理，留作 follow-up；F3 单会话能真聊不依赖它们。
@@ -97,6 +115,8 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     conversation: opts.conversation,
     checkpoints: opts.checkpoints,
     createdAt: opts.createdAt,
+    titleClient,
+    titleModel,
   })
   return mgr
 }

@@ -49,6 +49,11 @@ export class SessionService {
   private readonly tombstones = new Set<string>()
   /** Per-id manually-set titles (via rename) — wins over deriveTitle in persist(). */
   private readonly manualTitles = new Map<string, string>()
+  /** Per-id small-model-generated titles — pins the title (no re-gen, no deriveTitle
+   *  overwrite), but a manual rename still overrides. */
+  private readonly generatedTitles = new Map<string, string>()
+  /** Ids with a title-generation request in flight, so we only generate once. */
+  private readonly titlePending = new Set<string>()
 
   constructor(opts: SessionServiceOpts) {
     this.dir = opts.dir
@@ -79,9 +84,10 @@ export class SessionService {
       checkpoints: rec.checkpoints,
       createdAt: rec.createdAt,
     })
-    // Re-seed the manual title from disk so a restart doesn't lose it (and so the
-    // next autosave won't overwrite it with deriveTitle).
+    // Re-seed manual/generated title from disk so a restart doesn't lose it (and so
+    // the next autosave won't overwrite it, nor re-generate). Manual wins over generated.
     if (rec.titleManual) this.manualTitles.set(id, rec.title)
+    else if (rec.titleGenerated) this.generatedTitles.set(id, rec.title)
     this.tombstones.delete(id) // reusing this id is legal again
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)
@@ -133,6 +139,8 @@ export class SessionService {
     this.tombstones.add(id)
     this.persistAgain.delete(id) // drop any pending trailing save for this id
     this.manualTitles.delete(id)
+    this.generatedTitles.delete(id)
+    this.titlePending.delete(id)
     await deleteSession(this.dir, id)
   }
 
@@ -143,6 +151,7 @@ export class SessionService {
    */
   async rename(id: string, title: string): Promise<void> {
     this.manualTitles.set(id, title)
+    this.generatedTitles.delete(id) // a manual title supersedes any generated one
     const live = this.registry.get(id)
     if (live) {
       // Live manager → go through the normal persist path (picks up the manual title).
@@ -156,6 +165,7 @@ export class SessionService {
       ...rec,
       title,
       titleManual: true,
+      titleGenerated: false,
       updatedAt: new Date().toISOString(),
     })
   }
@@ -171,8 +181,35 @@ export class SessionService {
       if (e.type === 'turn-end' || e.type === 'checkpoint-recorded') {
         void this.persist(id, mgr)
       }
+      // On the first turn-end, ask the small model for a title (once). Separate from
+      // the persist above: it runs an async model call, then persists the result.
+      if (e.type === 'turn-end') void this.maybeGenerateTitle(id, mgr)
     })
     this.unsubs.set(id, unsub)
+  }
+
+  /**
+   * Generate a session title via the small model exactly once, then persist it.
+   * Skips when a manual/generated title already exists, when one is already in
+   * flight, or when the manager has no small model / no user text. Best-effort:
+   * a failed or empty generation leaves the deterministic deriveTitle in place.
+   */
+  private async maybeGenerateTitle(id: string, mgr: SessionManager): Promise<void> {
+    if (this.manualTitles.has(id) || this.generatedTitles.has(id) || this.titlePending.has(id)) return
+    if (this.tombstones.has(id)) return
+    this.titlePending.add(id)
+    try {
+      const title = await mgr.generateTitle()
+      // Re-check guards: a rename or delete may have landed during the model call.
+      if (title && !this.manualTitles.has(id) && !this.tombstones.has(id)) {
+        this.generatedTitles.set(id, title)
+        await this.persist(id, mgr)
+      }
+    } catch {
+      // Title generation is value-add; never surface a failure.
+    } finally {
+      this.titlePending.delete(id)
+    }
   }
 
   /**
@@ -198,14 +235,16 @@ export class SessionService {
     this.persisting.add(id)
     try {
       const snap = mgr.getConversation().toJSON()
-      // Title priority: explicit create/adopt seed > manual rename > derived.
-      // (forcedTitle is only the initial 'New chat', so no conflict with a manual title.)
+      // Title priority: explicit create/adopt seed > manual rename > small-model generated > derived.
+      // (forcedTitle is only the initial 'New chat', so no conflict with a manual/generated title.)
       const manual = this.manualTitles.get(id)
+      const generated = this.generatedTitles.get(id)
       const rec: SessionRecord = {
         version: 1,
         id,
-        title: forcedTitle ?? manual ?? deriveTitle(snap.messages),
+        title: forcedTitle ?? manual ?? generated ?? deriveTitle(snap.messages),
         titleManual: this.manualTitles.has(id),
+        titleGenerated: this.generatedTitles.has(id),
         cwd: mgr.getState().cwd,
         model: mgr.getModelId(),
         createdAt: mgr.getCreatedAt(),

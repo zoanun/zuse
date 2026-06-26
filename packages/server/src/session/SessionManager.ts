@@ -25,7 +25,9 @@ import {
   shouldConsolidateMemories,
   buildConsolidationPrompt,
   parseConsolidationOps,
+  generateSessionTitle,
   type ModelClient,
+  type Message,
   type FileReadTracker,
   type ResolvedSettings,
   type ProviderConfig,
@@ -89,6 +91,13 @@ export interface SessionManagerOptions {
    * instead of a real provider client.
    */
   createClient?: (providerConfig: ProviderConfig, model: string) => ModelClient
+  /**
+   * Optional small-model client + model id for cheap auxiliary tasks (session title
+   * generation). Built by createSession from settings.smallModel when configured;
+   * absent → generateTitle() is a no-op (caller falls back to first-message truncation).
+   */
+  titleClient?: ModelClient
+  titleModel?: string
 }
 
 interface Pending {
@@ -113,6 +122,9 @@ export class SessionManager {
   /** Models marked bad this session: key `${providerId}/${model}` → why. Feeds decideFailover. */
   private readonly badModels = new Map<string, ErrorCategory>()
   private readonly createClient: (providerConfig: ProviderConfig, model: string) => ModelClient
+  /** Small-model client + model for title generation; undefined when smallModel unset. */
+  private readonly titleClient: ModelClient | undefined
+  private readonly titleModel: string | undefined
   private abort: AbortController | null = null
   private readonly steerQueue: string[] = []
   private todos: TodoItemLite[] = []
@@ -156,6 +168,8 @@ export class SessionManager {
     this.maxTokens = opts.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
     this.currentProviderId = opts.providerId ?? 'unknown'
     this.createClient = opts.createClient ?? createModelClient
+    this.titleClient = opts.titleClient
+    this.titleModel = opts.titleModel
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
     // we leave totalUsage as undefined when the conversation is brand-new (all zeros).
@@ -213,6 +227,19 @@ export class SessionManager {
 
   getModelId(): string {
     return this.client.getModel()
+  }
+
+  /**
+   * Generate a concise session title with the small model from the first user
+   * message. Returns null when no small model is configured, when there is no
+   * user text yet, or when the model call fails — the caller then keeps its
+   * deterministic fallback title. Fire-and-forget; never throws.
+   */
+  async generateTitle(signal?: AbortSignal): Promise<string | null> {
+    if (!this.titleClient || !this.titleModel) return null
+    const firstUserText = firstUserMessageText(this.conversation.getMessages())
+    if (!firstUserText) return null
+    return generateSessionTitle(this.titleClient, this.titleModel, firstUserText, signal)
   }
 
   getState(): SessionSnapshot {
@@ -759,4 +786,22 @@ export class SessionManager {
       this.consolidating = false
     }
   }
+}
+
+/**
+ * First USER message's text, with submit()'s `[YYYY-MM-DD HH:MM] ` prefix stripped.
+ * Returns '' when there is no user text yet (mirrors SessionService.deriveTitle's scan,
+ * but returns the raw text for the title model rather than a 'New chat' fallback).
+ */
+function firstUserMessageText(messages: Message[]): string {
+  for (const m of messages) {
+    if (m.role !== 'user') continue
+    for (const block of m.content) {
+      if (block.type === 'text') {
+        const text = block.text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '').trim()
+        if (text) return text
+      }
+    }
+  }
+  return ''
 }
