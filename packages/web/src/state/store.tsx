@@ -85,8 +85,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const send = (msg: ClientMessage) => clientRef.current?.send(msg)
 
-  const newSession = async (): Promise<void> => {
-    const id = await createSession()
+  // Point the WS at `id`, clear local state, remember it, and refresh the list.
+  // Shared by newSession (after creating one) and switchSession.
+  const attachTo = (id: string): void => {
     setSessionId(id)
     clientRef.current?.reconnect(wsUrl(id))
     dispatch({ kind: 'reset' })
@@ -94,13 +95,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshSessions()
   }
 
+  const newSession = async (): Promise<void> => {
+    attachTo(await createSession())
+  }
+
   const switchSession = async (id: string): Promise<void> => {
     if (id === currentSessionId) return
-    setSessionId(id)
-    clientRef.current?.reconnect(wsUrl(id))
-    dispatch({ kind: 'reset' })
-    setCurrentSessionId(id)
-    void refreshSessions()
+    attachTo(id)
   }
 
   const removeSession = async (id: string): Promise<void> => {

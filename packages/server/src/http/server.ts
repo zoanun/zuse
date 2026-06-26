@@ -40,6 +40,20 @@ function sendJson(res: ServerResponse, status: number, obj: unknown): void {
   res.end(JSON.stringify(obj))
 }
 
+/**
+ * Run a session-id-scoped mutation: success → 200 {ok:true}; any throw → 400.
+ * The handler runs as `void handle()`, so a safeId rejection (malformed id) must
+ * be caught here or it becomes an unhandled rejection that hangs the client.
+ */
+async function runIdScoped(res: ServerResponse, op: () => Promise<unknown>): Promise<void> {
+  try {
+    await op()
+    sendJson(res, 200, { ok: true })
+  } catch {
+    sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid session id' } })
+  }
+}
+
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
@@ -175,16 +189,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!id) {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing session id' } })
       }
-      // safeId (inside service.delete) throws synchronously on a malformed id.
-      // Catch it here so a bad id is a clean 400 rather than an unhandled
-      // rejection (the handler is invoked as `void handle()` — a throw would
-      // hang the client).
-      try {
-        await deps.service.delete(id)
-      } catch {
-        return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid session id' } })
-      }
-      return sendJson(res, 200, { ok: true })
+      return runIdScoped(res, () => deps.service.delete(id))
     }
 
     // PATCH /api/sessions/<id> — rename title (auth-gated)
@@ -207,14 +212,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (typeof title !== 'string' || title.trim() === '') {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty title' } })
       }
-      // safeId (inside service.rename) throws synchronously on a malformed id —
-      // catch → 400 rather than hang (see DELETE above).
-      try {
-        await deps.service.rename(id, title)
-      } catch {
-        return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid session id' } })
-      }
-      return sendJson(res, 200, { ok: true })
+      return runIdScoped(res, () => deps.service.rename(id, title))
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

@@ -18,42 +18,35 @@ export function wsUrl(sessionId: string): string {
   return proto + '://' + location.host + '/ws?session=' + encodeURIComponent(sessionId)
 }
 
+const JSON_HEADERS = { 'content-type': 'application/json' }
+
+/** Same-origin fetch that throws `<label> failed: <status>` on a non-ok response. */
+async function request(path: string, init: RequestInit, label: string): Promise<Response> {
+  const r = await fetch(path, { credentials: 'same-origin', ...init })
+  if (!r.ok) throw new Error(`${label} failed: ${r.status}`)
+  return r
+}
+
+const sessionPath = (id: string): string => '/api/sessions/' + encodeURIComponent(id)
+
 /** POST /api/sessions and return the new session id. Throws on failure. */
 export async function createSession(): Promise<string> {
-  const r = await fetch('/api/sessions', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: '{}',
-  })
-  if (!r.ok) throw new Error('create session failed: ' + r.status)
-  const d = (await r.json()) as { id: string }
-  return d.id
+  const r = await request('/api/sessions', { method: 'POST', headers: JSON_HEADERS, body: '{}' }, 'create session')
+  return ((await r.json()) as { id: string }).id
 }
 
 /** GET /api/sessions — list sessions (server sorts by updatedAt desc). Throws on failure. */
 export async function listSessions(): Promise<SessionMeta[]> {
-  const r = await fetch('/api/sessions', { credentials: 'same-origin' })
-  if (!r.ok) throw new Error('list sessions failed: ' + r.status)
+  const r = await request('/api/sessions', {}, 'list sessions')
   return (await r.json()) as SessionMeta[]
 }
 
 /** DELETE /api/sessions/<id>. Throws on failure. */
 export async function deleteSession(id: string): Promise<void> {
-  const r = await fetch('/api/sessions/' + encodeURIComponent(id), {
-    method: 'DELETE',
-    credentials: 'same-origin',
-  })
-  if (!r.ok) throw new Error('delete session failed: ' + r.status)
+  await request(sessionPath(id), { method: 'DELETE' }, 'delete session')
 }
 
 /** PATCH /api/sessions/<id> with a new title. Throws on failure. */
 export async function renameSession(id: string, title: string): Promise<void> {
-  const r = await fetch('/api/sessions/' + encodeURIComponent(id), {
-    method: 'PATCH',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ title }),
-  })
-  if (!r.ok) throw new Error('rename session failed: ' + r.status)
+  await request(sessionPath(id), { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ title }) }, 'rename session')
 }
