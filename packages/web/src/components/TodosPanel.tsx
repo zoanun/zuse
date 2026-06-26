@@ -11,6 +11,8 @@ const STATUS_CLS: Record<TodoItemLite['status'], TaskStatus> = {
 export function TodosPanel({ todos }: { todos: TodoItemLite[] }) {
   if (!todos.length) return null
   const done = todos.filter((t) => t.status === 'completed').length
+  // 完成才消失: once every task is completed the plan is done — clear the panel.
+  if (done === todos.length) return null
   return (
     <div className="todos">
       <div className="th"><span>Tasks</span><span>{done} / {todos.length}</span></div>

@@ -40,11 +40,21 @@ function AgentMarker({ status }: { status: AgentStatus }) {
   return <span className="ag-mark ag-run" aria-hidden="true" />
 }
 
+/** Messages of the current turn: everything from the last user message onward. */
+function currentTurn(messages: Message[]): Message[] {
+  let start = 0
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i]!.role === 'user') { start = i; break }
+  return messages.slice(start)
+}
+
 export function AgentsPanel({ messages }: { messages: Message[] }) {
-  const agents = collectAgents(messages)
-  if (!agents.length) return null
-  const done = agents.filter((a) => a.status === 'done').length
+  // Scope to the current turn so finished turns' agents never linger alongside new ones.
+  const agents = collectAgents(currentTurn(messages))
   const running = agents.filter((a) => a.status === 'doing').length
+  // 完成才消失: show only while a sub-agent is still running; once all have returned/failed,
+  // the panel clears (their results remain on the inline tool cards in the chat).
+  if (!running) return null
+  const done = agents.filter((a) => a.status === 'done').length
   return (
     <div className="todos agents">
       <div className="th">

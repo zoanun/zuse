@@ -49,10 +49,33 @@ describe('collectAgents', () => {
   })
 })
 
+const userMsg = (text: string): Message => ({ id: 'u', role: 'user', parts: [{ kind: 'text', text }] })
+
 describe('AgentsPanel', () => {
   it('renders nothing when there are no sub-agents', () => {
     const { container } = render(<AgentsPanel messages={[msg([{ kind: 'text', text: 'hi' }])]} />)
     expect(container.querySelector('.agents')).toBeNull()
+  })
+
+  it('hides once every sub-agent has returned or failed (none running)', () => {
+    const { container } = render(<AgentsPanel messages={[
+      msg([agentUse('a1', 'done one'), toolResult('a1', 'ok')]),
+      msg([agentUse('a2', 'failed one'), toolResult('a2', 'boom', true)]),
+    ]} />)
+    expect(container.querySelector('.agents')).toBeNull()
+  })
+
+  it('shows only the current turn (agents from a prior turn do not linger)', () => {
+    const { container } = render(<AgentsPanel messages={[
+      // prior turn: a settled agent
+      msg([agentUse('old', 'old one'), toolResult('old', 'ok')]),
+      userMsg('next question'),
+      // current turn: one still running
+      msg([agentUse('new', 'new one')]),
+    ]} />)
+    expect(screen.getByText('new one')).toBeInTheDocument()
+    expect(screen.queryByText('old one')).toBeNull()
+    expect(container.querySelector('.th')?.textContent).toContain('0 / 1')
   })
 
   it('lists sub-agents with a done/total count', () => {
