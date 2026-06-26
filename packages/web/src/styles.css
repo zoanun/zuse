@@ -95,24 +95,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .text ul, .text ol { margin: 9px 0; padding-left: 1.5em; }
 .text li { margin: 3px 0; }
 .text li.task-list-item { list-style: none; }
-.text li.in-progress { list-style: none; display: flex; gap: 8px; align-items: center; }
+.text li.task-mark { list-style: none; display: flex; gap: 8px; align-items: center; }
+.text li.task-mark.done { color: var(--muted); text-decoration: line-through; }
 .text li.task-list-item:has(input:checked) { color: var(--muted); text-decoration: line-through; }
 
-/* Shared task marker — used by chat markdown task-lists (GFM checkboxes, self-drawn)
-   AND the Tasks panel (.cbx spans) so both render identically. Themed: green = done,
-   blue = in-progress, outline = pending. */
-.cbx, .text li.task-list-item input[type="checkbox"] {
-  appearance: none; -webkit-appearance: none; box-sizing: border-box; flex: none; margin: 0;
-  width: 14px; height: 14px; border: 1.5px solid var(--line); border-radius: 4px;
-  background: transparent; position: relative; display: inline-block; vertical-align: -2px; cursor: default;
+/* Task markers — shared by chat markdown task-lists and the Tasks panel.
+   done / pending use the DEFAULT checkbox, only re-tinted via accent-color.
+   in-progress is a solid themed square (no inner dot). */
+.cbx-native, .text li.task-list-item input[type="checkbox"] {
+  accent-color: var(--good); width: 14px; height: 14px; margin: 0; flex: none; vertical-align: -2px; cursor: default;
 }
-.cbx.done, .text li.task-list-item input[type="checkbox"]:checked { background: var(--good); border-color: var(--good); }
-.cbx.done::after, .text li.task-list-item input[type="checkbox"]:checked::after {
-  content: ''; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px;
-  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
-}
-.cbx.doing { background: var(--accent); border-color: var(--accent); }
-.cbx.doing::after { content: ''; position: absolute; inset: 0; margin: auto; width: 5px; height: 5px; border-radius: 50%; background: #fff; }
+.cbx.doing { display: inline-block; flex: none; box-sizing: border-box; width: 14px; height: 14px; border-radius: 4px; background: var(--accent); vertical-align: -2px; }
 .text code { font-family: var(--mono); font-size: 0.88em; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 5px; }
 .text pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 10px 0; }
 .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; }

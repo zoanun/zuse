@@ -17,7 +17,10 @@ export function TodosPanel({ todos }: { todos: TodoItemLite[] }) {
       <div className="th"><span>Tasks</span><span>{done} / {todos.length}</span></div>
       {todos.map((t, i) => {
         const cls = STATUS_CLS[t.status] ?? 'todo'
-        return <div key={i} className={'ti ' + cls}><span className={'cbx ' + cls} aria-hidden="true" /><span>{t.content}</span></div>
+        const marker = cls === 'doing'
+          ? <span className="cbx doing" aria-hidden="true" />
+          : <input type="checkbox" className="cbx-native" defaultChecked={cls === 'done'} disabled aria-hidden="true" />
+        return <div key={i} className={'ti ' + cls}>{marker}<span>{t.content}</span></div>
       })}
     </div>
   )
