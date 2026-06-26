@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { SessionMeta } from '@zuse/protocol'
 
 interface Props {
@@ -24,14 +24,20 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [confirming, setConfirming] = useState(false)
+  // Set when Esc cancels, so the blur fired by unmounting the input doesn't commit.
+  const cancelled = useRef(false)
 
-  const startEdit = () => { setDraft(titleOf(s)); setEditing(true) }
+  const startEdit = () => { setDraft(titleOf(s)); cancelled.current = false; setEditing(true) }
   const commit = () => {
+    if (cancelled.current) { cancelled.current = false; setEditing(false); return }
     const t = draft.trim()
-    if (t !== '') onRename(s.id, t)
+    // Only a real change is a rename. A no-op edit (double-click then blur without
+    // changing anything) must NOT pin the title as manual — that would freeze it and
+    // override the auto-generated title.
+    if (t !== '' && t !== titleOf(s)) onRename(s.id, t)
     setEditing(false)
   }
-  const cancel = () => setEditing(false)
+  const cancel = () => { cancelled.current = true; setEditing(false) }
 
   if (editing) {
     return (

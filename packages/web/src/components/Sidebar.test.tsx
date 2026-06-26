@@ -95,4 +95,33 @@ describe('Sidebar', () => {
     expect(props.onRename).not.toHaveBeenCalled()
     expect(screen.getByText('Alpha')).toBeInTheDocument()
   })
+
+  it('double-click then blur WITHOUT changing the title does not fire onRename', () => {
+    // Regression: a no-op edit must not pin the title as manual (which would
+    // freeze it and clobber the auto-generated title).
+    const props = renderSidebar()
+    fireEvent.doubleClick(screen.getByText('Alpha'))
+    const input = screen.getByDisplayValue('Alpha')
+    fireEvent.blur(input)
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
+
+  it('changing the title then blurring commits the rename', () => {
+    const props = renderSidebar()
+    fireEvent.doubleClick(screen.getByText('Alpha'))
+    const input = screen.getByDisplayValue('Alpha')
+    fireEvent.change(input, { target: { value: 'Beta' } })
+    fireEvent.blur(input)
+    expect(props.onRename).toHaveBeenCalledWith('a', 'Beta')
+  })
+
+  it('Esc after changing text does not commit on the unmount blur', () => {
+    const props = renderSidebar()
+    fireEvent.doubleClick(screen.getByText('Alpha'))
+    const input = screen.getByDisplayValue('Alpha')
+    fireEvent.change(input, { target: { value: 'Changed' } })
+    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.blur(input) // unmount blur — must be suppressed by the cancel guard
+    expect(props.onRename).not.toHaveBeenCalled()
+  })
 })
