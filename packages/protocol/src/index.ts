@@ -53,6 +53,28 @@ export interface ProjectInfo {
   cwd: string
 }
 
+/** A named persona (USER.md-style prompt layer), one of which may be active (M2). */
+export interface PersonaItem {
+  id: string
+  name: string
+  content: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** All personas plus which is active (null = none → only the read-only core prompt). */
+export interface PersonasState {
+  personas: PersonaItem[]
+  activeId: string | null
+}
+
+/** One labelled layer of the assembled system prompt (read-only "effective prompt" view). */
+export interface PromptSection {
+  /** Where it came from: 'core' | 'environment' | 'SYSTEM.md' | 'ZUSE.md' | 'MEMORY.md' | 'persona' | … */
+  source: string
+  content: string
+}
+
 /** 轻量 todo —— 与 server 内部状态镜像。 */
 export interface TodoItemLite {
   content: string

@@ -9,6 +9,7 @@ import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
 import { MemoryService } from '../memory/MemoryService.js'
+import { PersonaService } from '../persona/PersonaService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
@@ -40,14 +41,16 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
   const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
   // Temp-db MemoryService so memory routes never touch the real ~/.zuse/memory.db.
   memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
-  srv = createServer(makeRequestHandler({ auth, service, memory, devPage: false, tokenTtlSec: 3600 }))
+  // Temp-file PersonaService so persona routes never touch the real ~/.zuse/personas.json.
+  persona = new PersonaService(join(dir, 'personas.json'))
+  srv = createServer(makeRequestHandler({ auth, service, memory, persona, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -251,5 +254,47 @@ describe('/api/memory REST', () => {
     const cookie = await authCookie()
     const res = await fetch(`${base}/api/memory/abc`, { method: 'DELETE', headers: { cookie } })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('/api/personas REST', () => {
+  it('unauthenticated requests → 401', async () => {
+    expect((await fetch(`${base}/api/personas`)).status).toBe(401)
+    expect((await fetch(`${base}/api/personas`, json({ name: 'a', content: 'b' }))).status).toBe(401)
+    expect((await fetch(`${base}/api/personas/activate`, json({ id: null }))).status).toBe(401)
+  })
+
+  it('create → list → activate → patch → delete round-trips', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+
+    const created = await fetch(`${base}/api/personas`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'Reviewer', content: 'be terse' }) })
+    expect(created.status).toBe(200)
+    const p = await created.json() as { id: string; name: string }
+    expect(p.name).toBe('Reviewer')
+
+    const listed = await (await fetch(`${base}/api/personas`, { headers: { cookie } })).json() as { personas: Array<{ id: string }>; activeId: string | null }
+    expect(listed.personas).toHaveLength(1)
+    expect(listed.activeId).toBeNull()
+
+    const activated = await fetch(`${base}/api/personas/activate`, { method: 'POST', headers: h, body: JSON.stringify({ id: p.id }) })
+    expect(activated.status).toBe(200)
+    expect((await (await fetch(`${base}/api/personas`, { headers: { cookie } })).json()).activeId).toBe(p.id)
+
+    const patched = await fetch(`${base}/api/personas/${p.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ content: 'be very terse' }) })
+    expect((await patched.json()).content).toBe('be very terse')
+
+    const del = await fetch(`${base}/api/personas/${p.id}`, { method: 'DELETE', headers: { cookie } })
+    expect((await del.json()).ok).toBe(true)
+    const after = await (await fetch(`${base}/api/personas`, { headers: { cookie } })).json() as { personas: unknown[]; activeId: string | null }
+    expect(after.personas).toHaveLength(0)
+    expect(after.activeId).toBeNull() // deleting the active one cleared activation
+  })
+
+  it('activating an unknown id → 404; empty name → 400', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    expect((await fetch(`${base}/api/personas/activate`, { method: 'POST', headers: h, body: JSON.stringify({ id: 'nope' }) })).status).toBe(404)
+    expect((await fetch(`${base}/api/personas`, { method: 'POST', headers: h, body: JSON.stringify({ name: '  ', content: 'x' }) })).status).toBe(400)
   })
 })

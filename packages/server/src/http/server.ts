@@ -8,6 +8,7 @@ import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
+import type { PersonaService } from '../persona/PersonaService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -15,6 +16,7 @@ export interface RequestHandlerDeps {
   auth: AuthProvider
   service: SessionService
   memory: MemoryService
+  persona: PersonaService
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -318,6 +320,71 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       for (const m of await deps.service.list()) bySlug.set(cwdSlug(m.cwd), m.cwd)
       const projects: ProjectInfo[] = [...bySlug].map(([slug, cwd]) => ({ slug, cwd }))
       return sendJson(res, 200, projects)
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/personas — Persona CRUD + activation (M2), all auth-gated.
+    // -----------------------------------------------------------------------
+
+    // GET /api/personas — { personas, activeId }
+    if (method === 'GET' && path === '/api/personas') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, await deps.persona.list())
+    }
+
+    // POST /api/personas/activate — body {id: string|null}. Must precede the <id> patterns.
+    if (method === 'POST' && path === '/api/personas/activate') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { id?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const id = body?.id
+      if (id !== null && typeof id !== 'string') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'id must be a string or null' } })
+      }
+      const ok = await deps.persona.activate(id)
+      if (!ok) return sendJson(res, 404, { error: { code: 'not_found', message: 'Persona not found' } })
+      return sendJson(res, 200, { ok })
+    }
+
+    // POST /api/personas — create. body {name, content}
+    if (method === 'POST' && path === '/api/personas') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { name?: unknown; content?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      if (typeof body?.name !== 'string' || body.name.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty name' } })
+      }
+      if (typeof body?.content !== 'string' || body.content.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty content' } })
+      }
+      return sendJson(res, 200, await deps.persona.create({ name: body.name, content: body.content }))
+    }
+
+    // PATCH /api/personas/<id> — update {name?, content?}; unknown id → 404.
+    if (method === 'PATCH' && path.startsWith('/api/personas/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/personas/'.length))
+      let body: { name?: unknown; content?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const fields: { name?: string; content?: string } = {}
+      if (typeof body?.name === 'string') fields.name = body.name
+      if (typeof body?.content === 'string') fields.content = body.content
+      const updated = await deps.persona.update(id, fields)
+      if (!updated) return sendJson(res, 404, { error: { code: 'not_found', message: 'Persona not found' } })
+      return sendJson(res, 200, updated)
+    }
+
+    // DELETE /api/personas/<id> — remove (idempotent → ok:false if missing, still 200).
+    if (method === 'DELETE' && path.startsWith('/api/personas/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/personas/'.length))
+      return sendJson(res, 200, { ok: await deps.persona.remove(id) })
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

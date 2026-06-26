@@ -21,6 +21,7 @@ import {
   cwdSlug,
 } from '@zuse/tools'
 import { SessionManager } from './SessionManager.js'
+import { loadActivePersonaSync } from '../persona/personaStore.js'
 import type { SnapshotStore, SessionCheckpoint } from './events.js'
 
 export interface CreateSessionOpts {
@@ -91,6 +92,12 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
   // live client（failover 会热替换）/权限流/sessionAllow，放在 manager 内闭包最自然。
   // ScheduleWakeup / Lsp / LspInstall / MCP 仍未接，留作 follow-up（见 web-ui-roadmap）。
 
+  // Prompt sections = the read-only file layers (SYSTEM.md/ZUSE.md/MEMORY.md), plus the active
+  // persona (M2) layered on top as one more `## section`. Persona switching takes effect on
+  // newly-built sessions (the system prompt is fixed once a session exists).
+  const sections = loadPromptSections(home, cwd)
+  const persona = loadActivePersonaSync()
+  if (persona) sections.push({ title: `Persona: ${persona.name}`, content: persona.content })
   const systemPrompt = buildSystemPrompt(
     {
       platform: process.platform,
@@ -99,7 +106,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
       cwd,
       date: new Date().toISOString().slice(0, 10),
     },
-    loadPromptSections(home, cwd),
+    sections,
     sel.model,
   )
 

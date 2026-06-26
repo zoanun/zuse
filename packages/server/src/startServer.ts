@@ -7,6 +7,7 @@ import { makeRequestHandler } from './http/server.js'
 import { attachWsServer } from './ws/wsServer.js'
 import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
+import { PersonaService } from './persona/PersonaService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -63,7 +64,9 @@ export async function startServer(
     memory = new MemoryService()
   }
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const persona = new PersonaService()
+
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
