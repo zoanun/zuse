@@ -8,6 +8,7 @@ import type { ResolvedSettings } from '@zuse/core'
 import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
+import { MemoryService } from '../memory/MemoryService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
@@ -39,17 +40,19 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string
+let dir: string, srv: Server, base: string, memory: MemoryService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
   const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
-  srv = createServer(makeRequestHandler({ auth, service, devPage: false, tokenTtlSec: 3600 }))
+  // Temp-db MemoryService so memory routes never touch the real ~/.zuse/memory.db.
+  memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
+  srv = createServer(makeRequestHandler({ auth, service, memory, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
 })
-afterEach(async () => { await new Promise<void>((r) => srv.close(() => r())); rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => { await new Promise<void>((r) => srv.close(() => r())); memory.close(); rmSync(dir, { recursive: true, force: true }) })
 
 const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } })
 
@@ -172,5 +175,81 @@ describe('/api/sessions REST', () => {
     })
     expect(res.status).toBe(400)
     expect((await res.json()).error.code).toBe('bad_request')
+  })
+})
+
+describe('/api/memory REST', () => {
+  it('unauthenticated GET /api/memory → 401', async () => {
+    expect((await fetch(`${base}/api/memory`)).status).toBe(401)
+  })
+
+  it('unauthenticated POST/PATCH/DELETE → 401', async () => {
+    expect((await fetch(`${base}/api/memory`, json({ type: 'user', content: 'x' }))).status).toBe(401)
+    expect((await fetch(`${base}/api/memory/1`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401)
+    expect((await fetch(`${base}/api/memory/1`, { method: 'DELETE' })).status).toBe(401)
+  })
+
+  it('authed CRUD: POST → GET contains; PATCH → GET reflects; DELETE → GET gone', async () => {
+    const cookie = await authCookie()
+
+    // POST → 200 MemoryItem
+    const created = await fetch(`${base}/api/memory`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'project', content: 'compaction 阈值 80%', project: 'p' }) })
+    expect(created.status).toBe(200)
+    const item = await created.json() as { id: number; content: string; type: string }
+    expect(item.id).toBeGreaterThan(0)
+    expect(item.type).toBe('project')
+
+    // GET contains it
+    const listed = await (await fetch(`${base}/api/memory`, { headers: { cookie } })).json() as Array<{ id: number; content: string }>
+    expect(listed.map((m) => m.id)).toContain(item.id)
+
+    // PATCH content → GET reflects new content; search finds new, not old
+    const patched = await fetch(`${base}/api/memory/${item.id}`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ content: 'compaction 阈值 90%' }) })
+    expect(patched.status).toBe(200)
+    expect((await patched.json() as { content: string }).content).toBe('compaction 阈值 90%')
+    const afterPatch = await (await fetch(`${base}/api/memory?project=p`, { headers: { cookie } })).json() as Array<{ id: number; content: string }>
+    expect(afterPatch.find((m) => m.id === item.id)?.content).toBe('compaction 阈值 90%')
+    const search = await (await fetch(`${base}/api/memory?project=p&q=${encodeURIComponent('90%')}`, { headers: { cookie } })).json() as Array<{ id: number }>
+    expect(search.map((m) => m.id)).toContain(item.id)
+
+    // DELETE → GET gone
+    const deleted = await fetch(`${base}/api/memory/${item.id}`, { method: 'DELETE', headers: { cookie } })
+    expect(deleted.status).toBe(200)
+    expect(await deleted.json()).toEqual({ ok: true })
+    const after = await (await fetch(`${base}/api/memory`, { headers: { cookie } })).json() as Array<{ id: number }>
+    expect(after.map((m) => m.id)).not.toContain(item.id)
+  })
+
+  it('POST bad type → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/memory`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'nope', content: 'x' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
+
+  it('POST empty content → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/memory`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ type: 'user', content: '   ' }) })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH unknown id → 404', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/memory/99999`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ content: 'x' }) })
+    expect(res.status).toBe(404)
+    expect((await res.json()).error.code).toBe('not_found')
+  })
+
+  it('PATCH non-numeric id → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/memory/abc`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ content: 'x' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
+
+  it('DELETE non-numeric id → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/memory/abc`, { method: 'DELETE', headers: { cookie } })
+    expect(res.status).toBe(400)
   })
 })

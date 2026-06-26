@@ -47,6 +47,21 @@ describe('Message', () => {
     expect(screen.getByText('a b c')).toBeInTheDocument()
   })
 
+  it('pairs batched tool-uses with their results by id (no duplicate {} cards)', () => {
+    // Model batched two calls: all tool_use, then all tool_result (the snapshot/ledger shape).
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'tool-use', id: 't1', name: 'Grep', input: { pattern: 'greate' } },
+      { kind: 'tool-use', id: 't2', name: 'Glob', input: { pattern: '**/greate' } },
+      { kind: 'tool-result', id: 't1', name: '', output: 'No matches for: greate', isError: false },
+      { kind: 'tool-result', id: 't2', name: '', output: 'No files match', isError: false },
+    ] }} />)
+    // exactly two cards, each carrying its own result — not four, no empty-{}-args card
+    expect(container.querySelectorAll('.tool')).toHaveLength(2)
+    expect(container.querySelector('.args')).toBeNull()
+    expect(screen.getByText('No matches for: greate')).toBeInTheDocument()
+    expect(screen.getByText('No files match')).toBeInTheDocument()
+  })
+
   it('renders a system notice with the kind class', () => {
     const { container } = render(<Message msg={{ id: 'n0', role: 'system', parts: [{ kind: 'text', text: 'boom' }], noticeKind: 'error' }} />)
     const note = container.querySelector('.note.bad')

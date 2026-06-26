@@ -56,17 +56,20 @@ function RevertIcon() {
 
 function renderParts(parts: Part[]) {
   const out: ReactNode[] = []
+  // Pair a tool-use with its result BY ID, not by adjacency: the model often batches several
+  // calls (all tool_use, then all tool_result), so a use and its result aren't neighbours.
+  const resultById = new Map<string, Extract<Part, { kind: 'tool-result' }>>()
+  for (const p of parts) if (p.kind === 'tool-result') resultById.set(p.id, p)
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!
     if (p.kind === 'text') out.push(<Markdown key={i} text={p.text} />)
     else if (p.kind === 'tool-use') {
-      const next = parts[i + 1]
-      const result = next && next.kind === 'tool-result' && next.id === p.id ? next : undefined
-      if (result) i++
       if (p.name === 'TodoWrite') continue            // suppressed — shown in the TodosPanel instead
-      out.push(<ToolCall key={i} use={p} result={result} />)
+      out.push(<ToolCall key={i} use={p} result={resultById.get(p.id)} />)
     } else if (p.kind === 'tool-result') {
       if (p.name === 'TodoWrite') continue            // orphan TodoWrite result — also suppressed
+      // Already shown inline with its tool-use above → skip; only truly orphan results render.
+      if (parts.some((q) => q.kind === 'tool-use' && q.id === p.id)) continue
       out.push(<ToolCall key={i} use={{ kind: 'tool-use', id: p.id, name: p.name || 'tool', input: {} }} result={p} />)
     }
   }

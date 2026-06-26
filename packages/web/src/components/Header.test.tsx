@@ -1,12 +1,19 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { Header } from './Header.js'
 import { initialState } from '../state/reducer.js'
 
 describe('Header', () => {
   it('shows ctx used / window / percent', () => {
-    render(<Header state={{ ...initialState, connection: 'live', model: 'claude', contextTokens: 4700, contextWindow: 200000 }} onMenu={() => {}} />)
+    render(<Header state={{ ...initialState, connection: 'live', model: 'claude', contextTokens: 4700, contextWindow: 200000 }} onMenu={() => {}} onOpenManage={() => {}} />)
     expect(screen.getByText(/ctx 4.7k \/ 200.0k · 2%/)).toBeInTheDocument()
     expect(screen.getByText('connected')).toBeInTheDocument()
+  })
+
+  it('⚙ button fires onOpenManage', () => {
+    const onOpenManage = vi.fn()
+    render(<Header state={initialState} onMenu={() => {}} onOpenManage={onOpenManage} />)
+    fireEvent.click(screen.getByLabelText('Manage'))
+    expect(onOpenManage).toHaveBeenCalled()
   })
 })

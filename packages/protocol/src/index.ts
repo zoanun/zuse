@@ -36,6 +36,23 @@ export interface SessionMeta {
   messageCount: number
 }
 
+/** 记忆条目 DTO(权威源;server 的 MemoryService `import type` 复用,形状 = MemoryRow)。 */
+export interface MemoryItem {
+  id: number
+  type: 'user' | 'project' | 'insight' | 'reference'
+  content: string
+  project: string
+  hook: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** A known project: its memory `project` slug (cwd-slug) ↔ the real working directory. */
+export interface ProjectInfo {
+  slug: string
+  cwd: string
+}
+
 /** 轻量 todo —— 与 server 内部状态镜像。 */
 export interface TodoItemLite {
   content: string

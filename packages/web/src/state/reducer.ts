@@ -49,6 +49,7 @@ function mapPart(p: SnapshotPart): Part {
 }
 
 function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
+  const mapped = s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId }))
   return {
     ...state,
     model: s.model,
@@ -58,8 +59,37 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     todos: s.todos,
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
-    messages: s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId })),
+    messages: foldToolResults(mapped),
   }
+}
+
+type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string }
+
+/**
+ * In the API ledger a tool's result is a `role: 'user'` message holding only a tool_result
+ * block, so the raw snapshot renders it as an empty user bubble (and orphans the tool-use,
+ * which can't pair with a result in a different message). Fold those tool-result parts back
+ * into the preceding assistant message — matching the live shape, where tool-use and
+ * tool-result land in the same assistant message and render as a paired card. Any real text
+ * in the user message is kept as its own bubble.
+ */
+function foldToolResults(msgs: Hist[]): Hist[] {
+  const out: Hist[] = []
+  for (const m of msgs) {
+    if (m.role === 'user') {
+      const toolResults = m.parts.filter((p) => p.kind === 'tool-result')
+      const rest = m.parts.filter((p) => p.kind !== 'tool-result')
+      const prev = out[out.length - 1]
+      if (toolResults.length && prev && prev.role === 'assistant') prev.parts = [...prev.parts, ...toolResults]
+      else if (toolResults.length) out.push({ ...m, role: 'assistant', parts: toolResults, checkpointId: undefined })
+      // Keep the user bubble only if it has real (non-tool-result) content; an empty turn
+      // (tool-result carrier, or a message of only unknown blocks) would render as a blank pill.
+      if (rest.length) out.push({ ...m, parts: rest })
+    } else {
+      out.push(m)
+    }
+  }
+  return out
 }
 
 function reduceEvent(state: AppState, e: SessionEvent): AppState {

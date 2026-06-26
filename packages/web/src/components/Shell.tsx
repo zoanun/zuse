@@ -5,12 +5,17 @@ import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
 import { TodosPanel } from './TodosPanel.js'
+import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
 import { Composer } from './Composer.js'
+import { ManageDrawer } from './ManageDrawer.js'
+import type { ManagePanel } from './ManageDrawer.js'
 
 export function Shell() {
   const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
 
   const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
@@ -29,7 +34,7 @@ export function Shell() {
           onRename={(id, title) => { void rename(id, title) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} />
         <main className="chat">
           <MessageList messages={state.messages} thinking={state.thinking} pendingCount={state.pendingPermissions.length} onRevert={onRevert} />
           {state.pendingPermissions.length > 0 ? (
@@ -38,9 +43,16 @@ export function Shell() {
             </div>
           ) : null}
           <TodosPanel todos={state.todos} />
+          <AgentsPanel messages={state.messages} />
           <Composer disabled={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
         </main>
       </div>
+      <ManageDrawer
+        open={drawerOpen}
+        activePanel={activePanel}
+        onClose={() => setDrawerOpen(false)}
+        onSelectPanel={setActivePanel}
+      />
     </div>
   )
 }

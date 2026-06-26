@@ -66,6 +66,45 @@ describe('createSession', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('registers the Agent tool so a sub-agent runs end-to-end (not "Unknown tool")', async () => {
+    const dir = tmp()
+    const scripts: StreamEvent[][] = [
+      // main turn: call the Agent (sub-agent) tool
+      [
+        { type: 'message-start', id: 'm1', model: 'fake-model' },
+        { type: 'tool-use', id: 'a1', name: 'Agent', input: { description: 'greet', prompt: 'say hi' } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+      // the sub-agent's own runAgent turn (shares the same scripted client): produce text
+      [
+        { type: 'message-start', id: 's1', model: 'fake-model' },
+        { type: 'text-delta', text: 'sub-agent says hi' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+      // main turn continues after the tool result
+      [
+        { type: 'message-start', id: 'm2', model: 'fake-model' },
+        { type: 'text-delta', text: 'done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+    ]
+    const { client } = fakeClient(scripts)
+    const mgr = createSession({ sessionId: 'test', cwd: dir, client, snapshotStore: fakeSnapshotStore() })
+    const toolResults: Extract<SessionEvent, { type: 'tool-result' }>[] = []
+    mgr.subscribe((e) => {
+      if (e.type === 'permission-request') mgr.resolvePermission(e.id, 'allow')
+      if (e.type === 'tool-result') toolResults.push(e)
+    })
+
+    await mgr.submit('use a sub-agent')
+
+    const agentResult = toolResults.find((r) => r.id === 'a1')
+    expect(agentResult).toBeDefined()
+    expect(agentResult!.output).not.toContain('Unknown tool')
+    expect(agentResult!.output).toContain('sub-agent says hi')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('restores conversation + checkpoints from opts (restore path)', () => {
     const dir = tmp()
     const conversation = new Conversation()

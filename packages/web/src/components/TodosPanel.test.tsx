@@ -17,4 +17,11 @@ describe('TodosPanel', () => {
     const { container } = render(<TodosPanel todos={[]} />)
     expect(container.firstChild).toBeNull()
   })
+  it('renders nothing once every task is completed', () => {
+    const { container } = render(<TodosPanel todos={[
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'completed' },
+    ]} />)
+    expect(container.firstChild).toBeNull()
+  })
 })

@@ -21,7 +21,7 @@ export function wsUrl(sessionId: string): string {
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
 /** Same-origin fetch that throws `<label> failed: <status>` on a non-ok response. */
-async function request(path: string, init: RequestInit, label: string): Promise<Response> {
+export async function request(path: string, init: RequestInit, label: string): Promise<Response> {
   const r = await fetch(path, { credentials: 'same-origin', ...init })
   if (!r.ok) throw new Error(`${label} failed: ${r.status}`)
   return r

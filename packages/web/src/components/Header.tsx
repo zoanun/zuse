@@ -7,7 +7,7 @@ function fmt(n: number | undefined): string {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu }: { state: AppState; onMenu: () => void }) {
+export function Header({ state, onMenu, onOpenManage }: { state: AppState; onMenu: () => void; onOpenManage: () => void }) {
   const [, force] = useState(0)
   const ctx = state.contextTokens
   const win = state.contextWindow
@@ -29,9 +29,12 @@ export function Header({ state, onMenu }: { state: AppState; onMenu: () => void 
           <span className="dot" />{conn === 'live' ? 'connected' : conn === 'connecting' ? 'connecting' : 'offline'}
         </span>
       </div>
-      <button className="icon-btn" aria-label="Toggle theme" onClick={() => { toggleTheme(); force((n) => n + 1) }}>
-        {getTheme() === 'light' ? '☾' : '☀'}
-      </button>
+      <div className="mh-right">
+        <button className="icon-btn" aria-label="Manage" title="Manage" onClick={onOpenManage}>⚙</button>
+        <button className="icon-btn" aria-label="Toggle theme" onClick={() => { toggleTheme(); force((n) => n + 1) }}>
+          {getTheme() === 'light' ? '☾' : '☀'}
+        </button>
+      </div>
     </div>
   )
 }
