@@ -2,15 +2,47 @@ import type { Part } from '../state/types.js'
 
 export function ToolCall({ use, result }: { use: Extract<Part, { kind: 'tool-use' }>; result?: Extract<Part, { kind: 'tool-result' }> }) {
   const edits = editsFrom(use)
+  const write = edits ? null : writeFrom(use)
+  // Read/Glob/Grep: a single arg (file_path or pattern) is the gist → show it in the head and
+  // let the result box below carry the content/matches, instead of the escaped-JSON args.
+  const headArg = !edits && !write ? primaryArg(use) : null
+  const file = edits?.file ?? write?.file ?? headArg
   return (
     <div className="tool">
-      <div className="head">⚙ {use.name}{edits ? <span className="tool-file">{edits.file}</span> : null}</div>
+      <div className="head">⚙ {use.name}{file ? <span className="tool-file">{file}</span> : null}</div>
       {edits
         ? edits.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
+        : write
+        ? <pre className="write-body">{trunc(write.content, 4000)}</pre>
+        : headArg !== null
+        ? null
         : <div className="args">{trunc(safeJson(use.input), 200)}</div>}
       {result ? <div className={'result' + (result.isError ? ' err' : '')}>{trunc(result.output, 800)}</div> : null}
     </div>
   )
+}
+
+/**
+ * Pull {file, content} out of a Write tool-use, or null for any other tool. Renders the
+ * written file's content in a box with real line breaks instead of the escaped-JSON args.
+ */
+// Tools whose gist is one string arg: show that arg in the head, drop the args box, and let
+// the result box carry the content/matches.
+const PRIMARY_ARG: Record<string, string> = { Read: 'file_path', Glob: 'pattern', Grep: 'pattern' }
+
+/** The headline arg of a Read/Glob/Grep tool-use (file_path or pattern), or null otherwise. */
+function primaryArg(use: Extract<Part, { kind: 'tool-use' }>): string | null {
+  const key = PRIMARY_ARG[use.name]
+  if (!key) return null
+  const inp = use.input as Record<string, unknown> | null | undefined
+  return inp && typeof inp === 'object' && typeof inp[key] === 'string' ? (inp[key] as string) : null
+}
+
+function writeFrom(use: Extract<Part, { kind: 'tool-use' }>): { file: string; content: string } | null {
+  if (use.name !== 'Write') return null
+  const inp = use.input as { file_path?: unknown; content?: unknown } | null | undefined
+  if (!inp || typeof inp !== 'object' || typeof inp.content !== 'string') return null
+  return { file: typeof inp.file_path === 'string' ? inp.file_path : '', content: inp.content }
 }
 
 /** A computed diff for one Edit (or each edit of a MultiEdit). */
