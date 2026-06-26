@@ -131,6 +131,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .tool .args { color: var(--muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
 .tool .result { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
 .tool .result.err { color: var(--bad); }
+.tool-file { color: var(--muted); font-weight: 400; margin-left: 8px; }
+.edit-diff { margin: 7px 0 0; padding: 8px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+.edit-diff .dl { display: flex; padding: 0 10px; white-space: pre; }
+.edit-diff .dl-sign { flex: none; width: 1.2em; opacity: 0.7; user-select: none; }
+.edit-diff .dl-text { flex: 1; }
+.edit-diff .dl.add { background: rgba(31,157,99,0.16); color: var(--good); }
+.edit-diff .dl.del { background: rgba(216,69,59,0.15); color: var(--bad); }
+.edit-diff .dl.ctx { color: var(--muted); }
 .note { align-self: center; font: 500 12px/1.45 var(--mono); color: var(--faint); text-align: center; }
 .note.warn { color: var(--warn); } .note.bad { color: var(--bad); } .note.live { color: var(--accent); }
 .thinking { align-self: flex-start; }
