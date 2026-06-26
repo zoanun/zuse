@@ -183,6 +183,52 @@ describe('runAgent', () => {
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:out1', 'b:out2'])
   })
 
+  it('runs multiple Agent (sub-agent) calls concurrently though Agent is not read-only', async () => {
+    // Same barrier as the read-only test: a1 blocks until a2 starts. Agent isn't readOnly,
+    // but is parallel-safe (own context, no parent-cwd writeback), so the batch must run
+    // concurrently — serial execution would leave 'a2:start' after 'a1:end' and fail.
+    const order: string[] = []
+    let secondStarted!: () => void
+    const secondStartedP = new Promise<void>((res) => { secondStarted = res })
+    const delay = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
+
+    const reg = new ToolRegistry()
+    reg.register({
+      name: 'Agent', description: '', // deliberately NOT readOnly
+      inputSchema: { type: 'object', properties: {} },
+      run: async (input) => {
+        const n = (input as { n?: number }).n
+        if (n === 1) {
+          order.push('a1:start')
+          await Promise.race([secondStartedP, delay(200)])
+          order.push('a1:end')
+          return { output: 'r1' }
+        }
+        order.push('a2:start')
+        secondStarted()
+        order.push('a2:end')
+        return { output: 'r2' }
+      },
+    })
+
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'a', name: 'Agent', input: { n: 1 } },
+        { type: 'tool-use', id: 'b', name: 'Agent', input: { n: 2 } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+
+    const events = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+    }))
+
+    expect(order.indexOf('a2:start')).toBeLessThan(order.indexOf('a1:end'))
+    const results = events.filter((e) => e.type === 'tool-result') as Array<{ id: string; output: string }>
+    expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:r1', 'b:r2'])
+  })
+
   it('runs concurrent ask prompts on read-only tools without deadlock', async () => {
     // 契约:canUseTool 实现必须支持并发调用（多个未兑现 promise 同时在飞）。
     // TUI 用权限队列满足之;本测试的实现直接并发応答。断言两个只读工具的 ask
