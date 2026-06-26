@@ -13,6 +13,8 @@ export interface WsClientOptions {
 
 export interface WsClient {
   connect(): void
+  /** Point at a new URL and (re)open the socket. Used when switching sessions. */
+  reconnect(url: string): void
   send(msg: ClientMessage): void
   close(): void
 }
@@ -20,6 +22,7 @@ export interface WsClient {
 export function createWsClient(opts: WsClientOptions): WsClient {
   const make = opts.makeSocket ?? ((u: string) => new WebSocket(u))
   const reconnect = opts.reconnect !== false
+  let url = opts.url
   let ws: WebSocket | null = null
   let closed = false
   let attempts = 0
@@ -33,7 +36,7 @@ export function createWsClient(opts: WsClientOptions): WsClient {
     if (ws) { ws.onclose = null; ws.close() }
     closed = false
     opts.onStatus('connecting')
-    ws = make(opts.url)
+    ws = make(url)
     ws.onopen = () => { attempts = 0; opts.onStatus('live') }
     ws.onmessage = (e: MessageEvent) => {
       let msg: ServerMessage
@@ -54,6 +57,7 @@ export function createWsClient(opts: WsClientOptions): WsClient {
 
   return {
     connect,
+    reconnect(next: string) { url = next; connect() },
     send(msg: ClientMessage) { if (ws && ws.readyState === 1 /* OPEN */) ws.send(JSON.stringify(msg)) },
     close() { closed = true; if (timer) { clearTimeout(timer); timer = null }; if (ws) ws.close() },
   }

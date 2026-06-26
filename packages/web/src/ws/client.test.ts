@@ -72,6 +72,21 @@ describe('createWsClient', () => {
     expect(sockets[0]!.readyState).toBe(3) // old socket was closed
   })
 
+  it('reconnect(url) tears down the old socket and opens the new url', () => {
+    const sockets: FakeWS[] = []
+    const client = createWsClient({
+      url: 'ws://x/ws?session=a',
+      onMessage: () => {},
+      onStatus: () => {},
+      makeSocket: (u) => { const s = new FakeWS(u); sockets.push(s); return s as unknown as WebSocket },
+    })
+    client.connect(); sockets[0]!.onopen!()
+    client.reconnect('ws://x/ws?session=b')
+    expect(sockets).toHaveLength(2)
+    expect(sockets[0]!.readyState).toBe(3) // old socket closed
+    expect(sockets[1]!.url).toBe('ws://x/ws?session=b')
+  })
+
   it('send() before the socket is open is a no-op', () => {
     let ws!: FakeWS
     const client = createWsClient({ url: 'ws://x/ws', onMessage: () => {}, onStatus: () => {}, makeSocket: (u) => { ws = new FakeWS(u); return ws as unknown as WebSocket } })
