@@ -64,6 +64,7 @@ interface TextSeg { think: boolean; text: string }
  */
 export function splitThink(text: string): TextSeg[] {
   if (!/<think(?:ing)?>/i.test(text)) return [{ think: false, text }]
+  // Each match consumes at least the opening tag, so it always advances — no zero-width guard.
   const re = /<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/gi
   const segs: TextSeg[] = []
   let last = 0
@@ -72,7 +73,6 @@ export function splitThink(text: string): TextSeg[] {
     if (m.index > last) segs.push({ think: false, text: text.slice(last, m.index) })
     segs.push({ think: true, text: m[1] ?? '' })
     last = re.lastIndex
-    if (m.index === re.lastIndex) re.lastIndex++ // guard against a zero-width match looping
   }
   if (last < text.length) segs.push({ think: false, text: text.slice(last) })
   return segs
@@ -91,11 +91,11 @@ function ThinkBlock({ text }: { text: string }) {
 
 /** Render an assistant text part, folding any `<think>` reasoning into collapsible blocks. */
 function AssistantText({ text }: { text: string }) {
-  const segs = splitThink(text)
-  if (segs.length === 1 && !segs[0]!.think) return <Markdown text={text} />
+  // splitThink fast-returns a single plain segment when there are no tags, so the common
+  // (no-think) case is just one <Markdown> — no extra branch needed here.
   return (
     <>
-      {segs.map((s, j) => (s.think
+      {splitThink(text).map((s, j) => (s.think
         ? <ThinkBlock key={j} text={s.text} />
         : (s.text.trim() ? <Markdown key={j} text={s.text} /> : null)))}
     </>

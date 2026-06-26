@@ -60,8 +60,10 @@ export function isRunawayRepetition(text: string): boolean {
   for (let p = 1; p <= REPETITION_UNIT_MAX; p++) {
     const unit = window.slice(window.length - p)
     if (unit.trim() === '') continue // 纯空白单元忽略（连续缩进/换行不算退化）
+    // 从尾部向前,数有多少个连续的 p 长块恰好等于该单元。
     let repeats = 1
-    for (let i = window.length - p; i - p >= 0 && window.slice(i - p, i) === unit; i -= p) repeats++
+    let pos = window.length - p
+    while (pos - p >= 0 && window.slice(pos - p, pos) === unit) { repeats++; pos -= p }
     if (repeats >= REPETITION_MIN_REPEATS) return true
   }
   return false
@@ -243,14 +245,19 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     //
     // 同一轮里的多个 tool_use 之间天然无数据依赖（模型一次性请求时还没看到任何结果，
     // 有依赖会分轮做）。但「无数据依赖」≠「无副作用」：Bash 的 cd 改写共享 sessionCwd、
-    // Edit 的乐观锁竞争同一文件。所以只在「整批全是只读工具」时才并发 —— 只读工具不调
-    // setCwd（cwd 全程不变、共享快照无碍），也不竞争文件锁；混进一个写工具就维持串行。
+    // Edit 的乐观锁竞争同一文件。所以只在「整批都可并发」时才并发；混进一个会抢占共享状态
+    // 的工具就维持串行。可并发 = 工具声明了 readOnly（不调 setCwd、不竞争文件锁）或
+    // parallelizable（自带隔离上下文,如 Agent 子代理）—— 是 Tool 上的声明式属性,不在这里
+    // 硬编码工具名。
     //
-    // 只读 ≠ 免审：decide() 里 ask 规则先于 readOnly 自动放行判定，并发批内可能多个
-    // 工具同时走到 ask。这由 canUseTool 的契约兜住：实现必须支持并发调用（多个未兑现
-    // 的 promise 同时在飞）—— TUI 的实现是权限请求队列（弹框逐个排队、互不覆盖，见
-    // tui/permissionQueue.ts）；headless 调用方自行保证其 canUseTool 可并发。
-    const allReadOnly = toolUses.every((tu) => registry.get(tu.name)?.readOnly === true)
+    // 可并发 ≠ 免审：decide() 里 ask 规则先于自动放行判定，并发批内可能多个工具同时走到
+    // ask。这由 canUseTool 的契约兜住：实现必须支持并发调用（多个未兑现的 promise 同时在
+    // 飞）—— TUI 的实现是权限请求队列（弹框逐个排队、互不覆盖，见 tui/permissionQueue.ts）；
+    // headless 调用方自行保证其 canUseTool 可并发。
+    const allParallelSafe = toolUses.every((tu) => {
+      const t = registry.get(tu.name)
+      return t?.readOnly === true || t?.parallelizable === true
+    })
 
     // 每个工具调用按会话当前 cwd 重建 ctx —— 上一条 Bash 的 cd 才能被下一条看到。
     const buildCtx = (): ToolContext => ({
@@ -278,29 +285,31 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // 结果"算出即发"：每个工具一 settle 就 yield 它的 tool-result 事件,让前端能逐个
     // 显示内容/改状态,而不是整批跑完才一起冒出来。回喂给模型的 tool_result 块仍按
     // 【请求顺序】组装(见下),不受发射顺序影响。
-    const outputs = new Array<{ output: string; isError: boolean }>(toolUses.length)
-    const resultEvent = (i: number): StreamEvent => ({
-      type: 'tool-result', id: toolUses[i]!.id, name: toolUses[i]!.name,
-      output: outputs[i]!.output, is_error: outputs[i]!.isError,
+    type ToolOutput = { output: string; isError: boolean }
+    const outputs = new Array<ToolOutput>(toolUses.length)
+    const resultEvent = (i: number, r: ToolOutput): StreamEvent => ({
+      type: 'tool-result', id: toolUses[i]!.id, name: toolUses[i]!.name, output: r.output, is_error: r.isError,
     })
-    if (allReadOnly && toolUses.length > 1) {
-      // 并发执行整批只读工具,按【完成顺序】发射结果。gateAndRunTool 把工具异常 try/catch
+    if (allParallelSafe && toolUses.length > 1) {
+      // 并发执行整批可并发工具,按【完成顺序】发射结果。gateAndRunTool 把工具异常 try/catch
       // 成 isError 结果;ask 路径的 canUseTool 按契约可并发(见上)。仅 canUseTool /
       // onPersistAllow 自身抛错才会 reject —— Promise.race 同样把它抛出、中止回合,与原
       // Promise.all 行为一致。每个 derived promise 只建一次,复用给多次 race。
-      const pending = new Map<number, Promise<number>>(
-        toolUses.map((tu, i) => [i, dispatch(tu).then((r) => { outputs[i] = r; return i })]),
+      const pending = new Map<number, Promise<{ i: number; r: ToolOutput }>>(
+        toolUses.map((tu, i) => [i, dispatch(tu).then((r) => ({ i, r }))]),
       )
       while (pending.size > 0) {
-        const i = await Promise.race(pending.values())
+        const { i, r } = await Promise.race(pending.values())
         pending.delete(i)
-        yield resultEvent(i)
+        outputs[i] = r
+        yield resultEvent(i, r)
       }
     } else {
-      // 含写工具（或单个工具）：串行,保住 cd / 乐观锁的顺序语义;每个工具结束即发射其结果。
+      // 含会抢占共享状态的工具（或单个工具）：串行,保住 cd / 乐观锁顺序;每个工具结束即发射结果。
       for (let i = 0; i < toolUses.length; i++) {
-        outputs[i] = await dispatch(toolUses[i]!)
-        yield resultEvent(i)
+        const r = await dispatch(toolUses[i]!)
+        outputs[i] = r
+        yield resultEvent(i, r)
       }
     }
 

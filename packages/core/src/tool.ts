@@ -102,6 +102,12 @@ export interface Tool {
   run(input: unknown, ctx: ToolContext): Promise<ToolResult>
   /** 只读工具（Read/Glob/Grep 为 true），供 defaultMode 分类。 */
   readOnly?: boolean
+  /**
+   * 可在「同轮并发批」里并行执行（不抢占共享会话状态）。只读工具天然如此;非只读但自带
+   * 隔离上下文的工具（如 Agent 子代理——在自己的 Conversation 里跑、不回写父级 cwd）也置
+   * true,好让模型一次请求的多个调用真并行。与 readOnly 正交:仍照常过权限闸。
+   */
+  parallelizable?: boolean
   /** 返回用于规则限定符匹配的字符串：Bash 返回命令，文件工具返回路径；无则 null。 */
   specifierFor?(input: unknown): string | null
 }

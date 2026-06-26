@@ -22,6 +22,10 @@ export interface AgentToolDeps {
 export function createAgentTool(deps: AgentToolDeps): Tool {
   return {
     name: 'Agent',
+    // Each sub-agent runs in its own Conversation/context and never writes back the parent
+    // cwd, so a batch of Agent calls is safe to run concurrently (the model dispatches them
+    // for parallel work). Not readOnly — still permission-gated — but parallelizable.
+    parallelizable: true,
     description:
       'Launch a sub-agent to handle a complex or exploratory sub-task in an isolated context. ' +
       'The sub-agent has its own conversation and tool access, and returns its final text as the result. ' +

@@ -17,6 +17,9 @@ dist/
 # workflow resume 运行时日志（每次跑 workflow 生成，非源码）
 .zuse/workflow-journal/
 
+# Bash 工具溢出的超大输出（运行时生成，非源码）
+.zuse/tool-output/
+
 # logs
 *.log
 npm-debug.log*

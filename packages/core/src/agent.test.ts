@@ -183,6 +183,51 @@ describe('runAgent', () => {
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:out1', 'b:out2'])
   })
 
+  it('runs multiple parallelizable tools concurrently though they are not read-only', async () => {
+    // Agent (sub-agent) is parallelizable but NOT readOnly. A barrier proves concurrency:
+    // a1 blocks until a2 starts; serial execution would put 'a2:start' after 'a1:end'.
+    const order: string[] = []
+    let secondStarted!: () => void
+    const secondStartedP = new Promise<void>((res) => { secondStarted = res })
+    const delay = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
+
+    const reg = new ToolRegistry()
+    reg.register({
+      name: 'Agent', description: '', parallelizable: true, // not readOnly, but parallel-safe
+      inputSchema: { type: 'object', properties: {} },
+      run: async (input) => {
+        const n = (input as { n?: number }).n
+        if (n === 1) {
+          order.push('a1:start')
+          await Promise.race([secondStartedP, delay(200)])
+          order.push('a1:end')
+          return { output: 'r1' }
+        }
+        order.push('a2:start')
+        secondStarted()
+        order.push('a2:end')
+        return { output: 'r2' }
+      },
+    })
+
+    const { client } = fakeClient([
+      [
+        { type: 'tool-use', id: 'a', name: 'Agent', input: { n: 1 } },
+        { type: 'tool-use', id: 'b', name: 'Agent', input: { n: 2 } },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+      ],
+      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+
+    const events = await collect(runAgent({
+      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+    }))
+
+    expect(order.indexOf('a2:start')).toBeLessThan(order.indexOf('a1:end'))
+    const results = events.filter((e) => e.type === 'tool-result') as Array<{ id: string; output: string }>
+    expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:r1', 'b:r2'])
+  })
+
   it('aborts a turn that degenerates into runaway repetition (discards output)', async () => {
     const { client } = fakeClient([
       [
