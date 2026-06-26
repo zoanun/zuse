@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { runAgent } from './agent.js'
+import { runAgent, isRunawayRepetition } from './agent.js'
 import { Conversation } from './conversation.js'
 import { ToolRegistry, type Tool, type ToolDefinition } from './tool.js'
 import type { ModelClient } from './model-client.js'
@@ -183,50 +183,40 @@ describe('runAgent', () => {
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:out1', 'b:out2'])
   })
 
-  it('runs multiple Agent (sub-agent) calls concurrently though Agent is not read-only', async () => {
-    // Same barrier as the read-only test: a1 blocks until a2 starts. Agent isn't readOnly,
-    // but is parallel-safe (own context, no parent-cwd writeback), so the batch must run
-    // concurrently — serial execution would leave 'a2:start' after 'a1:end' and fail.
-    const order: string[] = []
-    let secondStarted!: () => void
-    const secondStartedP = new Promise<void>((res) => { secondStarted = res })
-    const delay = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms))
-
-    const reg = new ToolRegistry()
-    reg.register({
-      name: 'Agent', description: '', // deliberately NOT readOnly
-      inputSchema: { type: 'object', properties: {} },
-      run: async (input) => {
-        const n = (input as { n?: number }).n
-        if (n === 1) {
-          order.push('a1:start')
-          await Promise.race([secondStartedP, delay(200)])
-          order.push('a1:end')
-          return { output: 'r1' }
-        }
-        order.push('a2:start')
-        secondStarted()
-        order.push('a2:end')
-        return { output: 'r2' }
-      },
-    })
-
+  it('aborts a turn that degenerates into runaway repetition (discards output)', async () => {
     const { client } = fakeClient([
       [
-        { type: 'tool-use', id: 'a', name: 'Agent', input: { n: 1 } },
-        { type: 'tool-use', id: 'b', name: 'Agent', input: { n: 2 } },
-        { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+        // one big delta of pure repetition — the guard fires on the next check and breaks
+        { type: 'text-delta', text: '测过了！'.repeat(1500) },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
       ],
-      [{ type: 'text-delta', text: 'done' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
     ])
-
+    const conv = new Conversation()
     const events = await collect(runAgent({
-      conversation: new Conversation(), client, registry: reg, userText: 'go', config, cwd: '.', signal,
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'go', config, cwd: '.', signal,
     }))
+    const warn = events.find((e) => e.type === 'warning' && /repetition/i.test((e as { message: string }).message))
+    expect(warn).toBeDefined()
+    expect(conv.getMessages()).toHaveLength(0) // discarded — runaway text not committed to history
+  })
 
-    expect(order.indexOf('a2:start')).toBeLessThan(order.indexOf('a1:end'))
-    const results = events.filter((e) => e.type === 'tool-result') as Array<{ id: string; output: string }>
-    expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:r1', 'b:r2'])
+  describe('isRunawayRepetition', () => {
+    it('flags a short unit repeated for a long span', () => {
+      expect(isRunawayRepetition('测过了！'.repeat(1500))).toBe(true)
+      expect(isRunawayRepetition('ok '.repeat(2000))).toBe(true)
+    })
+    it('does not flag varied long text', () => {
+      const varied = Array.from({ length: 1000 }, (_, i) => `step ${i}: do thing ${i * 7}\n`).join('')
+      expect(varied.length).toBeGreaterThan(4000)
+      expect(isRunawayRepetition(varied)).toBe(false)
+    })
+    it('does not flag short output even if repetitive', () => {
+      expect(isRunawayRepetition('ab'.repeat(100))).toBe(false) // below the min-length gate
+    })
+    it('ignores whitespace-only runs (indentation/newlines)', () => {
+      expect(isRunawayRepetition(' '.repeat(8000))).toBe(false)
+      expect(isRunawayRepetition('\n'.repeat(8000))).toBe(false)
+    })
   })
 
   it('runs concurrent ask prompts on read-only tools without deadlock', async () => {

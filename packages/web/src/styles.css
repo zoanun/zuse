@@ -145,6 +145,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .bash-cmd::before { content: '$ '; color: var(--good); user-select: none; }
 .note { align-self: center; font: 500 12px/1.45 var(--mono); color: var(--faint); text-align: center; }
 .note.warn { color: var(--warn); } .note.bad { color: var(--bad); } .note.live { color: var(--accent); }
+.think { margin: 6px 0; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
+.think > summary { cursor: pointer; list-style: none; padding: 5px 10px; font: 600 11px/1.4 var(--mono); letter-spacing: 0.04em; color: var(--faint); user-select: none; }
+.think > summary::-webkit-details-marker { display: none; }
+.think > summary::before { content: '▸ '; }
+.think[open] > summary::before { content: '▾ '; }
+.think-body { padding: 0 10px 8px; font: 12px/1.5 var(--mono); color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow-y: auto; }
 .thinking { align-self: flex-start; }
 .thinking .dots { display: flex; gap: 5px; align-items: center; height: 28px; }
 .thinking .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); animation: bob 1.3s infinite ease-in-out; }

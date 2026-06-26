@@ -54,6 +54,54 @@ function RevertIcon() {
   )
 }
 
+/** One slice of assistant text: model reasoning (`think`) vs the actual answer. */
+interface TextSeg { think: boolean; text: string }
+
+/**
+ * Split assistant text on inline `<think>…</think>` (or `<thinking>…`) blocks that some models
+ * emit as literal tags. An unclosed `<think>` (still streaming, or never closed) folds
+ * everything after it as reasoning so a runaway loop can't flood the chat.
+ */
+export function splitThink(text: string): TextSeg[] {
+  if (!/<think(?:ing)?>/i.test(text)) return [{ think: false, text }]
+  const re = /<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/gi
+  const segs: TextSeg[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segs.push({ think: false, text: text.slice(last, m.index) })
+    segs.push({ think: true, text: m[1] ?? '' })
+    last = re.lastIndex
+    if (m.index === re.lastIndex) re.lastIndex++ // guard against a zero-width match looping
+  }
+  if (last < text.length) segs.push({ think: false, text: text.slice(last) })
+  return segs
+}
+
+/** Collapsible, dimmed reasoning block (collapsed by default; capped height so it can't flood). */
+function ThinkBlock({ text }: { text: string }) {
+  if (text.trim() === '') return null
+  return (
+    <details className="think">
+      <summary>💭 thinking</summary>
+      <div className="think-body">{text}</div>
+    </details>
+  )
+}
+
+/** Render an assistant text part, folding any `<think>` reasoning into collapsible blocks. */
+function AssistantText({ text }: { text: string }) {
+  const segs = splitThink(text)
+  if (segs.length === 1 && !segs[0]!.think) return <Markdown text={text} />
+  return (
+    <>
+      {segs.map((s, j) => (s.think
+        ? <ThinkBlock key={j} text={s.text} />
+        : (s.text.trim() ? <Markdown key={j} text={s.text} /> : null)))}
+    </>
+  )
+}
+
 function renderParts(parts: Part[]) {
   const out: ReactNode[] = []
   // Pair a tool-use with its result BY ID, not by adjacency: the model often batches several
@@ -62,7 +110,7 @@ function renderParts(parts: Part[]) {
   for (const p of parts) if (p.kind === 'tool-result') resultById.set(p.id, p)
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!
-    if (p.kind === 'text') out.push(<Markdown key={i} text={p.text} />)
+    if (p.kind === 'text') out.push(<AssistantText key={i} text={p.text} />)
     else if (p.kind === 'tool-use') {
       if (p.name === 'TodoWrite') continue            // suppressed — shown in the TodosPanel instead
       out.push(<ToolCall key={i} use={p} result={resultById.get(p.id)} />)

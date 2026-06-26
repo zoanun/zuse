@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { Message } from './Message.js'
+import { Message, splitThink } from './Message.js'
 
 describe('Message', () => {
   it('renders a user bubble as plain text', () => {
@@ -62,6 +62,25 @@ describe('Message', () => {
     expect(screen.getByText('No files match')).toBeInTheDocument()
   })
 
+  it('folds a <think> block into a collapsed details, answer stays visible', () => {
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'text', text: '<think>let me reason about this</think>The answer is **42**.' },
+    ] }} />)
+    const details = container.querySelector('details.think')
+    expect(details).not.toBeNull()
+    expect(details!.hasAttribute('open')).toBe(false) // collapsed by default
+    expect(container.querySelector('.think-body')?.textContent).toContain('let me reason')
+    // the actual answer renders as normal markdown, not inside the think block
+    expect(screen.getByText('42').tagName.toLowerCase()).toBe('strong')
+  })
+
+  it('folds an unclosed <think> (still streaming) so it cannot flood the chat', () => {
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+      { kind: 'text', text: 'prefix <think>going on and on and on' },
+    ] }} />)
+    expect(container.querySelector('.think-body')?.textContent).toContain('going on and on')
+  })
+
   it('renders a system notice with the kind class', () => {
     const { container } = render(<Message msg={{ id: 'n0', role: 'system', parts: [{ kind: 'text', text: 'boom' }], noticeKind: 'error' }} />)
     const note = container.querySelector('.note.bad')
@@ -91,6 +110,14 @@ describe('Message', () => {
       { kind: 'tool-result', id: 't9', name: 'tool', output: 'lonely', isError: false },
     ] }} />)
     expect(screen.getByText('lonely')).toBeInTheDocument()
+  })
+
+  it('splitThink: no tags → single normal segment; pairs and unclosed split correctly', () => {
+    expect(splitThink('plain text')).toEqual([{ think: false, text: 'plain text' }])
+    expect(splitThink('a<think>r</think>b')).toEqual([
+      { think: false, text: 'a' }, { think: true, text: 'r' }, { think: false, text: 'b' },
+    ])
+    expect(splitThink('<think>unclosed tail')).toEqual([{ think: true, text: 'unclosed tail' }])
   })
 
   it('marks an error tool-result with the err class', () => {

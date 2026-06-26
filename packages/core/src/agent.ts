@@ -44,6 +44,29 @@ function spillToolOutput(output: string, toolName: string, toolId: string, cwd: 
   )
 }
 
+/**
+ * 复读保护：模型退化进重复循环（同一短串无限复读，如 "测过了！测过了！…"）时,在撞
+ * max_tokens 之前就中止本回合,免得糊屏 + 烧 token。仅当输出已经很长时才检测,且要求某个
+ * ≤UNIT 长的单元在尾部【连续精确重复】≥REPEATS 次 —— 正常文本（含代码/表格）几乎不会触发。
+ */
+const REPETITION_MIN_CHARS = 4000
+const REPETITION_UNIT_MAX = 200
+const REPETITION_MIN_REPEATS = 24
+
+export function isRunawayRepetition(text: string): boolean {
+  if (text.length < REPETITION_MIN_CHARS) return false
+  // 只看尾部窗口（最多 UNIT*REPEATS 个字符），按各种单元长度从尾向前数连续精确重复。
+  const window = text.slice(-REPETITION_UNIT_MAX * REPETITION_MIN_REPEATS)
+  for (let p = 1; p <= REPETITION_UNIT_MAX; p++) {
+    const unit = window.slice(window.length - p)
+    if (unit.trim() === '') continue // 纯空白单元忽略（连续缩进/换行不算退化）
+    let repeats = 1
+    for (let i = window.length - p; i - p >= 0 && window.slice(i - p, i) === unit; i -= p) repeats++
+    if (repeats >= REPETITION_MIN_REPEATS) return true
+  }
+  return false
+}
+
 /** 未提供 settings 时的宽松回退：全部放行（保持 Phase 4 行为，便于旧测试/无头调用）。 */
 const PERMISSIVE_SETTINGS: ResolvedSettings = {
   tools: {},
@@ -149,6 +172,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     let text = ''
+    let lastRepCheck = 0
     const toolUses: PendingToolUse[] = []
     let stopReason = ''
     let errored = false
@@ -162,6 +186,16 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       if (event.type === 'text-delta') {
         text += event.text
         yield event
+        // 每多约 500 字符查一次复读；命中即中止本回合并丢弃 staged（不把垃圾写进账本,
+        // 否则后续回合会反复重喂这段退化文本）。break 会触发底层流的 .return() 收尾。
+        if (text.length - lastRepCheck >= 500) {
+          lastRepCheck = text.length
+          if (isRunawayRepetition(text)) {
+            yield { type: 'warning', message: 'Detected runaway repetition — stopped this turn (output discarded to keep the conversation clean).' }
+            errored = true
+            break
+          }
+        }
       } else if (event.type === 'tool-use') {
         toolUses.push({ id: event.id, name: event.name, input: event.input, invalidArgs: event.invalid_args })
         yield event
@@ -209,20 +243,14 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     //
     // 同一轮里的多个 tool_use 之间天然无数据依赖（模型一次性请求时还没看到任何结果，
     // 有依赖会分轮做）。但「无数据依赖」≠「无副作用」：Bash 的 cd 改写共享 sessionCwd、
-    // Edit 的乐观锁竞争同一文件。所以只在「整批都可并发」时才并发；混进一个写工具就维持串行。
-    //
-    // 可并发的工具有两类：
-    //  ① 只读工具 —— 不调 setCwd（cwd 全程不变、共享快照无碍），也不竞争文件锁。
-    //  ② Agent（子代理）—— 在自己的 Conversation/上下文里跑、不回写父级 cwd，模型常一次
-    //     性请求多个让它们并行（用户也明确要并行）。注意：子代理共享父级工作目录，若多个
-    //     子代理并行写【同一文件】会相互覆盖（无自动合并）——需隔离写时由模型按需传
-    //     isolation:'worktree'（各自独立 worktree）；只读/检索型子代理并行则完全安全。
+    // Edit 的乐观锁竞争同一文件。所以只在「整批全是只读工具」时才并发 —— 只读工具不调
+    // setCwd（cwd 全程不变、共享快照无碍），也不竞争文件锁；混进一个写工具就维持串行。
     //
     // 只读 ≠ 免审：decide() 里 ask 规则先于 readOnly 自动放行判定，并发批内可能多个
     // 工具同时走到 ask。这由 canUseTool 的契约兜住：实现必须支持并发调用（多个未兑现
     // 的 promise 同时在飞）—— TUI 的实现是权限请求队列（弹框逐个排队、互不覆盖，见
     // tui/permissionQueue.ts）；headless 调用方自行保证其 canUseTool 可并发。
-    const allParallelSafe = toolUses.every((tu) => registry.get(tu.name)?.readOnly === true || tu.name === 'Agent')
+    const allReadOnly = toolUses.every((tu) => registry.get(tu.name)?.readOnly === true)
 
     // 每个工具调用按会话当前 cwd 重建 ctx —— 上一条 Bash 的 cd 才能被下一条看到。
     const buildCtx = (): ToolContext => ({
@@ -255,7 +283,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       type: 'tool-result', id: toolUses[i]!.id, name: toolUses[i]!.name,
       output: outputs[i]!.output, is_error: outputs[i]!.isError,
     })
-    if (allParallelSafe && toolUses.length > 1) {
+    if (allReadOnly && toolUses.length > 1) {
       // 并发执行整批只读工具,按【完成顺序】发射结果。gateAndRunTool 把工具异常 try/catch
       // 成 isError 结果;ask 路径的 canUseTool 按契约可并发(见上)。仅 canUseTool /
       // onPersistAllow 自身抛错才会 reject —— Promise.race 同样把它抛出、中止回合,与原
