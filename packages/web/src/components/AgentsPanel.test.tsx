@@ -62,9 +62,10 @@ describe('AgentsPanel', () => {
     ]} />)
     expect(screen.getByText('finished one')).toBeInTheDocument()
     expect(screen.getByText('still running')).toBeInTheDocument()
-    expect(screen.getByText('1 / 2')).toBeInTheDocument()
-    // running row uses the in-progress marker; done row the checked checkbox
-    expect(container.querySelector('.ti.doing')).not.toBeNull()
-    expect(container.querySelector('.ti.done')).not.toBeNull()
+    // header shows the running count and the done/total tally
+    expect(screen.getByText(/1 running · 1 \/ 2/)).toBeInTheDocument()
+    // a returned agent gets the green check; a waiting one the pulsing run dot
+    expect(container.querySelector('.ti.ag.done .ag-mark.ag-done')).not.toBeNull()
+    expect(container.querySelector('.ti.ag.doing .ag-mark.ag-run')).not.toBeNull()
   })
 })

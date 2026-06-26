@@ -1,5 +1,4 @@
 import type { Message, Part } from '../state/types.js'
-import { taskMarker } from './taskMarker.js'
 
 type AgentStatus = 'done' | 'doing' | 'failed'
 
@@ -34,18 +33,27 @@ export function collectAgents(messages: Message[]): SubAgent[] {
   return out
 }
 
+/** Status marker: returned → green check, waiting → pulsing dot, failed → red ✕. */
+function AgentMarker({ status }: { status: AgentStatus }) {
+  if (status === 'done') return <span className="ag-mark ag-done" aria-hidden="true">✓</span>
+  if (status === 'failed') return <span className="ag-mark ag-failed" aria-hidden="true">✕</span>
+  return <span className="ag-mark ag-run" aria-hidden="true" />
+}
+
 export function AgentsPanel({ messages }: { messages: Message[] }) {
   const agents = collectAgents(messages)
   if (!agents.length) return null
   const done = agents.filter((a) => a.status === 'done').length
+  const running = agents.filter((a) => a.status === 'doing').length
   return (
     <div className="todos agents">
-      <div className="th"><span>Sub-agents</span><span>{done} / {agents.length}</span></div>
+      <div className="th">
+        <span>Sub-agents</span>
+        <span>{running > 0 ? `${running} running · ` : ''}{done} / {agents.length}</span>
+      </div>
       {agents.map((a) => (
-        <div key={a.id} className={'ti ' + (a.status === 'done' ? 'done' : a.status === 'failed' ? 'failed' : 'doing')}>
-          {a.status === 'failed'
-            ? <span className="cbx failed" aria-hidden="true">✕</span>
-            : taskMarker(a.status === 'done' ? 'done' : 'doing')}
+        <div key={a.id} className={'ti ag ' + a.status}>
+          <AgentMarker status={a.status} />
           <span>{a.label}</span>
         </div>
       ))}
