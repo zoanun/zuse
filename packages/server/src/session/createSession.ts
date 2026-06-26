@@ -9,6 +9,7 @@ import {
   buildSystemPrompt,
   loadPromptSections,
   type ModelClient,
+  type Conversation,
 } from '@zuse/core'
 import {
   createDefaultRegistry,
@@ -19,10 +20,17 @@ import {
   cwdSlug,
 } from '@zuse/tools'
 import { SessionManager } from './SessionManager.js'
-import type { SnapshotStore } from './events.js'
-import { DEFAULT_SESSION_ID } from '../config.js'
+import type { SnapshotStore, SessionCheckpoint } from './events.js'
 
-export interface CreateSessionDeps {
+export interface CreateSessionOpts {
+  sessionId: string
+  cwd: string
+  /** 恢复用：预置对话历史（持久化恢复路径）。 */
+  conversation?: Conversation
+  /** 恢复用：预置 checkpoint 锚点。 */
+  checkpoints?: SessionCheckpoint[]
+  /** 恢复用：原始创建时间戳。 */
+  createdAt?: string
   /** 注入用：协议/工厂单测传 fake client，离线不烧 token。缺省走 createModelClient。 */
   client?: ModelClient
   /** 注入用：测试可传假快照存储。缺省 createSnapshotStore(cwd)。 */
@@ -34,7 +42,8 @@ export interface CreateSessionDeps {
  * 镜像 TUI（index.tsx / useConversation.ts）的构造序列，但不碰 React、不 import tui。
  * client/snapshotStore 可注入以保持单测离线、无网络、无 git。
  */
-export function createSession(cwd: string, deps: CreateSessionDeps = {}): SessionManager {
+export function createSession(opts: CreateSessionOpts): SessionManager {
+  const { sessionId, cwd } = opts
   const settings = loadSettings()
   try {
     installProxy(settings)
@@ -44,7 +53,7 @@ export function createSession(cwd: string, deps: CreateSessionDeps = {}): Sessio
   }
 
   const sel = resolveModelSelection(settings)
-  const client = deps.client ?? createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
+  const client = opts.client ?? createModelClient(getProviderConfig(settings, sel.providerId), sel.model)
 
   const home = homedir()
   // 注：LSP（Lsp/LspInstall）与 MCP 工具 F3 不接 —— 比 TUI registry 少这几样。
@@ -73,10 +82,10 @@ export function createSession(cwd: string, deps: CreateSessionDeps = {}): Sessio
     sel.model,
   )
 
-  const snapshotStore = deps.snapshotStore ?? createSnapshotStore(cwd)
+  const snapshotStore = opts.snapshotStore ?? createSnapshotStore(cwd)
 
   mgr = new SessionManager({
-    sessionId: DEFAULT_SESSION_ID,
+    sessionId,
     cwd,
     client,
     registry,
@@ -85,6 +94,9 @@ export function createSession(cwd: string, deps: CreateSessionDeps = {}): Sessio
     permissionPolicy: { interactive: true, config: settings.permissions },
     snapshotStore,
     providerId: sel.providerId,
+    conversation: opts.conversation,
+    checkpoints: opts.checkpoints,
+    createdAt: opts.createdAt,
   })
   return mgr
 }

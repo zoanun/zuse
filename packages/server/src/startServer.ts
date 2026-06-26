@@ -31,7 +31,7 @@ export async function startServer(
   const registry = new SessionRegistry()
   let sessionErr: string | undefined
   try {
-    registry.set(DEFAULT_SESSION_ID, deps.session ?? createSession(cfg.cwd))
+    registry.set(DEFAULT_SESSION_ID, deps.session ?? createSession({ sessionId: DEFAULT_SESSION_ID, cwd: cfg.cwd }))
   } catch (err) {
     sessionErr = err instanceof Error ? err.message : String(err)
     console.warn(`[zuse-server] session 构建失败:${sessionErr}(/ws 将回 error,health/login 仍可用)`)

@@ -9,6 +9,7 @@ import type { ServerMessage } from '@zuse/protocol'
 import { startServer } from '../startServer.js'
 import { attachWsServer } from './wsServer.js'
 import { createSession } from '../session/createSession.js'
+import { DEFAULT_SESSION_ID } from '../config.js'
 import { SessionRegistry } from '../session/SessionRegistry.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
 import type { AuthProvider } from '../auth/authProvider.js'
@@ -27,7 +28,7 @@ afterEach(async () => {
 /** Boot a real server with an injected fake-client session + complete auth handshake. */
 async function makeServer(scripts: StreamEvent[][] = []) {
   const { client } = fakeClient(scripts)
-  const session = createSession(dir, { client, snapshotStore: fakeSnapshotStore() })
+  const session = createSession({ sessionId: DEFAULT_SESSION_ID, cwd: dir, client, snapshotStore: fakeSnapshotStore() })
   const server = await startServer(
     { host: '127.0.0.1', port: 0, authDir: dir, tokenTtlSec: 3600, cwd: dir },
     { session },

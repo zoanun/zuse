@@ -3,9 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { StreamEvent } from '@zuse/core'
+import { Conversation } from '@zuse/core'
 import { createSession } from './createSession.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
-import type { SessionEvent } from './events.js'
+import type { SessionEvent, SessionCheckpoint } from './events.js'
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), 'zuse-sess-'))
@@ -20,7 +21,7 @@ describe('createSession', () => {
       { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
     ]
     const { client } = fakeClient([script])
-    const mgr = createSession(dir, { client, snapshotStore: fakeSnapshotStore() })
+    const mgr = createSession({ sessionId: 'test', cwd: dir, client, snapshotStore: fakeSnapshotStore() })
     const events: SessionEvent[] = []
     mgr.subscribe((e) => events.push(e))
 
@@ -49,7 +50,7 @@ describe('createSession', () => {
       ],
     ]
     const { client } = fakeClient(scripts)
-    const mgr = createSession(dir, { client, snapshotStore: fakeSnapshotStore() })
+    const mgr = createSession({ sessionId: 'test', cwd: dir, client, snapshotStore: fakeSnapshotStore() })
     const todoEvents: Extract<SessionEvent, { type: 'todos-update' }>[] = []
     mgr.subscribe((e) => {
       // TodoWrite is NOT readOnly → classified 'ask'; interactive policy parks it. Auto-allow.
@@ -62,6 +63,31 @@ describe('createSession', () => {
     expect(todoEvents).toHaveLength(1)
     expect(todoEvents[0]!.todos[0]!.content).toBe('do x')
     expect(todoEvents[0]!.todos[0]!.status).toBe('pending')
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('restores conversation + checkpoints from opts (restore path)', () => {
+    const dir = tmp()
+    const conversation = new Conversation()
+    conversation.appendUserText('earlier question')
+    conversation.appendAssistantText('earlier answer')
+    const checkpoints: SessionCheckpoint[] = [
+      { messageIndex: 0, hash: 'abc123', at: '2026-01-01T00:00:00.000Z', label: 'earlier question' },
+    ]
+    const { client } = fakeClient([])
+    const mgr = createSession({
+      sessionId: 'restored',
+      cwd: dir,
+      conversation,
+      checkpoints,
+      client,
+      snapshotStore: fakeSnapshotStore(),
+    })
+
+    expect(mgr.getConversation().length).toBe(2)
+    expect(mgr.getConversation().getMessages()[0]!.role).toBe('user')
+    expect(mgr.getCheckpoints()).toHaveLength(1)
+    expect(mgr.getCheckpoints()[0]!.hash).toBe('abc123')
     rmSync(dir, { recursive: true, force: true })
   })
 })
