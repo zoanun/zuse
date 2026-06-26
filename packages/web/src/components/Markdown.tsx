@@ -20,6 +20,29 @@ const GLYPH_STATUS: Record<string, TaskStatus> = {
   '○': 'todo', '◯': 'todo', '☐': 'todo', '□': 'todo',
 }
 
+// Models often write a "todo list" as plain glyph-led lines (✓ / ● / ○ …) with NO
+// `- ` bullet, so they never become <li> and our li-renderer can't touch them. Rewrite
+// such lines to GFM task syntax up front (✓→[x], ●→[-], ○→[ ]) so list AND prose forms
+// converge on the same markers. Lines inside ``` fences are left alone.
+const GLYPH_TO_MD: Record<string, string> = {
+  '✓': '[x] ', '✔': '[x] ', '☑': '[x] ', '√': '[x] ',
+  '●': '[-] ', '◐': '[-] ',
+  '○': '[ ] ', '◯': '[ ] ', '☐': '[ ] ', '□': '[ ] ',
+}
+const GLYPH_LINE = /^(\s*)(?:[-*+]\s+)?([✓✔☑√●◐○◯☐□])\s+(.+)$/
+function normalizeTaskGlyphs(md: string): string {
+  let inFence = false
+  return md
+    .split('\n')
+    .map((line) => {
+      if (/^\s*```/.test(line)) { inFence = !inFence; return line }
+      if (inFence) return line
+      const m = line.match(GLYPH_LINE)
+      return m ? `${m[1]}- ${GLYPH_TO_MD[m[2]!]}${m[3]}` : line
+    })
+    .join('\n')
+}
+
 /** The marker for a task status: a re-tinted default checkbox, or a solid square (in-progress). */
 function taskMarker(status: TaskStatus): ReactNode {
   if (status === 'doing') return <span className="cbx doing" aria-hidden="true" />
@@ -77,7 +100,7 @@ export function Markdown({ text }: { text: string }) {
   return (
     <div className="text">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={components}>
-        {text}
+        {normalizeTaskGlyphs(text)}
       </ReactMarkdown>
     </div>
   )

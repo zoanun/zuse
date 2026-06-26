@@ -13,18 +13,18 @@ describe('Markdown', () => {
   })
 
   it('renders single newlines as line breaks (chat-style)', () => {
-    // The model often writes status lines separated by plain newlines (no "- " list).
-    // remark-breaks turns those soft breaks into <br> so they do not collapse onto one line.
-    const { container } = render(<Markdown text={'✓ one\n● two\n○ three'} />)
+    // Plain prose lines (non-task) are joined with <br> by remark-breaks.
+    const { container } = render(<Markdown text={'line one\nline two\nline three'} />)
     expect(container.querySelectorAll('br').length).toBe(2)
   })
 
-  it('drops the bullet on list items that lead with a status glyph (✓/●/○)', () => {
-    const { container } = render(<Markdown text={'- ✓ done\n- ● doing\n- ○ todo'} />)
-    const items = container.querySelectorAll('li')
-    expect(items.length).toBe(3)
-    // every glyph-led item is tagged task-list-item → CSS sets list-style:none (no disc)
-    items.forEach((li) => expect(li.className).toContain('task-list-item'))
-    expect(screen.getByText(/done/)).toBeInTheDocument()
+  it('converts glyph-led lines (✓/●/○), even without a "- " bullet, into task markers', () => {
+    const { container } = render(<Markdown text={'✓ a\n● b\n○ c'} />)
+    // ✓→done and ○→todo become native checkboxes (done one checked); ●→in-progress square
+    expect(container.querySelectorAll('input[type=checkbox]').length).toBe(2)
+    expect(container.querySelector('input[type=checkbox]:checked')).not.toBeNull()
+    expect(container.querySelector('.cbx.doing')).not.toBeNull()
+    // they became a list, not <br>-joined prose
+    expect(container.querySelectorAll('li').length).toBe(3)
   })
 })
