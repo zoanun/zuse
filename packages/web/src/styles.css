@@ -164,6 +164,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .todos .ti.todo { color: var(--muted); }
 .todos .ti.doing { font-weight: 650; }
 .todos .ti.done { color: var(--muted); text-decoration: line-through; }
+.todos .ti.failed { color: var(--bad); }
+.cbx.failed { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; font-size: 11px; line-height: 1; color: var(--bad); flex: none; }
 
 .composer-wrap { width: 100%; padding: 0 7% 18px; }
 .composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); }

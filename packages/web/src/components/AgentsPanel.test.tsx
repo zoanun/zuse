@@ -1,0 +1,70 @@
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { AgentsPanel, collectAgents } from './AgentsPanel.js'
+import type { Message } from '../state/types.js'
+
+const msg = (parts: Message['parts']): Message => ({ id: 'm', role: 'assistant', parts })
+
+const agentUse = (id: string, description: string) =>
+  ({ kind: 'tool-use', id, name: 'Agent', input: { description, prompt: 'do the thing' } }) as const
+const toolResult = (id: string, output: string, isError = false) =>
+  ({ kind: 'tool-result', id, name: 'Agent', output, isError }) as const
+
+describe('collectAgents', () => {
+  it('marks an Agent with no result as running (doing)', () => {
+    const agents = collectAgents([msg([agentUse('a1', 'scan logs')])])
+    expect(agents).toEqual([{ id: 'a1', label: 'scan logs', status: 'doing' }])
+  })
+
+  it('marks an Agent with a result as done, and an error result as failed', () => {
+    const agents = collectAgents([
+      msg([agentUse('a1', 'ok one'), toolResult('a1', 'all good')]),
+      msg([agentUse('a2', 'bad one'), toolResult('a2', 'boom', true)]),
+    ])
+    expect(agents.find((a) => a.id === 'a1')!.status).toBe('done')
+    expect(agents.find((a) => a.id === 'a2')!.status).toBe('failed')
+  })
+
+  it('treats a "launched in background" ack as still running', () => {
+    const agents = collectAgents([msg([
+      agentUse('a1', 'bg task'),
+      toolResult('a1', 'Sub-agent "bg task" launched in background. You will be notified when it finishes.'),
+    ])])
+    expect(agents[0]!.status).toBe('doing')
+  })
+
+  it('pairs result by id even when batched (use, use, result, result)', () => {
+    const agents = collectAgents([msg([
+      agentUse('a1', 'one'), agentUse('a2', 'two'),
+      toolResult('a1', 'done one'), toolResult('a2', 'done two'),
+    ])])
+    expect(agents.map((a) => a.status)).toEqual(['done', 'done'])
+  })
+
+  it('ignores non-Agent tool calls', () => {
+    const agents = collectAgents([msg([
+      { kind: 'tool-use', id: 'b1', name: 'Bash', input: { command: 'ls' } },
+    ])])
+    expect(agents).toEqual([])
+  })
+})
+
+describe('AgentsPanel', () => {
+  it('renders nothing when there are no sub-agents', () => {
+    const { container } = render(<AgentsPanel messages={[msg([{ kind: 'text', text: 'hi' }])]} />)
+    expect(container.querySelector('.agents')).toBeNull()
+  })
+
+  it('lists sub-agents with a done/total count', () => {
+    const { container } = render(<AgentsPanel messages={[
+      msg([agentUse('a1', 'finished one'), toolResult('a1', 'ok')]),
+      msg([agentUse('a2', 'still running')]),
+    ]} />)
+    expect(screen.getByText('finished one')).toBeInTheDocument()
+    expect(screen.getByText('still running')).toBeInTheDocument()
+    expect(screen.getByText('1 / 2')).toBeInTheDocument()
+    // running row uses the in-progress marker; done row the checked checkbox
+    expect(container.querySelector('.ti.doing')).not.toBeNull()
+    expect(container.querySelector('.ti.done')).not.toBeNull()
+  })
+})

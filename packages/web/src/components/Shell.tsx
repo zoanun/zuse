@@ -5,6 +5,7 @@ import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
 import { TodosPanel } from './TodosPanel.js'
+import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
 import { Composer } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
@@ -42,6 +43,7 @@ export function Shell() {
             </div>
           ) : null}
           <TodosPanel todos={state.todos} />
+          <AgentsPanel messages={state.messages} />
           <Composer disabled={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
         </main>
       </div>
