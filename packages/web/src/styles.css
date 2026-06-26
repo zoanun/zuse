@@ -139,7 +139,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .edit-diff .dl.add { background: rgba(31,157,99,0.16); color: var(--good); }
 .edit-diff .dl.del { background: rgba(216,69,59,0.15); color: var(--bad); }
 .edit-diff .dl.ctx { color: var(--muted); }
-.write-body { margin: 7px 0 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.write-body, .bash-cmd { margin: 7px 0 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.bash-cmd { font-family: var(--mono); }
+.bash-cmd::before { content: '$ '; color: var(--good); user-select: none; }
 .note { align-self: center; font: 500 12px/1.45 var(--mono); color: var(--faint); text-align: center; }
 .note.warn { color: var(--warn); } .note.bad { color: var(--bad); } .note.live { color: var(--accent); }
 .thinking { align-self: flex-start; }

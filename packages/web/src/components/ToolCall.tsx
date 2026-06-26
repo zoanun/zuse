@@ -1,49 +1,81 @@
 import type { Part } from '../state/types.js'
 
 export function ToolCall({ use, result }: { use: Extract<Part, { kind: 'tool-use' }>; result?: Extract<Part, { kind: 'tool-result' }> }) {
-  const edits = editsFrom(use)
-  const write = edits ? null : writeFrom(use)
-  // Read/Glob/Grep: a single arg (file_path or pattern) is the gist → show it in the head and
-  // let the result box below carry the content/matches, instead of the escaped-JSON args.
-  const headArg = !edits && !write ? primaryArg(use) : null
-  const file = edits?.file ?? write?.file ?? headArg
+  const { head, body } = describe(use)
   return (
     <div className="tool">
-      <div className="head">⚙ {use.name}{file ? <span className="tool-file">{file}</span> : null}</div>
-      {edits
-        ? edits.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
-        : write
-        ? <pre className="write-body">{trunc(write.content, 4000)}</pre>
-        : headArg !== null
-        ? null
-        : <div className="args">{trunc(safeJson(use.input), 200)}</div>}
+      <div className="head">⚙ {use.name}{head ? <span className="tool-file">{head}</span> : null}</div>
+      {body?.kind === 'diff'
+        ? body.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
+        : body?.kind === 'code'
+        ? <pre className={body.cls}>{trunc(body.text, 4000)}</pre>
+        : body?.kind === 'json'
+        ? <div className="args">{trunc(body.text, 200)}</div>
+        : null}
       {result ? <div className={'result' + (result.isError ? ' err' : '')}>{trunc(result.output, 800)}</div> : null}
     </div>
   )
 }
 
+/** What renders below the head: a line diff, a monospace box, raw-JSON args, or nothing. */
+type Body =
+  | { kind: 'diff'; diffs: DiffLine[][] }
+  | { kind: 'code'; text: string; cls: string }
+  | { kind: 'json'; text: string }
+  | null
+
+// Tools whose gist is one string arg: show that arg in the head, drop the body, and let the
+// result box below carry the content/matches.
+const PRIMARY_ARG: Record<string, string> = {
+  Read: 'file_path', Glob: 'pattern', Grep: 'pattern',
+  WebFetch: 'url', WebSearch: 'query', Skill: 'name', LspInstall: 'lang',
+}
+
 /**
- * Pull {file, content} out of a Write tool-use, or null for any other tool. Renders the
- * written file's content in a box with real line breaks instead of the escaped-JSON args.
+ * Decide how a tool-use renders: the muted `head` after the tool name, and the `body` below.
+ * Each tool surfaces its real arguments (a diff, the file content, the command, the query…)
+ * instead of escaped JSON; the raw-JSON args remain the fallback for anything unrecognised.
  */
-// Tools whose gist is one string arg: show that arg in the head, drop the args box, and let
-// the result box carry the content/matches.
-const PRIMARY_ARG: Record<string, string> = { Read: 'file_path', Glob: 'pattern', Grep: 'pattern' }
+function describe(use: Extract<Part, { kind: 'tool-use' }>): { head: string | null; body: Body } {
+  const inp = (use.input ?? {}) as Record<string, unknown>
+  const str = (k: string): string | undefined => (typeof inp[k] === 'string' ? (inp[k] as string) : undefined)
+  const json = (): { head: null; body: Body } => ({ head: null, body: { kind: 'json', text: safeJson(use.input) } })
 
-/** The headline arg of a Read/Glob/Grep tool-use (file_path or pattern), or null otherwise. */
-function primaryArg(use: Extract<Part, { kind: 'tool-use' }>): string | null {
-  const key = PRIMARY_ARG[use.name]
-  if (!key) return null
-  const inp = use.input as Record<string, unknown> | null | undefined
-  return inp && typeof inp === 'object' && typeof inp[key] === 'string' ? (inp[key] as string) : null
+  // Edit / MultiEdit → file in head + line diff.
+  const edits = editsFrom(use)
+  if (edits) return { head: edits.file, body: { kind: 'diff', diffs: edits.diffs } }
+
+  // One primary string arg → head only (content/matches show in the result box).
+  const pk = PRIMARY_ARG[use.name]
+  if (pk) { const v = str(pk); return v !== undefined ? { head: v, body: null } : json() }
+
+  switch (use.name) {
+    case 'Write': { const c = str('content'); return c !== undefined ? { head: str('file_path') ?? null, body: code(c) } : json() }
+    case 'Bash': { const c = str('command'); return c !== undefined ? { head: str('description') ?? null, body: code(c, 'bash-cmd') } : json() }
+    case 'Agent': { const p = str('prompt'); return p !== undefined ? { head: str('description') ?? null, body: code(p) } : json() }
+    case 'ScheduleWakeup': {
+      const m = str('message')
+      const head = typeof inp.delaySeconds === 'number' ? `in ${inp.delaySeconds}s` : null
+      return m !== undefined ? { head, body: code(m) } : json()
+    }
+    case 'Memory': {
+      const action = str('action')
+      if (!action) return json()
+      const t = str('type')
+      const text = str('content') ?? str('query') ?? str('hook')
+      return { head: t ? `${action} · ${t}` : action, body: text !== undefined ? code(text) : null }
+    }
+    case 'Lsp': {
+      const op = str('operation')
+      if (!op) return json()
+      const sym = str('symbol')
+      return { head: sym ? `${op}: ${sym}` : op, body: null }
+    }
+    default: return json()
+  }
 }
 
-function writeFrom(use: Extract<Part, { kind: 'tool-use' }>): { file: string; content: string } | null {
-  if (use.name !== 'Write') return null
-  const inp = use.input as { file_path?: unknown; content?: unknown } | null | undefined
-  if (!inp || typeof inp !== 'object' || typeof inp.content !== 'string') return null
-  return { file: typeof inp.file_path === 'string' ? inp.file_path : '', content: inp.content }
-}
+const code = (text: string, cls = 'write-body'): Body => ({ kind: 'code', text, cls })
 
 /** A computed diff for one Edit (or each edit of a MultiEdit). */
 function EditDiff({ lines }: { lines: DiffLine[] }) {

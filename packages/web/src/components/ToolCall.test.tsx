@@ -65,10 +65,50 @@ describe('ToolCall', () => {
     expect(container.querySelector('.result')?.textContent).toContain('a/test.md')
   })
 
-  it('falls back to raw-JSON args for other tools', () => {
-    const { container } = render(<ToolCall use={use('Bash', { command: 'ls -la' })} />)
+  it('renders Bash as a command box with the description in the head', () => {
+    const { container } = render(
+      <ToolCall use={use('Bash', { command: 'curl -s https://x | grep y', description: 'fetch and filter' })} />,
+    )
+    expect(screen.getByText('fetch and filter')).toBeInTheDocument()
+    expect(container.querySelector('.bash-cmd')?.textContent).toContain('curl -s https://x | grep y')
+    expect(container.querySelector('.args')).toBeNull()
+  })
+
+  it('renders Agent as a prompt box with the description in the head', () => {
+    const { container } = render(
+      <ToolCall use={use('Agent', { description: 'find the bug', prompt: 'Search the repo for the race condition.' })} />,
+    )
+    expect(screen.getByText('find the bug')).toBeInTheDocument()
+    expect(container.querySelector('.write-body')?.textContent).toContain('race condition')
+  })
+
+  it('shows the headline arg in the head for WebFetch/WebSearch/Skill (no args box)', () => {
+    const { container, rerender } = render(<ToolCall use={use('WebFetch', { url: 'https://example.com' })} />)
+    expect(screen.getByText('https://example.com')).toBeInTheDocument()
+    expect(container.querySelector('.args')).toBeNull()
+    rerender(<ToolCall use={use('WebSearch', { query: 'opus 4.8 release' })} />)
+    expect(screen.getByText('opus 4.8 release')).toBeInTheDocument()
+    rerender(<ToolCall use={use('Skill', { name: 'brainstorming' })} />)
+    expect(screen.getByText('brainstorming')).toBeInTheDocument()
+  })
+
+  it('renders Memory with an action·type head and the content below', () => {
+    const { container } = render(
+      <ToolCall use={use('Memory', { action: 'save', type: 'insight', content: 'the bug was a race' })} />,
+    )
+    expect(screen.getByText('save · insight')).toBeInTheDocument()
+    expect(container.querySelector('.write-body')?.textContent).toContain('the bug was a race')
+  })
+
+  it('renders Lsp as operation: symbol in the head', () => {
+    render(<ToolCall use={use('Lsp', { operation: 'definition', symbol: 'ToolCall' })} />)
+    expect(screen.getByText('definition: ToolCall')).toBeInTheDocument()
+  })
+
+  it('falls back to raw-JSON args for unrecognised tools', () => {
+    const { container } = render(<ToolCall use={use('SomethingNew', { foo: 'bar' })} />)
     expect(container.querySelector('.edit-diff')).toBeNull()
     expect(container.querySelector('.write-body')).toBeNull()
-    expect(container.querySelector('.args')?.textContent).toContain('ls -la')
+    expect(container.querySelector('.args')?.textContent).toContain('bar')
   })
 })
