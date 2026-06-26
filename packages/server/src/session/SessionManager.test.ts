@@ -105,6 +105,53 @@ describe('SessionManager skeleton', () => {
   })
 })
 
+describe('SessionManager snapshot projection', () => {
+  it('projects the conversation into SnapshotMessages and exposes checkpoints', () => {
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: 'hello' }] })
+    conversation.append({
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'running it' },
+        { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
+      ],
+    })
+    conversation.append({
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file.txt', is_error: false }],
+    })
+
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      conversation,
+    })
+
+    const s = mgr.getState()
+    expect(s.messages).toEqual([
+      { role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
+      {
+        role: 'assistant',
+        parts: [
+          { kind: 'text', text: 'running it' },
+          { kind: 'tool-use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
+        ],
+      },
+      { role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }] },
+    ])
+    // No turn has run, so no checkpoints recorded yet.
+    expect(s.checkpoints).toEqual([])
+    expect(s.messageCount).toBe(3)
+  })
+})
+
 describe('SessionManager permissions', () => {
   it('interactive: ask emits permission-request and resolves on resolvePermission', async () => {
     const { mgr } = makeManager()

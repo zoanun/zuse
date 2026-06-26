@@ -44,6 +44,7 @@ import type {
   SessionCheckpoint,
   SnapshotStore,
 } from './events.js'
+import type { SnapshotPart, SnapshotMessage } from '@zuse/protocol'
 
 /**
  * Compaction folds messages[0..cut) into a single summary message, so checkpoint
@@ -211,7 +212,36 @@ export class SessionManager {
       todos: this.todos,
       pendingPermissions,
       messageCount: this.conversation.length,
+      messages: this.projectMessages(),
+      checkpoints: this.checkpoints.map((c) => ({ id: c.hash, label: c.label })),
     }
+  }
+
+  /**
+   * Project the committed conversation into wire-shaped SnapshotMessages so a late-
+   * joining client can render the full history on attach. Each ContentBlock maps to a
+   * SnapshotPart; unknown block kinds are skipped (a message with no mappable blocks
+   * still emits {role, parts:[]} to preserve user/assistant ordering). tool_result blocks
+   * carry no tool name in the core ContentBlock, so name is '' here.
+   */
+  private projectMessages(): SnapshotMessage[] {
+    return this.conversation.getMessages().map(({ role, content }) => {
+      const parts: SnapshotPart[] = []
+      for (const block of content) {
+        if (block.type === 'text') {
+          parts.push({ kind: 'text', text: block.text })
+        } else if (block.type === 'tool_use') {
+          parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
+        } else if (block.type === 'tool_result') {
+          const output = Array.isArray(block.content)
+            ? (block.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
+            : String(block.content)
+          parts.push({ kind: 'tool-result', id: block.tool_use_id, name: '', output, isError: block.is_error ?? false })
+        }
+        // Unknown block kinds are intentionally skipped.
+      }
+      return { role, parts }
+    })
   }
 
   /**
