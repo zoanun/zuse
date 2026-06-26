@@ -1,0 +1,158 @@
+import { mkdir, writeFile, rename, readFile, readdir, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { Message, Usage } from '@zuse/core'
+import type { SessionCheckpoint } from './events.js'
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface SessionRecord {
+  version: 1
+  id: string
+  title: string
+  cwd: string
+  model?: string
+  createdAt: string
+  updatedAt: string
+  messages: Message[]
+  totalUsage: Usage
+  checkpoints: SessionCheckpoint[]
+}
+
+export interface SessionMeta {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  cwd: string
+  messageCount: number
+}
+
+// ---------------------------------------------------------------------------
+// ID generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a time-sortable session id: YYYYMMDD-HHMMSS-<4 hex chars>.
+ * Pass `now` to get deterministic output in tests.
+ */
+export function newSessionId(now: Date = new Date()): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const ts =
+    `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+    `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  // 4 hex chars from random float (base-16 of a 0..1 float truncated at 4 chars)
+  const rand = Math.floor(Math.random() * 0xffff)
+    .toString(16)
+    .padStart(4, '0')
+  return `${ts}-${rand}`
+}
+
+// ---------------------------------------------------------------------------
+// Path safety
+// ---------------------------------------------------------------------------
+
+/**
+ * Guard against path traversal: id must consist only of alphanumerics and hyphens.
+ * newSessionId always produces safe ids; this is a belt-and-suspenders check for
+ * ids that arrive from external sources (e.g. HTTP request params).
+ */
+function safeId(id: string): string {
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) {
+    throw new Error(`Invalid session id (contains unsafe characters): "${id}"`)
+  }
+  return id
+}
+
+// ---------------------------------------------------------------------------
+// Core CRUD
+// ---------------------------------------------------------------------------
+
+/**
+ * Atomically persist a session record.
+ * Writes to `<id>.json.tmp` first, then renames to `<id>.json` so a crash
+ * mid-write never leaves a corrupt final file.
+ */
+export async function saveSession(dir: string, rec: SessionRecord): Promise<void> {
+  await mkdir(dir, { recursive: true })
+  const safe = safeId(rec.id)
+  const finalPath = join(dir, `${safe}.json`)
+  const tmpPath = `${finalPath}.tmp`
+  await writeFile(tmpPath, JSON.stringify(rec, null, 2), 'utf8')
+  await rename(tmpPath, finalPath)
+}
+
+/**
+ * Load a session by id. Returns null if the file is missing or unparseable.
+ * Throws on invalid ids (path-safety enforcement is not swallowed).
+ */
+export async function loadSession(dir: string, id: string): Promise<SessionRecord | null> {
+  // safeId throws synchronously on bad input — let it propagate.
+  const safe = safeId(id)
+  try {
+    const raw = await readFile(join(dir, `${safe}.json`), 'utf8')
+    return JSON.parse(raw) as SessionRecord
+  } catch {
+    return null
+  }
+}
+
+/**
+ * List all sessions in `dir` as lightweight metadata objects, sorted by
+ * `updatedAt` descending. Corrupt or incomplete files are silently skipped.
+ * Returns [] if the directory does not exist.
+ */
+export async function listSessions(dir: string): Promise<SessionMeta[]> {
+  let files: string[]
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.json'))
+  } catch {
+    // Directory doesn't exist — no sessions yet.
+    return []
+  }
+
+  const metas: SessionMeta[] = []
+  for (const f of files) {
+    try {
+      const raw = await readFile(join(dir, f), 'utf8')
+      const rec = JSON.parse(raw) as Partial<SessionRecord>
+      // Require the fields that make a SessionMeta meaningful.
+      if (
+        typeof rec.id !== 'string' ||
+        typeof rec.title !== 'string' ||
+        typeof rec.createdAt !== 'string' ||
+        typeof rec.updatedAt !== 'string' ||
+        typeof rec.cwd !== 'string' ||
+        !Array.isArray(rec.messages)
+      ) {
+        continue
+      }
+      metas.push({
+        id: rec.id,
+        title: rec.title,
+        createdAt: rec.createdAt,
+        updatedAt: rec.updatedAt,
+        cwd: rec.cwd,
+        messageCount: rec.messages.length,
+      })
+    } catch {
+      // Corrupt file — skip.
+      continue
+    }
+  }
+
+  metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+  return metas
+}
+
+/**
+ * Delete a session file. Missing files are silently ignored (idempotent).
+ */
+export async function deleteSession(dir: string, id: string): Promise<void> {
+  try {
+    await unlink(join(dir, `${safeId(id)}.json`))
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+  }
+}
