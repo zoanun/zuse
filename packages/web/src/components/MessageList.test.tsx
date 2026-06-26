@@ -1,9 +1,22 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MessageList } from './MessageList.js'
 import type { Message } from '../state/types.js'
 
 describe('MessageList', () => {
+  beforeEach(() => {
+    // jsdom has no scrollIntoView; stub it so the auto-scroll effects don't throw.
+    Element.prototype.scrollIntoView = vi.fn()
+  })
+
+  it('scrolls to the bottom when a permission card appears (pendingCount > 0)', () => {
+    const spy = vi.fn()
+    Element.prototype.scrollIntoView = spy
+    const { rerender } = render(<MessageList messages={[]} thinking={false} pendingCount={0} />)
+    spy.mockClear()
+    rerender(<MessageList messages={[]} thinking={false} pendingCount={1} />)
+    expect(spy).toHaveBeenCalled()
+  })
   it('shows the empty state when there are no messages', () => {
     render(<MessageList messages={[]} thinking={false} />)
     expect(screen.getByText('Ask zuse anything to get started.')).toBeInTheDocument()

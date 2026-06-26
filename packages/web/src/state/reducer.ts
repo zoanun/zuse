@@ -58,7 +58,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     todos: s.todos,
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
-    messages: s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart) })),
+    messages: s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId })),
     checkpoints: s.checkpoints,
   }
 }
@@ -86,7 +86,16 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
     case 'aborted': return withNotice({ ...state, thinking: false }, 'stopped', 'warn')
-    case 'checkpoint-recorded': return { ...state, checkpoints: [...state.checkpoints, { id: e.id, label: e.label }] }
+    case 'checkpoint-recorded': {
+      // Attach the checkpoint id to the most recent user message that lacks one
+      // (one checkpoint per turn, in order → that turn's user message).
+      const msgs = state.messages.slice()
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i]!
+        if (m.role === 'user' && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
+      }
+      return { ...state, messages: msgs, checkpoints: [...state.checkpoints, { id: e.id, label: e.label }] }
+    }
     case 'reverted': return withNotice(state, 'reverted to checkpoint', 'info')
     default: return state
   }

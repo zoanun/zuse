@@ -94,17 +94,42 @@ describe('reduce', () => {
       checkpoints: [{ id: 'cp1', label: 'after hello' }],
     } } })
     expect(s.messages).toHaveLength(2)
-    expect(s.messages[0]).toEqual({ id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'hello' }] })
+    expect(s.messages[0]).toEqual({ id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'hello' }], checkpointId: undefined })
     expect(s.messages[1]).toEqual({ id: 'h1', role: 'assistant', parts: [
       { kind: 'text', text: 'hi' },
       { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
-    ] })
+    ], checkpointId: undefined })
     expect(s.checkpoints).toEqual([{ id: 'cp1', label: 'after hello' }])
+  })
+
+  it('applySnapshot carries checkpointId onto user messages', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'hello' }], checkpointId: 'cpA' },
+      ],
+      checkpoints: [{ id: 'cpA', label: 'after hello' }],
+    } } })
+    expect(s.messages[0]!.checkpointId).toBe('cpA')
   })
 
   it('checkpoint-recorded appends to checkpoints', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 3, label: 'after step 3' }) })
     expect(s.checkpoints).toEqual([{ id: 'cp2', label: 'after step 3' }])
+  })
+
+  it('checkpoint-recorded attaches e.id to the last user message lacking a checkpointId', () => {
+    const s = run([
+      { kind: 'user-send', id: 'u1', text: 'first' },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 'turn 1' }) },
+      { kind: 'user-send', id: 'u2', text: 'second' },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 2, label: 'turn 2' }) },
+    ])
+    const users = s.messages.filter((m) => m.role === 'user')
+    expect(users[0]!.checkpointId).toBe('cp1')
+    expect(users[1]!.checkpointId).toBe('cp2')
+    expect(s.checkpoints).toEqual([{ id: 'cp1', label: 'turn 1' }, { id: 'cp2', label: 'turn 2' }])
   })
 
   it('reverted adds an info notice', () => {

@@ -14,6 +14,7 @@ export function Shell() {
 
   const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
+  const onRevert = (checkpointId: string) => send({ type: 'revert', checkpointId })
 
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
@@ -22,12 +23,12 @@ export function Shell() {
           onNewChat={() => { send({ type: 'reset-session' }); dispatch({ kind: 'reset' }); setMenuOpen(false) }}
           checkpoints={state.checkpoints}
           thinking={state.thinking}
-          onRevert={(checkpointId) => send({ type: 'revert', checkpointId })}
+          onRevert={onRevert}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} />
         <main className="chat">
-          <MessageList messages={state.messages} thinking={state.thinking} />
+          <MessageList messages={state.messages} thinking={state.thinking} pendingCount={state.pendingPermissions.length} onRevert={onRevert} />
           {state.pendingPermissions.length > 0 ? (
             <div className="perm-wrap">
               {state.pendingPermissions.map((p) => <PermissionCard key={p.id} pending={p} onReply={onReply} />)}

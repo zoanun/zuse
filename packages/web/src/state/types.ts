@@ -10,6 +10,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system'
   parts: Part[]
   noticeKind?: 'info' | 'warn' | 'error'   // only set for role:'system'
+  checkpointId?: string                     // only set for role:'user' — the turn's shadow-git checkpoint
 }
 export type Connection = 'connecting' | 'live' | 'down'
 

@@ -3,7 +3,7 @@ import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 
-export function Message({ msg }: { msg: Msg }) {
+export function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId: string) => void }) {
   if (msg.role === 'system') {
     const kind = msg.noticeKind
     const cls = kind === 'error' ? 'bad' : kind === 'warn' ? 'warn' : 'live'
@@ -12,12 +12,39 @@ export function Message({ msg }: { msg: Msg }) {
   }
   if (msg.role === 'user') {
     const text = msg.parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
-    return <div className="msg you"><div className="bubble">{text}</div></div>
+    const cp = msg.checkpointId
+    return (
+      <div className="msg you">
+        <div className="bubble">{text}</div>
+        {cp && onRevert ? (
+          <button
+            type="button"
+            className="msg-revert"
+            title="Revert to this point"
+            aria-label="Revert to this point"
+            onClick={() => onRevert(cp)}
+          >
+            <RevertIcon />
+          </button>
+        ) : null}
+      </div>
+    )
   }
   return (
     <div className="msg agent">
       <div className="text-wrap">{renderParts(msg.parts)}</div>
     </div>
+  )
+}
+
+function RevertIcon() {
+  // Counterclockwise curved undo/revert arrow.
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 7v6h6" />
+      <path d="M3 13a9 9 0 1 0 3-7.7L3 7" />
+    </svg>
   )
 }
 
