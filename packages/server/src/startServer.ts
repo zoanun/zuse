@@ -1,11 +1,11 @@
 import { createServer } from 'node:http'
 import { fileURLToPath } from 'node:url'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, join } from 'node:path'
 import { PasswordStore } from './auth/passwordStore.js'
 import { LocalPasswordAuth } from './auth/authProvider.js'
 import { makeRequestHandler } from './http/server.js'
 import { attachWsServer } from './ws/wsServer.js'
-import { SessionRegistry } from './session/SessionRegistry.js'
+import { SessionService } from './session/SessionService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -26,19 +26,29 @@ export async function startServer(
 ): Promise<{ url: string; close(): Promise<void> }> {
   const auth = new LocalPasswordAuth(new PasswordStore(cfg.authDir), cfg.tokenTtlSec)
 
-  // 饱和构建一次单会话(内存态)。构建失败不崩 daemon:记日志、置 sessionErr,
-  // /ws 连上回 error 帧,health/setup/login 仍可用。
-  const registry = new SessionRegistry()
+  // Multi-session service over the web-sessions store dir. Construction never
+  // throws (no session is built here). Seed a DEFAULT session at boot so /ws
+  // keeps working for clients that connect without a `?session=` query — the
+  // existing single-session behaviour. Seeding can throw (real client build);
+  // on failure we record sessionErr → /ws returns an error frame, while
+  // health/setup/login stay up.
+  const service = new SessionService({ dir: join(cfg.authDir, 'web-sessions'), cwd: cfg.cwd })
   let sessionErr: string | undefined
   try {
-    registry.set(DEFAULT_SESSION_ID, deps.session ?? createSession({ sessionId: DEFAULT_SESSION_ID, cwd: cfg.cwd }))
+    // Reuse a disk-persisted default if present; otherwise seed one. Tests inject
+    // deps.session (a fake-client manager) — adopt it as the default.
+    const existing = await service.getOrLoad(DEFAULT_SESSION_ID)
+    if (!existing) {
+      const mgr = deps.session ?? createSession({ sessionId: DEFAULT_SESSION_ID, cwd: cfg.cwd })
+      await service.adopt(DEFAULT_SESSION_ID, mgr)
+    }
   } catch (err) {
     sessionErr = err instanceof Error ? err.message : String(err)
     console.warn(`[zuse-server] session 构建失败:${sessionErr}(/ws 将回 error,health/login 仍可用)`)
   }
 
   const httpServer = createServer(makeRequestHandler({ auth, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
-  const ws = attachWsServer(httpServer, { auth, registry, sessionErr })
+  const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
   const port = typeof addr === 'object' && addr ? addr.port : cfg.port

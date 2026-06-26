@@ -10,7 +10,7 @@ import { startServer } from '../startServer.js'
 import { attachWsServer } from './wsServer.js'
 import { createSession } from '../session/createSession.js'
 import { DEFAULT_SESSION_ID } from '../config.js'
-import { SessionRegistry } from '../session/SessionRegistry.js'
+import { SessionService } from '../session/SessionService.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
 import type { AuthProvider } from '../auth/authProvider.js'
 
@@ -97,7 +97,8 @@ describe('ws wiring', () => {
   it('sends an error frame when the session is unavailable', async () => {
     const httpServer = createServer()
     const fakeAuth = { verifyToken: () => true } as unknown as AuthProvider
-    attachWsServer(httpServer, { auth: fakeAuth, registry: new SessionRegistry(), sessionErr: 'boom' })
+    const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: dir })
+    attachWsServer(httpServer, { auth: fakeAuth, service, sessionErr: 'boom' })
     await new Promise<void>((r) => httpServer.listen(0, '127.0.0.1', r))
     const addr = httpServer.address()
     const port = typeof addr === 'object' && addr ? addr.port : 0
