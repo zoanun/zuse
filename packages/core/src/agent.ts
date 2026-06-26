@@ -241,39 +241,42 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
         ? Promise.resolve(invalidJsonResult(tu))
         : gateAndRunTool(registry, tu, buildCtx(), gateDeps())
 
-    let outputs: Array<{ output: string; isError: boolean }>
+    // 结果"算出即发"：每个工具一 settle 就 yield 它的 tool-result 事件,让前端能逐个
+    // 显示内容/改状态,而不是整批跑完才一起冒出来。回喂给模型的 tool_result 块仍按
+    // 【请求顺序】组装(见下),不受发射顺序影响。
+    const outputs = new Array<{ output: string; isError: boolean }>(toolUses.length)
+    const resultEvent = (i: number): StreamEvent => ({
+      type: 'tool-result', id: toolUses[i]!.id, name: toolUses[i]!.name,
+      output: outputs[i]!.output, is_error: outputs[i]!.isError,
+    })
     if (allReadOnly && toolUses.length > 1) {
-      // 并发执行整批只读工具。gateAndRunTool 把工具异常 try/catch 成 isError 结果;
-      // ask 路径的 canUseTool 按契约可并发(见上),故 Promise.all 不会卡死。
-      // 仅 canUseTool / onPersistAllow 自身抛错才会整体 reject —— 串行路径下同样中止回合,非并发新增风险。
-      outputs = await Promise.all(toolUses.map((tu) => dispatch(tu)))
+      // 并发执行整批只读工具,按【完成顺序】发射结果。gateAndRunTool 把工具异常 try/catch
+      // 成 isError 结果;ask 路径的 canUseTool 按契约可并发(见上)。仅 canUseTool /
+      // onPersistAllow 自身抛错才会 reject —— Promise.race 同样把它抛出、中止回合,与原
+      // Promise.all 行为一致。每个 derived promise 只建一次,复用给多次 race。
+      const pending = new Map<number, Promise<number>>(
+        toolUses.map((tu, i) => [i, dispatch(tu).then((r) => { outputs[i] = r; return i })]),
+      )
+      while (pending.size > 0) {
+        const i = await Promise.race(pending.values())
+        pending.delete(i)
+        yield resultEvent(i)
+      }
     } else {
-      // 含写工具（或单个工具）：串行,保住 cd / 乐观锁的顺序语义。
-      outputs = []
-      for (const tu of toolUses) {
-        outputs.push(await dispatch(tu))
+      // 含写工具（或单个工具）：串行,保住 cd / 乐观锁的顺序语义;每个工具结束即发射其结果。
+      for (let i = 0; i < toolUses.length; i++) {
+        outputs[i] = await dispatch(toolUses[i]!)
+        yield resultEvent(i)
       }
     }
 
-    // 按请求顺序回喂结果（tool_result 靠 id 匹配,顺序非强制,但保持一致更稳）。
-    const resultBlocks: ContentBlock[] = []
-    for (let i = 0; i < toolUses.length; i++) {
-      const tu = toolUses[i]!
-      const result = outputs[i]!
-      yield {
-        type: 'tool-result',
-        id: tu.id,
-        name: tu.name,
-        output: result.output,
-        is_error: result.isError,
-      }
-      resultBlocks.push({
-        type: 'tool_result',
-        tool_use_id: tu.id,
-        content: result.output,
-        is_error: result.isError,
-      })
-    }
+    // 回喂模型的结果块按请求顺序组装（tool_result 靠 id 匹配,顺序非强制,但保持一致更稳）。
+    const resultBlocks: ContentBlock[] = toolUses.map((tu, i) => ({
+      type: 'tool_result',
+      tool_use_id: tu.id,
+      content: outputs[i]!.output,
+      is_error: outputs[i]!.isError,
+    }))
     // Mid-turn steer: if the user sent a message while tools were running,
     // append it to the last tool result so the model sees it on the next turn.
     const steer = opts.consumeSteer?.()
