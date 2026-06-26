@@ -36,7 +36,7 @@ import {
   type Usage,
   type ErrorCategory,
 } from '@zuse/core'
-import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug } from '@zuse/tools'
+import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug, createAgentTool } from '@zuse/tools'
 import type {
   SessionEvent,
   SessionSnapshot,
@@ -182,6 +182,23 @@ export class SessionManager {
     const usage = this.conversation.totalUsage
     if (usage.input_tokens > 0 || usage.output_tokens > 0) {
       this.totalUsage = usage
+    }
+
+    // Wire the Agent (sub-agent) tool here, not in createSession: it needs the LIVE model
+    // client (failover hot-swaps this.client), the manager's permission flow, and the shared
+    // sessionAllow — all private to the manager. getClient/getSystemPrompt are getters so a
+    // failover-swapped client and the current prompt are always picked up at call time.
+    // onBackground is intentionally omitted: a runInBackground sub-agent is awaited inline
+    // (it still runs; it just isn't detached) until the server grows a message-injection seam.
+    if (!this.registry.get('Agent')) {
+      this.registry.register(createAgentTool({
+        registry: this.registry,
+        getClient: () => this.client,
+        settings: this.settings,
+        getSystemPrompt: () => this.systemPrompt,
+        sessionAllow: this.sessionAllow,
+        canUseTool: this.canUseTool,
+      }))
     }
   }
 

@@ -87,8 +87,9 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
   // late-bind：TodoWrite.onUpdate 要回调到下面才构造的 manager（镜像 TUI 的 ref 套路）。
   let mgr!: SessionManager
   registry.register(createTodoWriteTool({ onUpdate: (todos) => mgr.setTodos(todos) }))
-  // 注：Agent / ScheduleWakeup 工具 F3 不接 —— 二者需反向访问 manager 的 live client
-  // （failover 会热替换），且非聊天必需，显式留作 follow-up。
+  // 注：Agent（子代理）工具由 SessionManager 构造时自行注册 —— 它需反向访问 manager 的
+  // live client（failover 会热替换）/权限流/sessionAllow，放在 manager 内闭包最自然。
+  // ScheduleWakeup / Lsp / LspInstall / MCP 仍未接，留作 follow-up（见 web-ui-roadmap）。
 
   const systemPrompt = buildSystemPrompt(
     {
