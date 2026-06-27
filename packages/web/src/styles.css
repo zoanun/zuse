@@ -40,9 +40,11 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .session-item:hover .session-del, .session-del:focus-visible { opacity: 1; }
 .session-del:hover { color: var(--bad); background: var(--surface-2); }
 .session-confirm { display: flex; gap: 4px; flex: none; }
-.session-confirm-yes, .session-confirm-no { padding: 3px 8px; font-size: 11.5px; border-radius: 7px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
+.session-confirm-yes, .session-confirm-no { width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
 .session-confirm-yes { color: var(--bad); border-color: var(--bad); }
-.session-confirm-no:hover { background: var(--surface-2); }
+.session-confirm-yes:hover { background: var(--bad); color: #fff; }
+.session-confirm-no { color: var(--muted); }
+.session-confirm-no:hover { background: var(--surface-2); color: var(--text); }
 .session-rename-input { flex: 1; min-width: 0; font-family: var(--sans); font-size: 13px; padding: 4px 6px; border: 1px solid var(--accent-border); border-radius: 8px; background: var(--surface); color: var(--text); outline: none; }
 .side-label { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 6px; }
 .ckpt-list { display: flex; flex-direction: column; gap: 4px; }

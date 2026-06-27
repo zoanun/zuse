@@ -56,7 +56,7 @@ describe('Sidebar', () => {
     fireEvent.click(within(items[0]!).getByLabelText('Delete session'))
     // not yet deleted — confirm UI shown
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(items[0]!).getByText('Delete'))
+    fireEvent.click(within(items[0]!).getByLabelText('Confirm delete'))
     expect(props.onDelete).toHaveBeenCalledWith('a')
   })
 
@@ -64,7 +64,7 @@ describe('Sidebar', () => {
     const props = renderSidebar()
     const items = screen.getAllByRole('listitem')
     fireEvent.click(within(items[0]!).getByLabelText('Delete session'))
-    fireEvent.click(within(items[0]!).getByText('Cancel'))
+    fireEvent.click(within(items[0]!).getByLabelText('Cancel delete'))
     expect(props.onDelete).not.toHaveBeenCalled()
   })
 

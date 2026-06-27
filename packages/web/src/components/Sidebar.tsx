@@ -70,13 +70,15 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
           <button
             className="session-confirm-yes"
             title="Confirm delete"
+            aria-label="Confirm delete"
             onClick={(e) => { e.stopPropagation(); setConfirming(false); onDelete(s.id) }}
-          >Delete</button>
+          >✓</button>
           <button
             className="session-confirm-no"
             title="Cancel"
+            aria-label="Cancel delete"
             onClick={(e) => { e.stopPropagation(); setConfirming(false) }}
-          >Cancel</button>
+          >✕</button>
         </span>
       ) : (
         <button
