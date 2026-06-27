@@ -59,8 +59,8 @@ function PersonaRow({ item, active, onActivate, onEdit, onDelete }: {
       <span className="mem-label" title={item.content}>{item.name}</span>
       {confirming ? (
         <span className="mem-confirm">
-          <button className="mem-confirm-yes" onClick={() => { setConfirming(false); onDelete(item.id) }}>Delete</button>
-          <button className="mem-confirm-no" onClick={() => setConfirming(false)}>Cancel</button>
+          <button className="mem-confirm-yes" title="Confirm delete" aria-label="Confirm delete" onClick={() => { setConfirming(false); onDelete(item.id) }}>✓</button>
+          <button className="mem-confirm-no" title="Cancel" aria-label="Cancel delete" onClick={() => setConfirming(false)}>✕</button>
         </span>
       ) : (
         <span className="mem-actions">

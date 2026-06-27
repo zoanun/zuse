@@ -57,8 +57,8 @@ function ServerRow({ s, onDelete }: { s: McpServerInfo; onDelete: (name: string)
         <span className="mcp-meta">{STATUS_LABEL[s.status]}{s.tools.length ? ` · ${s.tools.length} tools` : ''}</span>
         {confirming ? (
           <span className="mem-confirm">
-            <button className="mem-confirm-yes" onClick={() => { setConfirming(false); onDelete(s.name) }}>Delete</button>
-            <button className="mem-confirm-no" onClick={() => setConfirming(false)}>Cancel</button>
+            <button className="mem-confirm-yes" title="Confirm delete" aria-label="Confirm delete" onClick={() => { setConfirming(false); onDelete(s.name) }}>✓</button>
+            <button className="mem-confirm-no" title="Cancel" aria-label="Cancel delete" onClick={() => setConfirming(false)}>✕</button>
           </span>
         ) : (
           <span className="mem-actions">

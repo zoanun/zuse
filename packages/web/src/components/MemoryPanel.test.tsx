@@ -107,7 +107,7 @@ describe('MemoryPanel', () => {
     const first = rows[0]!
     fireEvent.click(within(first).getByLabelText('Delete memory'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(first).getByText('Delete'))
+    fireEvent.click(within(first).getByLabelText('Confirm delete'))
     expect(props.onDelete).toHaveBeenCalledWith(1)
   })
 
@@ -115,7 +115,7 @@ describe('MemoryPanel', () => {
     const props = renderPanel()
     const first = screen.getAllByRole('listitem')[0]!
     fireEvent.click(within(first).getByLabelText('Delete memory'))
-    fireEvent.click(within(first).getByText('Cancel'))
+    fireEvent.click(within(first).getByLabelText('Cancel delete'))
     expect(props.onDelete).not.toHaveBeenCalled()
   })
 

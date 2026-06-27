@@ -67,7 +67,7 @@ describe('PersonasPanel', () => {
     const first = screen.getAllByRole('listitem')[0]!
     fireEvent.click(within(first).getByLabelText('Delete persona'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(first).getByText('Delete'))
+    fireEvent.click(within(first).getByLabelText('Confirm delete'))
     expect(props.onDelete).toHaveBeenCalledWith('p1')
   })
 

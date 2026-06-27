@@ -52,7 +52,7 @@ describe('McpPanel', () => {
     const row = screen.getAllByRole('listitem')[0]!
     fireEvent.click(within(row).getByLabelText('Delete server'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(row).getByText('Delete'))
+    fireEvent.click(within(row).getByLabelText('Confirm delete'))
     expect(props.onDelete).toHaveBeenCalledWith('playwright')
   })
 

@@ -258,9 +258,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .mem-edit:hover { color: var(--text); background: var(--surface); }
 .mem-del:hover { color: var(--bad); background: var(--surface); }
 .mem-confirm { flex: none; display: flex; gap: 4px; }
-.mem-confirm-yes, .mem-confirm-no { padding: 3px 8px; font-size: 11.5px; border-radius: 7px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
+.mem-confirm-yes, .mem-confirm-no { width: 22px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer; }
 .mem-confirm-yes { color: var(--bad); border-color: var(--bad); }
-.mem-confirm-no:hover { background: var(--surface-2); }
+.mem-confirm-yes:hover { background: var(--bad); color: #fff; }
+.mem-confirm-no { color: var(--muted); }
+.mem-confirm-no:hover { background: var(--surface-2); color: var(--text); }
 .mem-item-editing { padding: 4px 0; }
 .mem-form { display: flex; flex-direction: column; gap: 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .mem-field { display: flex; flex-direction: column; gap: 4px; }
