@@ -121,6 +121,22 @@ describe('ToolCall', () => {
     expect(container.querySelector('.args')).toBeNull()
   })
 
+  it('inlines a single short scalar MCP arg into the head (no JSON box)', () => {
+    const { container } = render(<ToolCall use={use('mcp__everything__echo', { message: 'hello' })} />)
+    const headText = container.querySelector('.head')?.textContent ?? ''
+    expect(headText).toContain('echo')
+    expect(headText).toContain('message: "hello"')
+    expect(screen.getByText('MCP · everything')).toBeInTheDocument()
+    // single short scalar → no JSON box at all
+    expect(container.querySelector('.write-body')).toBeNull()
+  })
+
+  it('keeps the JSON box for a single arg whose value is long/non-scalar', () => {
+    const { container } = render(<ToolCall use={use('mcp__x__run', { payload: { nested: true } })} />)
+    expect(container.querySelector('.write-body')?.textContent).toContain('"nested"') // object value → box
+    expect(container.querySelector('.head')?.textContent).not.toContain('payload:')
+  })
+
   it('renders an MCP tool with no args as just name + badge (no body)', () => {
     const { container } = render(<ToolCall use={use('mcp__github__list_repos', {})} />)
     expect(container.querySelector('.head')?.textContent).toContain('list_repos')

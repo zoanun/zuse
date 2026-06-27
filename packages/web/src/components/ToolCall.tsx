@@ -46,14 +46,19 @@ function describe(use: Extract<Part, { kind: 'tool-use' }>): Desc {
   const json = (): Desc => ({ head: null, body: { kind: 'json', text: safeJson(use.input) } })
 
   // MCP tools are registered as `mcp__<server>__<tool>`: show the clean tool name with a
-  // "MCP · <server>" badge and pretty-print the (arbitrary) args instead of the mangled name.
+  // "MCP · <server>" badge. A single short scalar arg goes inline in the head (echo · message:
+  // "hello"); anything else (multiple args / long / non-scalar) keeps the pretty-JSON box so a
+  // busy call never crowds the title.
   if (use.name.startsWith('mcp__')) {
     const rest = use.name.slice('mcp__'.length)
     const sep = rest.indexOf('__')
     const server = sep >= 0 ? rest.slice(0, sep) : ''
     const tool = sep >= 0 ? rest.slice(sep + 2) : rest
+    const tag = server ? `MCP · ${server}` : 'MCP'
+    const inline = inlineArg(use.input)
+    if (inline !== null) return { name: tool, tag, head: inline, body: null }
     const pretty = prettyJson(use.input)
-    return { name: tool, tag: server ? `MCP · ${server}` : 'MCP', head: null, body: pretty ? code(pretty) : null }
+    return { name: tool, tag, head: null, body: pretty ? code(pretty) : null }
   }
 
   // Edit / MultiEdit → file in head + line diff.
@@ -97,6 +102,22 @@ function describe(use: Extract<Part, { kind: 'tool-use' }>): Desc {
 }
 
 const code = (text: string, cls = 'write-body'): Body => ({ kind: 'code', text, cls })
+
+/**
+ * If the input is exactly one short scalar arg, format it as `key: value` for the head
+ * (strings quoted) — else null so the caller keeps the JSON box. Keeps single-arg MCP calls
+ * compact without crowding the title when there are many/complex args.
+ */
+function inlineArg(input: unknown): string | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const keys = Object.keys(input)
+  if (keys.length !== 1) return null
+  const k = keys[0]!
+  const v = (input as Record<string, unknown>)[k]
+  if (typeof v === 'string') return v.length <= 60 ? `${k}: ${JSON.stringify(v)}` : null
+  if (typeof v === 'number' || typeof v === 'boolean') return `${k}: ${v}`
+  return null
+}
 
 // Pretty-print MCP args (2-space indent) so arbitrary tool inputs read as JSON instead of one
 // cramped line; '' for an empty/absent object so the card shows just the name + tag.
