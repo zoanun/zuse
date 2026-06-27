@@ -102,7 +102,12 @@ export async function addMcp(body: AddMcpBody): Promise<void> {
   await request('/api/mcp', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'add mcp server')
 }
 
-/** DELETE /api/mcp/<name> (restart to apply). Throws on non-ok. */
+/** DELETE /api/mcp/<name>. Throws on non-ok. */
 export async function deleteMcp(name: string): Promise<void> {
   await request('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' }, 'delete mcp server')
+}
+
+/** POST /api/mcp/reconnect → live reconnect from current settings (no server restart). */
+export async function reconnectMcp(): Promise<void> {
+  await request('/api/mcp/reconnect', { method: 'POST' }, 'reconnect mcp')
 }

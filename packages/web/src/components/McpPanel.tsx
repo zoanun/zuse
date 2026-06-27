@@ -8,6 +8,8 @@ interface Props {
   error?: string | null
   onAdd: (body: AddMcpBody) => void
   onDelete: (name: string) => void
+  /** Live reconnect from current settings (apply add/delete without a server restart). */
+  onReconnect: () => void
 }
 
 const STATUS_LABEL: Record<McpServerInfo['status'], string> = {
@@ -77,13 +79,14 @@ function ServerRow({ s, onDelete }: { s: McpServerInfo; onDelete: (name: string)
   )
 }
 
-export function McpPanel({ servers, loading, error, onAdd, onDelete }: Props) {
+export function McpPanel({ servers, loading, error, onAdd, onDelete, onReconnect }: Props) {
   const [adding, setAdding] = useState(false)
   const anyConfigured = servers.some((s) => s.status === 'configured')
   return (
     <div className="mem-panel">
       <div className="mem-toolbar">
-        <div className="persona-hint">MCP servers connect at startup. Config changes here take effect after a server restart.</div>
+        <div className="persona-hint">Add/remove servers, then Reconnect to apply (no server restart).</div>
+        <button className="mem-new ghost" title="Reconnect MCP servers from current config" onClick={onReconnect}>↻ Reconnect</button>
         <button className="mem-new" onClick={() => setAdding((a) => !a)}>＋ New</button>
       </div>
 
@@ -92,7 +95,7 @@ export function McpPanel({ servers, loading, error, onAdd, onDelete }: Props) {
       {error ? <div className="mem-error">{error}</div> : null}
       {loading ? <div className="mem-empty">Loading…</div> : null}
       {!loading && servers.length === 0 && !error ? <div className="mem-empty">No MCP servers configured.</div> : null}
-      {anyConfigured ? <div className="mcp-restart-note">Some changes need a server restart to connect.</div> : null}
+      {anyConfigured ? <div className="mcp-restart-note">Pending servers aren't connected yet — click Reconnect to apply.</div> : null}
 
       <ul className="mem-list">
         {servers.map((s) => <ServerRow key={s.name} s={s} onDelete={onDelete} />)}

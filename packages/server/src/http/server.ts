@@ -400,6 +400,18 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       return sendJson(res, 200, deps.mcp.list())
     }
 
+    // POST /api/mcp/reconnect — live reconnect from current settings (no server restart). Must
+    // precede the <name> routes. Returns the refreshed list.
+    if (method === 'POST' && path === '/api/mcp/reconnect') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        await deps.mcp.reconnect()
+      } catch (err) {
+        return sendJson(res, 500, { error: { code: 'reconnect_failed', message: err instanceof Error ? err.message : String(err) } })
+      }
+      return sendJson(res, 200, deps.mcp.list())
+    }
+
     // POST /api/mcp — add/overwrite a server config. body {name, command?, args?, env?, cwd?, url?}
     if (method === 'POST' && path === '/api/mcp') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })

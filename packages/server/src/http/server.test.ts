@@ -336,4 +336,21 @@ describe('/api/mcp REST', () => {
     const res = await fetch(`${base}/api/mcp`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'x' }) })
     expect(res.status).toBe(400)
   })
+
+  it('POST /api/mcp/reconnect → 200 with the refreshed list (auth-gated)', async () => {
+    expect((await fetch(`${base}/api/mcp/reconnect`, { method: 'POST' })).status).toBe(401)
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/mcp/reconnect`, { method: 'POST', headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(Array.isArray(await res.json())).toBe(true)
+  })
+
+  it('a deleted server disappears from the list immediately', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    await fetch(`${base}/api/mcp`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'gone', command: 'x' }) })
+    await fetch(`${base}/api/mcp/gone`, { method: 'DELETE', headers: { cookie } })
+    const list = await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json() as unknown[]
+    expect(list).toHaveLength(0) // driven by configured servers → delete drops the row at once
+  })
 })

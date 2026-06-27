@@ -32,34 +32,43 @@ export async function startServer(
 ): Promise<{ url: string; close(): Promise<void> }> {
   const auth = new LocalPasswordAuth(new PasswordStore(cfg.authDir), cfg.tokenTtlSec)
 
-  // MCP servers (B4): connect ONCE at daemon startup (spawning per session would be wasteful),
-  // then register their tools into every session's registry via registerExtraTools. Best-effort:
-  // a failed/absent MCP config must never crash the daemon. disconnect on close().
+  // MCP servers (B4/M4): the daemon owns ONE McpManager (spawning per session would be wasteful).
+  // Its tools register into every session's registry via registerExtraTools — which always reads
+  // the CURRENT `mcp`, so a live reconnect (M4) is picked up by newly-created sessions without a
+  // server restart. ctxWindow is fixed (model selection); reconnect re-reads settings.mcpServers.
   let mcp: McpManager | undefined
-  let registerExtraTools: ((registry: ToolRegistry) => void) | undefined
   let mcpFailed: Array<{ name: string; error: string }> = []
-  const settings = loadSettings()
-  const mcpServers = settings.mcpServers
-  if (mcpServers && Object.keys(mcpServers).length > 0) {
+  const sel = resolveModelSelection(loadSettings())
+  const ctxWindow = resolveContextWindow(loadSettings(), sel.providerId, sel.model)
+  // Always set: no-ops until `mcp` is connected, so a reconnect that establishes it later still
+  // feeds tools into subsequent sessions. Best-effort — a bad registration never breaks a session.
+  const registerExtraTools = (registry: ToolRegistry): void => { mcp?.registerTools(registry, ctxWindow) }
+
+  // Tear down + reconnect from current settings. Used at startup and by POST /api/mcp/reconnect.
+  // Already-built sessions keep their tool set (registry is fixed at creation); new chats pick up
+  // the change. Absent/failed config never crashes the daemon.
+  const reconnectMcp = async (): Promise<void> => {
+    if (mcp) { await mcp.disconnectAll().catch(() => {}); mcp = undefined }
+    mcpFailed = []
+    const servers = loadSettings().mcpServers
+    if (!servers || Object.keys(servers).length === 0) return
     const m = new McpManager()
     try {
-      const { connected, failed } = await m.connectAll(mcpServers)
+      const { connected, failed } = await m.connectAll(servers)
       mcpFailed = failed
       for (const f of failed) console.warn(`[zuse-server] MCP "${f.name}" 连接失败:${f.error}`)
       if (connected.length > 0) {
-        const sel = resolveModelSelection(settings)
-        const ctxWindow = resolveContextWindow(settings, sel.providerId, sel.model)
         mcp = m
-        registerExtraTools = (registry) => { m.registerTools(registry, ctxWindow) }
         console.warn(`[zuse-server] MCP 已连接:${connected.join(', ')}`)
       } else {
-        await m.disconnectAll()
+        await m.disconnectAll().catch(() => {})
       }
     } catch (err) {
       console.warn(`[zuse-server] MCP 连接异常:${err instanceof Error ? err.message : String(err)}`)
       await m.disconnectAll().catch(() => {})
     }
   }
+  await reconnectMcp()
 
   // Multi-session service over the web-sessions store dir. Construction never
   // throws (no session is built here). Seed a DEFAULT session at boot so /ws
@@ -98,8 +107,13 @@ export async function startServer(
   }
 
   const persona = new PersonaService()
-  // MCP management view (M4): merges configured servers with live status/tools from the manager.
-  const mcpService = new McpService({ connectedServers: () => mcp?.servers ?? [], failed: mcpFailed })
+  // MCP management view (M4): merges configured servers with live status/tools; reconnect lets the
+  // panel apply config changes without a server restart. Getters read the current manager state.
+  const mcpService = new McpService({
+    connectedServers: () => mcp?.servers ?? [],
+    failed: () => mcpFailed,
+    reconnect: reconnectMcp,
+  })
 
   const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
