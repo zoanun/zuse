@@ -669,7 +669,11 @@ describe('SessionManager checkpoints + revert', () => {
       snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
     })
     const reverted: string[] = []
-    mgr.subscribe((e) => { if (e.type === 'reverted') reverted.push(e.checkpointId) })
+    const echoed: string[] = []
+    mgr.subscribe((e) => {
+      if (e.type === 'reverted') reverted.push(e.checkpointId)
+      if (e.type === 'user-echo') echoed.push(e.text)
+    })
 
     await mgr.submit('my question')
     const before = mgr.getState().messageCount
@@ -678,6 +682,8 @@ describe('SessionManager checkpoints + revert', () => {
     await mgr.retry()
     expect(restored).toEqual(['cp-hash-1'])
     expect(reverted).toEqual(['cp-hash-1'])
+    // Echoes the re-submitted question so clients show it immediately (no refresh needed).
+    expect(echoed).toEqual(['my question'])
     expect(mgr.getState().messageCount).toBe(before)
     const first = mgr.getState().messages[0]!
     expect(first.role).toBe('user')

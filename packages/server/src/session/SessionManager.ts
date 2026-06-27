@@ -807,6 +807,10 @@ export class SessionManager {
     const text = raw.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '')
     if (text.trim() === '') return
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
+    // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
+    // "user message" event, so clients wouldn't show it until a reconnect. Echo it now so the
+    // re-submitted question reappears immediately (mirrors send()'s live optimistic add).
+    this.emit({ type: 'user-echo', text })
     await this.submit(text)      // fresh attempt from the clean checkpoint
   }
 
