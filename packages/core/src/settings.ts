@@ -258,8 +258,17 @@ export function appendAllowRule(rule: string, localPath?: string): void {
  * @param basePath 省略时取 `~/.zuse/settings.json`（同名 .jsonc 优先）。
  */
 export function setMcpServerInSettings(name: string, config: McpServerConfig | null, basePath?: string): void {
-  const base = basePath ?? join(homedir(), '.zuse', 'settings.json')
-  const path = resolveLayerPath(base)
+  // config===null → 传 undefined 让 modify 删除该键。
+  updateJsoncSettingsFile(basePath ?? join(homedir(), '.zuse', 'settings.json'), ['mcpServers', name], config ?? undefined)
+}
+
+/**
+ * 用 jsonc 的 modify+applyEdits 在一个 settings 文件里就地设置（或删除,value=undefined）一个
+ * key 路径,保留其余字段/注释/缩进。以原文为基底(缺失/空/读不动退回 "{}"),原子落盘。
+ * 是 setModelInSettings / setMcpServerInSettings 共用的写入原语。
+ */
+function updateJsoncSettingsFile(basePath: string, keyPath: (string | number)[], value: unknown): void {
+  const path = resolveLayerPath(basePath)
   let text = '{}'
   if (existsSync(path)) {
     try {
@@ -269,10 +278,7 @@ export function setMcpServerInSettings(name: string, config: McpServerConfig | n
       text = '{}'
     }
   }
-  // config===null → 传 undefined 让 modify 删除该键。
-  const edits = modify(text, ['mcpServers', name], config ?? undefined, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  })
+  const edits = modify(text, keyPath, value, { formattingOptions: { insertSpaces: true, tabSize: 2 } })
   const updated = applyEdits(text, edits)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
@@ -371,26 +377,7 @@ export function getProviderConfig(settings: ResolvedSettings, providerId: string
  * @param localPath 省略时取 <项目根>/.zuse/settings.local.json
  */
 export function setModelInSettings(model: string, localPath?: string): void {
-  const basePath = localPath ?? join(findProjectRoot(), '.zuse', 'settings.local.json')
-  // 已存在 .jsonc 版本就地写它，避免出现两个配置文件。
-  const path = resolveLayerPath(basePath)
-  // 以原文为基底（缺失/空/读不动都退回 "{}"），保留用户的注释和格式。
-  let text = '{}'
-  if (existsSync(path)) {
-    try {
-      const raw = readFileSync(path, 'utf8')
-      if (raw.trim()) text = raw
-    } catch {
-      text = '{}' // 读不动就当空对象重建
-    }
-  }
-  // 只改 model 这一处，applyEdits 保留其余字段、注释与缩进。
-  const edits = modify(text, ['model'], model, {
-    formattingOptions: { insertSpaces: true, tabSize: 2 },
-  })
-  const updated = applyEdits(text, edits)
-  mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
+  updateJsoncSettingsFile(localPath ?? join(findProjectRoot(), '.zuse', 'settings.local.json'), ['model'], model)
 }
 
 /** 从 settings 解析选中项 + provider 配置，造出对应 client。TUI 启动入口。 */

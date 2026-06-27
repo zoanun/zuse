@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MemoryItem, ProjectInfo, PersonaItem } from '@zuse/protocol'
+import type { ProjectInfo } from '@zuse/protocol'
 import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
-import type { McpServerInfo } from '@zuse/protocol'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
 import { McpPanel } from './McpPanel.js'
@@ -27,14 +26,15 @@ interface Props {
   onSelectPanel: (p: ManagePanel) => void
 }
 
-/** Owns the Memory fetch+state lifecycle: load on open, refetch after mutations. */
-function useMemoryData(active: boolean) {
-  const [items, setItems] = useState<MemoryItem[]>([])
+/**
+ * Generic "load on open, refetch after mutation" resource hook shared by the manage panels:
+ * fetches when `active` (and on any `deps` change), guards stale responses with a request seq,
+ * and exposes mutate() = run a promise → refetch on success, surface its error on failure.
+ */
+function useResource<T>(active: boolean, fetchFn: () => Promise<T>, deps: unknown[] = []) {
+  const [data, setData] = useState<T>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [query, setQuery] = useState('')
-  const debouncedQuery = useDebounced(query, 250)
-  // Bumped to force a refetch after a mutation.
   const [reloadTick, setReloadTick] = useState(0)
   const reqSeq = useRef(0)
 
@@ -43,23 +43,37 @@ function useMemoryData(active: boolean) {
     const seq = ++reqSeq.current
     setLoading(true)
     setError(null)
-    const q = debouncedQuery.trim()
-    listMemory(q ? { q } : {})
-      .then((rows) => { if (seq === reqSeq.current) { setItems(rows); setLoading(false) } })
+    fetchFn()
+      .then((d) => { if (seq === reqSeq.current) { setData(d); setLoading(false) } })
       .catch((e: unknown) => { if (seq === reqSeq.current) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } })
-  }, [active, debouncedQuery, reloadTick])
+    // fetchFn is recreated each render but only read here at run time; the caller lists what
+    // should actually trigger a refetch in `deps`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, reloadTick, ...deps])
 
   const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
-  // Every mutation does the same thing: run it, refetch on success, surface the error on failure.
   const mutate = useCallback((p: Promise<unknown>) => {
     p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [refetch])
 
-  const onCreate = useCallback((body: CreateMemoryBody) => mutate(createMemory(body)), [mutate])
-  const onUpdate = useCallback((id: number, body: UpdateMemoryBody) => mutate(updateMemory(id, body)), [mutate])
-  const onDelete = useCallback((id: number) => mutate(deleteMemory(id)), [mutate])
+  return { data, loading, error, mutate }
+}
 
-  return { items, loading, error, query, setQuery, onCreate, onUpdate, onDelete }
+/** Owns the Memory fetch+state lifecycle (search query drives the fetch). */
+function useMemoryData(active: boolean) {
+  const [query, setQuery] = useState('')
+  const debouncedQuery = useDebounced(query, 250)
+  const { data, loading, error, mutate } = useResource(
+    active,
+    () => { const q = debouncedQuery.trim(); return listMemory(q ? { q } : {}) },
+    [debouncedQuery],
+  )
+  return {
+    items: data ?? [], loading, error, query, setQuery,
+    onCreate: useCallback((body: CreateMemoryBody) => mutate(createMemory(body)), [mutate]),
+    onUpdate: useCallback((id: number, body: UpdateMemoryBody) => mutate(updateMemory(id, body)), [mutate]),
+    onDelete: useCallback((id: number) => mutate(deleteMemory(id)), [mutate]),
+  }
 }
 
 function MemoryContainer({ active }: { active: boolean }) {
@@ -88,32 +102,11 @@ function MemoryContainer({ active }: { active: boolean }) {
   )
 }
 
-/** Owns the persona fetch+state lifecycle: load on open, refetch after mutations. */
+/** Owns the persona fetch+state lifecycle. */
 function usePersonaData(active: boolean) {
-  const [personas, setPersonas] = useState<PersonaItem[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [reloadTick, setReloadTick] = useState(0)
-  const reqSeq = useRef(0)
-
-  useEffect(() => {
-    if (!active) return
-    const seq = ++reqSeq.current
-    setLoading(true)
-    setError(null)
-    listPersonas()
-      .then((s) => { if (seq === reqSeq.current) { setPersonas(s.personas); setActiveId(s.activeId); setLoading(false) } })
-      .catch((e: unknown) => { if (seq === reqSeq.current) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } })
-  }, [active, reloadTick])
-
-  const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
-  const mutate = useCallback((p: Promise<unknown>) => {
-    p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refetch])
-
+  const { data, loading, error, mutate } = useResource(active, listPersonas)
   return {
-    personas, activeId, loading, error,
+    personas: data?.personas ?? [], activeId: data?.activeId ?? null, loading, error,
     onCreate: useCallback((b: { name: string; content: string }) => mutate(createPersona(b)), [mutate]),
     onUpdate: useCallback((id: string, b: { name?: string; content?: string }) => mutate(updatePersona(id, b)), [mutate]),
     onDelete: useCallback((id: string) => mutate(deletePersona(id)), [mutate]),
@@ -137,31 +130,11 @@ function PersonasContainer({ active }: { active: boolean }) {
   )
 }
 
-/** Owns the MCP fetch+state lifecycle: load on open, refetch after config mutations. */
+/** Owns the MCP fetch+state lifecycle. */
 function useMcpData(active: boolean) {
-  const [servers, setServers] = useState<McpServerInfo[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [reloadTick, setReloadTick] = useState(0)
-  const reqSeq = useRef(0)
-
-  useEffect(() => {
-    if (!active) return
-    const seq = ++reqSeq.current
-    setLoading(true)
-    setError(null)
-    listMcp()
-      .then((s) => { if (seq === reqSeq.current) { setServers(s); setLoading(false) } })
-      .catch((e: unknown) => { if (seq === reqSeq.current) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } })
-  }, [active, reloadTick])
-
-  const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
-  const mutate = useCallback((p: Promise<unknown>) => {
-    p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
-  }, [refetch])
-
+  const { data, loading, error, mutate } = useResource(active, listMcp)
   return {
-    servers, loading, error,
+    servers: data ?? [], loading, error,
     onAdd: useCallback((b: AddMcpBody) => mutate(addMcp(b)), [mutate]),
     onDelete: useCallback((name: string) => mutate(deleteMcp(name)), [mutate]),
   }
