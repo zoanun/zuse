@@ -75,6 +75,23 @@ export class McpManager {
     this.clients.clear()
   }
 
+  /** (Re)connect a single server: drop any existing same-name client, then connect fresh.
+   *  Throws on connect failure (caller records it). Used for per-server reconnect (M4). */
+  async connectServer(name: string, config: McpServerConfig): Promise<void> {
+    await this.disconnectServer(name)
+    const client = new McpClient()
+    await client.connect(config)
+    this.clients.set(name, client)
+  }
+
+  /** Disconnect + drop a single server if connected (no-op otherwise). */
+  async disconnectServer(name: string): Promise<void> {
+    const client = this.clients.get(name)
+    if (!client) return
+    await client.disconnect().catch(() => {})
+    this.clients.delete(name)
+  }
+
   get serverNames(): string[] {
     return [...this.clients.keys()]
   }

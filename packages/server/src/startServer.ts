@@ -70,6 +70,22 @@ export async function startServer(
   }
   await reconnectMcp()
 
+  // Reconnect a SINGLE server (per-row ↻ in the panel). Removed-from-settings → just disconnect.
+  const reconnectOneMcp = async (name: string): Promise<void> => {
+    const config = loadSettings().mcpServers?.[name]
+    mcpFailed = mcpFailed.filter((f) => f.name !== name)
+    if (!config) { await mcp?.disconnectServer(name).catch(() => {}); return }
+    if (!mcp) mcp = new McpManager()
+    try {
+      await mcp.connectServer(name, config)
+      console.warn(`[zuse-server] MCP "${name}" 已重连`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      mcpFailed.push({ name, error: msg })
+      console.warn(`[zuse-server] MCP "${name}" 重连失败:${msg}`)
+    }
+  }
+
   // Multi-session service over the web-sessions store dir. Construction never
   // throws (no session is built here). Seed a DEFAULT session at boot so /ws
   // keeps working for clients that connect without a `?session=` query — the
@@ -113,6 +129,7 @@ export async function startServer(
     connectedServers: () => mcp?.servers ?? [],
     failed: () => mcpFailed,
     reconnect: reconnectMcp,
+    reconnectServer: reconnectOneMcp,
   })
 
   const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))

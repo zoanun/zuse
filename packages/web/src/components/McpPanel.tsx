@@ -8,8 +8,10 @@ interface Props {
   error?: string | null
   onAdd: (body: AddMcpBody) => void
   onDelete: (name: string) => void
-  /** Live reconnect from current settings (apply add/delete without a server restart). */
+  /** Live reconnect of ALL servers from current settings (apply add/delete without a restart). */
   onReconnect: () => void
+  /** Live reconnect of a single server by name. */
+  onReconnectServer: (name: string) => void
 }
 
 const STATUS_LABEL: Record<McpServerInfo['status'], string> = {
@@ -48,7 +50,7 @@ function AddForm({ onSubmit, onCancel }: { onSubmit: (b: AddMcpBody) => void; on
   )
 }
 
-function ServerRow({ s, onDelete }: { s: McpServerInfo; onDelete: (name: string) => void }) {
+function ServerRow({ s, onDelete, onReconnect }: { s: McpServerInfo; onDelete: (name: string) => void; onReconnect: (name: string) => void }) {
   const [confirming, setConfirming] = useState(false)
   const [open, setOpen] = useState(false)
   return (
@@ -65,6 +67,7 @@ function ServerRow({ s, onDelete }: { s: McpServerInfo; onDelete: (name: string)
         ) : (
           <span className="mem-actions">
             {s.tools.length ? <button className="mem-edit" title="Show tools" aria-label="Show tools" onClick={() => setOpen((o) => !o)}>{open ? '▾' : '▸'}</button> : null}
+            <button className="mem-edit" title="Reconnect this server" aria-label="Reconnect server" onClick={() => onReconnect(s.name)}>↻</button>
             <button className="mem-del" title="Delete" aria-label="Delete server" onClick={() => setConfirming(true)}>×</button>
           </span>
         )}
@@ -79,7 +82,7 @@ function ServerRow({ s, onDelete }: { s: McpServerInfo; onDelete: (name: string)
   )
 }
 
-export function McpPanel({ servers, loading, error, onAdd, onDelete, onReconnect }: Props) {
+export function McpPanel({ servers, loading, error, onAdd, onDelete, onReconnect, onReconnectServer }: Props) {
   const [adding, setAdding] = useState(false)
   const anyConfigured = servers.some((s) => s.status === 'configured')
   return (
@@ -98,7 +101,7 @@ export function McpPanel({ servers, loading, error, onAdd, onDelete, onReconnect
       {anyConfigured ? <div className="mcp-restart-note">Pending servers aren't connected yet — click Reconnect to apply.</div> : null}
 
       <ul className="mem-list">
-        {servers.map((s) => <ServerRow key={s.name} s={s} onDelete={onDelete} />)}
+        {servers.map((s) => <ServerRow key={s.name} s={s} onDelete={onDelete} onReconnect={onReconnectServer} />)}
       </ul>
     </div>
   )

@@ -12,6 +12,8 @@ export interface McpServiceDeps {
   settingsBasePath?: string
   /** Tear down + reconnect the daemon's McpManager from current settings (live, no restart). */
   reconnect?: () => Promise<void>
+  /** Reconnect a single server by name from current settings. */
+  reconnectServer?: (name: string) => Promise<void>
 }
 
 /**
@@ -46,6 +48,11 @@ export class McpService {
   /** Live reconnect: re-read settings and rebuild the daemon's MCP connections (no server restart). */
   async reconnect(): Promise<void> {
     await this.deps.reconnect?.()
+  }
+
+  /** Live reconnect of a single server by name (no server restart). */
+  async reconnectServer(name: string): Promise<void> {
+    await this.deps.reconnectServer?.(name)
   }
 
   /** Add (or overwrite) a server config. Takes effect on restart. */

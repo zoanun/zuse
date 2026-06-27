@@ -345,6 +345,14 @@ describe('/api/mcp REST', () => {
     expect(Array.isArray(await res.json())).toBe(true)
   })
 
+  it('POST /api/mcp/<name>/reconnect → 200 with the refreshed list (auth-gated)', async () => {
+    expect((await fetch(`${base}/api/mcp/everything/reconnect`, { method: 'POST' })).status).toBe(401)
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/mcp/everything/reconnect`, { method: 'POST', headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(Array.isArray(await res.json())).toBe(true)
+  })
+
   it('a deleted server disappears from the list immediately', async () => {
     const cookie = await authCookie()
     const h = { cookie, 'content-type': 'application/json' }

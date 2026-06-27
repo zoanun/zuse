@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectInfo } from '@zuse/protocol'
 import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
-import { listMcp, addMcp, deleteMcp, reconnectMcp } from '../state/manageApi.js'
+import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
@@ -138,12 +138,13 @@ function useMcpData(active: boolean) {
     onAdd: useCallback((b: AddMcpBody) => mutate(addMcp(b)), [mutate]),
     onDelete: useCallback((name: string) => mutate(deleteMcp(name)), [mutate]),
     onReconnect: useCallback(() => mutate(reconnectMcp()), [mutate]),
+    onReconnectServer: useCallback((name: string) => mutate(reconnectMcpServer(name)), [mutate]),
   }
 }
 
 function McpContainer({ active }: { active: boolean }) {
   const m = useMcpData(active)
-  return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} onReconnect={m.onReconnect} />
+  return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} onReconnect={m.onReconnect} onReconnectServer={m.onReconnectServer} />
 }
 
 export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Props) {

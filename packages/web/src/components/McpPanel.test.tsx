@@ -8,7 +8,7 @@ const srv = (over: Partial<McpServerInfo> = {}): McpServerInfo => ({
 })
 
 function renderPanel(over: Partial<Parameters<typeof McpPanel>[0]> = {}) {
-  const props = { servers: [srv()], onAdd: vi.fn(), onDelete: vi.fn(), onReconnect: vi.fn(), ...over }
+  const props = { servers: [srv()], onAdd: vi.fn(), onDelete: vi.fn(), onReconnect: vi.fn(), onReconnectServer: vi.fn(), ...over }
   return { ...props, ...render(<McpPanel {...props} />) }
 }
 
@@ -31,10 +31,17 @@ describe('McpPanel', () => {
     expect(screen.getByText(/click Reconnect to apply/)).toBeInTheDocument()
   })
 
-  it('Reconnect button fires onReconnect', () => {
+  it('toolbar Reconnect fires onReconnect (all)', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByRole('button', { name: /Reconnect/ }))
+    fireEvent.click(screen.getByRole('button', { name: /↻ Reconnect/ }))
     expect(props.onReconnect).toHaveBeenCalled()
+  })
+
+  it('per-row ↻ fires onReconnectServer with the name', () => {
+    const props = renderPanel()
+    const row = screen.getAllByRole('listitem')[0]!
+    fireEvent.click(within(row).getByLabelText('Reconnect server'))
+    expect(props.onReconnectServer).toHaveBeenCalledWith('playwright')
   })
 
   it('New form submits onAdd with name+command+args', () => {

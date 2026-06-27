@@ -107,7 +107,12 @@ export async function deleteMcp(name: string): Promise<void> {
   await request('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' }, 'delete mcp server')
 }
 
-/** POST /api/mcp/reconnect → live reconnect from current settings (no server restart). */
+/** POST /api/mcp/reconnect → live reconnect of ALL servers from current settings. */
 export async function reconnectMcp(): Promise<void> {
   await request('/api/mcp/reconnect', { method: 'POST' }, 'reconnect mcp')
+}
+
+/** POST /api/mcp/<name>/reconnect → live reconnect of a single server. */
+export async function reconnectMcpServer(name: string): Promise<void> {
+  await request('/api/mcp/' + encodeURIComponent(name) + '/reconnect', { method: 'POST' }, 'reconnect mcp server')
 }
