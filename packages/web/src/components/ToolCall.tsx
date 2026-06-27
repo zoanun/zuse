@@ -1,18 +1,43 @@
+import { useState } from 'react'
 import type { Part } from '../state/types.js'
 
 export function ToolCall({ use, result }: { use: Extract<Part, { kind: 'tool-use' }>; result?: Extract<Part, { kind: 'tool-result' }> }) {
   const { name, tag, head, body } = describe(use)
+  const [open, setOpen] = useState(false)
+  // A card is only foldable when there's something below the head (a body or a result). Cards
+  // whose gist is fully in the head (e.g. Lsp, a single primary arg) render as a plain title.
+  const foldable = body !== null || result !== undefined
+  const title = (
+    <>
+      <span className="tool-name">⚙ {name ?? use.name}</span>
+      {tag ? <span className="tool-tag">{tag}</span> : null}
+      {head ? <span className="tool-file">{head}</span> : null}
+    </>
+  )
   return (
-    <div className="tool">
-      <div className="head">⚙ {name ?? use.name}{tag ? <span className="tool-tag">{tag}</span> : null}{head ? <span className="tool-file">{head}</span> : null}</div>
-      {body?.kind === 'diff'
-        ? body.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
-        : body?.kind === 'code'
-        ? <pre className={body.cls}>{trunc(body.text, 4000)}</pre>
-        : body?.kind === 'json'
-        ? <div className="args">{trunc(body.text, 200)}</div>
-        : null}
-      {result ? <div className={'result' + (result.isError ? ' err' : '')}>{trunc(result.output, 800)}</div> : null}
+    <div className={'tool' + (open ? ' open' : '')}>
+      {foldable ? (
+        <button type="button" className="head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          <span className="caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+          {title}
+          {!open && result?.isError ? <span className="tool-err" aria-label="error">✕</span> : null}
+        </button>
+      ) : (
+        <div className="head">{title}</div>
+      )}
+      {open ? (
+        <>
+          {body?.kind === 'diff'
+            ? body.diffs.map((d, i) => <EditDiff key={i} lines={d} />)
+            : body?.kind === 'code'
+            ? <pre className={body.cls}>{trunc(body.text, 4000)}</pre>
+            : body?.kind === 'json'
+            ? <div className="args">{trunc(body.text, 200)}</div>
+            : null}
+          {result ? <div className={'result' + (result.isError ? ' err' : '')}>{trunc(result.output, 800)}</div> : null}
+          <button type="button" className="tool-collapse" onClick={() => setOpen(false)}>▴ collapse</button>
+        </>
+      ) : null}
     </div>
   )
 }

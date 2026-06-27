@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { Message, splitThink } from './Message.js'
+import { Message, splitThink, replyMarkdown } from './Message.js'
+
+// Tool cards are collapsed by default — open every one so result/body assertions can see them.
+const expandTools = (container: HTMLElement): void => {
+  container.querySelectorAll('button.head').forEach((b) => fireEvent.click(b))
+}
 
 describe('Message', () => {
   it('renders a user bubble as plain text', () => {
@@ -14,8 +19,7 @@ describe('Message', () => {
       msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'do it' }], checkpointId: 'cpX' }}
       onRevert={onRevert}
     />)
-    const btn = screen.getByRole('button', { name: 'Revert to this point' })
-    fireEvent.click(btn)
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to this point' }))
     expect(onRevert).toHaveBeenCalledWith('cpX')
   })
 
@@ -38,25 +42,25 @@ describe('Message', () => {
     expect(screen.getByText('bold').tagName.toLowerCase()).toBe('strong')
   })
 
-  it('renders a tool call with its result', () => {
-    render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+  it('renders a tool call with its result (once expanded)', () => {
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
       { kind: 'tool-result', id: 't1', name: 'Bash', output: 'a b c', isError: false },
     ] }} />)
     expect(screen.getByText(/⚙ Bash/)).toBeInTheDocument()
+    expandTools(container)
     expect(screen.getByText('a b c')).toBeInTheDocument()
   })
 
   it('pairs batched tool-uses with their results by id (no duplicate {} cards)', () => {
-    // Model batched two calls: all tool_use, then all tool_result (the snapshot/ledger shape).
     const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Grep', input: { pattern: 'greate' } },
       { kind: 'tool-use', id: 't2', name: 'Glob', input: { pattern: '**/greate' } },
       { kind: 'tool-result', id: 't1', name: '', output: 'No matches for: greate', isError: false },
       { kind: 'tool-result', id: 't2', name: '', output: 'No files match', isError: false },
     ] }} />)
-    // exactly two cards, each carrying its own result — not four, no empty-{}-args card
     expect(container.querySelectorAll('.tool')).toHaveLength(2)
+    expandTools(container)
     expect(container.querySelector('.args')).toBeNull()
     expect(screen.getByText('No matches for: greate')).toBeInTheDocument()
     expect(screen.getByText('No files match')).toBeInTheDocument()
@@ -68,9 +72,8 @@ describe('Message', () => {
     ] }} />)
     const details = container.querySelector('details.think')
     expect(details).not.toBeNull()
-    expect(details!.hasAttribute('open')).toBe(false) // collapsed by default
+    expect(details!.hasAttribute('open')).toBe(false)
     expect(container.querySelector('.think-body')?.textContent).toContain('let me reason')
-    // the actual answer renders as normal markdown, not inside the think block
     expect(screen.getByText('42').tagName.toLowerCase()).toBe('strong')
   })
 
@@ -97,18 +100,20 @@ describe('Message', () => {
   })
 
   it('does not crash when a tool-use has undefined input', () => {
-    // JSON.stringify(undefined) === undefined; safeJson must coalesce to a string.
-    expect(() => render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+    let container!: HTMLElement
+    expect(() => { container = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Noop', input: undefined },
-    ] }} />)).not.toThrow()
+    ] }} />).container }).not.toThrow()
     expect(screen.getByText(/⚙ Noop/)).toBeInTheDocument()
+    expandTools(container)
     expect(screen.getByText('undefined')).toBeInTheDocument()
   })
 
   it('renders an orphan tool-result without a matching tool-use', () => {
-    render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
+    const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-result', id: 't9', name: 'tool', output: 'lonely', isError: false },
     ] }} />)
+    expandTools(container)
     expect(screen.getByText('lonely')).toBeInTheDocument()
   })
 
@@ -125,6 +130,41 @@ describe('Message', () => {
       { kind: 'tool-use', id: 't1', name: 'Bash', input: {} },
       { kind: 'tool-result', id: 't1', name: 'Bash', output: 'boom', isError: true },
     ] }} />)
+    expandTools(container)
     expect(container.querySelector('.result.err')).not.toBeNull()
+  })
+
+  it('replyMarkdown returns the prose, stripping <think> and ignoring tool parts', () => {
+    expect(replyMarkdown([
+      { kind: 'text', text: '<think>reasoning</think>The **answer**.' },
+      { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+    ])).toBe('The **answer**.')
+  })
+
+  it('shows a copy button on an assistant reply with prose, none on a tool-only turn', () => {
+    const { rerender } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hello' }] }} />)
+    expect(screen.getByLabelText('Copy reply')).toBeInTheDocument()
+    rerender(<Message msg={{ id: 'a2', role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'Bash', input: {} }] }} />)
+    expect(screen.queryByLabelText('Copy reply')).toBeNull()
+  })
+
+  it('shows a share button when onShare is provided, and hides actions in share mode', () => {
+    const { rerender } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hi' }] }} onShare={() => {}} />)
+    expect(screen.getByLabelText('share')).toBeInTheDocument()
+    rerender(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hi' }] }} onShare={() => {}} shareMode />)
+    expect(screen.queryByLabelText('share')).toBeNull()
+    expect(screen.queryByLabelText('Copy reply')).toBeNull()
+  })
+
+  it('in share mode renders only prose, dropping tool cards', () => {
+    const { container } = render(<Message
+      msg={{ id: 'a1', role: 'assistant', parts: [
+        { kind: 'text', text: 'the prose' },
+        { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      ] }}
+      shareMode
+    />)
+    expect(screen.getByText('the prose')).toBeInTheDocument()
+    expect(container.querySelector('.tool')).toBeNull()
   })
 })

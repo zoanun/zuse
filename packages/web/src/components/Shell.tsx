@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PermissionVerdict } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
@@ -16,11 +16,52 @@ export function Shell() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
+  // null = not sharing; a Set = share-selection mode with the chosen message ids.
+  const [shareSel, setShareSel] = useState<Set<string> | null>(null)
 
   const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
   const onRevert = useCallback((checkpointId: string) => send({ type: 'revert', checkpointId }), [send])
+  const onRetry = useCallback(() => send({ type: 'retry' }), [send])
+
+  // onShare must be stable (passed to every memoized assistant Message) — read messages from a
+  // ref instead of closing over state.messages, which changes on every stream delta.
+  const messagesRef = useRef(state.messages)
+  messagesRef.current = state.messages
+  // Enter share mode pre-selecting the clicked reply + its question (nearest user message above).
+  const onShare = useCallback((assistantId: string) => {
+    const msgs = messagesRef.current
+    const i = msgs.findIndex((m) => m.id === assistantId)
+    const ids = new Set<string>()
+    if (i >= 0) {
+      ids.add(msgs[i]!.id)
+      for (let j = i - 1; j >= 0; j--) if (msgs[j]!.role === 'user') { ids.add(msgs[j]!.id); break }
+    }
+    setShareSel(ids)
+  }, [])
+  const toggleSelect = useCallback((id: string) => {
+    setShareSel((prev) => {
+      if (!prev) return prev
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }, [])
+  const confirmShare = () => {
+    if (shareSel && shareSel.size > 0) {
+      const subset = state.messages.filter((m) => shareSel.has(m.id))
+      void import('../state/exportChat.js').then((m) => m.downloadChatHtml(subset))
+    }
+    setShareSel(null)
+  }
+  // Esc cancels share-selection mode.
+  useEffect(() => {
+    if (!shareSel) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShareSel(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [shareSel])
 
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
@@ -28,15 +69,34 @@ export function Shell() {
       <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}
-          onNewChat={() => { void newSession(); setMenuOpen(false) }}
-          onSwitch={(id) => { void switchSession(id); setMenuOpen(false) }}
+          onNewChat={() => { setShareSel(null); void newSession(); setMenuOpen(false) }}
+          onSwitch={(id) => { setShareSel(null); void switchSession(id); setMenuOpen(false) }}
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} />
         <main className="chat">
-          <MessageList messages={state.messages} thinking={state.thinking} pendingCount={state.pendingPermissions.length} onRevert={onRevert} />
+          {shareSel ? (
+            <div className="share-bar">
+              <span className="share-bar-label">Select messages to share · {shareSel.size} selected · Esc to cancel</span>
+              <div className="share-bar-actions">
+                <button type="button" className="share-go" onClick={confirmShare} disabled={shareSel.size === 0}>Export selected</button>
+                <button type="button" className="share-cancel" onClick={() => setShareSel(null)}>Cancel</button>
+              </div>
+            </div>
+          ) : null}
+          <MessageList
+            messages={state.messages}
+            thinking={state.thinking}
+            pendingCount={state.pendingPermissions.length}
+            onRevert={onRevert}
+            onShare={onShare}
+            onRetry={onRetry}
+            shareMode={!!shareSel}
+            selected={shareSel ?? undefined}
+            onToggleSelect={toggleSelect}
+          />
           {state.pendingPermissions.length > 0 ? (
             <div className="perm-wrap">
               {state.pendingPermissions.map((p) => <PermissionCard key={p.id} pending={p} onReply={onReply} />)}

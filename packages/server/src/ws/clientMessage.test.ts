@@ -9,6 +9,7 @@ function fakeMgr(): SessionManagerLike & {
   switchModel: ReturnType<typeof vi.fn>
   reset: ReturnType<typeof vi.fn>
   revert: ReturnType<typeof vi.fn>
+  retry: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -18,6 +19,7 @@ function fakeMgr(): SessionManagerLike & {
     switchModel: vi.fn(),
     reset: vi.fn(),
     revert: vi.fn(async () => {}),
+    retry: vi.fn(async () => {}),
   }
 }
 
@@ -66,6 +68,23 @@ describe('applyClientMessage', () => {
     applyClientMessage(mgr, JSON.stringify({ type: 'revert' }), err)
     expect(mgr.revert).not.toHaveBeenCalled()
     expect(err).toHaveBeenCalledWith(expect.stringContaining('checkpointId'))
+  })
+
+  it('dispatches retry to mgr.retry (no payload required)', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'retry' }), err)
+    expect(mgr.retry).toHaveBeenCalledTimes(1)
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('reports a rejected retry (turn already in progress)', async () => {
+    const mgr = fakeMgr()
+    mgr.retry = vi.fn(async () => { throw new Error('A turn is already in progress') })
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'retry' }), err)
+    await Promise.resolve(); await Promise.resolve()
+    expect(err).toHaveBeenCalledWith('A turn is already in progress')
   })
 
   it('errors on invalid JSON', () => {

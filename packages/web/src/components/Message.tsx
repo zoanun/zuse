@@ -1,17 +1,28 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
-function partsText(parts: Part[]): string {
+export function partsText(parts: Part[]): string {
   return parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
+}
+
+/** A turn's prose markdown: text parts joined, with folded `<think>` reasoning stripped out. */
+export function replyMarkdown(parts: Part[]): string {
+  return splitThink(partsText(parts)).filter((s) => !s.think).map((s) => s.text).join('').trim()
 }
 
 // memo: while streaming, the store re-renders on every delta but only the last
 // message's identity changes — memo lets the unchanged messages skip re-rendering
-// (and re-parsing their markdown). Relies on a stable `onRevert` (see Shell).
-export const Message = memo(function Message({ msg, onRevert }: { msg: Msg; onRevert?: (checkpointId: string) => void }) {
+// (and re-parsing their markdown). Relies on a stable `onRevert`/`onShare` (see Shell).
+export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, shareMode }: {
+  msg: Msg
+  onRevert?: (checkpointId: string) => void
+  onShare?: (id: string) => void
+  onRetry?: () => void          // only supplied for the latest assistant reply
+  shareMode?: boolean
+}) {
   if (msg.role === 'system') {
     const kind = msg.noticeKind
     const cls = kind === 'error' ? 'bad' : kind === 'warn' ? 'warn' : 'live'
@@ -37,12 +48,85 @@ export const Message = memo(function Message({ msg, onRevert }: { msg: Msg; onRe
       </div>
     )
   }
+  const md = replyMarkdown(msg.parts)
+  // In share mode show only the prose (drop tool cards) — that mirrors what export keeps.
+  const visibleParts = shareMode ? msg.parts.filter((p) => p.kind === 'text') : msg.parts
   return (
     <div className="msg agent">
-      <div className="text-wrap">{renderParts(msg.parts)}</div>
+      <div className="text-wrap">{renderParts(visibleParts)}</div>
+      {!shareMode && md ? (
+        <div className="msg-actions">
+          <CopyButton text={md} />
+          {onShare ? (
+            <MsgAction className="msg-share" title="Share — pick messages to export" label="share" onClick={() => onShare(msg.id)}>
+              <ShareIcon />
+            </MsgAction>
+          ) : null}
+          {onRetry ? (
+            <MsgAction className="msg-retry" title="Retry — re-run this question from a clean checkpoint" label="retry" onClick={onRetry}>
+              <RetryIcon />
+            </MsgAction>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 })
+
+/** A reply-footer action: icon only; the description lives in the native hover tooltip (title). */
+function MsgAction({ className, title, label, onClick, children }: {
+  className?: string; title: string; label: string; onClick: () => void; children: ReactNode
+}) {
+  return (
+    <button type="button" className={'msg-copy' + (className ? ' ' + className : '')} title={title} aria-label={label} onClick={onClick}>
+      {children}
+    </button>
+  )
+}
+
+/** Copy a reply's prose markdown to the clipboard; the icon flips to ✓ briefly on success. */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = (): void => {
+    void navigator.clipboard?.writeText(text).then(
+      () => { setCopied(true); setTimeout(() => setCopied(false), 1500) },
+      () => {},
+    )
+  }
+  return (
+    <button type="button" className="msg-copy" title="Copy reply (markdown)" aria-label="Copy reply" onClick={copy}>
+      {copied ? '✓' : <CopyIcon />}
+    </button>
+  )
+}
+
+function CopyIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      <rect x="5.5" y="5.5" width="8" height="9" rx="1.5" />
+      <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H10" />
+    </svg>
+  )
+}
+
+function ShareIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      <path d="M8 10V2.5M8 2.5 5.8 4.7M8 2.5l2.2 2.2" />
+      <path d="M3.5 8.5V12a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V8.5" />
+    </svg>
+  )
+}
+
+function RetryIcon() {
+  // Clockwise "redo" arrow.
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z" />
+      <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466" />
+    </svg>
+  )
+}
 
 function RevertIcon() {
   // Circular counterclockwise "restore" arrow (Bootstrap arrow-counterclockwise).

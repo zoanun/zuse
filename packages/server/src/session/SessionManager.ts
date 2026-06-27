@@ -787,6 +787,30 @@ export class SessionManager {
   }
 
   /**
+   * Retry the last user turn (web "retry"): revert to that turn's checkpoint — rolling the
+   * workspace back and dropping the turn from the ledger — then re-submit the same text from
+   * the clean state. This is the safe semantics when the turn changed code: the next attempt
+   * starts from the same point, not on top of half-applied edits. No-op when there is no user
+   * turn or no checkpoint anchoring it; throws if a turn is already running (mirrors submit()).
+   */
+  async retry(): Promise<void> {
+    if (this.isThinking) throw new Error('A turn is already in progress')
+    // Use the LAST checkpoint — it anchors the most recent real user turn. Do NOT scan for the
+    // last role:'user' message: tool_result blocks are committed as role:'user' too, so that
+    // would land on a tool result (which has no checkpoint) and silently no-op.
+    const cp = this.checkpoints[this.checkpoints.length - 1]
+    if (!cp) return
+    const userMsg = this.conversation.getMessages()[cp.messageIndex]
+    if (!userMsg || userMsg.role !== 'user') return
+    // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
+    const raw = userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
+    const text = raw.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '')
+    if (text.trim() === '') return
+    await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
+    await this.submit(text)      // fresh attempt from the clean checkpoint
+  }
+
+  /**
    * Background memory consolidation (Phase 13, lightweight autoDream): when the memory
    * index is near its cap and ≥24h since the last run, send ONE tool-less request asking
    * the model to emit DELETE/SAVE op lines, then apply them deterministically. Guarded by

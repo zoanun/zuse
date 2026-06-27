@@ -156,6 +156,7 @@ export type ClientMessage =
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
   | { type: 'revert'; checkpointId: string }
+  | { type: 'retry' }
 
 /** 下行 server → client。 */
 export type ServerMessage =

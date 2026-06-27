@@ -1,17 +1,54 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { ToolCall } from './ToolCall.js'
 import type { Part } from '../state/types.js'
 
 const use = (name: string, input: unknown): Extract<Part, { kind: 'tool-use' }> => ({ kind: 'tool-use', id: 't1', name, input })
 
+// Cards are collapsed by default — click the head (when it's a toggle) to reveal the body.
+const expand = (container: HTMLElement): void => {
+  const head = container.querySelector('button.head')
+  if (head) fireEvent.click(head)
+}
+
 describe('ToolCall', () => {
+  it('is collapsed by default and toggles open/closed on the head', () => {
+    const { container } = render(
+      <ToolCall use={use('Write', { file_path: 'doc.md', content: '# Title' })} />,
+    )
+    // head visible, body hidden until expanded
+    expect(screen.getByText('doc.md')).toBeInTheDocument()
+    expect(container.querySelector('.write-body')).toBeNull()
+    expand(container)
+    expect(container.querySelector('.write-body')?.textContent).toContain('# Title')
+    // the in-body collapse button folds it back
+    fireEvent.click(screen.getByText(/collapse/))
+    expect(container.querySelector('.write-body')).toBeNull()
+  })
+
+  it('renders a head-only card (no body, no result) as a plain title with no toggle', () => {
+    const { container } = render(<ToolCall use={use('Lsp', { operation: 'definition', symbol: 'ToolCall' })} />)
+    expect(screen.getByText('definition: ToolCall')).toBeInTheDocument()
+    expect(container.querySelector('button.head')).toBeNull()
+  })
+
+  it('flags an error on the collapsed head', () => {
+    const { container } = render(
+      <ToolCall
+        use={use('Bash', { command: 'false', description: 'fail' })}
+        result={{ kind: 'tool-result', id: 't1', name: 'Bash', output: 'boom', isError: true }}
+      />,
+    )
+    expect(container.querySelector('.head .tool-err')).not.toBeNull()
+  })
+
   it('renders an Edit as a +/- line diff, not raw JSON', () => {
     const { container } = render(
       <ToolCall use={use('Edit', { file_path: 'test.md', old_string: 'a\nB old\nc', new_string: 'a\nB new\nc' })} />,
     )
     // file shown in the head
     expect(screen.getByText('test.md')).toBeInTheDocument()
+    expand(container)
     // changed line appears as a removed + an added row; unchanged lines are context
     expect(container.querySelector('.edit-diff .dl.del')?.textContent).toContain('B old')
     expect(container.querySelector('.edit-diff .dl.add')?.textContent).toContain('B new')
@@ -27,6 +64,7 @@ describe('ToolCall', () => {
         { old_string: 'two', new_string: 'TWO' },
       ] })} />,
     )
+    expand(container)
     expect(container.querySelectorAll('.edit-diff').length).toBe(2)
   })
 
@@ -35,6 +73,7 @@ describe('ToolCall', () => {
       <ToolCall use={use('Write', { file_path: 'doc.md', content: '# Title\nline one\nline two' })} />,
     )
     expect(screen.getByText('doc.md')).toBeInTheDocument()
+    expand(container)
     const body = container.querySelector('.write-body')
     expect(body?.textContent).toContain('# Title')
     expect(body?.textContent).toContain('line two')
@@ -49,6 +88,7 @@ describe('ToolCall', () => {
       />,
     )
     expect(screen.getByText('a.ts')).toBeInTheDocument()
+    expand(container)
     expect(container.querySelector('.args')).toBeNull()
     expect(container.querySelector('.result')?.textContent).toContain('file contents here')
   })
@@ -61,6 +101,7 @@ describe('ToolCall', () => {
       />,
     )
     expect(screen.getByText('**/test.md')).toBeInTheDocument()
+    expand(container)
     expect(container.querySelector('.args')).toBeNull()
     expect(container.querySelector('.result')?.textContent).toContain('a/test.md')
   })
@@ -70,6 +111,7 @@ describe('ToolCall', () => {
       <ToolCall use={use('Bash', { command: 'curl -s https://x | grep y', description: 'fetch and filter' })} />,
     )
     expect(screen.getByText('fetch and filter')).toBeInTheDocument()
+    expand(container)
     expect(container.querySelector('.bash-cmd')?.textContent).toContain('curl -s https://x | grep y')
     expect(container.querySelector('.args')).toBeNull()
   })
@@ -79,6 +121,7 @@ describe('ToolCall', () => {
       <ToolCall use={use('Agent', { description: 'find the bug', prompt: 'Search the repo for the race condition.' })} />,
     )
     expect(screen.getByText('find the bug')).toBeInTheDocument()
+    expand(container)
     expect(container.querySelector('.write-body')?.textContent).toContain('race condition')
   })
 
@@ -97,6 +140,7 @@ describe('ToolCall', () => {
       <ToolCall use={use('Memory', { action: 'save', type: 'insight', content: 'the bug was a race' })} />,
     )
     expect(screen.getByText('save · insight')).toBeInTheDocument()
+    expand(container)
     expect(container.querySelector('.write-body')?.textContent).toContain('the bug was a race')
   })
 
@@ -114,6 +158,7 @@ describe('ToolCall', () => {
     expect(headText).toContain('browser_click')
     expect(headText).not.toContain('mcp__')
     expect(screen.getByText('MCP · playwright')).toBeInTheDocument()
+    expand(container)
     // args are pretty-printed (multi-line), not the cramped single-line .args
     const body = container.querySelector('.write-body')
     expect(body?.textContent).toContain('"selector"')
@@ -133,6 +178,7 @@ describe('ToolCall', () => {
 
   it('keeps the JSON box for a single arg whose value is long/non-scalar', () => {
     const { container } = render(<ToolCall use={use('mcp__x__run', { payload: { nested: true } })} />)
+    expand(container)
     expect(container.querySelector('.write-body')?.textContent).toContain('"nested"') // object value → box
     expect(container.querySelector('.head')?.textContent).not.toContain('payload:')
   })
@@ -147,6 +193,7 @@ describe('ToolCall', () => {
 
   it('falls back to raw-JSON args for unrecognised tools', () => {
     const { container } = render(<ToolCall use={use('SomethingNew', { foo: 'bar' })} />)
+    expand(container)
     expect(container.querySelector('.edit-diff')).toBeNull()
     expect(container.querySelector('.write-body')).toBeNull()
     expect(container.querySelector('.args')?.textContent).toContain('bar')

@@ -653,6 +653,69 @@ describe('SessionManager checkpoints + revert', () => {
     expect(restored).toEqual(['cp-hash-1'])
     expect(reverted).toEqual(['cp-hash-1'])
   })
+
+  it('retry reverts the last turn then re-submits the same prompt', async () => {
+    const mkScript = (): StreamEvent[] => [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'an answer' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { client } = fakeClient([mkScript(), mkScript()])
+    const restored: string[] = []
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
+      settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
+    })
+    const reverted: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'reverted') reverted.push(e.checkpointId) })
+
+    await mgr.submit('my question')
+    const before = mgr.getState().messageCount
+    expect(before).toBeGreaterThan(0)
+
+    await mgr.retry()
+    expect(restored).toEqual(['cp-hash-1'])
+    expect(reverted).toEqual(['cp-hash-1'])
+    expect(mgr.getState().messageCount).toBe(before)
+    const first = mgr.getState().messages[0]!
+    expect(first.role).toBe('user')
+    expect(first.parts[0]).toMatchObject({ kind: 'text', text: 'my question' })
+
+    mgr.reset()
+    await mgr.retry()
+    expect(restored).toEqual(['cp-hash-1'])
+  })
+
+  it('retry skips intervening tool_result (role:user) messages and resubmits the real question', async () => {
+    // A turn with a tool call leaves a tool_result committed as role:'user'. Scanning for the
+    // last role:'user' message would land there (no checkpoint → silent no-op). retry must use
+    // the last checkpoint, which anchors the real question at index 0.
+    const seeded = Conversation.fromJSON({ version: 1, messages: [
+      { role: 'user', content: [{ type: 'text', text: '[2026-06-27 10:00] the real question' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'tool output' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+    ], totalUsage: new Conversation().totalUsage })
+    const { client } = fakeClient([[
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'fresh answer' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]])
+    const restored: string[] = []
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
+      settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: { track: async () => 'cp-new', restore: async (h) => { restored.push(h) } },
+      conversation: seeded,
+      checkpoints: [{ messageIndex: 0, hash: 'cp0', at: '2026-06-27T10:00:00.000Z', label: 'q' }],
+    })
+    await mgr.retry()
+    expect(restored).toEqual(['cp0'])
+    expect(mgr.getState().messages[0]!.parts[0]).toMatchObject({ kind: 'text', text: 'the real question' })
+  })
 })
 
 describe('SessionManager switchModel', () => {
