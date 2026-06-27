@@ -105,6 +105,39 @@ describe('createSession', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('calls registerExtraTools with the session registry (MCP/B4 seam) and the tool is usable', async () => {
+    const dir = tmp()
+    const scripts: StreamEvent[][] = [
+      [
+        { type: 'message-start', id: 'm1', model: 'fake-model' },
+        { type: 'tool-use', id: 'e1', name: 'ExtraTool', input: {} },
+        { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+      [
+        { type: 'message-start', id: 'm2', model: 'fake-model' },
+        { type: 'text-delta', text: 'done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+      ],
+    ]
+    const { client } = fakeClient(scripts)
+    let registryGiven = false
+    const mgr = createSession({
+      sessionId: 'test', cwd: dir, client, snapshotStore: fakeSnapshotStore(),
+      registerExtraTools: (reg) => {
+        registryGiven = typeof reg.register === 'function'
+        reg.register({ name: 'ExtraTool', description: 'x', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async () => ({ output: 'extra-ran' }) })
+      },
+    })
+    expect(registryGiven).toBe(true)
+
+    const results: Extract<SessionEvent, { type: 'tool-result' }>[] = []
+    mgr.subscribe((e) => { if (e.type === 'tool-result') results.push(e) })
+    await mgr.submit('use the extra tool')
+    const r = results.find((x) => x.id === 'e1')
+    expect(r?.output).toBe('extra-ran') // registered tool actually ran (not "Unknown tool")
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('restores conversation + checkpoints from opts (restore path)', () => {
     const dir = tmp()
     const conversation = new Conversation()

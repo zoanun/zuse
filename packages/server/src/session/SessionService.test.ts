@@ -58,6 +58,19 @@ function fakeCreateSessionFactory(scriptsById: Record<string, StreamEvent[][]> =
 }
 
 describe('SessionService', () => {
+  it('forwards registerExtraTools into createSession (B4 MCP seam)', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const reg = (): void => {}
+    let seen: unknown = 'unset'
+    const createFake = (opts: CreateSessionOpts): SessionManager => {
+      seen = opts.registerExtraTools
+      return fakeCreateSessionFactory()(opts)
+    }
+    const svc = new SessionService({ dir, cwd: '/work', createSession: createFake, registerExtraTools: reg })
+    await svc.create()
+    expect(seen).toBe(reg) // the exact callback was threaded through to createSession
+  })
+
   it('create() returns an id, list() shows it as "New chat", and a record file exists', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
