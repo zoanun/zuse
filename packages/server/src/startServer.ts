@@ -8,6 +8,7 @@ import { attachWsServer } from './ws/wsServer.js'
 import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
 import { PersonaService } from './persona/PersonaService.js'
+import { McpService } from './mcp/McpService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -36,12 +37,14 @@ export async function startServer(
   // a failed/absent MCP config must never crash the daemon. disconnect on close().
   let mcp: McpManager | undefined
   let registerExtraTools: ((registry: ToolRegistry) => void) | undefined
+  let mcpFailed: Array<{ name: string; error: string }> = []
   const settings = loadSettings()
   const mcpServers = settings.mcpServers
   if (mcpServers && Object.keys(mcpServers).length > 0) {
     const m = new McpManager()
     try {
       const { connected, failed } = await m.connectAll(mcpServers)
+      mcpFailed = failed
       for (const f of failed) console.warn(`[zuse-server] MCP "${f.name}" 连接失败:${f.error}`)
       if (connected.length > 0) {
         const sel = resolveModelSelection(settings)
@@ -95,8 +98,10 @@ export async function startServer(
   }
 
   const persona = new PersonaService()
+  // MCP management view (M4): merges configured servers with live status/tools from the manager.
+  const mcpService = new McpService({ connectedServers: () => mcp?.servers ?? [], failed: mcpFailed })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

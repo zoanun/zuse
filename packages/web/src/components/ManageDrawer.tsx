@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MemoryItem, ProjectInfo, PersonaItem } from '@zuse/protocol'
 import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
-import type { CreateMemoryBody, UpdateMemoryBody } from '../state/manageApi.js'
+import { listMcp, addMcp, deleteMcp } from '../state/manageApi.js'
+import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
+import type { McpServerInfo } from '@zuse/protocol'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
+import { McpPanel } from './McpPanel.js'
 
 export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage'
 
@@ -13,7 +16,7 @@ const NAV: NavEntry[] = [
   { id: 'memory', label: 'Memory', enabled: true },
   { id: 'prompts', label: 'Personas', enabled: true },
   { id: 'skills', label: 'Skills', enabled: false },
-  { id: 'mcp', label: 'MCP', enabled: false },
+  { id: 'mcp', label: 'MCP', enabled: true },
   { id: 'usage', label: 'Usage', enabled: false },
 ]
 
@@ -134,6 +137,41 @@ function PersonasContainer({ active }: { active: boolean }) {
   )
 }
 
+/** Owns the MCP fetch+state lifecycle: load on open, refetch after config mutations. */
+function useMcpData(active: boolean) {
+  const [servers, setServers] = useState<McpServerInfo[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [reloadTick, setReloadTick] = useState(0)
+  const reqSeq = useRef(0)
+
+  useEffect(() => {
+    if (!active) return
+    const seq = ++reqSeq.current
+    setLoading(true)
+    setError(null)
+    listMcp()
+      .then((s) => { if (seq === reqSeq.current) { setServers(s); setLoading(false) } })
+      .catch((e: unknown) => { if (seq === reqSeq.current) { setError(e instanceof Error ? e.message : String(e)); setLoading(false) } })
+  }, [active, reloadTick])
+
+  const refetch = useCallback(() => setReloadTick((n) => n + 1), [])
+  const mutate = useCallback((p: Promise<unknown>) => {
+    p.then(refetch).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+  }, [refetch])
+
+  return {
+    servers, loading, error,
+    onAdd: useCallback((b: AddMcpBody) => mutate(addMcp(b)), [mutate]),
+    onDelete: useCallback((name: string) => mutate(deleteMcp(name)), [mutate]),
+  }
+}
+
+function McpContainer({ active }: { active: boolean }) {
+  const m = useMcpData(active)
+  return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} />
+}
+
 export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Props) {
   // Close on Escape while open.
   useEffect(() => {
@@ -169,6 +207,8 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Prop
               ? <MemoryContainer active={open && activePanel === 'memory'} />
               : activePanel === 'prompts'
               ? <PersonasContainer active={open && activePanel === 'prompts'} />
+              : activePanel === 'mcp'
+              ? <McpContainer active={open && activePanel === 'mcp'} />
               : <div className="mem-empty">Coming soon.</div>}
           </div>
         </div>

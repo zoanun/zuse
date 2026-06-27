@@ -94,7 +94,7 @@ Zuse 当前只有 TUI（`packages/tui`）。需要新增一个 **Web UI**，要�
 | M1 | memory 增删改查 | 对 core 记忆库完整 CRUD：列表/搜索、查看、新增、编辑、删除 | F3 |
 | M2 | 角色/人设提示词 CRUD + 切换（两层模型）| **核心约束层**（`DEFAULT_SYSTEM_PROMPT` + 非 Claude 强制约束）只读、不参与切换，仅展示以保护系统性约束；**角色/人设层**：管理一组命名人设的完整 CRUD（新增/编辑/删除/列表），"切换"=选择激活哪个人设，作为附加层叠加在核心层之上（复用 `buildSystemPrompt` 现有 `## section` 追加机制，不改引擎）；另提供"查看当前生效完整 prompt"只读视图（拼全各层 + 标来源） | F3 |
 | M3 | skill 管理 | 列出已加载 skill、查看内容/触发条件、启用/禁用、**手动编辑已有 skill**（改 SKILL.md 正文/description/触发条件，保存即生效）。不做新增/删除；插件来源的 skill 只读 + 启停（归插件管） | F3 |
-| M4 | MCP 管理 | server 列表/健康/启停、查看其工具、增删配置 | F3 |
+| M4 | MCP 管理 | ✅ 已做（2026-06-27）：server 列表 + 连接状态(connected/failed/configured) + 查看其工具 + 增删配置(写全局 settings.jsonc 的 mcpServers,surgical JSONC modify 保注释)。**配置改动重启生效**(连接在 daemon 启动时建)；live 启停 deferred。修了 mergeLayers 从不透传 mcpServers 的潜伏 bug(B4/TUI MCP 之前其实都没真连上)。`McpService` + `/api/mcp` GET/POST/DELETE + `McpPanel` | F3,B4 |
 | M5 | usage 仪表盘 | 实时 token/成本、按会话/模型聚合 | F3 |
 | M6 | 检查点时间线 | 影子 git 快照可视化 + 一键 revert | F3 |
 | M7 | 文件树浏览器 | 项目文件树、点击预览 | F3 |

@@ -18,6 +18,7 @@ import type {
   RawWebSearchConfig,
   WebSearchConfig,
 } from './types.js'
+import type { McpServerConfig } from './mcp-client.js'
 import { createModelClient } from './model-client.js'
 import type { ModelClient } from './model-client.js'
 
@@ -100,6 +101,7 @@ interface RawSettings {
   }
   providers?: Record<string, RawProviderConfig>
   webSearch?: RawWebSearchConfig
+  mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string }>
 }
 
 export interface LoadSettingsOptions {
@@ -177,6 +179,8 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
         backends: { ...(prev.backends ?? {}), ...(layer.webSearch.backends ?? {}) },
       }
     }
+    // MCP servers 按 server 名浅合并：高层整条覆盖同名 server（配置是原子的）。
+    if (layer.mcpServers) out.mcpServers = { ...(out.mcpServers ?? {}), ...layer.mcpServers }
     const pm = layer.permissions
     if (pm) {
       if (pm.defaultMode !== undefined) out.permissions.defaultMode = pm.defaultMode
@@ -240,6 +244,33 @@ export function appendAllowRule(rule: string, localPath?: string): void {
   if (existing.includes(rule)) return // 已有则幂等跳过，连写盘都省了
   // 只改 permissions.allow 这一处，applyEdits 保留其余字段、注释与缩进。
   const edits = modify(text, ['permissions', 'allow'], [...existing, rule], {
+    formattingOptions: { insertSpaces: true, tabSize: 2 },
+  })
+  const updated = applyEdits(text, edits)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, updated.endsWith('\n') ? updated : updated + '\n', 'utf8')
+}
+
+/**
+ * 增/删全局 settings 里的一个 MCP server 配置（M4）。`config` 为 null 时删除该 server。
+ * 默认写全局 `~/.zuse/settings.json(c)`（mcpServers 通常配在全局层）；用 jsonc 的
+ * modify+applyEdits 只动 mcpServers.<name> 这一处,保留其余字段/注释/缩进。
+ * @param basePath 省略时取 `~/.zuse/settings.json`（同名 .jsonc 优先）。
+ */
+export function setMcpServerInSettings(name: string, config: McpServerConfig | null, basePath?: string): void {
+  const base = basePath ?? join(homedir(), '.zuse', 'settings.json')
+  const path = resolveLayerPath(base)
+  let text = '{}'
+  if (existsSync(path)) {
+    try {
+      const raw = readFileSync(path, 'utf8')
+      if (raw.trim()) text = raw
+    } catch {
+      text = '{}'
+    }
+  }
+  // config===null → 传 undefined 让 modify 删除该键。
+  const edits = modify(text, ['mcpServers', name], config ?? undefined, {
     formattingOptions: { insertSpaces: true, tabSize: 2 },
   })
   const updated = applyEdits(text, edits)

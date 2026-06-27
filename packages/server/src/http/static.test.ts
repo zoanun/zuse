@@ -8,6 +8,7 @@ import type { AuthProvider } from '../auth/authProvider.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
+import type { McpService } from '../mcp/McpService.js'
 
 const fakeAuth = { verifyToken: () => true, isConfigured: async () => true } as unknown as AuthProvider
 // Minimal fake — these tests never hit the /api/sessions routes.
@@ -16,10 +17,12 @@ const fakeService = { list: async () => [], create: async () => ({ id: 'x' }), d
 const fakeMemory = { list: () => [], create: () => ({}), update: () => null, remove: () => false, close: () => {} } as unknown as MemoryService
 // Minimal fake — these tests never hit the /api/personas routes.
 const fakePersona = { list: async () => ({ personas: [], activeId: null }) } as unknown as PersonaService
+// Minimal fake — these tests never hit the /api/mcp routes.
+const fakeMcp = { list: () => [] } as unknown as McpService
 let dir: string, server: Server, base: string
 
 async function start(webDir?: string): Promise<void> {
-  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, persona: fakePersona, devPage: true, tokenTtlSec: 3600, webDir }))
+  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, persona: fakePersona, mcp: fakeMcp, devPage: true, tokenTtlSec: 3600, webDir }))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const a = server.address()
   base = 'http://127.0.0.1:' + (typeof a === 'object' && a ? a.port : 0)

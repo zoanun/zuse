@@ -14,9 +14,12 @@ vi.mock('../state/manageApi.js', () => ({
   updatePersona: vi.fn(async () => ({})),
   deletePersona: vi.fn(async () => undefined),
   activatePersona: vi.fn(async () => undefined),
+  listMcp: vi.fn(async () => []),
+  addMcp: vi.fn(async () => undefined),
+  deleteMcp: vi.fn(async () => undefined),
 }))
 
-import { listMemory, listPersonas } from '../state/manageApi.js'
+import { listMemory, listPersonas, listMcp } from '../state/manageApi.js'
 
 function renderDrawer(over: Partial<Parameters<typeof ManageDrawer>[0]> = {}) {
   const props = {
@@ -47,6 +50,11 @@ describe('ManageDrawer', () => {
   it('loads personas via listPersonas when switched to the Personas panel', async () => {
     renderDrawer({ activePanel: 'prompts' })
     await waitFor(() => expect(listPersonas).toHaveBeenCalled())
+  })
+
+  it('loads MCP servers via listMcp when switched to the MCP panel', async () => {
+    renderDrawer({ activePanel: 'mcp' })
+    await waitFor(() => expect(listMcp).toHaveBeenCalled())
   })
 
   it('loads memory via listMemory when open on the memory panel', async () => {

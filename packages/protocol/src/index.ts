@@ -68,6 +68,20 @@ export interface PersonasState {
   activeId: string | null
 }
 
+/** An MCP server's config + live connection status + its tools (M4 management panel). */
+export interface McpServerInfo {
+  name: string
+  /** connected = live this session; failed = configured but connect errored; configured = in settings, not yet connected (restart to apply). */
+  status: 'connected' | 'failed' | 'configured'
+  /** The stdio command (or omitted for URL/SSE servers), for display. */
+  command?: string
+  args?: string[]
+  /** Connect error message when status === 'failed'. */
+  error?: string
+  /** Tools exposed by the server (only populated when connected). */
+  tools: Array<{ name: string; description?: string }>
+}
+
 /** One labelled layer of the assembled system prompt (read-only "effective prompt" view). */
 export interface PromptSection {
   /** Where it came from: 'core' | 'environment' | 'SYSTEM.md' | 'ZUSE.md' | 'MEMORY.md' | 'persona' | … */

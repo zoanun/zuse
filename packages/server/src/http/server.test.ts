@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
@@ -10,6 +10,7 @@ import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
 import { MemoryService } from '../memory/MemoryService.js'
 import { PersonaService } from '../persona/PersonaService.js'
+import { McpService } from '../mcp/McpService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
@@ -41,7 +42,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, mcp: McpService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
@@ -50,7 +51,12 @@ beforeEach(async () => {
   memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
   // Temp-file PersonaService so persona routes never touch the real ~/.zuse/personas.json.
   persona = new PersonaService(join(dir, 'personas.json'))
-  srv = createServer(makeRequestHandler({ auth, service, memory, persona, devPage: false, tokenTtlSec: 3600 }))
+  // Temp-file McpService: configured read from a temp settings file; no live manager.
+  const settingsPath = join(dir, 'settings.json')
+  mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
+    try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
+  } })
+  srv = createServer(makeRequestHandler({ auth, service, memory, persona, mcp, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -296,5 +302,38 @@ describe('/api/personas REST', () => {
     const h = { cookie, 'content-type': 'application/json' }
     expect((await fetch(`${base}/api/personas/activate`, { method: 'POST', headers: h, body: JSON.stringify({ id: 'nope' }) })).status).toBe(404)
     expect((await fetch(`${base}/api/personas`, { method: 'POST', headers: h, body: JSON.stringify({ name: '  ', content: 'x' }) })).status).toBe(400)
+  })
+})
+
+describe('/api/mcp REST', () => {
+  it('unauthenticated requests → 401', async () => {
+    expect((await fetch(`${base}/api/mcp`)).status).toBe(401)
+    expect((await fetch(`${base}/api/mcp`, json({ name: 'a', command: 'b' }))).status).toBe(401)
+  })
+
+  it('add → list (status configured) → delete round-trips via settings.json', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+
+    // empty initially
+    expect(await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json()).toEqual([])
+
+    const added = await fetch(`${base}/api/mcp`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'playwright', command: 'npx', args: ['@playwright/mcp'] }) })
+    expect(added.status).toBe(200)
+    expect((await added.json()).restartRequired).toBe(true)
+
+    const list = await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json() as Array<{ name: string; status: string; command?: string }>
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ name: 'playwright', status: 'configured', command: 'npx' }) // configured, not connected (no live manager)
+
+    const del = await fetch(`${base}/api/mcp/playwright`, { method: 'DELETE', headers: { cookie } })
+    expect((await del.json()).ok).toBe(true)
+    expect(await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json()).toEqual([])
+  })
+
+  it('add with neither command nor url → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/mcp`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'x' }) })
+    expect(res.status).toBe(400)
   })
 })

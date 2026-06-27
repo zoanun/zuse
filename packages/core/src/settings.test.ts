@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -264,6 +264,35 @@ describe('setModelInSettings', () => {
     writeFileSync(p('l.json'), JSON.stringify({ model: 'a/b' }))
     setModelInSettings('a/b', p('l.json'))
     expect(JSON.parse(readFileSync(p('l.json'), 'utf8')).model).toBe('a/b')
+  })
+})
+
+describe('setMcpServerInSettings', () => {
+  it('adds a server under mcpServers, creating the file if absent', () => {
+    setMcpServerInSettings('playwright', { command: 'npx', args: ['@playwright/mcp'] }, p('l.json'))
+    const data = JSON.parse(readFileSync(p('l.json'), 'utf8'))
+    expect(data.mcpServers.playwright).toEqual({ command: 'npx', args: ['@playwright/mcp'] })
+  })
+
+  it('preserves existing fields and comments (surgical JSONC edit)', () => {
+    writeFileSync(p('l.jsonc'), '{\n  // my config\n  "model": "a/b",\n  "providers": { "x": { "apiKey": "k" } }\n}\n')
+    setMcpServerInSettings('srv', { command: 'run' }, p('l.json')) // base .json → resolves to existing .jsonc
+    const text = readFileSync(p('l.jsonc'), 'utf8')
+    expect(text).toContain('// my config') // comment preserved
+    expect(text).toContain('"model": "a/b"') // existing fields untouched
+    expect(text).toContain('"apiKey": "k"')
+    // loadSettings reads the .jsonc layer (tolerates comments) → new server present.
+    const resolved = loadSettings({ userPath: p('zz-absent.json'), projectPath: p('zz-absent2.json'), localPath: p('l.json') })
+    expect(resolved.mcpServers?.srv).toEqual({ command: 'run' })
+  })
+
+  it('removes a server when config is null', () => {
+    setMcpServerInSettings('a', { command: 'x' }, p('l.json'))
+    setMcpServerInSettings('b', { command: 'y' }, p('l.json'))
+    setMcpServerInSettings('a', null, p('l.json'))
+    const data = JSON.parse(readFileSync(p('l.json'), 'utf8'))
+    expect(data.mcpServers.a).toBeUndefined()
+    expect(data.mcpServers.b).toEqual({ command: 'y' })
   })
 })
 

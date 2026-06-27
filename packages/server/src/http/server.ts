@@ -9,6 +9,7 @@ import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
+import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -17,6 +18,7 @@ export interface RequestHandlerDeps {
   service: SessionService
   memory: MemoryService
   persona: PersonaService
+  mcp: McpService
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -385,6 +387,58 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       const id = decodeURIComponent(path.slice('/api/personas/'.length))
       return sendJson(res, 200, { ok: await deps.persona.remove(id) })
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/mcp — MCP server management (M4), all auth-gated.
+    // Config changes take effect on daemon restart (connections are established at startup).
+    // -----------------------------------------------------------------------
+
+    // GET /api/mcp — McpServerInfo[] (configured + live status + tools).
+    if (method === 'GET' && path === '/api/mcp') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, deps.mcp.list())
+    }
+
+    // POST /api/mcp — add/overwrite a server config. body {name, command?, args?, env?, cwd?, url?}
+    if (method === 'POST' && path === '/api/mcp') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { name?: unknown; command?: unknown; args?: unknown; env?: unknown; cwd?: unknown; url?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      if (typeof body?.name !== 'string' || body.name.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty name' } })
+      }
+      const hasCommand = typeof body.command === 'string' && body.command.trim() !== ''
+      const hasUrl = typeof body.url === 'string' && body.url.trim() !== ''
+      if (!hasCommand && !hasUrl) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Provide a command (stdio) or url (SSE)' } })
+      }
+      const config: Record<string, unknown> = {}
+      if (hasCommand) config.command = body.command
+      if (hasUrl) config.url = body.url
+      if (Array.isArray(body.args)) config.args = body.args.filter((a) => typeof a === 'string')
+      if (body.env && typeof body.env === 'object') config.env = body.env
+      if (typeof body.cwd === 'string') config.cwd = body.cwd
+      try {
+        deps.mcp.add(body.name, config as Parameters<McpService['add']>[1])
+      } catch (err) {
+        return sendJson(res, 500, { error: { code: 'write_failed', message: err instanceof Error ? err.message : String(err) } })
+      }
+      return sendJson(res, 200, { ok: true, restartRequired: true })
+    }
+
+    // DELETE /api/mcp/<name> — remove a server config (idempotent). Takes effect on restart.
+    if (method === 'DELETE' && path.startsWith('/api/mcp/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const name = decodeURIComponent(path.slice('/api/mcp/'.length))
+      try {
+        deps.mcp.remove(name)
+      } catch (err) {
+        return sendJson(res, 500, { error: { code: 'write_failed', message: err instanceof Error ? err.message : String(err) } })
+      }
+      return sendJson(res, 200, { ok: true, restartRequired: true })
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

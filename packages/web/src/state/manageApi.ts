@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -85,4 +85,24 @@ export async function deletePersona(id: string): Promise<void> {
 /** POST /api/personas/activate with {id} (null clears). Throws on non-ok. */
 export async function activatePersona(id: string | null): Promise<void> {
   await request('/api/personas/activate', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ id }) }, 'activate persona')
+}
+
+// --- MCP servers (M4) ---
+
+export interface AddMcpBody { name: string; command?: string; args?: string[]; env?: Record<string, string>; cwd?: string; url?: string }
+
+/** GET /api/mcp → McpServerInfo[] (configured + live status + tools). Throws on non-ok. */
+export async function listMcp(): Promise<McpServerInfo[]> {
+  const r = await request('/api/mcp', {}, 'list mcp')
+  return (await r.json()) as McpServerInfo[]
+}
+
+/** POST /api/mcp → add/overwrite a server config (restart to apply). Throws on non-ok. */
+export async function addMcp(body: AddMcpBody): Promise<void> {
+  await request('/api/mcp', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'add mcp server')
+}
+
+/** DELETE /api/mcp/<name> (restart to apply). Throws on non-ok. */
+export async function deleteMcp(name: string): Promise<void> {
+  await request('/api/mcp/' + encodeURIComponent(name), { method: 'DELETE' }, 'delete mcp server')
 }

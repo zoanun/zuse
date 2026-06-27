@@ -79,6 +79,14 @@ export class McpManager {
     return [...this.clients.keys()]
   }
 
+  /** Connected servers with their tools (name + description) — for the MCP management view (M4). */
+  get servers(): Array<{ name: string; tools: Array<{ name: string; description?: string }> }> {
+    return [...this.clients].map(([name, client]) => ({
+      name,
+      tools: client.tools.map((t) => ({ name: t.name, description: t.description })),
+    }))
+  }
+
   /** Short description for tool listings: name + first 80 chars of description. */
   static toolListing(name: string, description: string | undefined): string {
     const desc = description ?? ''
