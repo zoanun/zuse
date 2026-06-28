@@ -62,6 +62,14 @@ export function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: num
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
 
+/**
+ * submit() prefixes the model's user text with `[YYYY-MM-DD HH:MM] ` (see submit()). Consumers
+ * that recover the raw prompt — projectMessages() (for display) and retry() (for resubmit) —
+ * strip it via this single definition so the format lives in one place.
+ */
+const USER_STAMP_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /
+function stripUserStamp(text: string): string { return text.replace(USER_STAMP_RE, '') }
+
 export interface PermissionPolicy {
   interactive: boolean
   config: PermissionsConfig
@@ -324,9 +332,7 @@ export class SessionManager {
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
           // pattern, and only from user text — never touch assistant text.
-          const text = role === 'user'
-            ? block.text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '')
-            : block.text
+          const text = role === 'user' ? stripUserStamp(block.text) : block.text
           parts.push({ kind: 'text', text })
         } else if (block.type === 'tool_use') {
           parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
@@ -803,8 +809,7 @@ export class SessionManager {
     const userMsg = this.conversation.getMessages()[cp.messageIndex]
     if (!userMsg || userMsg.role !== 'user') return
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
-    const raw = userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
-    const text = raw.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '')
+    const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))
     if (text.trim() === '') return
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no

@@ -1,7 +1,8 @@
-import { memo, useState, type ReactNode } from 'react'
+import { memo, type ReactNode } from 'react'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
+import { useCopy } from '../state/useCopy.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
 export function partsText(parts: Part[]): string {
@@ -49,11 +50,11 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     )
   }
   const md = replyMarkdown(msg.parts)
-  // In share mode show only the prose (drop tool cards) — that mirrors what export keeps.
-  const visibleParts = shareMode ? msg.parts.filter((p) => p.kind === 'text') : msg.parts
   return (
     <div className="msg agent">
-      <div className="text-wrap">{renderParts(visibleParts)}</div>
+      {/* Share mode renders the exact prose export keeps (replyMarkdown) — not a parts filter,
+          which would diverge (e.g. leave <think> blocks the export drops). */}
+      <div className="text-wrap">{shareMode ? <Markdown text={md} /> : renderParts(msg.parts)}</div>
       {!shareMode && md ? (
         <div className="msg-actions">
           <CopyButton text={md} />
@@ -86,17 +87,11 @@ function MsgAction({ className, title, label, onClick, children }: {
 
 /** Copy a reply's prose markdown to the clipboard; the icon flips to ✓ briefly on success. */
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  const copy = (): void => {
-    void navigator.clipboard?.writeText(text).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 1500) },
-      () => {},
-    )
-  }
+  const { copied, copy } = useCopy()
   return (
-    <button type="button" className="msg-copy" title="Copy reply (markdown)" aria-label="Copy reply" onClick={copy}>
+    <MsgAction title="Copy reply (markdown)" label="Copy reply" onClick={() => copy(text)}>
       {copied ? '✓' : <CopyIcon />}
-    </button>
+    </MsgAction>
   )
 }
 

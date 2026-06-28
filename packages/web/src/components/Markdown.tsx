@@ -1,9 +1,10 @@
-import { useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { useRef, type ComponentPropsWithoutRef, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
 import { taskMarker, type TaskStatus } from './taskMarker.js'
+import { useCopy } from '../state/useCopy.js'
 
 // "In progress" status syntax [-]/[~]/[/], which GFM leaves as literal text.
 const IN_PROGRESS = /^\[[-~/]\]\s+/
@@ -45,18 +46,10 @@ const REHYPE_PLUGINS = [rehypeHighlight]
 // regardless of how rehype-highlight split the tokens into child spans.
 function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
   const ref = useRef<HTMLPreElement>(null)
-  const [copied, setCopied] = useState(false)
-  const copy = (): void => {
-    const text = ref.current?.textContent ?? ''
-    if (!text) return
-    void navigator.clipboard?.writeText(text).then(
-      () => { setCopied(true); setTimeout(() => setCopied(false), 1500) },
-      () => {},
-    )
-  }
+  const { copied, copy } = useCopy()
   return (
     <div className="code-wrap">
-      <button type="button" className="code-copy" onClick={copy} aria-label="Copy code">
+      <button type="button" className="code-copy" onClick={() => copy(ref.current?.textContent ?? '')} aria-label="Copy code">
         {copied ? '✓ Copied' : 'Copy'}
       </button>
       <pre ref={ref} {...rest} />
