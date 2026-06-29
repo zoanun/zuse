@@ -5,12 +5,13 @@ import { FilesPanel, stripAnsi } from './FilesPanel.js'
 
 const root: DirListing = {
   path: '',
+  root: '/projects/demo',
   entries: [
     { name: 'src', path: 'src', type: 'dir' },
     { name: 'readme.md', path: 'readme.md', type: 'file' },
   ],
 }
-const srcDir: DirListing = { path: 'src', entries: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }] }
+const srcDir: DirListing = { path: 'src', root: '/projects/demo', entries: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }] }
 
 function setup(over: { loadDir?: typeof defaultLoadDir; loadFile?: typeof defaultLoadFile } = {}) {
   const props = { active: true, loadDir: over.loadDir ?? defaultLoadDir, loadFile: over.loadFile ?? defaultLoadFile }
@@ -41,6 +42,12 @@ describe('FilesPanel', () => {
     await waitFor(() => expect(loadDir).toHaveBeenCalledWith(''))
     expect(await screen.findByText('src')).toBeInTheDocument()
     expect(screen.getByText('readme.md')).toBeInTheDocument()
+    expect(screen.getByText('/projects/demo')).toBeInTheDocument() // root header
+  })
+
+  it('shows the project root path as a header', async () => {
+    setup({ loadDir: vi.fn(async () => root) })
+    expect(await screen.findByText('/projects/demo')).toBeInTheDocument()
   })
 
   it('lazily loads a directory the first time it is expanded', async () => {

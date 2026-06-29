@@ -289,6 +289,7 @@ button.head:hover .caret { opacity: 1; }
 .usage-sub { flex: none; font: 11px/1.4 var(--mono); color: var(--faint); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-tokens { flex: none; font: 12px/1.4 var(--mono); color: var(--muted); }
 /* Files (M7) */
+.file-root { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 8px 8px; border-bottom: 1px solid var(--line); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-tree { list-style: none; margin: 0; padding: 0; max-height: 45vh; overflow: auto; }
 .file-node { margin: 0; }
 .file-row { display: flex; align-items: center; gap: 4px; width: 100%; padding: 3px 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; border-radius: 6px; }

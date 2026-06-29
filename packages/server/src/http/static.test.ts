@@ -25,7 +25,7 @@ const fakeSkill = { list: async () => ({ skills: [] }) } as unknown as SkillServ
 // Minimal fake — these tests never hit the /api/usage route.
 const fakeUsage = { stats: async () => ({ total: { input_tokens: 0, output_tokens: 0 }, sessionCount: 0, byModel: [], sessions: [] }) } as unknown as UsageService
 // Minimal fake — these tests never hit the /api/files routes.
-const fakeFile = { list: async () => ({ path: '', entries: [] }), read: async () => ({ path: '', content: '', truncated: false, binary: false, size: 0 }) } as unknown as FileService
+const fakeFile = { list: async () => ({ path: '', root: '/', entries: [] }), read: async () => ({ path: '', content: '', truncated: false, binary: false, size: 0 }) } as unknown as FileService
 // Minimal fake — these tests never hit the /api/mcp routes.
 const fakeMcp = { list: () => [] } as unknown as McpService
 let dir: string, server: Server, base: string

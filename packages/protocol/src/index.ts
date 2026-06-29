@@ -125,6 +125,8 @@ export interface FileEntry {
 export interface DirListing {
   /** The listed directory, relative to the project root ('' = root). */
   path: string
+  /** Absolute path of the project root (the browser's cwd) — shown as the tree header. */
+  root: string
   entries: FileEntry[]
 }
 

@@ -61,7 +61,7 @@ export class FileService {
       if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
       return a.name.localeCompare(b.name)
     })
-    return { path: this.toRel(absDir), entries }
+    return { path: this.toRel(absDir), root: this.root, entries }
   }
 
   /** Read a file for preview: size-capped, binary-sniffed. Throws if it's a directory. */

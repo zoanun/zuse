@@ -23,6 +23,7 @@ interface Props {
  */
 export function FilesPanel({ active, loadDir, loadFile }: Props) {
   const [children, setChildren] = useState<Map<string, FileEntry[]>>(new Map())
+  const [root, setRoot] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -33,6 +34,7 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
     try {
       const listing = await loadDir(dir)
       setChildren((m) => new Map(m).set(dir, listing.entries))
+      if (dir === '') setRoot(listing.root)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -91,6 +93,7 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
 
   return (
     <div className="mem-panel">
+      {root ? <div className="file-root" title={root}>{root}</div> : null}
       {error ? <div className="mem-error">{error}</div> : null}
       <ul className="file-tree">
         {children.has('') ? renderLevel('', 0) : <li className="mem-empty">Loading…</li>}
