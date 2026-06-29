@@ -278,6 +278,20 @@ button.head:hover .caret { opacity: 1; }
 .mcp-tools { list-style: none; margin: 4px 0 0 18px; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
 .mcp-tools li { font: 11px/1.4 var(--mono); color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
 .mcp-restart-note { font-size: 12px; color: var(--warn); margin-bottom: 8px; }
+/* Dir picker (S3) */
+.dirpick { position: relative; display: inline-flex; }
+.dirpick-btn { cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dirpick-backdrop { position: fixed; inset: 0; z-index: 40; }
+.dirpick-pop { position: absolute; top: 110%; left: 0; z-index: 41; width: 320px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
+.dirpick-cur { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.dirpick-drives { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; }
+.dirpick-drive { font: 11px/1.4 var(--mono); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.dirpick-list { list-style: none; margin: 4px 0; padding: 0; max-height: 40vh; overflow: auto; }
+.dirpick-dir { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font-size: 13px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+.dirpick-dir:hover { background: var(--surface); }
+.dirpick-up { color: var(--muted); }
+.dirpick-actions { display: flex; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+.dirpick-ok { flex: 1; }
 /* Usage (M5) */
 .usage-total { text-align: center; padding: 14px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 .usage-total-num { font-size: 30px; font-weight: 600; line-height: 1.1; }

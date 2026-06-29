@@ -31,6 +31,8 @@ interface Props {
   activePanel: ManagePanel
   onClose: () => void
   onSelectPanel: (p: ManagePanel) => void
+  /** The active session's cwd — the Files browser is rooted here (S3). */
+  cwd?: string
 }
 
 /**
@@ -156,8 +158,17 @@ function UsageContainer({ active }: { active: boolean }) {
   return <UsagePanel stats={data} loading={loading} error={error} />
 }
 
-function FilesContainer({ active }: { active: boolean }) {
-  return <FilesPanel active={active} loadDir={listDir} loadFile={readFilePreview} />
+function FilesContainer({ active, cwd }: { active: boolean; cwd?: string }) {
+  // Bind the active session's cwd into the loaders; key by cwd so switching sessions remounts
+  // the tree (fresh fetch of the new root) instead of showing the old project's files.
+  return (
+    <FilesPanel
+      key={cwd ?? ''}
+      active={active}
+      loadDir={(dir) => listDir(dir, cwd)}
+      loadFile={(path) => readFilePreview(path, cwd)}
+    />
+  )
 }
 
 /** Owns the MCP fetch+state lifecycle. */
@@ -177,7 +188,7 @@ function McpContainer({ active }: { active: boolean }) {
   return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} onReconnect={m.onReconnect} onReconnectServer={m.onReconnectServer} />
 }
 
-export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Props) {
+export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }: Props) {
   // Close on Escape while open.
   useEffect(() => {
     if (!open) return
@@ -219,7 +230,7 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Prop
               : activePanel === 'usage'
               ? <UsageContainer active={open && activePanel === 'usage'} />
               : activePanel === 'files'
-              ? <FilesContainer active={open && activePanel === 'files'} />
+              ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} />
               : <div className="mem-empty">Coming soon.</div>}
           </div>
         </div>

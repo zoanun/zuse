@@ -19,6 +19,8 @@ export interface AppState {
   todos: TodoItemLite[]
   pendingPermissions: PendingPermissionLite[]
   model?: string
+  /** Active session's working directory (S3) — root for the dir picker / file browser. */
+  cwd?: string
   contextTokens?: number
   contextWindow?: number
   totalUsage?: Usage

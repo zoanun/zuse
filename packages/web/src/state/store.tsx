@@ -9,8 +9,8 @@ interface Store {
   state: AppState
   send: (msg: ClientMessage) => void
   dispatch: (a: Action) => void
-  /** Create a fresh server session, reconnect to it, and clear local state. */
-  newSession: () => Promise<void>
+  /** Create a fresh server session (optionally rooted at `cwd`), reconnect, and clear local state. */
+  newSession: (cwd?: string) => Promise<void>
   /** All sessions, newest (updatedAt) first — as the server returns them. */
   sessions: SessionMeta[]
   /** Id of the session the UI is currently attached to (for highlight). */
@@ -97,8 +97,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshSessions()
   }
 
-  const newSession = async (): Promise<void> => {
-    attachTo(await createSession())
+  const newSession = async (cwd?: string): Promise<void> => {
+    attachTo(await createSession(cwd))
   }
 
   const switchSession = async (id: string): Promise<void> => {

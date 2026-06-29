@@ -5,14 +5,14 @@ import { initialState } from '../state/reducer.js'
 
 describe('Header', () => {
   it('shows ctx used / window / percent', () => {
-    render(<Header state={{ ...initialState, connection: 'live', model: 'claude', contextTokens: 4700, contextWindow: 200000 }} onMenu={() => {}} onOpenManage={() => {}} />)
+    render(<Header state={{ ...initialState, connection: 'live', model: 'claude', contextTokens: 4700, contextWindow: 200000 }} onMenu={() => {}} onOpenManage={() => {}} onChangeCwd={() => {}} />)
     expect(screen.getByText(/ctx 4.7k \/ 200.0k · 2%/)).toBeInTheDocument()
     expect(screen.getByText('connected')).toBeInTheDocument()
   })
 
   it('⚙ button fires onOpenManage', () => {
     const onOpenManage = vi.fn()
-    render(<Header state={initialState} onMenu={() => {}} onOpenManage={onOpenManage} />)
+    render(<Header state={initialState} onMenu={() => {}} onOpenManage={onOpenManage} onChangeCwd={() => {}} />)
     fireEvent.click(screen.getByLabelText('Manage'))
     expect(onOpenManage).toHaveBeenCalled()
   })

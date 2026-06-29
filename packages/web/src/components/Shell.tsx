@@ -69,13 +69,13 @@ export function Shell() {
       <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}
-          onNewChat={() => { setShareSel(null); void newSession(); setMenuOpen(false) }}
+          onNewChat={() => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) }}
           onSwitch={(id) => { setShareSel(null); void switchSession(id); setMenuOpen(false) }}
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={(cwd) => { setShareSel(null); void newSession(cwd) }} />
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">
@@ -112,6 +112,7 @@ export function Shell() {
         activePanel={activePanel}
         onClose={() => setDrawerOpen(false)}
         onSelectPanel={setActivePanel}
+        cwd={state.cwd}
       />
     </div>
   )

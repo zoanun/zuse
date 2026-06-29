@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, DirNav, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -111,16 +111,26 @@ export async function getUsage(): Promise<UsageStats> {
 
 // --- Files (M7) ---
 
-/** GET /api/files?dir=<rel> → a directory's immediate children. Throws on non-ok. */
-export async function listDir(dir: string): Promise<DirListing> {
-  const r = await request('/api/files?dir=' + encodeURIComponent(dir), {}, 'list directory')
+/** GET /api/files?dir=<rel>[&cwd=<abs>] → a directory's immediate children. Throws on non-ok. */
+export async function listDir(dir: string, cwd?: string): Promise<DirListing> {
+  const qs = new URLSearchParams({ dir })
+  if (cwd) qs.set('cwd', cwd)
+  const r = await request('/api/files?' + qs.toString(), {}, 'list directory')
   return (await r.json()) as DirListing
 }
 
-/** GET /api/files/content?path=<rel> → a file preview. Throws on non-ok. */
-export async function readFilePreview(path: string): Promise<FilePreview> {
-  const r = await request('/api/files/content?path=' + encodeURIComponent(path), {}, 'read file')
+/** GET /api/files/content?path=<rel>[&cwd=<abs>] → a file preview. Throws on non-ok. */
+export async function readFilePreview(path: string, cwd?: string): Promise<FilePreview> {
+  const qs = new URLSearchParams({ path })
+  if (cwd) qs.set('cwd', cwd)
+  const r = await request('/api/files/content?' + qs.toString(), {}, 'read file')
   return (await r.json()) as FilePreview
+}
+
+/** GET /api/dirs?path=<abs> → subdir navigation for the cwd picker (S3). Throws on non-ok. */
+export async function navigateDirs(path?: string): Promise<DirNav> {
+  const r = await request('/api/dirs' + (path ? '?path=' + encodeURIComponent(path) : ''), {}, 'navigate dirs')
+  return (await r.json()) as DirNav
 }
 
 // --- MCP servers (M4) ---

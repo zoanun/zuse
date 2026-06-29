@@ -53,6 +53,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   return {
     ...state,
     model: s.model,
+    cwd: s.cwd,
     contextTokens: s.contextTokens,
     contextWindow: s.contextWindow,
     totalUsage: s.totalUsage,

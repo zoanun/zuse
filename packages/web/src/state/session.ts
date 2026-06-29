@@ -29,9 +29,10 @@ export async function request(path: string, init: RequestInit, label: string): P
 
 const sessionPath = (id: string): string => '/api/sessions/' + encodeURIComponent(id)
 
-/** POST /api/sessions and return the new session id. Throws on failure. */
-export async function createSession(): Promise<string> {
-  const r = await request('/api/sessions', { method: 'POST', headers: JSON_HEADERS, body: '{}' }, 'create session')
+/** POST /api/sessions (optionally rooted at `cwd`) and return the new session id. Throws on failure. */
+export async function createSession(cwd?: string): Promise<string> {
+  const body = cwd ? JSON.stringify({ cwd }) : '{}'
+  const r = await request('/api/sessions', { method: 'POST', headers: JSON_HEADERS, body }, 'create session')
   return ((await r.json()) as { id: string }).id
 }
 
