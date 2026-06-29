@@ -75,8 +75,7 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
               {nav && nav.dirs.length === 0 ? <li className="mem-empty">(no subfolders)</li> : null}
             </ul>
             <div className="dirpick-actions">
-              <button className="dirpick-ok" onClick={confirm} disabled={!nav}>Use this folder · new chat</button>
-              <button type="button" className="ghost" onClick={() => setOpen(false)}>Cancel</button>
+              <button className="dirpick-ok" onClick={confirm} disabled={!nav}>Use this folder</button>
             </div>
           </div>
         </>,
