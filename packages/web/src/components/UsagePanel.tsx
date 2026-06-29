@@ -34,11 +34,7 @@ function Breakdown({ usage }: { usage: Usage }) {
       <span title="New input tokens (excludes cache)">in {formatTokens(usage.input_tokens)}</span>
       <span title="Output tokens">out {formatTokens(usage.output_tokens)}</span>
       {cacheRead > 0 ? <span title="Cache-read input tokens (cheap cache hits)">cache rd {formatTokens(cacheRead)}</span> : null}
-      {cacheWrite > 0 ? (
-        <span title="Cache-write input tokens: a session's first turn writes the whole system prompt + tool definitions into the cache">
-          cache wr {formatTokens(cacheWrite)} <span className="usage-note">(system prompt + tool defs)</span>
-        </span>
-      ) : null}
+      {cacheWrite > 0 ? <span title="Input tokens newly written to the prompt cache (first turn: system prompt + tool defs; later turns: new conversation)">cache wr {formatTokens(cacheWrite)}</span> : null}
     </span>
   )
 }
