@@ -25,7 +25,7 @@ import {
   type WorkspaceSymbol,
 } from 'vscode-languageserver-protocol'
 import { findOnPath, killTree } from '../util.js'
-import { queryWithWarmup } from './warmup.js'
+import { queryWithWarmup, queryWithWarmupGrow } from './warmup.js'
 import type { LanguageServerConfig } from './servers.js'
 
 /** 就绪等待与 initialize 握手的总超时（毫秒）。超时不算致命，降级放行。 */
@@ -229,30 +229,39 @@ export class LspClient {
     this.opened.add(uri)
   }
 
-  /** 跳定义：返回归一后的 Location[]。 */
-  async definition(absPath: string, position: Position): Promise<Location[]> {
+  /**
+   * 跳定义：返回归一后的 Location[]。冷启动时工程未加载、跨文件定义可能查不到(空) →
+   * 用 queryWithWarmup 退避重试,拿到首个非空即返回(定义结果稳定)。
+   */
+  async definition(absPath: string, position: Position, signal?: AbortSignal): Promise<Location[]> {
     const uri = pathToFileURL(absPath).toString()
-    const r = await withTimeout(
-      this.conn.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position }),
-      REQUEST_TIMEOUT,
-      'definition',
-    )
-    return toLocations(r)
+    const run = (): Promise<Location[]> =>
+      withTimeout(
+        this.conn.sendRequest(DefinitionRequest.type, { textDocument: { uri }, position }),
+        REQUEST_TIMEOUT,
+        'definition',
+      ).then(toLocations)
+    return queryWithWarmup(run, this.warm, WARMUP_DELAYS, sleep, () => signal?.aborted ?? false)
   }
 
-  /** 找引用：context.includeDeclaration = true，把声明本身也算进去。 */
-  async references(absPath: string, position: Position): Promise<Location[]> {
+  /**
+   * 找引用：context.includeDeclaration = true，把声明本身也算进去。冷启动时工程未加载,
+   * references 只返回声明本身、漏掉别处使用 → 用 queryWithWarmupGrow 跑满退避预算取最大结果集
+   * (随工程加载 references 只增不减),暖场后单发。
+   */
+  async references(absPath: string, position: Position, signal?: AbortSignal): Promise<Location[]> {
     const uri = pathToFileURL(absPath).toString()
-    const r = await withTimeout(
-      this.conn.sendRequest(ReferencesRequest.type, {
-        textDocument: { uri },
-        position,
-        context: { includeDeclaration: true },
-      }),
-      REQUEST_TIMEOUT,
-      'references',
-    )
-    return r ?? []
+    const run = (): Promise<Location[]> =>
+      withTimeout(
+        this.conn.sendRequest(ReferencesRequest.type, {
+          textDocument: { uri },
+          position,
+          context: { includeDeclaration: true },
+        }),
+        REQUEST_TIMEOUT,
+        'references',
+      ).then((r) => r ?? [])
+    return queryWithWarmupGrow(run, this.warm, WARMUP_DELAYS, sleep, () => signal?.aborted ?? false)
   }
 
   /**

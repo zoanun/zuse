@@ -35,3 +35,32 @@ export async function queryWithWarmup<T>(
   }
   return r
 }
+
+/**
+ * 暖场重试(结果会「变多」型)。
+ *
+ * 背景:textDocument/references 在 didOpen 后立刻发出时,tsserver 往往还在后台加载工程,
+ * 此刻只返回**声明本身**(就在刚打开的那个文件里),漏掉别的文件里的使用;工程索引建好后
+ * 再发才返回全部。与 queryWithWarmup 不同——这里冷查询结果**非空但不完整**,不能拿首个非空
+ * 结果就走,故冷态(未暖场)时跑满整个退避预算,**取见过的最大结果集**(随工程加载,references
+ * 只增不减)。暖场后单发即权威。abort 时返回当前最佳但**不置 warmed**(留给下次重试)。
+ */
+export async function queryWithWarmupGrow<T>(
+  run: () => Promise<T[]>,
+  state: { warmed: boolean },
+  delays: number[],
+  sleep: (ms: number) => Promise<void>,
+  aborted: () => boolean = () => false,
+): Promise<T[]> {
+  let best = await run()
+  // 已暖场:工程已加载,单次查询就是完整结果。
+  if (state.warmed) return best
+  for (const d of delays) {
+    if (aborted()) return best // 中断:不置 warmed,下次再暖
+    await sleep(d)
+    const r = await run()
+    if (r.length > best.length) best = r
+  }
+  state.warmed = true
+  return best
+}

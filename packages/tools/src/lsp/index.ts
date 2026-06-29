@@ -222,11 +222,11 @@ export function createLspTool(manager: LspManager): Tool {
         client.openDocument(abs, text)
 
         if (input.operation === 'definition') {
-          const locs = await client.definition(abs, loc.position)
+          const locs = await client.definition(abs, loc.position, ctx.signal)
           return { output: formatDefinition(locs, ctx.cwd, readLine, input.symbol), isError: false }
         }
         if (input.operation === 'references') {
-          const locs = await client.references(abs, loc.position)
+          const locs = await client.references(abs, loc.position, ctx.signal)
           return {
             output: formatReferences(locs, ctx.cwd, readLine, REFERENCES_LIMIT, input.symbol),
             isError: false,
