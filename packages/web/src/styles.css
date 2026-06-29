@@ -282,7 +282,8 @@ button.head:hover .caret { opacity: 1; }
 .usage-total { text-align: center; padding: 14px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 .usage-total-num { font-size: 30px; font-weight: 600; line-height: 1.1; }
 .usage-total-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
-.usage-break { display: inline-flex; gap: 10px; margin-top: 8px; font: 11px/1.4 var(--mono); color: var(--faint); }
+.usage-break { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; font: 11px/1.4 var(--mono); color: var(--faint); }
+.usage-note { opacity: .75; }
 .usage-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 4px; }
 .usage-row { display: flex; gap: 9px; align-items: baseline; padding: 4px 0; }
 .usage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
