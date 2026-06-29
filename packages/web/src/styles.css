@@ -281,11 +281,11 @@ button.head:hover .caret { opacity: 1; }
 /* Dir picker (S3) */
 .dirpick { position: relative; display: inline-flex; }
 .dirpick-btn { cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dirpick-backdrop { position: fixed; inset: 0; z-index: 40; }
-.dirpick-pop { position: absolute; top: 110%; left: 0; z-index: 41; width: 320px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
+.dirpick-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.32); }
+.dirpick-pop { position: absolute; top: 110%; left: 0; z-index: 51; width: 320px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
 .dirpick-cur { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .dirpick-drives { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; }
-.dirpick-drive { font: 11px/1.4 var(--mono); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.dirpick-drive { font: 11px/1.4 var(--mono); min-width: 34px; text-align: center; color: var(--text); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
 .dirpick-list { list-style: none; margin: 4px 0; padding: 0; max-height: 40vh; overflow: auto; }
 .dirpick-dir { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font-size: 13px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .dirpick-dir:hover { background: var(--surface); }
