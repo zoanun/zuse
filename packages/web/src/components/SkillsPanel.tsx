@@ -49,7 +49,7 @@ function SkillRow({ item, onToggleExpand, onEdit, onSetEnabled }: {
         aria-label={item.enabled ? 'Disable skill' : 'Enable skill'}
         aria-pressed={item.enabled}
         onClick={() => onSetEnabled(!item.enabled)}
-      >{item.enabled ? '●' : '○'}</button>
+      />
       <span className="mem-label skill-name" title="Click to view" onClick={onToggleExpand}>{item.name}</span>
       <span className={'skill-src skill-src-' + item.source}>{item.source}</span>
       <span className="mem-actions">

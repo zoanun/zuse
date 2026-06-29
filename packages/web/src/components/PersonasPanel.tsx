@@ -55,7 +55,7 @@ function PersonaRow({ item, active, onActivate, onEdit, onDelete }: {
         aria-label={active ? 'Deactivate persona' : 'Activate persona'}
         aria-pressed={active}
         onClick={() => onActivate(active ? null : item.id)}
-      >{active ? '●' : '○'}</button>
+      />
       <span className="mem-label" title={item.content}>{item.name}</span>
       {confirming ? (
         <span className="mem-confirm">
