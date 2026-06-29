@@ -306,9 +306,12 @@ export function extractPreviousSummary(messages: Message[]): string | null {
   const text = first.content[0]
   if (text?.type !== 'text') return null
   if (!text.text.startsWith('[CONTEXT COMPACTION')) return null
-  // Extract the summary body (between the prefix and the end marker)
+  // Extract the summary body (between the prefix and the end marker).
+  // lastIndexOf, not indexOf: we append the marker at the very end, so if the model's summary
+  // body happens to contain the marker text, we still cut at the real (appended) one — not an
+  // earlier echo of it inside the body.
   const endMarker = '--- END OF CONTEXT SUMMARY'
-  const endIdx = text.text.indexOf(endMarker)
+  const endIdx = text.text.lastIndexOf(endMarker)
   if (endIdx === -1) return text.text
   return text.text.slice(0, endIdx).trim()
 }

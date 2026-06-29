@@ -31,9 +31,14 @@ export class Conversation {
     this.append({ role: 'assistant', content: [{ type: 'text', text }] })
   }
 
-  /** 返回一份防御性拷贝 —— 调用方不得修改我们内部的数组。 */
+  /**
+   * 返回一份**深**拷贝 —— 调用方可随意读写结果(含每个 content block 及其 input 对象),
+   * 绝不会污染我们内部的消息/内容块。浅拷贝只护住数组、block 仍是共享引用,改 block.input
+   * 会回灌内部状态,故用 structuredClone 整体深拷。getMessages 每回合调一两次(非热循环),
+   * 这点拷贝成本相对一次 API 往返可忽略。
+   */
   getMessages(): Message[] {
-    return this.messages.map((m) => ({ role: m.role, content: [...m.content] }))
+    return structuredClone(this.messages)
   }
 
   get length(): number {
