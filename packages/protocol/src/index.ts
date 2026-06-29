@@ -114,6 +114,33 @@ export interface UsageStats {
   sessions: UsageSessionStat[]
 }
 
+/** One entry in a directory listing (M7 file tree). path is posix, relative to the project root. */
+export interface FileEntry {
+  name: string
+  path: string
+  type: 'file' | 'dir'
+}
+
+/** A directory's immediate children (M7, lazy-loaded one level at a time). */
+export interface DirListing {
+  /** The listed directory, relative to the project root ('' = root). */
+  path: string
+  entries: FileEntry[]
+}
+
+/** A file's content for read-only preview (M7). Large files are truncated; binary ones aren't read. */
+export interface FilePreview {
+  path: string
+  /** UTF-8 text; empty when binary. */
+  content: string
+  /** True when content was cut at the size cap. */
+  truncated: boolean
+  /** True when the file looked binary (NUL byte) — content is then empty. */
+  binary: boolean
+  /** Full file size in bytes. */
+  size: number
+}
+
 /** An MCP server's config + live connection status + its tools (M4 management panel). */
 export interface McpServerInfo {
   name: string

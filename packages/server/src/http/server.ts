@@ -11,6 +11,7 @@ import type { MemoryService } from '../memory/MemoryService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
+import { FileService, PathOutsideRootError } from '../file/FileService.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
@@ -22,6 +23,7 @@ export interface RequestHandlerDeps {
   persona: PersonaService
   skill: SkillService
   usage: UsageService
+  file: FileService
   mcp: McpService
   devPage: boolean
   tokenTtlSec: number
@@ -427,6 +429,28 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && path === '/api/usage') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       return sendJson(res, 200, await deps.usage.stats())
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/files — read-only project file browser (M7), auth-gated.
+    //   GET /api/files?dir=<rel>          → immediate children (lazy, one level)
+    //   GET /api/files/content?path=<rel> → file preview (size-capped, binary-skipped)
+    // Path traversal outside the project root → 403; missing → 404.
+    // -----------------------------------------------------------------------
+    if (method === 'GET' && (path === '/api/files' || path === '/api/files/content')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        if (path === '/api/files') {
+          return sendJson(res, 200, await deps.file.list(url.searchParams.get('dir') ?? ''))
+        }
+        const p = url.searchParams.get('path')
+        if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
+        return sendJson(res, 200, await deps.file.read(p))
+      } catch (e) {
+        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
     }
 
     // -----------------------------------------------------------------------

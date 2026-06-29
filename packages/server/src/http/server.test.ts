@@ -12,6 +12,7 @@ import { MemoryService } from '../memory/MemoryService.js'
 import { PersonaService } from '../persona/PersonaService.js'
 import { SkillService } from '../skill/SkillService.js'
 import { UsageService } from '../usage/UsageService.js'
+import { FileService } from '../file/FileService.js'
 import { McpService } from '../mcp/McpService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
@@ -44,7 +45,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, mcp: McpService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
@@ -57,12 +58,14 @@ beforeEach(async () => {
   skill = new SkillService({ home: dir, cwd: dir, disabledFile: join(dir, 'skills-disabled.json') })
   // UsageService over the same web-sessions store the SessionService writes.
   usage = new UsageService(join(dir, 'web-sessions'))
+  // FileService rooted at the temp dir so /api/files never browses the real project.
+  file = new FileService(dir)
   // Temp-file McpService: configured read from a temp settings file; no live manager.
   const settingsPath = join(dir, 'settings.json')
   mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
     try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
   } })
-  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, mcp, devPage: false, tokenTtlSec: 3600 }))
+  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, file, mcp, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
