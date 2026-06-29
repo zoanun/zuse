@@ -136,7 +136,7 @@ describe('pipeline', () => {
 
     const results = await wf.pipeline(
       [1, 2, 3],
-      async (n) => n * 10,
+      async (n) => (n as number) * 10,
       async (n) => `result:${n}`,
     )
 
@@ -148,7 +148,7 @@ describe('pipeline', () => {
 
     const results = await wf.pipeline(
       ['a', 'b'],
-      async (item) => item.toUpperCase(),
+      async (item) => (item as string).toUpperCase(),
       async (prev, orig, idx) => `${prev}-${orig}-${idx}`,
     )
 
@@ -163,11 +163,11 @@ describe('pipeline', () => {
       [1, 2, 3],
       async (n) => {
         if (n === 2) throw new Error('fail')
-        return n * 10
+        return (n as number) * 10
       },
       async (n, _orig, idx) => {
         stage2Calls.push(idx)
-        return n + 1
+        return (n as number) + 1
       },
     )
 
@@ -398,12 +398,12 @@ describe('workflow resume (journal)', () => {
       const lines = readFileSync(journalPath, 'utf-8').trim().split('\n')
       expect(lines).toHaveLength(2)
 
-      const entry0 = JSON.parse(lines[0])
+      const entry0 = JSON.parse(lines[0]!)
       expect(entry0.prompt).toBe('task-a')
       expect(entry0.result).toBe('result-a')
       expect(entry0.tokens).toBe(50)
 
-      const entry1 = JSON.parse(lines[1])
+      const entry1 = JSON.parse(lines[1]!)
       expect(entry1.prompt).toBe('task-b')
       expect(entry1.result).toBe('result-b')
       expect(entry1.tokens).toBe(30)
