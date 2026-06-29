@@ -140,7 +140,7 @@ F3 地基为快速跑通基础聊天，**故意只在服务端注册了工具子
 |---|------|------|------|------|
 | **B1** | Agent（子代理） | ✅ 已接（2026-06-26） | 在 `SessionManager` 构造里注册，闭包复用 live client（failover 热替换）/权限流/`sessionAllow`。`onBackground` 暂未接 → 后台子代理目前同步 `await`（仍能跑，只是不真后台）；真后台完成通知需先有"消息注入接口" | F2 |
 | **B2** | ScheduleWakeup | 待接 | 定时唤醒；需一个把唤醒消息注入会话的回调（类似 TUI 的 `sendMessage`）。与 C1（cron 引擎）天然同源，建议并入 C1 一起设计 | F2,(C1) |
-| **B3** | Lsp / LspInstall | 待接 | 语言服务器查询/安装；需各自的进程池与连接生命周期管理 | F2 |
+| **B3** | Lsp / LspInstall | ✅ 已接（2026-06-29） | daemon 启动时建一个 `LspManager`（语言服务器进程池，构造不 spawn，首次用才起进程），经通用 `registerExtraTools(registry)` 接缝把 `Lsp`+`LspInstall` 注册进每个会话；`close()` 时 `dispose()` 关掉所有 language server | F2 |
 | **B4** | MCP 工具（`mcp__*`）+ McpSearch | ✅ 已接（2026-06-27） | daemon 启动时 `McpManager.connectAll(settings.mcpServers)` 连一次,经通用 `registerExtraTools(registry)` 接缝把工具注册进每个会话的 registry,`close()` 时 `disconnectAll`。createSession/SessionService 加 `registerExtraTools` 透传。**解锁 M4**。配 `settings.mcpServers` 后重启即生效 | F2 |
 
 > 注：前端工具卡片已对**全部**工具（含未接的）做了结构化渲染（含 MCP 名解析 `mcp__server__tool` + 来源徽章），所以 B2–B4 接好后**前端无需改动**。Web 里子代理的运行/返回/失败状态由 Sub-agents 面板呈现。

@@ -15,6 +15,7 @@ import type { SessionManager } from './session/SessionManager.js'
 import {
   loadSettings, resolveModelSelection, resolveContextWindow, McpManager, type ToolRegistry,
 } from '@zuse/core'
+import { LspManager, createLspTool, createLspInstallTool } from '@zuse/tools'
 
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
@@ -40,9 +41,17 @@ export async function startServer(
   let mcpFailed: Array<{ name: string; error: string }> = []
   const sel = resolveModelSelection(loadSettings())
   const ctxWindow = resolveContextWindow(loadSettings(), sel.providerId, sel.model)
+  // Lsp/LspInstall (B3): the daemon owns ONE LspManager (a language-server process pool, like the
+  // single McpManager) — spawning per session would be wasteful. `new LspManager()` is cheap: it
+  // spawns nothing until the Lsp tool's first use. Disposed on shutdown (see close()).
+  const lsp = new LspManager()
   // Always set: no-ops until `mcp` is connected, so a reconnect that establishes it later still
   // feeds tools into subsequent sessions. Best-effort — a bad registration never breaks a session.
-  const registerExtraTools = (registry: ToolRegistry): void => { mcp?.registerTools(registry, ctxWindow) }
+  const registerExtraTools = (registry: ToolRegistry): void => {
+    mcp?.registerTools(registry, ctxWindow)
+    registry.register(createLspTool(lsp))
+    registry.register(createLspInstallTool())
+  }
 
   // Tear down + reconnect from current settings. Used at startup and by POST /api/mcp/reconnect.
   // Already-built sessions keep their tool set (registry is fixed at creation); new chats pick up
@@ -144,6 +153,7 @@ export async function startServer(
     url: `http://${cfg.host}:${port}`,
     close: () => new Promise<void>((resolve) => {
       void mcp?.disconnectAll().catch(() => {})
+      void lsp.dispose().catch(() => {})
       httpServer.close(() => resolve())
       ws.closeAll()
       httpServer.closeAllConnections()
