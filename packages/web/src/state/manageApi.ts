@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -107,6 +107,20 @@ export async function updateSkill(name: string, body: { description?: string; bo
 export async function getUsage(): Promise<UsageStats> {
   const r = await request('/api/usage', {}, 'get usage')
   return (await r.json()) as UsageStats
+}
+
+// --- Files (M7) ---
+
+/** GET /api/files?dir=<rel> → a directory's immediate children. Throws on non-ok. */
+export async function listDir(dir: string): Promise<DirListing> {
+  const r = await request('/api/files?dir=' + encodeURIComponent(dir), {}, 'list directory')
+  return (await r.json()) as DirListing
+}
+
+/** GET /api/files/content?path=<rel> → a file preview. Throws on non-ok. */
+export async function readFilePreview(path: string): Promise<FilePreview> {
+  const r = await request('/api/files/content?path=' + encodeURIComponent(path), {}, 'read file')
+  return (await r.json()) as FilePreview
 }
 
 // --- MCP servers (M4) ---

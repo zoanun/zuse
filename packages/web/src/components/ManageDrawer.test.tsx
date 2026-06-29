@@ -17,6 +17,8 @@ vi.mock('../state/manageApi.js', () => ({
   listSkills: vi.fn(async () => ({ skills: [] })),
   updateSkill: vi.fn(async () => ({})),
   getUsage: vi.fn(async () => ({ total: { input_tokens: 0, output_tokens: 0 }, sessionCount: 0, byModel: [], sessions: [] })),
+  listDir: vi.fn(async () => ({ path: '', entries: [] })),
+  readFilePreview: vi.fn(async () => ({ path: '', content: '', truncated: false, binary: false, size: 0 })),
   listMcp: vi.fn(async () => []),
   addMcp: vi.fn(async () => undefined),
   deleteMcp: vi.fn(async () => undefined),
@@ -46,8 +48,8 @@ describe('ManageDrawer', () => {
     renderDrawer()
     const memBtn = screen.getByRole('button', { name: /Memory/ })
     expect(memBtn.className).toContain('active')
-    // All five panels (Memory/Personas/Skills/MCP/Usage) are now shipped — none disabled.
-    for (const name of [/Memory/, /Personas/, /Skills/, /MCP/, /Usage/]) {
+    // All panels (Memory/Personas/Skills/MCP/Usage/Files) are now shipped — none disabled.
+    for (const name of [/Memory/, /Personas/, /Skills/, /MCP/, /Usage/, /Files/]) {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(false)
     }
     expect(screen.queryByText('soon')).toBeNull()

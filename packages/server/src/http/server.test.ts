@@ -372,6 +372,29 @@ describe('/api/usage REST', () => {
   })
 })
 
+describe('/api/files REST', () => {
+  it('unauthenticated → 401', async () => {
+    expect((await fetch(`${base}/api/files`)).status).toBe(401)
+    expect((await fetch(`${base}/api/files/content?path=x`)).status).toBe(401)
+  })
+
+  it('lists a dir and reads a file (FileService is rooted at the temp dir)', async () => {
+    writeFileSync(join(dir, 'note.txt'), 'hello files', 'utf8')
+    const cookie = await authCookie()
+    const listing = await (await fetch(`${base}/api/files?dir=`, { headers: { cookie } })).json() as { entries: Array<{ name: string }> }
+    expect(listing.entries.some((e) => e.name === 'note.txt')).toBe(true)
+    const preview = await (await fetch(`${base}/api/files/content?path=note.txt`, { headers: { cookie } })).json() as { content: string }
+    expect(preview.content).toBe('hello files')
+  })
+
+  it('path traversal → 403; missing file → 404; missing path param → 400', async () => {
+    const cookie = await authCookie()
+    expect((await fetch(`${base}/api/files?dir=..`, { headers: { cookie } })).status).toBe(403)
+    expect((await fetch(`${base}/api/files/content?path=nope.txt`, { headers: { cookie } })).status).toBe(404)
+    expect((await fetch(`${base}/api/files/content`, { headers: { cookie } })).status).toBe(400)
+  })
+})
+
 describe('/api/mcp REST', () => {
   it('unauthenticated requests → 401', async () => {
     expect((await fetch(`${base}/api/mcp`)).status).toBe(401)
