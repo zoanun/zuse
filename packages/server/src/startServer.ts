@@ -8,6 +8,7 @@ import { attachWsServer } from './ws/wsServer.js'
 import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
 import { PersonaService } from './persona/PersonaService.js'
+import { SkillService } from './skill/SkillService.js'
 import { McpService } from './mcp/McpService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
@@ -132,6 +133,8 @@ export async function startServer(
   }
 
   const persona = new PersonaService()
+  // Skill management (M3): scans ~/.zuse/skills + project .zuse/skills under the daemon's cwd.
+  const skill = new SkillService({ cwd: cfg.cwd })
   // MCP management view (M4): merges configured servers with live status/tools; reconnect lets the
   // panel apply config changes without a server restart. Getters read the current manager state.
   const mcpService = new McpService({
@@ -141,7 +144,7 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, skill, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

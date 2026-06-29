@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -85,6 +85,20 @@ export async function deletePersona(id: string): Promise<void> {
 /** POST /api/personas/activate with {id} (null clears). Throws on non-ok. */
 export async function activatePersona(id: string | null): Promise<void> {
   await request('/api/personas/activate', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ id }) }, 'activate persona')
+}
+
+// --- Skills (M3) ---
+
+/** GET /api/skills → { skills }. Throws on non-ok. */
+export async function listSkills(): Promise<SkillsState> {
+  const r = await request('/api/skills', {}, 'list skills')
+  return (await r.json()) as SkillsState
+}
+
+/** PATCH /api/skills/<name> → the updated SkillItem. Throws on non-ok (404 unknown name). */
+export async function updateSkill(name: string, body: { description?: string; body?: string; enabled?: boolean }): Promise<SkillItem> {
+  const r = await request('/api/skills/' + encodeURIComponent(name), { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'update skill')
+  return (await r.json()) as SkillItem
 }
 
 // --- MCP servers (M4) ---

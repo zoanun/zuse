@@ -23,6 +23,7 @@ import {
 } from '@zuse/tools'
 import { SessionManager } from './SessionManager.js'
 import { loadActivePersonaSync } from '../persona/personaStore.js'
+import { loadDisabledSkillsSync, skillsDisabledFile } from '../skill/skillStore.js'
 import type { SnapshotStore, SessionCheckpoint } from './events.js'
 
 export interface CreateSessionOpts {
@@ -85,10 +86,13 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
   const home = homedir()
   // 注：MCP（B4）与 LSP（Lsp/LspInstall，B3）这类需进程池/连接生命周期的工具不在这里建 —— 由
   // daemon 持有其管理器，经下方的 registerExtraTools 接缝注册进每个会话的 registry。
+  // M3:启停状态存在 ~/.zuse/skills-disabled.json,扫盘后按名字滤掉禁用的。每次新会话重读 ——
+  // 故面板里的启停在下一个新聊天生效(与 MCP「开着的会话工具集不变」同约束)。
+  const disabledSkills = loadDisabledSkillsSync(skillsDisabledFile(home))
   const registry = createDefaultRegistry({
     webSearch: getWebSearchConfig(settings),
     memoryProject: cwdSlug(cwd),
-    skills: scanSkills(home, cwd),
+    skills: scanSkills(home, cwd).filter((s) => !disabledSkills.has(s.name)),
   })
 
   // late-bind：TodoWrite.onUpdate 要回调到下面才构造的 manager（镜像 TUI 的 ref 套路）。

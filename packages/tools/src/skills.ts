@@ -156,10 +156,18 @@ ${listing}`,
         const names = skills.map((s) => s.name).join(', ') || '(none)'
         return { output: `Unknown skill: ${name}. Available skills: ${names}.`, isError: true }
       }
+      // 调用时重读盘(M3「查看时重新加载」):面板刚改完正文,哪怕本会话没关,模型这次
+      // 加载也拿最新内容。读不到则回退到会话启动时缓存的 body。
+      let freshBody = skill.body
+      try {
+        freshBody = parseFrontmatter(readFileSync(join(skill.dir, 'SKILL.md'), 'utf8')).body
+      } catch {
+        // 文件被删/不可读:用缓存的 body 兜底,工具仍可用
+      }
       // ${ZUSE_SKILL_DIR} 展开为技能目录;Windows 反斜杠转正斜杠,避免正文里的
       // 路径进 shell 后被当转义(对齐 CC 的处理)。
       const dirPosix = process.platform === 'win32' ? skill.dir.replace(/\\/g, '/') : skill.dir
-      const body = capAtLineBoundary(skill.body.replace(/\$\{ZUSE_SKILL_DIR\}/g, dirPosix), SKILL_BODY_CAP)
+      const body = capAtLineBoundary(freshBody.replace(/\$\{ZUSE_SKILL_DIR\}/g, dirPosix), SKILL_BODY_CAP)
       return { output: `Base directory: ${dirPosix}\n\n${body}` }
     },
   }

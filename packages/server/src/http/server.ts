@@ -9,6 +9,7 @@ import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
+import type { SkillService } from '../skill/SkillService.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
@@ -18,6 +19,7 @@ export interface RequestHandlerDeps {
   service: SessionService
   memory: MemoryService
   persona: PersonaService
+  skill: SkillService
   mcp: McpService
   devPage: boolean
   tokenTtlSec: number
@@ -387,6 +389,34 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       const id = decodeURIComponent(path.slice('/api/personas/'.length))
       return sendJson(res, 200, { ok: await deps.persona.remove(id) })
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/skills — Skill management (M3), all auth-gated. List + edit/enable; no create/delete.
+    // Edits rewrite SKILL.md (live body on next Skill load); enable/disable applies on new chats.
+    // -----------------------------------------------------------------------
+
+    // GET /api/skills — { skills }
+    if (method === 'GET' && path === '/api/skills') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, await deps.skill.list())
+    }
+
+    // PATCH /api/skills/<name> — update {description?, body?, enabled?}; unknown name → 404.
+    if (method === 'PATCH' && path.startsWith('/api/skills/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const name = decodeURIComponent(path.slice('/api/skills/'.length))
+      let body: { description?: unknown; body?: unknown; enabled?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const fields: { description?: string; body?: string; enabled?: boolean } = {}
+      if (typeof body?.description === 'string') fields.description = body.description
+      if (typeof body?.body === 'string') fields.body = body.body
+      if (typeof body?.enabled === 'boolean') fields.enabled = body.enabled
+      const updated = await deps.skill.update(name, fields)
+      if (!updated) return sendJson(res, 404, { error: { code: 'not_found', message: 'Skill not found' } })
+      return sendJson(res, 200, updated)
     }
 
     // -----------------------------------------------------------------------

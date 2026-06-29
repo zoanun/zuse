@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectInfo } from '@zuse/protocol'
 import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } from '../state/manageApi.js'
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
+import { listSkills, updateSkill } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
+import { SkillsPanel } from './SkillsPanel.js'
 import { McpPanel } from './McpPanel.js'
 
 export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage'
@@ -14,7 +16,7 @@ interface NavEntry { id: ManagePanel; label: string; enabled: boolean }
 const NAV: NavEntry[] = [
   { id: 'memory', label: 'Memory', enabled: true },
   { id: 'prompts', label: 'Personas', enabled: true },
-  { id: 'skills', label: 'Skills', enabled: false },
+  { id: 'skills', label: 'Skills', enabled: true },
   { id: 'mcp', label: 'MCP', enabled: true },
   { id: 'usage', label: 'Usage', enabled: false },
 ]
@@ -130,6 +132,20 @@ function PersonasContainer({ active }: { active: boolean }) {
   )
 }
 
+/** Owns the skills fetch+state lifecycle. */
+function useSkillData(active: boolean) {
+  const { data, loading, error, mutate } = useResource(active, listSkills)
+  return {
+    skills: data?.skills ?? [], loading, error,
+    onUpdate: useCallback((name: string, b: { description?: string; body?: string; enabled?: boolean }) => mutate(updateSkill(name, b)), [mutate]),
+  }
+}
+
+function SkillsContainer({ active }: { active: boolean }) {
+  const s = useSkillData(active)
+  return <SkillsPanel skills={s.skills} loading={s.loading} error={s.error} onUpdate={s.onUpdate} />
+}
+
 /** Owns the MCP fetch+state lifecycle. */
 function useMcpData(active: boolean) {
   const { data, loading, error, mutate } = useResource(active, listMcp)
@@ -182,6 +198,8 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel }: Prop
               ? <MemoryContainer active={open && activePanel === 'memory'} />
               : activePanel === 'prompts'
               ? <PersonasContainer active={open && activePanel === 'prompts'} />
+              : activePanel === 'skills'
+              ? <SkillsContainer active={open && activePanel === 'skills'} />
               : activePanel === 'mcp'
               ? <McpContainer active={open && activePanel === 'mcp'} />
               : <div className="mem-empty">Coming soon.</div>}

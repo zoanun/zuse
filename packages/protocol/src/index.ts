@@ -68,6 +68,23 @@ export interface PersonasState {
   activeId: string | null
 }
 
+/** A loaded skill (M3 management panel). name is the stable identity/key; description is the
+ * model's trigger basis; body is the SKILL.md instructions. source: where the SKILL.md lives. */
+export interface SkillItem {
+  name: string
+  description: string
+  body: string
+  /** user = ~/.zuse/skills; project = a .zuse/skills along the cwd chain. */
+  source: 'user' | 'project'
+  /** false = listed in the panel but excluded from the Skill tool (new sessions). */
+  enabled: boolean
+}
+
+/** All loaded skills (M3). */
+export interface SkillsState {
+  skills: SkillItem[]
+}
+
 /** An MCP server's config + live connection status + its tools (M4 management panel). */
 export interface McpServerInfo {
   name: string

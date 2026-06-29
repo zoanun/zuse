@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
@@ -10,6 +10,7 @@ import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
 import { MemoryService } from '../memory/MemoryService.js'
 import { PersonaService } from '../persona/PersonaService.js'
+import { SkillService } from '../skill/SkillService.js'
 import { McpService } from '../mcp/McpService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
@@ -42,7 +43,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, mcp: McpService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, mcp: McpService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
@@ -51,12 +52,14 @@ beforeEach(async () => {
   memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
   // Temp-file PersonaService so persona routes never touch the real ~/.zuse/personas.json.
   persona = new PersonaService(join(dir, 'personas.json'))
+  // Temp-home SkillService so skill routes scan a temp ~/.zuse/skills, never the real one.
+  skill = new SkillService({ home: dir, cwd: dir, disabledFile: join(dir, 'skills-disabled.json') })
   // Temp-file McpService: configured read from a temp settings file; no live manager.
   const settingsPath = join(dir, 'settings.json')
   mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
     try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
   } })
-  srv = createServer(makeRequestHandler({ auth, service, memory, persona, mcp, devPage: false, tokenTtlSec: 3600 }))
+  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, mcp, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -302,6 +305,47 @@ describe('/api/personas REST', () => {
     const h = { cookie, 'content-type': 'application/json' }
     expect((await fetch(`${base}/api/personas/activate`, { method: 'POST', headers: h, body: JSON.stringify({ id: 'nope' }) })).status).toBe(404)
     expect((await fetch(`${base}/api/personas`, { method: 'POST', headers: h, body: JSON.stringify({ name: '  ', content: 'x' }) })).status).toBe(400)
+  })
+})
+
+describe('/api/skills REST', () => {
+  // The SkillService here scans home=cwd=dir, so a fixture under dir/.zuse/skills is "user"-sourced.
+  function writeSkillFixture(name: string, description: string, body: string): void {
+    const d = join(dir, '.zuse', 'skills', name)
+    mkdirSync(d, { recursive: true })
+    writeFileSync(join(d, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`, 'utf8')
+  }
+
+  it('unauthenticated requests → 401', async () => {
+    expect((await fetch(`${base}/api/skills`)).status).toBe(401)
+    expect((await fetch(`${base}/api/skills/foo`, { method: 'PATCH', body: '{}', headers: { 'content-type': 'application/json' } })).status).toBe(401)
+  })
+
+  it('list → edit (description/body) → disable round-trips', async () => {
+    writeSkillFixture('reviewer', 'use when reviewing', 'Original body.')
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+
+    const listed = await (await fetch(`${base}/api/skills`, { headers: { cookie } })).json() as { skills: Array<{ name: string; source: string; enabled: boolean }> }
+    expect(listed.skills.map((s) => s.name)).toContain('reviewer')
+    const reviewer = listed.skills.find((s) => s.name === 'reviewer')!
+    expect(reviewer.source).toBe('user')
+    expect(reviewer.enabled).toBe(true)
+
+    const patched = await fetch(`${base}/api/skills/reviewer`, { method: 'PATCH', headers: h, body: JSON.stringify({ description: 'use sparingly', body: 'New body.' }) })
+    expect(patched.status).toBe(200)
+    const after = await patched.json() as { description: string; body: string }
+    expect(after.description).toBe('use sparingly')
+    expect(after.body.trim()).toBe('New body.')
+
+    const disabled = await fetch(`${base}/api/skills/reviewer`, { method: 'PATCH', headers: h, body: JSON.stringify({ enabled: false }) })
+    expect((await disabled.json()).enabled).toBe(false)
+  })
+
+  it('patching an unknown skill name → 404', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    expect((await fetch(`${base}/api/skills/nope`, { method: 'PATCH', headers: h, body: JSON.stringify({ description: 'x' }) })).status).toBe(404)
   })
 })
 
