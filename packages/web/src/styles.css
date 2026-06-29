@@ -281,8 +281,11 @@ button.head:hover .caret { opacity: 1; }
 /* Dir picker (S3) */
 .dirpick { position: relative; display: inline-flex; }
 .dirpick-btn { cursor: pointer; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dirpick-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.32); }
-.dirpick-pop { position: absolute; top: 110%; left: 0; z-index: 51; width: 320px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
+/* Portaled to document.body (escapes the header's backdrop-filter stacking context). Backdrop is
+   a transparent click-catcher — no dim, so the header isn't darkened; the opaque popover sits on
+   top so chat no longer bleeds through. Position is set inline from the button's rect. */
+.dirpick-backdrop { position: fixed; inset: 0; z-index: 50; }
+.dirpick-pop { position: fixed; z-index: 51; width: 320px; max-width: 90vw; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
 .dirpick-cur { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .dirpick-drives { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; }
 .dirpick-drive { font: 11px/1.4 var(--mono); min-width: 34px; text-align: center; color: var(--text); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }

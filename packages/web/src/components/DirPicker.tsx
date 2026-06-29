@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { DirNav } from '@zuse/protocol'
 import { navigateDirs } from '../state/manageApi.js'
 
@@ -18,6 +19,9 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
   const [nav, setNav] = useState<DirNav | null>(null)
   const [error, setError] = useState<string | null>(null)
   // "loading" = a fetch is in flight = nav cleared and no error yet; no separate flag needed.
+  // Anchor the (portaled) popover to the button's on-screen position.
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
 
   const go = async (path?: string) => {
     setNav(null)
@@ -30,6 +34,8 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
   }
 
   const openPicker = () => {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 4, left: r.left })
     setOpen(true)
     void go(cwd || undefined)
   }
@@ -42,13 +48,13 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
 
   return (
     <div className="dirpick">
-      <button className="chip dirpick-btn" title={cwd || 'working directory'} onClick={openPicker}>
+      <button ref={btnRef} className="chip dirpick-btn" title={cwd || 'working directory'} onClick={openPicker}>
         📁 {cwd ? basename(cwd) : '(dir)'}
       </button>
-      {open ? (
+      {open ? createPortal(
         <>
           <div className="dirpick-backdrop" onClick={() => setOpen(false)} />
-          <div className="dirpick-pop" role="dialog" aria-label="Choose working directory">
+          <div className="dirpick-pop" style={{ top: pos.top, left: pos.left }} role="dialog" aria-label="Choose working directory">
             <div className="dirpick-cur" title={nav?.path}>{nav?.path ?? '…'}</div>
             {nav && nav.drives.length > 0 ? (
               <div className="dirpick-drives">
@@ -73,7 +79,8 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
               <button type="button" className="ghost" onClick={() => setOpen(false)}>Cancel</button>
             </div>
           </div>
-        </>
+        </>,
+        document.body,
       ) : null}
     </div>
   )
