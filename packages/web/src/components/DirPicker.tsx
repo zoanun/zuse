@@ -16,24 +16,21 @@ function basename(p: string): string {
 export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: string) => void }) {
   const [open, setOpen] = useState(false)
   const [nav, setNav] = useState<DirNav | null>(null)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // "loading" = a fetch is in flight = nav cleared and no error yet; no separate flag needed.
 
   const go = async (path?: string) => {
-    setLoading(true)
+    setNav(null)
     setError(null)
     try {
       setNav(await navigateDirs(path))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
     }
   }
 
   const openPicker = () => {
     setOpen(true)
-    setNav(null)
     void go(cwd || undefined)
   }
   const confirm = () => {
@@ -65,14 +62,11 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
               {nav?.parent ? (
                 <li><button className="dirpick-dir dirpick-up" onClick={() => void go(nav.parent!)}>↑ ..</button></li>
               ) : null}
-              {loading ? (
-                <li className="mem-empty">Loading…</li>
-              ) : (
-                nav?.dirs.map((d) => (
-                  <li key={d.path}><button className="dirpick-dir" onClick={() => void go(d.path)}>{d.name}</button></li>
-                ))
-              )}
-              {nav && !loading && nav.dirs.length === 0 ? <li className="mem-empty">(no subfolders)</li> : null}
+              {!nav && !error ? <li className="mem-empty">Loading…</li> : null}
+              {nav?.dirs.map((d) => (
+                <li key={d.path}><button className="dirpick-dir" onClick={() => void go(d.path)}>{d.name}</button></li>
+              ))}
+              {nav && nav.dirs.length === 0 ? <li className="mem-empty">(no subfolders)</li> : null}
             </ul>
             <div className="dirpick-actions">
               <button className="dirpick-ok" onClick={confirm} disabled={!nav}>Use this folder · new chat</button>

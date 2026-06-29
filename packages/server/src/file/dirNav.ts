@@ -8,17 +8,11 @@ import type { DirNav } from '@zuse/protocol'
  */
 async function listDrives(): Promise<string[]> {
   if (process.platform !== 'win32') return []
-  const out: string[] = []
-  for (let c = 'A'.charCodeAt(0); c <= 'Z'.charCodeAt(0); c++) {
-    const root = `${String.fromCharCode(c)}:\\`
-    try {
-      await stat(root)
-      out.push(root)
-    } catch {
-      // drive letter not mounted — skip
-    }
-  }
-  return out
+  // Probe A–Z concurrently — unmounted letters are the slow ones (brief stalls); running them in
+  // parallel keeps the whole probe ~one stat's latency instead of 26 in series.
+  const letters = Array.from({ length: 26 }, (_, i) => `${String.fromCharCode(65 + i)}:\\`)
+  const checked = await Promise.all(letters.map((root) => stat(root).then(() => root, () => null)))
+  return checked.filter((r): r is string => r !== null)
 }
 
 /**
@@ -30,14 +24,17 @@ async function listDrives(): Promise<string[]> {
 export async function listDirsAt(path: string): Promise<DirNav> {
   const abs = resolve(path)
   const names = await readdir(abs)
-  const dirs: { name: string; path: string }[] = []
-  for (const name of names) {
-    try {
-      if ((await stat(join(abs, name))).isDirectory()) dirs.push({ name, path: join(abs, name) })
-    } catch {
-      // unreadable / vanished entry — skip
-    }
-  }
+  // stat concurrently (see FileService.list) — keep only readable subdirectories.
+  const settled = await Promise.all(
+    names.map(async (name): Promise<{ name: string; path: string } | null> => {
+      try {
+        return (await stat(join(abs, name))).isDirectory() ? { name, path: join(abs, name) } : null
+      } catch {
+        return null
+      }
+    }),
+  )
+  const dirs = settled.filter((d): d is { name: string; path: string } => d !== null)
   dirs.sort((a, b) => a.name.localeCompare(b.name))
   const parent = dirname(abs)
   return { path: abs, parent: parent === abs ? null : parent, dirs, drives: await listDrives() }

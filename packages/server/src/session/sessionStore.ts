@@ -184,23 +184,26 @@ export async function readSessionUsage(dir: string): Promise<SessionUsageRow[]> 
   } catch {
     return []
   }
-  const rows: SessionUsageRow[] = []
-  for (const f of files) {
-    try {
-      const rec = JSON.parse(await readFile(join(dir, f), 'utf8')) as Partial<SessionRecord>
-      if (typeof rec.id !== 'string') continue
-      rows.push({
-        id: rec.id,
-        title: typeof rec.title === 'string' ? rec.title : '',
-        model: typeof rec.model === 'string' ? rec.model : '',
-        updatedAt: typeof rec.updatedAt === 'string' ? rec.updatedAt : '',
-        totalUsage: normalizeUsage(rec.totalUsage),
-      })
-    } catch {
-      continue
-    }
-  }
-  return rows
+  // Read + parse the session files concurrently — the dashboard aggregates every session, so a
+  // serial loop would be one disk round-trip per file. Corrupt/foreign files resolve to null.
+  const settled = await Promise.all(
+    files.map(async (f): Promise<SessionUsageRow | null> => {
+      try {
+        const rec = JSON.parse(await readFile(join(dir, f), 'utf8')) as Partial<SessionRecord>
+        if (typeof rec.id !== 'string') return null
+        return {
+          id: rec.id,
+          title: typeof rec.title === 'string' ? rec.title : '',
+          model: typeof rec.model === 'string' ? rec.model : '',
+          updatedAt: typeof rec.updatedAt === 'string' ? rec.updatedAt : '',
+          totalUsage: normalizeUsage(rec.totalUsage),
+        }
+      } catch {
+        return null
+      }
+    }),
+  )
+  return settled.filter((r): r is SessionUsageRow => r !== null)
 }
 
 /**

@@ -46,17 +46,19 @@ export class FileService {
   async list(relDir = ''): Promise<DirListing> {
     const absDir = this.resolveInRoot(relDir)
     const names = await readdir(absDir)
-    const entries: FileEntry[] = []
-    for (const name of names) {
-      const abs = join(absDir, name)
-      let isDir: boolean
-      try {
-        isDir = (await stat(abs)).isDirectory()
-      } catch {
-        continue // unreadable / vanished entry — skip it
-      }
-      entries.push({ name, path: this.toRel(abs), type: isDir ? 'dir' : 'file' })
-    }
+    // stat concurrently — a directory can hold thousands of entries; serial awaits would be N
+    // round-trips. Unreadable/vanished entries resolve to null and are dropped.
+    const settled = await Promise.all(
+      names.map(async (name): Promise<FileEntry | null> => {
+        const abs = join(absDir, name)
+        try {
+          return { name, path: this.toRel(abs), type: (await stat(abs)).isDirectory() ? 'dir' : 'file' }
+        } catch {
+          return null
+        }
+      }),
+    )
+    const entries = settled.filter((e): e is FileEntry => e !== null)
     entries.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'dir' ? -1 : 1
       return a.name.localeCompare(b.name)

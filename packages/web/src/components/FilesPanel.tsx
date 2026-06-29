@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 
 // Terminal-captured files (e.g. .zuse/tool-output/*) embed ANSI escape codes; strip them so the
@@ -40,10 +40,15 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
     }
   }, [loadDir])
 
-  // Load the root the first time the panel becomes active.
+  // Load the root once, the first time the panel becomes active. Gated on a ref (not the whole
+  // `children` Map) so the effect fires only on activation — not after every directory fetch.
+  const rootRequested = useRef(false)
   useEffect(() => {
-    if (active && !children.has('')) void fetchDir('')
-  }, [active, children, fetchDir])
+    if (active && !rootRequested.current) {
+      rootRequested.current = true
+      void fetchDir('')
+    }
+  }, [active, fetchDir])
 
   const toggleDir = (path: string) => {
     setExpanded((s) => {
