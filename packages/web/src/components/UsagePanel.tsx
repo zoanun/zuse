@@ -33,8 +33,8 @@ function Breakdown({ usage }: { usage: Usage }) {
     <span className="usage-break">
       <span title="New input tokens (excludes cache)">in {formatTokens(usage.input_tokens)}</span>
       <span title="Output tokens">out {formatTokens(usage.output_tokens)}</span>
-      {cacheRead > 0 ? <span title="Cache-read input tokens (cheap cache hits)">cache rd {formatTokens(cacheRead)}</span> : null}
-      {cacheWrite > 0 ? <span title="Input tokens newly written to the prompt cache (first turn: system prompt + tool defs; later turns: new conversation)">cache wr {formatTokens(cacheWrite)}</span> : null}
+      {cacheRead > 0 ? <span title="Input tokens served from the prompt cache (cheap cache hits)">cache read {formatTokens(cacheRead)}</span> : null}
+      {cacheWrite > 0 ? <span title="Input tokens newly written to the prompt cache (first turn: system prompt + tool defs; later turns: new conversation)">cache write {formatTokens(cacheWrite)}</span> : null}
     </span>
   )
 }
