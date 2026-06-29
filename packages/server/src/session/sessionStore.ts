@@ -1,6 +1,7 @@
 import { mkdir, writeFile, rename, readFile, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Message, Usage } from '@zuse/core'
+import { emptyUsage } from '@zuse/core'
 import type { SessionMeta } from '@zuse/protocol'
 import type { SessionCheckpoint } from './events.js'
 
@@ -147,6 +148,59 @@ export async function listSessions(dir: string): Promise<SessionMeta[]> {
 
   metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
   return metas
+}
+
+/** One session's recorded token usage, for the M5 dashboard's aggregation. */
+export interface SessionUsageRow {
+  id: string
+  title: string
+  /** '' when the record never persisted a model. */
+  model: string
+  updatedAt: string
+  totalUsage: Usage
+}
+
+/** Coerce a possibly-missing/partial persisted usage into a full Usage (missing fields → 0). */
+function normalizeUsage(u: Partial<Usage> | undefined): Usage {
+  const base = emptyUsage()
+  if (!u) return base
+  return {
+    input_tokens: u.input_tokens ?? 0,
+    output_tokens: u.output_tokens ?? 0,
+    cache_read_input_tokens: u.cache_read_input_tokens ?? 0,
+    cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0,
+  }
+}
+
+/**
+ * Read every session record's token usage (M5). Reads the same files as listSessions but keeps
+ * the usage + model fields it drops. Corrupt/foreign files are skipped. No sorting — the caller
+ * (UsageService) aggregates and orders.
+ */
+export async function readSessionUsage(dir: string): Promise<SessionUsageRow[]> {
+  let files: string[]
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.json'))
+  } catch {
+    return []
+  }
+  const rows: SessionUsageRow[] = []
+  for (const f of files) {
+    try {
+      const rec = JSON.parse(await readFile(join(dir, f), 'utf8')) as Partial<SessionRecord>
+      if (typeof rec.id !== 'string') continue
+      rows.push({
+        id: rec.id,
+        title: typeof rec.title === 'string' ? rec.title : '',
+        model: typeof rec.model === 'string' ? rec.model : '',
+        updatedAt: typeof rec.updatedAt === 'string' ? rec.updatedAt : '',
+        totalUsage: normalizeUsage(rec.totalUsage),
+      })
+    } catch {
+      continue
+    }
+  }
+  return rows
 }
 
 /**

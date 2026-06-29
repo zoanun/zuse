@@ -85,6 +85,35 @@ export interface SkillsState {
   skills: SkillItem[]
 }
 
+/** Token usage for one model, summed across all sessions that recorded it (M5). */
+export interface UsageModelStat {
+  /** The recorded model id; 'unknown' when a session never recorded one. */
+  model: string
+  /** How many sessions contributed. */
+  sessions: number
+  usage: Usage
+}
+
+/** Token usage for one session (M5). */
+export interface UsageSessionStat {
+  id: string
+  title: string
+  model: string
+  updatedAt: string
+  usage: Usage
+}
+
+/** Aggregated token usage across all persisted sessions (M5 dashboard). No cost — token-only. */
+export interface UsageStats {
+  /** Grand total across every session. */
+  total: Usage
+  sessionCount: number
+  /** Per-model breakdown, biggest first. */
+  byModel: UsageModelStat[]
+  /** Per-session breakdown, biggest first. */
+  sessions: UsageSessionStat[]
+}
+
 /** An MCP server's config + live connection status + its tools (M4 management panel). */
 export interface McpServerInfo {
   name: string

@@ -11,6 +11,7 @@ import { SessionService } from '../session/SessionService.js'
 import { MemoryService } from '../memory/MemoryService.js'
 import { PersonaService } from '../persona/PersonaService.js'
 import { SkillService } from '../skill/SkillService.js'
+import { UsageService } from '../usage/UsageService.js'
 import { McpService } from '../mcp/McpService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
@@ -43,7 +44,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, mcp: McpService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, mcp: McpService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
@@ -54,12 +55,14 @@ beforeEach(async () => {
   persona = new PersonaService(join(dir, 'personas.json'))
   // Temp-home SkillService so skill routes scan a temp ~/.zuse/skills, never the real one.
   skill = new SkillService({ home: dir, cwd: dir, disabledFile: join(dir, 'skills-disabled.json') })
+  // UsageService over the same web-sessions store the SessionService writes.
+  usage = new UsageService(join(dir, 'web-sessions'))
   // Temp-file McpService: configured read from a temp settings file; no live manager.
   const settingsPath = join(dir, 'settings.json')
   mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
     try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
   } })
-  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, mcp, devPage: false, tokenTtlSec: 3600 }))
+  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, mcp, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -346,6 +349,23 @@ describe('/api/skills REST', () => {
     const cookie = await authCookie()
     const h = { cookie, 'content-type': 'application/json' }
     expect((await fetch(`${base}/api/skills/nope`, { method: 'PATCH', headers: h, body: JSON.stringify({ description: 'x' }) })).status).toBe(404)
+  })
+})
+
+describe('/api/usage REST', () => {
+  it('unauthenticated → 401', async () => {
+    expect((await fetch(`${base}/api/usage`)).status).toBe(401)
+  })
+
+  it('authed → aggregated stats shape', async () => {
+    const cookie = await authCookie()
+    const r = await fetch(`${base}/api/usage`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    const stats = await r.json() as { total: unknown; sessionCount: number; byModel: unknown[]; sessions: unknown[] }
+    expect(typeof stats.sessionCount).toBe('number')
+    expect(Array.isArray(stats.byModel)).toBe(true)
+    expect(Array.isArray(stats.sessions)).toBe(true)
+    expect(stats.total).toHaveProperty('input_tokens')
   })
 })
 

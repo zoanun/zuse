@@ -278,6 +278,16 @@ button.head:hover .caret { opacity: 1; }
 .mcp-tools { list-style: none; margin: 4px 0 0 18px; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
 .mcp-tools li { font: 11px/1.4 var(--mono); color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; }
 .mcp-restart-note { font-size: 12px; color: var(--warn); margin-bottom: 8px; }
+/* Usage (M5) */
+.usage-total { text-align: center; padding: 14px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.usage-total-num { font-size: 30px; font-weight: 600; line-height: 1.1; }
+.usage-total-label { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.usage-break { display: inline-flex; gap: 10px; margin-top: 8px; font: 11px/1.4 var(--mono); color: var(--faint); }
+.usage-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 4px; }
+.usage-row { display: flex; gap: 9px; align-items: baseline; padding: 4px 0; }
+.usage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.usage-sub { flex: none; font: 11px/1.4 var(--mono); color: var(--faint); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-tokens { flex: none; font: 12px/1.4 var(--mono); color: var(--muted); }
 .mem-error { background: var(--surface-2); border: 1px solid var(--bad); color: var(--bad); font-size: 12.5px; padding: 8px 11px; border-radius: 10px; margin-bottom: 10px; }
 .mem-empty { color: var(--faint); font-size: 13.5px; padding: 12px 2px; }
 .mem-group { margin-bottom: 16px; }

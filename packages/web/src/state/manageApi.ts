@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -99,6 +99,14 @@ export async function listSkills(): Promise<SkillsState> {
 export async function updateSkill(name: string, body: { description?: string; body?: string; enabled?: boolean }): Promise<SkillItem> {
   const r = await request('/api/skills/' + encodeURIComponent(name), { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(body) }, 'update skill')
   return (await r.json()) as SkillItem
+}
+
+// --- Usage (M5) ---
+
+/** GET /api/usage → aggregated token usage across all sessions. Throws on non-ok. */
+export async function getUsage(): Promise<UsageStats> {
+  const r = await request('/api/usage', {}, 'get usage')
+  return (await r.json()) as UsageStats
 }
 
 // --- MCP servers (M4) ---

@@ -9,6 +9,7 @@ import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
 import { PersonaService } from './persona/PersonaService.js'
 import { SkillService } from './skill/SkillService.js'
+import { UsageService } from './usage/UsageService.js'
 import { McpService } from './mcp/McpService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
@@ -102,7 +103,8 @@ export async function startServer(
   // existing single-session behaviour. Seeding can throw (real client build);
   // on failure we record sessionErr → /ws returns an error frame, while
   // health/setup/login stay up.
-  const service = new SessionService({ dir: join(cfg.authDir, 'web-sessions'), cwd: cfg.cwd, registerExtraTools })
+  const sessionsDir = join(cfg.authDir, 'web-sessions')
+  const service = new SessionService({ dir: sessionsDir, cwd: cfg.cwd, registerExtraTools })
   let sessionErr: string | undefined
   try {
     // Reuse a disk-persisted default if present; otherwise seed one. Tests inject
@@ -133,6 +135,8 @@ export async function startServer(
   }
 
   const persona = new PersonaService()
+  // Token usage dashboard (M5): aggregates the same web-sessions store the SessionService writes.
+  const usage = new UsageService(sessionsDir)
   // Skill management (M3): scans ~/.zuse/skills + project .zuse/skills under the daemon's cwd.
   const skill = new SkillService({ cwd: cfg.cwd })
   // MCP management view (M4): merges configured servers with live status/tools; reconnect lets the
@@ -144,7 +148,7 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, skill, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

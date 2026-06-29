@@ -10,6 +10,7 @@ import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
+import type { UsageService } from '../usage/UsageService.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
@@ -20,6 +21,7 @@ export interface RequestHandlerDeps {
   memory: MemoryService
   persona: PersonaService
   skill: SkillService
+  usage: UsageService
   mcp: McpService
   devPage: boolean
   tokenTtlSec: number
@@ -417,6 +419,14 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       const updated = await deps.skill.update(name, fields)
       if (!updated) return sendJson(res, 404, { error: { code: 'not_found', message: 'Skill not found' } })
       return sendJson(res, 200, updated)
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/usage — aggregated token usage across all sessions (M5), auth-gated. Read-only.
+    // -----------------------------------------------------------------------
+    if (method === 'GET' && path === '/api/usage') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, await deps.usage.stats())
     }
 
     // -----------------------------------------------------------------------
