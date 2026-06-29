@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { DirListing, FilePreview } from '@zuse/protocol'
-import { FilesPanel } from './FilesPanel.js'
+import { FilesPanel, stripAnsi } from './FilesPanel.js'
 
 const root: DirListing = {
   path: '',
@@ -20,7 +20,21 @@ function setup(over: { loadDir?: typeof defaultLoadDir; loadFile?: typeof defaul
 const defaultLoadDir = vi.fn(async (dir: string): Promise<DirListing> => (dir === 'src' ? srcDir : root))
 const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ path, content: '# hi', truncated: false, binary: false, size: 4 }))
 
+describe('stripAnsi', () => {
+  it('removes ANSI color/CSI escape codes, keeps the text', () => {
+    expect(stripAnsi('\x1b[1m\x1b[36m RUN \x1b[39m\x1b[22mv2.1.9')).toBe(' RUN v2.1.9')
+    expect(stripAnsi('plain text')).toBe('plain text')
+  })
+})
+
 describe('FilesPanel', () => {
+  it('strips ANSI codes from the preview body', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: '\x1b[32m✓\x1b[39m passed', truncated: false, binary: false, size: 9 }))
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    expect(await screen.findByText('✓ passed')).toBeInTheDocument()
+  })
+
   it('loads and shows the root tree when active', async () => {
     const loadDir = vi.fn(async () => root)
     setup({ loadDir })

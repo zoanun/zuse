@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 
+// Terminal-captured files (e.g. .zuse/tool-output/*) embed ANSI escape codes; strip them so the
+// preview reads as plain text instead of `␛[1m␛[36m…` noise. Matches CSI sequences (SGR colors,
+// cursor moves). The server still returns raw bytes — this is a display-only clean-up.
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
+export function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, '')
+}
+
 interface Props {
   active: boolean
   loadDir: (dir: string) => Promise<DirListing>
@@ -96,7 +105,7 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
             preview.binary ? (
               <div className="mem-empty">Binary file ({preview.size} bytes) — no preview.</div>
             ) : (
-              <pre className="file-preview-body">{preview.content}{preview.truncated ? '\n\n[… truncated]' : ''}</pre>
+              <pre className="file-preview-body">{stripAnsi(preview.content)}{preview.truncated ? '\n\n[… truncated]' : ''}</pre>
             )
           ) : null}
         </div>
