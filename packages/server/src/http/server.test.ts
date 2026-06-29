@@ -395,6 +395,42 @@ describe('/api/files REST', () => {
   })
 })
 
+describe('/api/dirs + cwd (S3)', () => {
+  it('GET /api/dirs unauthenticated → 401', async () => {
+    expect((await fetch(`${base}/api/dirs`)).status).toBe(401)
+  })
+
+  it('GET /api/dirs lists subdirectories + parent + drives', async () => {
+    mkdirSync(join(dir, 'sub'))
+    const cookie = await authCookie()
+    const nav = await (await fetch(`${base}/api/dirs?path=${encodeURIComponent(dir)}`, { headers: { cookie } })).json() as { path: string; parent: string | null; dirs: Array<{ name: string }>; drives: string[] }
+    expect(nav.dirs.some((d) => d.name === 'sub')).toBe(true)
+    expect(typeof nav.parent).toBe('string') // dir is not a drive root
+    expect(Array.isArray(nav.drives)).toBe(true)
+  })
+
+  it('POST /api/sessions rejects a non-existent cwd with 400', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    const bad = await fetch(`${base}/api/sessions`, { method: 'POST', headers: h, body: JSON.stringify({ cwd: join(dir, 'does-not-exist') }) })
+    expect(bad.status).toBe(400)
+    const ok = await fetch(`${base}/api/sessions`, { method: 'POST', headers: h, body: JSON.stringify({ cwd: dir }) })
+    expect(ok.status).toBe(200)
+  })
+
+  it('GET /api/files?cwd=<other> browses that directory instead of the default root', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'zuse-other-'))
+    writeFileSync(join(other, 'over-here.txt'), 'x', 'utf8')
+    try {
+      const cookie = await authCookie()
+      const listing = await (await fetch(`${base}/api/files?cwd=${encodeURIComponent(other)}`, { headers: { cookie } })).json() as { entries: Array<{ name: string }> }
+      expect(listing.entries.some((e) => e.name === 'over-here.txt')).toBe(true)
+    } finally {
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('/api/mcp REST', () => {
   it('unauthenticated requests → 401', async () => {
     expect((await fetch(`${base}/api/mcp`)).status).toBe(401)

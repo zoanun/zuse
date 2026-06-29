@@ -12,6 +12,7 @@ import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
 import { FileService, PathOutsideRootError } from '../file/FileService.js'
+import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
@@ -190,7 +191,19 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       } catch {
         body = undefined // tolerate empty / non-JSON body
       }
-      const { id } = await deps.service.create({ cwd: body?.cwd, title: body?.title })
+      // S3: a supplied cwd must exist and be a directory — else the session would bind to a bad
+      // root (snapshot/scan/prompt all key off it). Omitted cwd falls back to the daemon cwd (A).
+      const cwd = body?.cwd
+      if (cwd !== undefined) {
+        try {
+          if (!(await stat(cwd)).isDirectory()) {
+            return sendJson(res, 400, { error: { code: 'bad_request', message: 'cwd is not a directory' } })
+          }
+        } catch {
+          return sendJson(res, 400, { error: { code: 'bad_request', message: 'cwd does not exist' } })
+        }
+      }
+      const { id } = await deps.service.create({ cwd, title: body?.title })
       return sendJson(res, 200, { id })
     }
 
@@ -440,15 +453,34 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && (path === '/api/files' || path === '/api/files/content')) {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       try {
+        // S3: browse under the active session's cwd when given; else the daemon default. Each
+        // FileService is root-locked to that cwd (traversal guard intact).
+        const cwd = url.searchParams.get('cwd')
+        const fileSvc = cwd ? new FileService(cwd) : deps.file
         if (path === '/api/files') {
-          return sendJson(res, 200, await deps.file.list(url.searchParams.get('dir') ?? ''))
+          return sendJson(res, 200, await fileSvc.list(url.searchParams.get('dir') ?? ''))
         }
         const p = url.searchParams.get('path')
         if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
-        return sendJson(res, 200, await deps.file.read(p))
+        return sendJson(res, 200, await fileSvc.read(p))
       } catch (e) {
         if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/dirs — working-directory picker (S3): unrestricted subdir navigation + drives.
+    //   GET /api/dirs?path=<abs> → { path, parent, dirs, drives }. Defaults to the daemon cwd.
+    // Unrestricted on purpose (chooser for a new session's cwd); single-user trust model.
+    // -----------------------------------------------------------------------
+    if (method === 'GET' && path === '/api/dirs') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        return sendJson(res, 200, await listDirsAt(url.searchParams.get('path') || process.cwd()))
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Directory not found' } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
       }
     }

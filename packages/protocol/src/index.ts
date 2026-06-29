@@ -130,6 +130,19 @@ export interface DirListing {
   entries: FileEntry[]
 }
 
+/** A node in the working-directory picker (S3): the listed dir, its parent, subdirs, and drives.
+ * Unrestricted (not root-locked like the M7 browser) — it's a chooser for a new session's cwd. */
+export interface DirNav {
+  /** Absolute path of the listed directory. */
+  path: string
+  /** Absolute parent path, or null at a filesystem/drive root. */
+  parent: string | null
+  /** Immediate subdirectories (absolute paths), alphabetical. */
+  dirs: { name: string; path: string }[]
+  /** Windows drive roots (e.g. ["C:\\", "D:\\"]) for the drive switcher; [] on POSIX. */
+  drives: string[]
+}
+
 /** A file's content for read-only preview (M7). Large files are truncated; binary ones aren't read. */
 export interface FilePreview {
   path: string
