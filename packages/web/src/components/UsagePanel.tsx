@@ -25,11 +25,16 @@ export function totalTokens(u: Usage): number {
 }
 
 function Breakdown({ usage }: { usage: Usage }) {
+  // Show every bucket the headline counts, so in+out+cache adds back up to the total. The first
+  // turn of a session writes the whole system prompt + tool defs to the cache → a big cache-write.
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0
   return (
     <span className="usage-break">
-      <span title="New input tokens (excludes cache reads)">in {formatTokens(usage.input_tokens)}</span>
+      <span title="New input tokens (excludes cache)">in {formatTokens(usage.input_tokens)}</span>
       <span title="Output tokens">out {formatTokens(usage.output_tokens)}</span>
-      {(usage.cache_read_input_tokens ?? 0) > 0 ? <span title="Cache-read input tokens">cache {formatTokens(usage.cache_read_input_tokens ?? 0)}</span> : null}
+      {cacheRead > 0 ? <span title="Cache-read input tokens (cheap cache hits)">cache rd {formatTokens(cacheRead)}</span> : null}
+      {cacheWrite > 0 ? <span title="Cache-write input tokens (first turn writes the system prompt + tools to cache)">cache wr {formatTokens(cacheWrite)}</span> : null}
     </span>
   )
 }
