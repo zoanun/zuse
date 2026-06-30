@@ -33,7 +33,14 @@ export class FileService {
   private resolveInRoot(rel: string): string {
     // An absolute input is only allowed if it already sits inside the root.
     const abs = isAbsolute(rel) ? resolve(rel) : resolve(this.root, rel)
-    if (abs !== this.root && !abs.startsWith(this.root + sep)) throw new PathOutsideRootError()
+    // Windows paths are case-insensitive, and path.resolve() preserves the input case of the
+    // drive letter / segments rather than canonicalizing it (e.g. 'c:\proj' vs 'C:\proj'). A
+    // case-sensitive compare would reject a valid in-root path whose drive case differs from
+    // the cwd's. Compare case-folded on win32; still return the original-cased abs for fs ops.
+    const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p)
+    const a = fold(abs)
+    const r = fold(this.root)
+    if (a !== r && !a.startsWith(r + sep)) throw new PathOutsideRootError()
     return abs
   }
 
