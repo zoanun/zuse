@@ -17,10 +17,10 @@ describe('PermissionCard', () => {
   it('replies with the matching verdict for each button', () => {
     const onReply = vi.fn()
     render(<PermissionCard pending={pending} onReply={onReply} />)
-    fireEvent.click(screen.getByText('Allow'))
-    fireEvent.click(screen.getByText('Session'))
-    fireEvent.click(screen.getByText('Always'))
-    fireEvent.click(screen.getByText('Deny'))
+    fireEvent.click(screen.getByText('允许'))
+    fireEvent.click(screen.getByText('本次会话'))
+    fireEvent.click(screen.getByText('始终'))
+    fireEvent.click(screen.getByText('拒绝'))
     expect(onReply).toHaveBeenNthCalledWith(1, 'p1', 'allow')
     expect(onReply).toHaveBeenNthCalledWith(2, 'p1', 'allow_session')
     expect(onReply).toHaveBeenNthCalledWith(3, 'p1', 'allow_persist')
@@ -30,14 +30,14 @@ describe('PermissionCard', () => {
   it('clicking Session calls onReply with allow_session', () => {
     const onReply = vi.fn()
     render(<PermissionCard pending={pending} onReply={onReply} />)
-    fireEvent.click(screen.getByText('Session'))
+    fireEvent.click(screen.getByText('本次会话'))
     expect(onReply).toHaveBeenCalledWith('p1', 'allow_session')
   })
 
   it('clicking Always calls onReply with allow_persist', () => {
     const onReply = vi.fn()
     render(<PermissionCard pending={pending} onReply={onReply} />)
-    fireEvent.click(screen.getByText('Always'))
+    fireEvent.click(screen.getByText('始终'))
     expect(onReply).toHaveBeenCalledWith('p1', 'allow_persist')
   })
 })

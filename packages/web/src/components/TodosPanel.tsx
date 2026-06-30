@@ -15,7 +15,7 @@ export function TodosPanel({ todos }: { todos: TodoItemLite[] }) {
   if (done === todos.length) return null
   return (
     <div className="todos">
-      <div className="th"><span>Tasks</span><span>{done} / {todos.length}</span></div>
+      <div className="th"><span>任务</span><span>{done} / {todos.length}</span></div>
       {todos.map((t, i) => {
         const cls = STATUS_CLS[t.status] ?? 'todo'
         return <div key={i} className={'ti ' + cls}>{taskMarker(cls)}<span>{t.content}</span></div>

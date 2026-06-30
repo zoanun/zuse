@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --sans: -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  --sans: -apple-system, "Segoe UI", "Microsoft YaHei", "微软雅黑", system-ui, Roboto, Helvetica, Arial, sans-serif;
   --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
 }
 :root[data-theme="light"] {

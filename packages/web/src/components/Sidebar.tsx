@@ -13,7 +13,7 @@ interface Props {
 }
 
 function titleOf(s: SessionMeta): string {
-  return s.title.trim() === '' ? 'New chat' : s.title
+  return s.title.trim() === '' ? '新对话' : s.title
 }
 
 function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
@@ -71,22 +71,22 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
         <span className="session-confirm" onClick={(e) => e.stopPropagation()}>
           <button
             className="session-confirm-yes"
-            title="Confirm delete"
-            aria-label="Confirm delete"
+            title="确认删除"
+            aria-label="确认删除"
             onClick={(e) => { e.stopPropagation(); setConfirming(false); onDelete(s.id) }}
           >✓</button>
           <button
             className="session-confirm-no"
-            title="Cancel"
-            aria-label="Cancel delete"
+            title="取消"
+            aria-label="取消删除"
             onClick={(e) => { e.stopPropagation(); setConfirming(false) }}
           >✕</button>
         </span>
       ) : (
         <button
           className="session-del"
-          title="Delete session"
-          aria-label="Delete session"
+          title="删除会话"
+          aria-label="删除会话"
           onClick={(e) => { e.stopPropagation(); setConfirming(true) }}
         >×</button>
       )}
@@ -116,7 +116,7 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
   return (
     <aside className="sidebar">
       <div className="brand"><span className="mark">Z</span> zuse</div>
-      <button className="side-btn" onClick={onNewChat}>＋&nbsp; New chat</button>
+      <button className="side-btn" onClick={onNewChat}>＋&nbsp; 新对话</button>
       <div className="search-box">
         <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
@@ -135,7 +135,7 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
             : results.length === 0 ? <div className="search-empty">无匹配</div>
             : results.map((r) => (
               <div key={r.session.id} className="search-group">
-                <div className="search-group-head">{r.session.title || 'New chat'}</div>
+                <div className="search-group-head">{r.session.title || '新对话'}</div>
                 {r.hits.map((h) => (
                   <button
                     key={r.session.id + ':' + h.msgIndex}

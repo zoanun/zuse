@@ -70,6 +70,6 @@ describe('FilesPanel', () => {
     const loadFile = vi.fn(async (path: string) => ({ path, content: '', truncated: false, binary: true, size: 999 }))
     setup({ loadFile })
     fireEvent.click(await screen.findByText('readme.md'))
-    expect(await screen.findByText(/Binary file/)).toBeInTheDocument()
+    expect(await screen.findByText(/二进制文件/)).toBeInTheDocument()
   })
 })

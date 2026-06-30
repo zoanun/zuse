@@ -22,18 +22,18 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd }: { state: Ap
   return (
     <div className="main-header">
       <div className="mh-left">
-        <button className="icon-btn menu-btn" aria-label="Open sidebar" onClick={onMenu}>☰</button>
+        <button className="icon-btn menu-btn" aria-label="打开侧边栏" onClick={onMenu}>☰</button>
         <div className="brand mh-brand"><span className="mark">Z</span> zuse</div>
         <DirPicker cwd={state.cwd ?? ''} onChange={onChangeCwd} />
-        {state.model ? <span className="chip">model {state.model}</span> : null}
+        {state.model ? <span className="chip">模型 {state.model}</span> : null}
         {ctxText ? <span className="chip">{ctxText}{tok ? ' · ' + tok : ''}</span> : null}
         <span className={'chip ' + (conn === 'live' ? 'live' : conn === 'connecting' ? 'warn' : 'down')}>
-          <span className="dot" />{conn === 'live' ? 'connected' : conn === 'connecting' ? 'connecting' : 'offline'}
+          <span className="dot" />{conn === 'live' ? '已连接' : conn === 'connecting' ? '连接中' : '离线'}
         </span>
       </div>
       <div className="mh-right">
-        <button className="icon-btn" aria-label="Manage" title="Manage" onClick={onOpenManage}>⚙</button>
-        <button className="icon-btn" aria-label="Toggle theme" onClick={() => { toggleTheme(); force((n) => n + 1) }}>
+        <button className="icon-btn" aria-label="管理" title="管理" onClick={onOpenManage}>⚙</button>
+        <button className="icon-btn" aria-label="切换主题" onClick={() => { toggleTheme(); force((n) => n + 1) }}>
           {getTheme() === 'light' ? '☾' : '☀'}
         </button>
       </div>

@@ -101,19 +101,19 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
       {root ? <div className="file-root" title={root}>{root}</div> : null}
       {error ? <div className="mem-error">{error}</div> : null}
       <ul className="file-tree">
-        {children.has('') ? renderLevel('', 0) : <li className="mem-empty">Loading…</li>}
+        {children.has('') ? renderLevel('', 0) : <li className="mem-empty">加载中…</li>}
       </ul>
 
       {selected ? (
         <div className="file-preview">
           <div className="file-preview-head" title={selected}>{selected}</div>
           {previewLoading ? (
-            <div className="mem-empty">Loading…</div>
+            <div className="mem-empty">加载中…</div>
           ) : preview ? (
             preview.binary ? (
-              <div className="mem-empty">Binary file ({preview.size} bytes) — no preview.</div>
+              <div className="mem-empty">二进制文件（{preview.size} 字节）— 无法预览。</div>
             ) : (
-              <pre className="file-preview-body">{stripAnsi(preview.content)}{preview.truncated ? '\n\n[… truncated]' : ''}</pre>
+              <pre className="file-preview-body">{stripAnsi(preview.content)}{preview.truncated ? '\n\n[… 已截断]' : ''}</pre>
             )
           ) : null}
         </div>

@@ -33,7 +33,7 @@ describe('DirPicker', () => {
     render(<DirPicker cwd="/projects/x" onChange={onChange} />)
     fireEvent.click(screen.getByRole('button', { name: /x/ }))
     await screen.findByText('/projects/x') // current-path header
-    fireEvent.click(screen.getByText(/Use this folder/))
+    fireEvent.click(screen.getByText(/使用此目录/))
     expect(onChange).toHaveBeenCalledWith('/projects/x')
   })
 })

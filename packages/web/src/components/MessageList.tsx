@@ -47,7 +47,7 @@ export function MessageList({
 
   return (
     <div className="stream">
-      {messages.length === 0 ? <div className="empty">Ask zuse anything to get started.</div> : null}
+      {messages.length === 0 ? <div className="empty">输入任意内容，开始和 zuse 对话</div> : null}
       {visible.map((m) => {
         const msgEl = (
           <Message
@@ -63,7 +63,7 @@ export function MessageList({
           return (
             <label key={m.id} id={'msg-' + m.id} className={'msg-row' + (selected?.has(m.id) ? ' sel' : '')}>
               <input
-                type="checkbox" className="msg-check" aria-label="Select message"
+                type="checkbox" className="msg-check" aria-label="选择消息"
                 checked={selected?.has(m.id) ?? false} onChange={() => onToggleSelect?.(m.id)}
               />
               <div className="msg-row-body">{msgEl}</div>

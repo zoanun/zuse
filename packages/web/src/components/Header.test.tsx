@@ -7,13 +7,13 @@ describe('Header', () => {
   it('shows ctx used / window / percent', () => {
     render(<Header state={{ ...initialState, connection: 'live', model: 'claude', contextTokens: 4700, contextWindow: 200000 }} onMenu={() => {}} onOpenManage={() => {}} onChangeCwd={() => {}} />)
     expect(screen.getByText(/ctx 4.7k \/ 200.0k · 2%/)).toBeInTheDocument()
-    expect(screen.getByText('connected')).toBeInTheDocument()
+    expect(screen.getByText('已连接')).toBeInTheDocument()
   })
 
   it('⚙ button fires onOpenManage', () => {
     const onOpenManage = vi.fn()
     render(<Header state={initialState} onMenu={() => {}} onOpenManage={onOpenManage} onChangeCwd={() => {}} />)
-    fireEvent.click(screen.getByLabelText('Manage'))
+    fireEvent.click(screen.getByLabelText('管理'))
     expect(onOpenManage).toHaveBeenCalled()
   })
 })

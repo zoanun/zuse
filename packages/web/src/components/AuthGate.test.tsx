@@ -14,14 +14,14 @@ describe('AuthGate', () => {
   it('shows the setup form when the server is not configured', async () => {
     mockFetch(async () => json({ configured: false, authenticated: false }))
     render(<AuthGate><div>secret app</div></AuthGate>)
-    expect(await screen.findByText('Protect this server')).toBeInTheDocument()
+    expect(await screen.findByText('保护此服务器')).toBeInTheDocument()
     expect(screen.queryByText('secret app')).toBeNull()
   })
 
   it('shows the login form when configured but not authenticated', async () => {
     mockFetch(async () => json({ configured: true, authenticated: false }))
     render(<AuthGate><div>secret app</div></AuthGate>)
-    expect(await screen.findByText('Welcome back')).toBeInTheDocument()
+    expect(await screen.findByText('欢迎回来')).toBeInTheDocument()
   })
 
   it('renders children when already authenticated', async () => {
@@ -33,7 +33,7 @@ describe('AuthGate', () => {
   it('shows the error phase when the status check fails', async () => {
     mockFetch(async () => { throw new Error('boom') })
     render(<AuthGate><div>secret app</div></AuthGate>)
-    expect(await screen.findByText('Server unreachable')).toBeInTheDocument()
+    expect(await screen.findByText('无法连接服务器')).toBeInTheDocument()
   })
 
   it('surfaces "Incorrect password" on a 401 login', async () => {
@@ -42,10 +42,10 @@ describe('AuthGate', () => {
         ? json({ configured: true, authenticated: false })
         : json({}, false, 401))
     render(<AuthGate><div>secret app</div></AuthGate>)
-    const input = await screen.findByPlaceholderText('Password')
+    const input = await screen.findByPlaceholderText('密码')
     fireEvent.change(input, { target: { value: 'wrong' } })
-    fireEvent.click(screen.getByText('Log in'))
-    expect(await screen.findByText('Incorrect password')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('登录'))
+    expect(await screen.findByText('密码错误')).toBeInTheDocument()
   })
 
   it('shows a network-error message when login fetch rejects', async () => {
@@ -55,9 +55,9 @@ describe('AuthGate', () => {
       throw new Error('offline')
     })
     render(<AuthGate><div>secret app</div></AuthGate>)
-    const input = await screen.findByPlaceholderText('Password')
+    const input = await screen.findByPlaceholderText('密码')
     fireEvent.change(input, { target: { value: 'x' } })
-    fireEvent.click(screen.getByText('Log in'))
-    await waitFor(() => expect(screen.getByText(/Network error/)).toBeInTheDocument())
+    fireEvent.click(screen.getByText('登录'))
+    await waitFor(() => expect(screen.getByText(/网络错误/)).toBeInTheDocument())
   })
 })

@@ -167,6 +167,6 @@ describe('reduce', () => {
     const notices = s.messages.filter((m) => m.role === 'system')
     expect(notices).toHaveLength(1)
     expect(notices[0]!.noticeKind).toBe('info')
-    expect(notices[0]!.parts[0]).toEqual({ kind: 'text', text: 'reverted to checkpoint' })
+    expect(notices[0]!.parts[0]).toEqual({ kind: 'text', text: '已回退到检查点' })
   })
 })

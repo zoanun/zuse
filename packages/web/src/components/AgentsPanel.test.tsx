@@ -86,7 +86,7 @@ describe('AgentsPanel', () => {
     expect(screen.getByText('finished one')).toBeInTheDocument()
     expect(screen.getByText('still running')).toBeInTheDocument()
     // header shows the running count and the done/total tally
-    expect(screen.getByText(/1 running · 1 \/ 2/)).toBeInTheDocument()
+    expect(screen.getByText(/1 运行中 · 1 \/ 2/)).toBeInTheDocument()
     // a returned agent gets the green check; a waiting one the pulsing run dot
     expect(container.querySelector('.ti.ag.done .ag-mark.ag-done')).not.toBeNull()
     expect(container.querySelector('.ti.ag.doing .ag-mark.ag-run')).not.toBeNull()

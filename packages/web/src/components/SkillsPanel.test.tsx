@@ -30,9 +30,9 @@ describe('SkillsPanel', () => {
 
   it('clicking the toggle on an enabled skill disables it; on a disabled one enables it', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByLabelText('Disable skill')) // brainstorm (enabled)
+    fireEvent.click(screen.getByLabelText('禁用技能')) // brainstorm (enabled)
     expect(props.onUpdate).toHaveBeenCalledWith('brainstorm', { enabled: false })
-    fireEvent.click(screen.getByLabelText('Enable skill')) // deploy (disabled)
+    fireEvent.click(screen.getByLabelText('启用技能')) // deploy (disabled)
     expect(props.onUpdate).toHaveBeenCalledWith('deploy', { enabled: true })
   })
 
@@ -45,15 +45,15 @@ describe('SkillsPanel', () => {
 
   it('edit (✎) opens inline form; save fires onUpdate with description+body', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getAllByLabelText('Edit skill')[0]!)
+    fireEvent.click(screen.getAllByLabelText('编辑技能')[0]!)
     fireEvent.change(screen.getByDisplayValue('use when planning'), { target: { value: 'use rarely' } })
     fireEvent.change(screen.getByDisplayValue('Brainstorm body.'), { target: { value: 'New body.' } })
-    fireEvent.click(screen.getByText('Save'))
+    fireEvent.click(screen.getByText('保存'))
     expect(props.onUpdate).toHaveBeenCalledWith('brainstorm', { description: 'use rarely', body: 'New body.' })
   })
 
   it('shows an empty state when there are no skills', () => {
     renderPanel({ skills: [] })
-    expect(screen.getByText(/No skills/)).toBeInTheDocument()
+    expect(screen.getByText(/未找到技能/)).toBeInTheDocument()
   })
 })

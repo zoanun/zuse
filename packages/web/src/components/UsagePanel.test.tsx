@@ -37,22 +37,22 @@ describe('UsagePanel', () => {
     // Total (1.2M + 300k + 5k = 1.505M → "1.5M"); assert via its own element to dodge
     // token-string collisions with the model/session rows.
     expect(container.querySelector('.usage-total-num')?.textContent).toBe('1.5M')
-    expect(container.querySelector('.usage-total-label')?.textContent).toContain('2 sessions')
+    expect(container.querySelector('.usage-total-label')?.textContent).toContain('2 个会话')
     // Model names appear in both the by-model and by-session sections → use getAllByText.
     expect(screen.getAllByText('opus').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('sonnet').length).toBeGreaterThanOrEqual(1)
     // Session titles are unique.
     expect(screen.getByText('Big chat')).toBeInTheDocument()
-    expect(screen.getByText('(untitled)')).toBeInTheDocument() // empty title falls back
+    expect(screen.getByText('(未命名)')).toBeInTheDocument() // empty title falls back
   })
 
   it('shows an empty state when no usage recorded', () => {
     render(<UsagePanel stats={{ total: { input_tokens: 0, output_tokens: 0 }, sessionCount: 0, byModel: [], sessions: [] }} />)
-    expect(screen.getByText(/No usage recorded/)).toBeInTheDocument()
+    expect(screen.getByText(/暂无用量记录/)).toBeInTheDocument()
   })
 
   it('shows a loading state', () => {
     render(<UsagePanel loading />)
-    expect(screen.getByText(/Loading/)).toBeInTheDocument()
+    expect(screen.getByText(/加载中/)).toBeInTheDocument()
   })
 })

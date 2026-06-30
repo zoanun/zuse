@@ -49,8 +49,8 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
   const { copied, copy } = useCopy()
   return (
     <div className="code-wrap">
-      <button type="button" className="code-copy" onClick={() => copy(ref.current?.textContent ?? '')} aria-label="Copy code">
-        {copied ? '✓ Copied' : 'Copy'}
+      <button type="button" className="code-copy" onClick={() => copy(ref.current?.textContent ?? '')} aria-label="复制代码">
+        {copied ? '✓ 已复制' : '复制'}
       </button>
       <pre ref={ref} {...rest} />
     </div>

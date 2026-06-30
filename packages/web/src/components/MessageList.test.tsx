@@ -25,7 +25,7 @@ describe('MessageList', () => {
   })
   it('shows the empty state when there are no messages', () => {
     render(<MessageList messages={[]} thinking={false} />)
-    expect(screen.getByText('Ask zuse anything to get started.')).toBeInTheDocument()
+    expect(screen.getByText('输入任意内容，开始和 zuse 对话')).toBeInTheDocument()
   })
 
   it('hides the empty state once a message exists', () => {
@@ -33,7 +33,7 @@ describe('MessageList', () => {
       messages={[{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }]}
       thinking={false}
     />)
-    expect(screen.queryByText('Ask zuse anything to get started.')).toBeNull()
+    expect(screen.queryByText('输入任意内容，开始和 zuse 对话')).toBeNull()
   })
 
   it('renders system notice messages with their kind classes (error→bad, warn→warn, info→live)', () => {
@@ -56,12 +56,12 @@ describe('MessageList', () => {
   it('puts the retry control only on the latest assistant reply, and not while thinking', () => {
     const onRetry = vi.fn()
     const { rerender } = render(<MessageList messages={convo} thinking={false} onRetry={onRetry} />)
-    const retries = screen.getAllByLabelText('retry')
+    const retries = screen.getAllByLabelText('重试')
     expect(retries).toHaveLength(1)
     fireEvent.click(retries[0]!)
     expect(onRetry).toHaveBeenCalled()
     rerender(<MessageList messages={convo} thinking={true} onRetry={onRetry} />)
-    expect(screen.queryByLabelText('retry')).toBeNull()
+    expect(screen.queryByLabelText('重试')).toBeNull()
   })
 
   it('in share mode shows a checkbox only for prose messages and toggles selection', () => {
@@ -74,8 +74,8 @@ describe('MessageList', () => {
     expect(checks[0]!.checked).toBe(true)
     fireEvent.click(checks[0]!)
     expect(onToggle).toHaveBeenCalledWith('u1')
-    expect(screen.queryByLabelText('share')).toBeNull()
-    expect(screen.queryByLabelText('retry')).toBeNull()
+    expect(screen.queryByLabelText('分享')).toBeNull()
+    expect(screen.queryByLabelText('重试')).toBeNull()
   })
 
   it('share mode hides tool-only assistant turns (nothing to export)', () => {

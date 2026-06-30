@@ -31,10 +31,10 @@ function Breakdown({ usage }: { usage: Usage }) {
   const cacheWrite = usage.cache_creation_input_tokens ?? 0
   return (
     <span className="usage-break">
-      <span title="New input tokens (excludes cache)">in {formatTokens(usage.input_tokens)}</span>
-      <span title="Output tokens">out {formatTokens(usage.output_tokens)}</span>
-      {cacheRead > 0 ? <span title="Input tokens served from the prompt cache (cheap cache hits)">cache read {formatTokens(cacheRead)}</span> : null}
-      {cacheWrite > 0 ? <span title="Input tokens newly written to the prompt cache (first turn: system prompt + tool defs; later turns: new conversation)">cache write {formatTokens(cacheWrite)}</span> : null}
+      <span title="新输入 token（不含缓存）">in {formatTokens(usage.input_tokens)}</span>
+      <span title="输出 token">out {formatTokens(usage.output_tokens)}</span>
+      {cacheRead > 0 ? <span title="从 prompt 缓存命中读取的输入 token（廉价的缓存命中）">cache read {formatTokens(cacheRead)}</span> : null}
+      {cacheWrite > 0 ? <span title="新写入 prompt 缓存的输入 token（首回合：系统提示 + 工具定义；后续回合：新增对话）">cache write {formatTokens(cacheWrite)}</span> : null}
     </span>
   )
 }
@@ -43,39 +43,39 @@ export function UsagePanel({ stats, loading, error }: Props) {
   return (
     <div className="mem-panel">
       <div className="mem-toolbar">
-        <div className="persona-hint">Token usage across all saved sessions (no cost — token-only). Per-model totals are approximate when a session failed over between models.</div>
+        <div className="persona-hint">所有已保存会话的 token 用量（不计费用，仅统计 token）。会话在不同模型间发生故障切换时，各模型的统计为近似值。</div>
       </div>
 
       {error ? <div className="mem-error">{error}</div> : null}
-      {loading ? <div className="mem-empty">Loading…</div> : null}
+      {loading ? <div className="mem-empty">加载中…</div> : null}
 
       {stats && !loading ? (
         stats.sessionCount === 0 ? (
-          <div className="mem-empty">No usage recorded yet.</div>
+          <div className="mem-empty">暂无用量记录。</div>
         ) : (
           <>
             <div className="usage-total">
               <div className="usage-total-num">{formatTokens(totalTokens(stats.total))}</div>
-              <div className="usage-total-label">total tokens · {stats.sessionCount} session{stats.sessionCount === 1 ? '' : 's'}</div>
+              <div className="usage-total-label">总 token · {stats.sessionCount} 个会话</div>
               <Breakdown usage={stats.total} />
             </div>
 
-            <div className="usage-section-title">By model</div>
+            <div className="usage-section-title">按模型</div>
             <ul className="mem-list">
               {stats.byModel.map((m) => (
                 <li key={m.model} className="usage-row">
                   <span className="usage-name" title={m.model}>{m.model}</span>
-                  <span className="usage-sub">{m.sessions} session{m.sessions === 1 ? '' : 's'}</span>
+                  <span className="usage-sub">{m.sessions} 个会话</span>
                   <span className="usage-tokens">{formatTokens(totalTokens(m.usage))}</span>
                 </li>
               ))}
             </ul>
 
-            <div className="usage-section-title">By session</div>
+            <div className="usage-section-title">按会话</div>
             <ul className="mem-list">
               {stats.sessions.map((s) => (
                 <li key={s.id} className="usage-row">
-                  <span className="usage-name" title={s.title || s.id}>{s.title || '(untitled)'}</span>
+                  <span className="usage-name" title={s.title || s.id}>{s.title || '(未命名)'}</span>
                   <span className="usage-sub" title={s.model}>{s.model}</span>
                   <span className="usage-tokens">{formatTokens(totalTokens(s.usage))}</span>
                 </li>

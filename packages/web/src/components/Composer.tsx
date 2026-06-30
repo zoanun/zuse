@@ -30,7 +30,7 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
         <textarea
           ref={taRef}
           rows={1}
-          placeholder="Message zuse…"
+          placeholder="给 zuse 发消息…"
           value={value}
           disabled={disabled}
           onChange={(e) => {
@@ -44,8 +44,8 @@ export function Composer({ disabled, onSend, onStop }: { disabled: boolean; onSe
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
           }}
         />
-        {disabled ? <button className="ghost" onClick={onStop}>Stop</button> : null}
-        <button className="send-btn" aria-label="Send message" onClick={submit} disabled={disabled}>↑</button>
+        {disabled ? <button className="ghost" onClick={onStop}>停止</button> : null}
+        <button className="send-btn" aria-label="发送消息" onClick={submit} disabled={disabled}>↑</button>
       </div>
     </div>
   )

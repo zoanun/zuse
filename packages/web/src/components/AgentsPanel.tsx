@@ -59,8 +59,8 @@ export function AgentsPanel({ messages }: { messages: Message[] }) {
   return (
     <div className="todos agents">
       <div className="th">
-        <span>Sub-agents</span>
-        <span>{running > 0 ? `${running} running · ` : ''}{done} / {agents.length}</span>
+        <span>子代理</span>
+        <span>{running > 0 ? `${running} 运行中 · ` : ''}{done} / {agents.length}</span>
       </div>
       {agents.map((a) => (
         <div key={a.id} className={'ti ag ' + a.status}>

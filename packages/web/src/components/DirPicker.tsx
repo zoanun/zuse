@@ -48,13 +48,13 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
 
   return (
     <div className="dirpick">
-      <button ref={btnRef} className="chip dirpick-btn" title={cwd || 'working directory'} onClick={openPicker}>
-        📁 {cwd ? basename(cwd) : '(dir)'}
+      <button ref={btnRef} className="chip dirpick-btn" title={cwd || '工作目录'} onClick={openPicker}>
+        📁 {cwd ? basename(cwd) : '(目录)'}
       </button>
       {open ? createPortal(
         <>
           <div className="dirpick-backdrop" onClick={() => setOpen(false)} />
-          <div className="dirpick-pop" style={{ top: pos.top, left: pos.left }} role="dialog" aria-label="Choose working directory">
+          <div className="dirpick-pop" style={{ top: pos.top, left: pos.left }} role="dialog" aria-label="选择工作目录">
             <div className="dirpick-cur" title={nav?.path}>{nav?.path ?? '…'}</div>
             {nav && nav.drives.length > 0 ? (
               <div className="dirpick-drives">
@@ -68,14 +68,14 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
               {nav?.parent ? (
                 <li><button className="dirpick-dir dirpick-up" onClick={() => void go(nav.parent!)}>↑ ..</button></li>
               ) : null}
-              {!nav && !error ? <li className="mem-empty">Loading…</li> : null}
+              {!nav && !error ? <li className="mem-empty">加载中…</li> : null}
               {nav?.dirs.map((d) => (
                 <li key={d.path}><button className="dirpick-dir" onClick={() => void go(d.path)}>{d.name}</button></li>
               ))}
-              {nav && nav.dirs.length === 0 ? <li className="mem-empty">(no subfolders)</li> : null}
+              {nav && nav.dirs.length === 0 ? <li className="mem-empty">(无子目录)</li> : null}
             </ul>
             <div className="dirpick-actions">
-              <button className="dirpick-ok" onClick={confirm} disabled={!nav}>Use this folder</button>
+              <button className="dirpick-ok" onClick={confirm} disabled={!nav}>使用此目录</button>
             </div>
           </div>
         </>,

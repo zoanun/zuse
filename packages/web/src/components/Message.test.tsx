@@ -19,13 +19,13 @@ describe('Message', () => {
       msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'do it' }], checkpointId: 'cpX' }}
       onRevert={onRevert}
     />)
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to this point' }))
+    fireEvent.click(screen.getByRole('button', { name: '回退到此处' }))
     expect(onRevert).toHaveBeenCalledWith('cpX')
   })
 
   it('shows no revert button on a user message without a checkpointId', () => {
     render(<Message msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'no cp' }] }} onRevert={() => {}} />)
-    expect(screen.queryByRole('button', { name: 'Revert to this point' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '回退到此处' })).toBeNull()
   })
 
   it('never shows a revert button on an assistant message', () => {
@@ -33,7 +33,7 @@ describe('Message', () => {
       msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hi' }], checkpointId: 'cpX' }}
       onRevert={() => {}}
     />)
-    expect(screen.queryByRole('button', { name: 'Revert to this point' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '回退到此处' })).toBeNull()
   })
 
   it('renders assistant markdown (heading + bold)', () => {
@@ -143,17 +143,17 @@ describe('Message', () => {
 
   it('shows a copy button on an assistant reply with prose, none on a tool-only turn', () => {
     const { rerender } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hello' }] }} />)
-    expect(screen.getByLabelText('Copy reply')).toBeInTheDocument()
+    expect(screen.getByLabelText('复制回复')).toBeInTheDocument()
     rerender(<Message msg={{ id: 'a2', role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'Bash', input: {} }] }} />)
-    expect(screen.queryByLabelText('Copy reply')).toBeNull()
+    expect(screen.queryByLabelText('复制回复')).toBeNull()
   })
 
   it('shows a share button when onShare is provided, and hides actions in share mode', () => {
     const { rerender } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hi' }] }} onShare={() => {}} />)
-    expect(screen.getByLabelText('share')).toBeInTheDocument()
+    expect(screen.getByLabelText('分享')).toBeInTheDocument()
     rerender(<Message msg={{ id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'hi' }] }} onShare={() => {}} shareMode />)
-    expect(screen.queryByLabelText('share')).toBeNull()
-    expect(screen.queryByLabelText('Copy reply')).toBeNull()
+    expect(screen.queryByLabelText('分享')).toBeNull()
+    expect(screen.queryByLabelText('复制回复')).toBeNull()
   })
 
   it('in share mode renders only prose, dropping tool cards', () => {

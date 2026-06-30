@@ -18,12 +18,12 @@ export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage' | 'f
 
 interface NavEntry { id: ManagePanel; label: string; enabled: boolean }
 const NAV: NavEntry[] = [
-  { id: 'memory', label: 'Memory', enabled: true },
-  { id: 'prompts', label: 'Personas', enabled: true },
-  { id: 'skills', label: 'Skills', enabled: true },
+  { id: 'memory', label: '记忆', enabled: true },
+  { id: 'prompts', label: '人设', enabled: true },
+  { id: 'skills', label: '技能', enabled: true },
   { id: 'mcp', label: 'MCP', enabled: true },
-  { id: 'usage', label: 'Usage', enabled: true },
-  { id: 'files', label: 'Files', enabled: true },
+  { id: 'usage', label: '用量', enabled: true },
+  { id: 'files', label: '文件', enabled: true },
 ]
 
 interface Props {
@@ -200,10 +200,10 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
   return (
     <div className={'manage-root' + (open ? ' open' : '')} aria-hidden={!open}>
       <div className="manage-backdrop" onClick={onClose} />
-      <aside className="manage-drawer" role="dialog" aria-label="Manage" aria-modal="true">
+      <aside className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true">
         <div className="manage-head">
-          <span className="manage-title">Manage</span>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}>×</button>
+          <span className="manage-title">管理</span>
+          <button className="icon-btn" aria-label="关闭" onClick={onClose}>×</button>
         </div>
         <div className="manage-body">
           <nav className="manage-nav">
@@ -214,7 +214,7 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
                 disabled={!n.enabled}
                 onClick={() => n.enabled && onSelectPanel(n.id)}
               >
-                {n.label}{!n.enabled ? <span className="manage-soon">soon</span> : null}
+                {n.label}{!n.enabled ? <span className="manage-soon">即将</span> : null}
               </button>
             ))}
           </nav>
@@ -231,7 +231,7 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
               ? <UsageContainer active={open && activePanel === 'usage'} />
               : activePanel === 'files'
               ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} />
-              : <div className="mem-empty">Coming soon.</div>}
+              : <div className="mem-empty">敬请期待</div>}
           </div>
         </div>
       </aside>

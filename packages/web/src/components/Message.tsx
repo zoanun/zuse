@@ -49,8 +49,8 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
           <button
             type="button"
             className="msg-revert"
-            title="Revert to this point"
-            aria-label="Revert to this point"
+            title="回退到此处"
+            aria-label="回退到此处"
             onClick={() => onRevert(cp)}
           >
             <RevertIcon />
@@ -69,12 +69,12 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
         <div className="msg-actions">
           <CopyButton text={md} />
           {onShare ? (
-            <MsgAction className="msg-share" title="Share — pick messages to export" label="share" onClick={() => onShare(msg.id)}>
+            <MsgAction className="msg-share" title="分享 — 选择要导出的消息" label="分享" onClick={() => onShare(msg.id)}>
               <ShareIcon />
             </MsgAction>
           ) : null}
           {onRetry ? (
-            <MsgAction className="msg-retry" title="Retry — re-run this question from a clean checkpoint" label="retry" onClick={onRetry}>
+            <MsgAction className="msg-retry" title="重试 — 从干净的检查点重跑此问题" label="重试" onClick={onRetry}>
               <RetryIcon />
             </MsgAction>
           ) : null}
@@ -99,7 +99,7 @@ function MsgAction({ className, title, label, onClick, children }: {
 function CopyButton({ text }: { text: string }) {
   const { copied, copy } = useCopy()
   return (
-    <MsgAction title="Copy reply (markdown)" label="Copy reply" onClick={() => copy(text)}>
+    <MsgAction title="复制回复（markdown）" label="复制回复" onClick={() => copy(text)}>
       {copied ? '✓' : <CopyIcon />}
     </MsgAction>
   )
@@ -172,7 +172,7 @@ function ThinkBlock({ text }: { text: string }) {
   if (text.trim() === '') return null
   return (
     <details className="think">
-      <summary>💭 thinking</summary>
+      <summary>💭 思考</summary>
       <div className="think-body">{text}</div>
     </details>
   )

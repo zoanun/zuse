@@ -80,10 +80,10 @@ export function Shell() {
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">
-              <span className="share-bar-label">Select messages to share · {shareSel.size} selected · Esc to cancel</span>
+              <span className="share-bar-label">选择要分享的消息 · 已选 {shareSel.size} 条 · 按 Esc 取消</span>
               <div className="share-bar-actions">
-                <button type="button" className="share-go" onClick={confirmShare} disabled={shareSel.size === 0}>Export selected</button>
-                <button type="button" className="share-cancel" onClick={() => setShareSel(null)}>Cancel</button>
+                <button type="button" className="share-go" onClick={confirmShare} disabled={shareSel.size === 0}>导出所选</button>
+                <button type="button" className="share-cancel" onClick={() => setShareSel(null)}>取消</button>
               </div>
             </div>
           ) : null}

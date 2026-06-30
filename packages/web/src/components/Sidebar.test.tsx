@@ -41,7 +41,7 @@ describe('Sidebar', () => {
     // empty-title session falls back to "New chat" (separate from the button)
     const items = screen.getAllByRole('listitem')
     expect(items).toHaveLength(2)
-    expect(within(items[1]!).getByText('New chat')).toBeInTheDocument()
+    expect(within(items[1]!).getByText('新对话')).toBeInTheDocument()
   })
 
   it('marks the current session row active', () => {
@@ -58,26 +58,26 @@ describe('Sidebar', () => {
   })
 
   it('New chat button fires onNewChat', () => {
-    const props = renderSidebar({ sessions: [] }) // no rows → only the button reads "New chat"
-    fireEvent.click(screen.getByText(/New chat/))
+    const props = renderSidebar({ sessions: [] }) // no rows → only the button reads "新对话"
+    fireEvent.click(screen.getByText(/新对话/))
     expect(props.onNewChat).toHaveBeenCalled()
   })
 
   it('delete requires inline confirm before firing onDelete', () => {
     const props = renderSidebar()
     const items = screen.getAllByRole('listitem')
-    fireEvent.click(within(items[0]!).getByLabelText('Delete session'))
+    fireEvent.click(within(items[0]!).getByLabelText('删除会话'))
     // not yet deleted — confirm UI shown
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(items[0]!).getByLabelText('Confirm delete'))
+    fireEvent.click(within(items[0]!).getByLabelText('确认删除'))
     expect(props.onDelete).toHaveBeenCalledWith('a')
   })
 
   it('canceling the delete confirm does not fire onDelete', () => {
     const props = renderSidebar()
     const items = screen.getAllByRole('listitem')
-    fireEvent.click(within(items[0]!).getByLabelText('Delete session'))
-    fireEvent.click(within(items[0]!).getByLabelText('Cancel delete'))
+    fireEvent.click(within(items[0]!).getByLabelText('删除会话'))
+    fireEvent.click(within(items[0]!).getByLabelText('取消删除'))
     expect(props.onDelete).not.toHaveBeenCalled()
   })
 

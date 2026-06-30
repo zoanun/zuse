@@ -46,13 +46,13 @@ afterEach(() => { vi.restoreAllMocks() })
 describe('ManageDrawer', () => {
   it('renders the nav with Memory active and every panel enabled (no "soon" left)', () => {
     renderDrawer()
-    const memBtn = screen.getByRole('button', { name: /Memory/ })
+    const memBtn = screen.getByRole('button', { name: /记忆/ })
     expect(memBtn.className).toContain('active')
-    // All panels (Memory/Personas/Skills/MCP/Usage/Files) are now shipped — none disabled.
-    for (const name of [/Memory/, /Personas/, /Skills/, /MCP/, /Usage/, /Files/]) {
+    // All panels (记忆/人设/技能/MCP/用量/文件) are now shipped — none disabled.
+    for (const name of [/记忆/, /人设/, /技能/, /MCP/, /用量/, /文件/]) {
       expect((screen.getByRole('button', { name }) as HTMLButtonElement).disabled).toBe(false)
     }
-    expect(screen.queryByText('soon')).toBeNull()
+    expect(screen.queryByText('即将')).toBeNull()
   })
 
   it('loads personas via listPersonas when switched to the Personas panel', async () => {
@@ -80,7 +80,7 @@ describe('ManageDrawer', () => {
   it('the close (×) button calls onClose', async () => {
     const props = renderDrawer()
     await waitFor(() => expect(listMemory).toHaveBeenCalled())
-    fireEvent.click(screen.getByLabelText('Close'))
+    fireEvent.click(screen.getByLabelText('关闭'))
     expect(props.onClose).toHaveBeenCalled()
   })
 

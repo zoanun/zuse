@@ -24,16 +24,16 @@ function PersonaForm({ initial, onSubmit, onCancel }: {
   return (
     <form className="mem-form" onSubmit={(e) => { e.preventDefault(); if (valid) onSubmit({ name: name.trim(), content }) }}>
       <label className="mem-field">
-        <span className="mem-field-label">Name</span>
-        <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Reviewer" />
+        <span className="mem-field-label">名称</span>
+        <input type="text" autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 Reviewer" />
       </label>
       <label className="mem-field">
-        <span className="mem-field-label">Content <span className="mem-opt">(layered on the read-only core prompt)</span></span>
-        <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Persona instructions (markdown)…" />
+        <span className="mem-field-label">内容 <span className="mem-opt">(叠加在只读的核心提示词之上)</span></span>
+        <textarea rows={6} value={content} onChange={(e) => setContent(e.target.value)} placeholder="人设指令（markdown）…" />
       </label>
       <div className="mem-form-actions">
-        <button type="submit" disabled={!valid}>{initial ? 'Save' : 'Add'}</button>
-        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
+        <button type="submit" disabled={!valid}>{initial ? '保存' : '新增'}</button>
+        <button type="button" className="ghost" onClick={onCancel}>取消</button>
       </div>
     </form>
   )
@@ -51,21 +51,21 @@ function PersonaRow({ item, active, onActivate, onEdit, onDelete }: {
     <li className={'mem-item' + (active ? ' persona-active' : '')}>
       <button
         className={'persona-toggle' + (active ? ' on' : '')}
-        title={active ? 'Active — click to deactivate' : 'Activate this persona'}
-        aria-label={active ? 'Deactivate persona' : 'Activate persona'}
+        title={active ? '已启用 —— 点击停用' : '启用此人设'}
+        aria-label={active ? '停用人设' : '启用人设'}
         aria-pressed={active}
         onClick={() => onActivate(active ? null : item.id)}
       />
       <span className="mem-label" title={item.content}>{item.name}</span>
       {confirming ? (
         <span className="mem-confirm">
-          <button className="mem-confirm-yes" title="Confirm delete" aria-label="Confirm delete" onClick={() => { setConfirming(false); onDelete(item.id) }}>✓</button>
-          <button className="mem-confirm-no" title="Cancel" aria-label="Cancel delete" onClick={() => setConfirming(false)}>✕</button>
+          <button className="mem-confirm-yes" title="确认删除" aria-label="确认删除" onClick={() => { setConfirming(false); onDelete(item.id) }}>✓</button>
+          <button className="mem-confirm-no" title="取消" aria-label="取消删除" onClick={() => setConfirming(false)}>✕</button>
         </span>
       ) : (
         <span className="mem-actions">
-          <button className="mem-edit" title="Edit" aria-label="Edit persona" onClick={onEdit}>✎</button>
-          <button className="mem-del" title="Delete" aria-label="Delete persona" onClick={() => setConfirming(true)}>×</button>
+          <button className="mem-edit" title="编辑" aria-label="编辑人设" onClick={onEdit}>✎</button>
+          <button className="mem-del" title="删除" aria-label="删除人设" onClick={() => setConfirming(true)}>×</button>
         </span>
       )}
     </li>
@@ -80,8 +80,8 @@ export function PersonasPanel(props: Props) {
   return (
     <div className="mem-panel">
       <div className="mem-toolbar">
-        <div className="persona-hint">Activate one persona — it layers on the read-only core prompt. Takes effect on new chats.</div>
-        <button className="mem-new" onClick={() => setEditing((e) => (e === 'new' ? null : 'new'))}>＋ New</button>
+        <div className="persona-hint">启用一个人设 —— 它会叠加在只读的核心提示词之上。在新对话中生效。</div>
+        <button className="mem-new" onClick={() => setEditing((e) => (e === 'new' ? null : 'new'))}>＋ 新增</button>
       </div>
 
       {editing === 'new' ? (
@@ -89,8 +89,8 @@ export function PersonasPanel(props: Props) {
       ) : null}
 
       {error ? <div className="mem-error">{error}</div> : null}
-      {loading ? <div className="mem-empty">Loading…</div> : null}
-      {!loading && personas.length === 0 && !error ? <div className="mem-empty">No personas yet.</div> : null}
+      {loading ? <div className="mem-empty">加载中…</div> : null}
+      {!loading && personas.length === 0 && !error ? <div className="mem-empty">暂无人设。</div> : null}
 
       <ul className="mem-list">
         {personas.map((p) => (

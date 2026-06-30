@@ -32,47 +32,47 @@ describe('PersonasPanel', () => {
     const props = renderPanel()
     const rows = screen.getAllByRole('listitem')
     // p2 is inactive → activate p2
-    fireEvent.click(within(rows[1]!).getByLabelText('Activate persona'))
+    fireEvent.click(within(rows[1]!).getByLabelText('启用人设'))
     expect(props.onActivate).toHaveBeenCalledWith('p2')
     // p1 is active → deactivate (null)
-    fireEvent.click(within(rows[0]!).getByLabelText('Deactivate persona'))
+    fireEvent.click(within(rows[0]!).getByLabelText('停用人设'))
     expect(props.onActivate).toHaveBeenCalledWith(null)
   })
 
   it('New reveals the form; submit fires onCreate with name+content', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByText(/New/))
-    fireEvent.change(screen.getByPlaceholderText('e.g. Reviewer'), { target: { value: 'Coach' } })
-    fireEvent.change(screen.getByPlaceholderText(/Persona instructions/), { target: { value: 'encourage' } })
-    fireEvent.click(screen.getByText('Add'))
+    fireEvent.click(screen.getByText(/新增/))
+    fireEvent.change(screen.getByPlaceholderText('例如 Reviewer'), { target: { value: 'Coach' } })
+    fireEvent.change(screen.getByPlaceholderText(/人设指令/), { target: { value: 'encourage' } })
+    fireEvent.click(screen.getByText('新增'))
     expect(props.onCreate).toHaveBeenCalledWith({ name: 'Coach', content: 'encourage' })
   })
 
   it('add form will not submit without name and content', () => {
     renderPanel()
-    fireEvent.click(screen.getByText(/New/))
-    expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText(/新增/))
+    expect((screen.getByText('新增') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('edit (✎) opens inline form; save fires onUpdate', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getAllByLabelText('Edit persona')[0]!)
+    fireEvent.click(screen.getAllByLabelText('编辑人设')[0]!)
     fireEvent.change(screen.getByDisplayValue('be terse'), { target: { value: 'be very terse' } })
-    fireEvent.click(screen.getByText('Save'))
+    fireEvent.click(screen.getByText('保存'))
     expect(props.onUpdate).toHaveBeenCalledWith('p1', { name: 'Reviewer', content: 'be very terse' })
   })
 
   it('delete requires inline confirm', () => {
     const props = renderPanel()
     const first = screen.getAllByRole('listitem')[0]!
-    fireEvent.click(within(first).getByLabelText('Delete persona'))
+    fireEvent.click(within(first).getByLabelText('删除人设'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(first).getByLabelText('Confirm delete'))
+    fireEvent.click(within(first).getByLabelText('确认删除'))
     expect(props.onDelete).toHaveBeenCalledWith('p1')
   })
 
   it('shows an empty state when there are no personas', () => {
     renderPanel({ personas: [], activeId: null })
-    expect(screen.getByText(/No personas/)).toBeInTheDocument()
+    expect(screen.getByText(/暂无人设/)).toBeInTheDocument()
   })
 })

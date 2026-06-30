@@ -26,16 +26,15 @@ function renderPanel(over: Partial<Parameters<typeof MemoryPanel>[0]> = {}) {
     onDelete: vi.fn(),
     ...over,
   }
-  render(<MemoryPanel {...props} />)
-  return props
+  return { ...props, ...render(<MemoryPanel {...props} />) }
 }
 
 describe('MemoryPanel', () => {
   it('renders rows grouped by type with headings', () => {
     renderPanel()
-    expect(screen.getByText('User')).toBeInTheDocument()
-    expect(screen.getByText('Project')).toBeInTheDocument()
-    expect(screen.getByText('Insight')).toBeInTheDocument()
+    expect(screen.getByText('用户')).toBeInTheDocument()
+    expect(screen.getByText('项目')).toBeInTheDocument()
+    expect(screen.getByText('洞察')).toBeInTheDocument()
     // hook preferred as the row label
     expect(screen.getByText('always greet')).toBeInTheDocument()
     // content shown when no hook
@@ -43,27 +42,28 @@ describe('MemoryPanel', () => {
   })
 
   it('shows project tag and a global tag for empty project', () => {
-    renderPanel()
+    const { container } = renderPanel()
     // tag shows the real working-directory path (mapped from the slug), not the slug
     expect(screen.getAllByText('E:/ai-study/zuse').length).toBeGreaterThan(0)
-    expect(screen.getByText('global')).toBeInTheDocument()
+    // the row's global tag (distinct from the "全局" filter <option>)
+    expect(container.querySelector('.mem-tag-global')?.textContent).toBe('全局')
   })
 
   it('typing in the search box fires onQueryChange', () => {
     const props = renderPanel()
-    fireEvent.change(screen.getByLabelText('Search memories'), { target: { value: 'race' } })
+    fireEvent.change(screen.getByLabelText('搜索记忆'), { target: { value: 'race' } })
     expect(props.onQueryChange).toHaveBeenCalledWith('race')
   })
 
   it('changing the project filter fires onProjectFilterChange', () => {
     const props = renderPanel()
-    fireEvent.change(screen.getByLabelText('Filter by project'), { target: { value: 'zuse' } })
+    fireEvent.change(screen.getByLabelText('按项目筛选'), { target: { value: 'zuse' } })
     expect(props.onProjectFilterChange).toHaveBeenCalledWith('zuse')
   })
 
   it('project filter <select> lists distinct projects plus All/Global', () => {
     renderPanel()
-    const sel = screen.getByLabelText('Filter by project') as HTMLSelectElement
+    const sel = screen.getByLabelText('按项目筛选') as HTMLSelectElement
     const values = Array.from(sel.options).map((o) => o.value)
     expect(values).toEqual(['', GLOBAL_FILTER, 'zuse'])
   })
@@ -76,28 +76,28 @@ describe('MemoryPanel', () => {
 
   it('New button reveals the add form; submit fires onCreate', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByText(/New/))
-    const textarea = screen.getByPlaceholderText('What to remember…')
+    fireEvent.click(screen.getByText(/新增/))
+    const textarea = screen.getByPlaceholderText('要记住的内容…')
     fireEvent.change(textarea, { target: { value: 'new memory' } })
-    fireEvent.click(screen.getByText('Add'))
+    fireEvent.click(screen.getByText('新增'))
     expect(props.onCreate).toHaveBeenCalledWith(expect.objectContaining({ type: 'user', content: 'new memory' }))
   })
 
   it('add form does not submit empty content', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByText(/New/))
+    fireEvent.click(screen.getByText(/新增/))
     // submit button disabled when content empty
-    expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByText('新增') as HTMLButtonElement).disabled).toBe(true)
     expect(props.onCreate).not.toHaveBeenCalled()
   })
 
   it('edit (✎) opens inline form; save fires onUpdate', () => {
     const props = renderPanel()
-    const editBtns = screen.getAllByLabelText('Edit memory')
+    const editBtns = screen.getAllByLabelText('编辑记忆')
     fireEvent.click(editBtns[0]!)
     const textarea = screen.getByDisplayValue('remember the milk')
     fireEvent.change(textarea, { target: { value: 'updated content' } })
-    fireEvent.click(screen.getByText('Save'))
+    fireEvent.click(screen.getByText('保存'))
     expect(props.onUpdate).toHaveBeenCalledWith(1, expect.objectContaining({ content: 'updated content' }))
   })
 
@@ -105,23 +105,23 @@ describe('MemoryPanel', () => {
     const props = renderPanel()
     const rows = screen.getAllByRole('listitem')
     const first = rows[0]!
-    fireEvent.click(within(first).getByLabelText('Delete memory'))
+    fireEvent.click(within(first).getByLabelText('删除记忆'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(first).getByLabelText('Confirm delete'))
+    fireEvent.click(within(first).getByLabelText('确认删除'))
     expect(props.onDelete).toHaveBeenCalledWith(1)
   })
 
   it('canceling delete confirm does not fire onDelete', () => {
     const props = renderPanel()
     const first = screen.getAllByRole('listitem')[0]!
-    fireEvent.click(within(first).getByLabelText('Delete memory'))
-    fireEvent.click(within(first).getByLabelText('Cancel delete'))
+    fireEvent.click(within(first).getByLabelText('删除记忆'))
+    fireEvent.click(within(first).getByLabelText('取消删除'))
     expect(props.onDelete).not.toHaveBeenCalled()
   })
 
   it('shows an empty state when there are no items', () => {
     renderPanel({ items: [] })
-    expect(screen.getByText(/No memories/)).toBeInTheDocument()
+    expect(screen.getByText(/暂无记忆/)).toBeInTheDocument()
   })
 
   it('renders an error banner when error is set', () => {

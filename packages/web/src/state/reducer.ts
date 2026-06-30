@@ -107,15 +107,15 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'todos-update': return { ...state, todos: e.todos }
     case 'permission-request': return { ...state, pendingPermissions: [...state.pendingPermissions, { id: e.id, req: e.req }] }
     case 'permission-resolved': return { ...state, pendingPermissions: state.pendingPermissions.filter((p) => p.id !== e.id) }
-    case 'failover': return withNotice({ ...state, model: e.toModel }, 'failover: ' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
-    case 'model-select-needed': return withNotice(state, 'model selection needed: ' + e.reason, 'warn')
+    case 'failover': return withNotice({ ...state, model: e.toModel }, '故障切换：' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
+    case 'model-select-needed': return withNotice(state, '需要选择模型：' + e.reason, 'warn')
     case 'compaction-start': return state
-    case 'compaction-done': return withNotice(state, 'context compacted', 'info')
+    case 'compaction-done': return withNotice(state, '上下文已压缩', 'info')
     case 'memory-notice': return withNotice(state, e.text, 'info')
     case 'cwd-change': return state
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
-    case 'aborted': return withNotice({ ...state, thinking: false }, 'stopped', 'warn')
+    case 'aborted': return withNotice({ ...state, thinking: false }, '已停止', 'warn')
     case 'checkpoint-recorded': {
       // Attach the checkpoint id to the most recent user message that lacks one
       // (one checkpoint per turn, in order → that turn's user message).
@@ -126,7 +126,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
       }
       return { ...state, messages: msgs }
     }
-    case 'reverted': return withNotice(state, 'reverted to checkpoint', 'info')
+    case 'reverted': return withNotice(state, '已回退到检查点', 'info')
     // Retry re-submits a question server-side; echo it back as a user message so it shows
     // immediately (the post-revert snapshot had dropped it). checkpoint-recorded re-attaches
     // this turn's checkpoint to it at turn end.

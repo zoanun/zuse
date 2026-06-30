@@ -17,8 +17,8 @@ describe('McpPanel', () => {
     const { container } = renderPanel()
     expect(screen.getByText('playwright')).toBeInTheDocument()
     expect(container.querySelector('.mcp-status.connected')).not.toBeNull()
-    expect(screen.getByText(/1 tools/)).toBeInTheDocument()
-    fireEvent.click(screen.getByLabelText('Show tools'))
+    expect(screen.getByText(/1 个工具/)).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('查看工具'))
     expect(screen.getByText('browser_click')).toBeInTheDocument()
   })
 
@@ -28,49 +28,49 @@ describe('McpPanel', () => {
       srv({ name: 'pending', status: 'configured', tools: [] }),
     ] })
     expect(screen.getByText('spawn ENOENT')).toBeInTheDocument()
-    expect(screen.getByText(/click Reconnect to apply/)).toBeInTheDocument()
+    expect(screen.getByText(/待生效的服务器尚未连接/)).toBeInTheDocument()
   })
 
   it('toolbar Reconnect fires onReconnect (all)', () => {
     const props = renderPanel()
-    fireEvent.click(screen.getByRole('button', { name: /↻ Reconnect/ }))
+    fireEvent.click(screen.getByRole('button', { name: /↻ 重连/ }))
     expect(props.onReconnect).toHaveBeenCalled()
   })
 
   it('per-row ↻ fires onReconnectServer with the name', () => {
     const props = renderPanel()
     const row = screen.getAllByRole('listitem')[0]!
-    fireEvent.click(within(row).getByLabelText('Reconnect server'))
+    fireEvent.click(within(row).getByLabelText('重连服务器'))
     expect(props.onReconnectServer).toHaveBeenCalledWith('playwright')
   })
 
   it('New form submits onAdd with name+command+args', () => {
     const props = renderPanel({ servers: [] })
-    fireEvent.click(screen.getByText(/New/))
-    fireEvent.change(screen.getByPlaceholderText('e.g. playwright'), { target: { value: 'pw' } })
-    fireEvent.change(screen.getByPlaceholderText('e.g. npx'), { target: { value: 'npx' } })
+    fireEvent.click(screen.getByRole('button', { name: /新增/ }))
+    fireEvent.change(screen.getByPlaceholderText('例如 playwright'), { target: { value: 'pw' } })
+    fireEvent.change(screen.getByPlaceholderText('例如 npx'), { target: { value: 'npx' } })
     fireEvent.change(screen.getByPlaceholderText('@playwright/mcp'), { target: { value: '-y @playwright/mcp' } })
-    fireEvent.click(screen.getByText('Add'))
+    fireEvent.click(screen.getByText('新增'))
     expect(props.onAdd).toHaveBeenCalledWith({ name: 'pw', command: 'npx', args: ['-y', '@playwright/mcp'] })
   })
 
   it('Add disabled without name+command', () => {
     renderPanel({ servers: [] })
-    fireEvent.click(screen.getByText(/New/))
-    expect((screen.getByText('Add') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /新增/ }))
+    expect((screen.getByText('新增') as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('delete requires inline confirm', () => {
     const props = renderPanel()
     const row = screen.getAllByRole('listitem')[0]!
-    fireEvent.click(within(row).getByLabelText('Delete server'))
+    fireEvent.click(within(row).getByLabelText('删除服务器'))
     expect(props.onDelete).not.toHaveBeenCalled()
-    fireEvent.click(within(row).getByLabelText('Confirm delete'))
+    fireEvent.click(within(row).getByLabelText('确认删除'))
     expect(props.onDelete).toHaveBeenCalledWith('playwright')
   })
 
   it('empty state', () => {
     renderPanel({ servers: [] })
-    expect(screen.getByText(/No MCP servers/)).toBeInTheDocument()
+    expect(screen.getByText(/未配置 MCP 服务器/)).toBeInTheDocument()
   })
 })
