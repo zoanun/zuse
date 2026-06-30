@@ -92,12 +92,12 @@ function wireSocket(ws: WebSocket, mgr: SessionManager): void {
   // (single in-memory session, no turn running at connect in practice);
   // revisit when multi-client mid-turn join becomes real (S1/S2).
   const unsub = mgr.subscribe((e) => {
-    // Forward the event, then — for a revert — re-push a fresh snapshot so this
-    // connection re-syncs to the truncated conversation/checkpoints. Snapshot-after-
-    // event is fine: the reducer treats `reverted` as just a notice, and the snapshot
-    // carries the authoritative post-revert state.
-    sendJson(ws, { type: 'event', event: e })
+    // For a revert, push the authoritative (truncated) snapshot FIRST, then the `reverted`
+    // event. The reducer appends a "reverted to checkpoint" notice when it sees the event;
+    // applySnapshot replaces messages wholesale, so the old snapshot-AFTER-event order wiped
+    // that notice every time. Snapshot-then-event lands the notice on top of the fresh state.
     if (e.type === 'reverted') sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
+    sendJson(ws, { type: 'event', event: e })
   })
   sendJson(ws, { type: 'snapshot', snapshot: mgr.getState() })
 
