@@ -1,4 +1,4 @@
-import type { SessionMeta } from '@zuse/protocol'
+import type { SessionMeta, SessionSearchResult } from '@zuse/protocol'
 
 const KEY = 'zuse.sessionId'
 
@@ -50,4 +50,10 @@ export async function deleteSession(id: string): Promise<void> {
 /** PATCH /api/sessions/<id> with a new title. Throws on failure. */
 export async function renameSession(id: string, title: string): Promise<void> {
   await request(sessionPath(id), { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ title }) }, 'rename session')
+}
+
+/** GET /api/search — 跨会话全文搜索。signal 用于取消过期请求。失败抛错。 */
+export async function searchSessions(q: string, signal?: AbortSignal): Promise<SessionSearchResult[]> {
+  const r = await request('/api/search?q=' + encodeURIComponent(q), { signal }, 'search')
+  return (await r.json()) as SessionSearchResult[]
 }
