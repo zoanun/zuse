@@ -8,7 +8,7 @@ interface ProseDoc { msgIndex: number; role: 'user' | 'assistant'; text: string 
 type SessionLite = SessionSearchResult['session']
 interface CacheEntry { mtimeMs: number; meta: SessionLite; docs: ProseDoc[] }
 
-const SNIPPET_RADIUS = 40
+const SNIPPET_RADIUS = 80
 const DEFAULT_LIMIT = 100
 const DEFAULT_PER_SESSION_CAP = 5
 

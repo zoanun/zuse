@@ -117,12 +117,18 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
     <aside className="sidebar">
       <div className="brand"><span className="mark">Z</span> zuse</div>
       <button className="side-btn" onClick={onNewChat}>＋&nbsp; New chat</button>
-      <input
-        className="session-search"
-        placeholder="搜索历史…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-      />
+      <div className="search-box">
+        <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+        <input
+          className="session-search"
+          placeholder="搜索历史…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
       {results !== null ? (
         <div className="search-results">
           {searchErr ? <div className="search-empty">搜索失败</div>

@@ -363,14 +363,26 @@ button.head:hover .caret { opacity: 1; }
 @media (max-width: 560px) { .msg.you { max-width: 90%; } }
 @media (max-width: 480px) { .manage-drawer { width: 100%; } }
 
+/* The scroll-anchor wraps each message; it must stay layout-transparent so the inner
+   .msg.you / .msg.agent keep their align-self (right / full-width) as direct-ish flex
+   children of .stream. A plain block here was left-aligning user bubbles. */
+.msg-anchor { display: flex; flex-direction: column; }
 @keyframes msg-flash { from { background: rgba(255, 214, 102, 0.35); } to { background: transparent; } }
 .msg-anchor.flash, .msg-row.flash { animation: msg-flash 1.5s ease-out; border-radius: 8px; }
 
-.session-search { width: 100%; box-sizing: border-box; margin: 8px 0; padding: 6px 8px; }
-.search-group-head { font-size: 12px; opacity: .7; margin: 8px 0 2px; }
-.search-hit { display: flex; gap: 6px; width: 100%; text-align: left; background: none; border: 0; padding: 4px 6px; cursor: pointer; }
-.search-hit:hover { background: rgba(127,127,127,.12); }
-.hit-role { font-size: 11px; opacity: .6; flex: none; }
-.hit-snippet { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.search-hit mark { background: rgba(255,214,102,.45); }
-.search-more, .search-empty { font-size: 12px; opacity: .6; padding: 4px 6px; }
+/* ---- history search (S4) ---- */
+.search-box { position: relative; margin: 8px 0; }
+.search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--faint); pointer-events: none; }
+.session-search { width: 100%; box-sizing: border-box; padding: 7px 10px 7px 32px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; color: var(--text); font-family: var(--sans); font-size: 13px; outline: none; }
+.session-search:focus { border-color: var(--accent-border); }
+.session-search::placeholder { color: var(--faint); }
+.search-results { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
+.search-group { display: flex; flex-direction: column; gap: 1px; }
+.search-group-head { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-hit { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.search-hit:hover { background: var(--surface-2); }
+.hit-role { font: 600 9px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); flex: none; }
+.hit-snippet { font-size: 12.5px; line-height: 1.5; color: var(--text); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.search-hit mark { background: rgba(229,181,103,0.45); color: var(--text); border-radius: 3px; padding: 0 1px; }
+.search-more { font-size: 11px; color: var(--faint); padding: 2px 8px 4px; }
+.search-empty { font-size: 12px; color: var(--faint); padding: 6px 8px; }
