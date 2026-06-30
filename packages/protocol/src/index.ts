@@ -252,3 +252,26 @@ export type ServerMessage =
   | { type: 'snapshot'; snapshot: SessionSnapshot }
   | { type: 'event'; event: SessionEvent }
   | { type: 'error'; message: string }
+
+/** 一条命中的高亮片段：命中处前后各截一段，match 为命中原文（保留大小写）。 */
+export interface SearchSnippet {
+  pre: string
+  match: string
+  post: string
+}
+
+/** 一条消息级命中。 */
+export interface SearchHit {
+  msgIndex: number
+  role: 'user' | 'assistant'
+  snippet: SearchSnippet
+}
+
+/** 一个会话内的搜索结果（命中按会话分组）。 */
+export interface SessionSearchResult {
+  session: { id: string; title: string; cwd: string; updatedAt: string }
+  /** 已封顶的命中列表（最多 perSessionCap 条）。 */
+  hits: SearchHit[]
+  /** 该会话总命中数；可能 > hits.length。 */
+  hitCount: number
+}
