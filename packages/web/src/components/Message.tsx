@@ -9,9 +9,19 @@ export function partsText(parts: Part[]): string {
   return parts.map((p) => (p.kind === 'text' ? p.text : '')).join('')
 }
 
+// Memoized by the parts-array reference: in share mode MessageList calls replyMarkdown once to
+// decide visibility and Message calls it again to render — same `parts` ref within a render, so
+// the second call is a WeakMap hit instead of re-splitting <think> + re-joining. A WeakMap keeps
+// it leak-free: entries vanish when the parts array (recreated each store update) is GC'd.
+const replyMarkdownCache = new WeakMap<Part[], string>()
+
 /** A turn's prose markdown: text parts joined, with folded `<think>` reasoning stripped out. */
 export function replyMarkdown(parts: Part[]): string {
-  return splitThink(partsText(parts)).filter((s) => !s.think).map((s) => s.text).join('').trim()
+  const cached = replyMarkdownCache.get(parts)
+  if (cached !== undefined) return cached
+  const md = splitThink(partsText(parts)).filter((s) => !s.think).map((s) => s.text).join('').trim()
+  replyMarkdownCache.set(parts, md)
+  return md
 }
 
 // memo: while streaming, the store re-renders on every delta but only the last
