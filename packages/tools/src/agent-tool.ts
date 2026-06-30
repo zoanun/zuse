@@ -22,9 +22,13 @@ export interface AgentToolDeps {
 export function createAgentTool(deps: AgentToolDeps): Tool {
   return {
     name: 'Agent',
-    // Each sub-agent runs in its own Conversation/context and never writes back the parent
-    // cwd, so a batch of Agent calls is safe to run concurrently (the model dispatches them
-    // for parallel work). Not readOnly — still permission-gated — but parallelizable.
+    // Each sub-agent runs in its own Conversation, its own cwd (its Bash `cd` never writes
+    // back to the parent), and — see executeSubAgent — its OWN FileTracker, so a batch of
+    // Agent calls carries no shared read-before-write state and is safe to run concurrently
+    // for parallel work on DIFFERENT files. (Two sub-agents editing the SAME physical file
+    // concurrently still conflict at the filesystem level — the optimistic lock correctly
+    // rejects the second blind write; use `isolation: 'worktree'` for full isolation.)
+    // Not readOnly — still permission-gated — but parallelizable.
     parallelizable: true,
     description:
       'Launch a sub-agent to handle a complex or exploratory sub-task in an isolated context. ' +
@@ -123,15 +127,18 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
         // Set up worktree if isolation requested
         let worktreeInfo: WorktreeInfo | null = null
         let effectiveCwd = ctx.cwd
-        let childTracker = ctx.tracker
+        // Every sub-agent gets its OWN tracker — never the parent's. Sharing ctx.tracker
+        // leaked read-before-write state across the parent and sibling sub-agents (a
+        // concurrent batch raced the optimistic lock, and a sub-agent could Edit a file
+        // only the PARENT had read). A fresh tracker makes each sub-agent's context truly
+        // isolated; the worktree branch below also points at physically separate files.
+        const childTracker = createFileTracker()
 
         try {
           if (isolation === 'worktree' && gitRoot) {
             const slug = `agent-${crypto.randomUUID().slice(0, 8)}`
             worktreeInfo = await createWorktree(gitRoot, slug)
             effectiveCwd = worktreeInfo.worktreePath
-            // Isolated sub-agent gets a fresh tracker (different physical files)
-            childTracker = createFileTracker()
           }
 
           const conversation = new Conversation()

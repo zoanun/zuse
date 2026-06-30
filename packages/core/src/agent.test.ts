@@ -228,7 +228,7 @@ describe('runAgent', () => {
     expect(results.map((r) => `${r.id}:${r.output}`).sort()).toEqual(['a:r1', 'b:r2'])
   })
 
-  it('aborts a turn that degenerates into runaway repetition (discards output)', async () => {
+  it('aborts a turn that degenerates into runaway repetition (keeps the turn, truncates output)', async () => {
     const { client } = fakeClient([
       [
         // one big delta of pure repetition — the guard fires on the next check and breaks
@@ -242,7 +242,16 @@ describe('runAgent', () => {
     }))
     const warn = events.find((e) => e.type === 'warning' && /repetition/i.test((e as { message: string }).message))
     expect(warn).toBeDefined()
-    expect(conv.getMessages()).toHaveLength(0) // discarded — runaway text not committed to history
+    // The turn is PRESERVED, not discarded: the user message must survive (else the user's
+    // question vanishes), and the assistant reply is kept but truncated with a marker so the
+    // degenerate tail isn't fed back next turn.
+    const msgs = conv.getMessages()
+    expect(msgs).toHaveLength(2)
+    expect(msgs[0]!.role).toBe('user')
+    expect(msgs[1]!.role).toBe('assistant')
+    const assistantText = msgs[1]!.content.map((b) => (b.type === 'text' ? b.text : '')).join('')
+    expect(assistantText).toContain('[output truncated: runaway repetition detected]')
+    expect(assistantText.length).toBeLessThan('测过了！'.repeat(1500).length) // tail trimmed off
   })
 
   describe('isRunawayRepetition', () => {

@@ -178,6 +178,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     const toolUses: PendingToolUse[] = []
     let stopReason = ''
     let errored = false
+    let runaway = false
 
     for await (const event of client.sendMessages(
       [...base, ...staged],
@@ -188,13 +189,15 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       if (event.type === 'text-delta') {
         text += event.text
         yield event
-        // 每多约 500 字符查一次复读；命中即中止本回合并丢弃 staged（不把垃圾写进账本,
-        // 否则后续回合会反复重喂这段退化文本）。break 会触发底层流的 .return() 收尾。
+        // 每多约 500 字符查一次复读；命中即中止本回合。break 会触发底层流的 .return() 收尾。
+        // 注意：不丢弃整个回合 —— 那样连用户这轮的提问都会一起消失（账本回到空）。改为
+        // 保留用户消息 + 截断后的助手文本（见下 runaway 分支）：掐掉退化的尾巴不回喂垃圾,
+        // 但本轮问答仍留痕，用户不会"问了个问题结果整轮蒸发"。
         if (text.length - lastRepCheck >= 500) {
           lastRepCheck = text.length
           if (isRunawayRepetition(text)) {
-            yield { type: 'warning', message: 'Detected runaway repetition — stopped this turn (output discarded to keep the conversation clean).' }
-            errored = true
+            yield { type: 'warning', message: 'Detected runaway repetition — stopped this turn (output truncated to keep the conversation clean).' }
+            runaway = true
             break
           }
         }
@@ -220,7 +223,18 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       }
     }
 
-    if (errored) return // 模型调用失败时什么都不提交
+    if (errored) return // 真·模型调用失败（error 事件）：什么都不提交
+
+    if (runaway) {
+      // 复读退化：保留用户消息 + 截断后的助手文本（掐掉退化尾巴，不回喂垃圾），提交本回合后结束。
+      // 截到 REPETITION_MIN_CHARS：触发时 text 必 ≥ 该阈值，且退化串在尾部，前缀通常仍是有效内容。
+      staged.push({
+        role: 'assistant',
+        content: [{ type: 'text', text: `${text.slice(0, REPETITION_MIN_CHARS)}\n\n[output truncated: runaway repetition detected]` }],
+      })
+      clean = true
+      break
+    }
 
     // 重建助手消息（text + 任何 tool_use 块）并暂存它。
     const assistantContent: ContentBlock[] = []
