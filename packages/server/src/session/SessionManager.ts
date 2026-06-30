@@ -46,6 +46,7 @@ import type {
   SnapshotStore,
 } from './events.js'
 import type { SnapshotPart, SnapshotMessage } from '@zuse/protocol'
+import { stripUserStamp } from './userStamp.js'
 
 /**
  * Compaction folds messages[0..cut) into a single summary message, so checkpoint
@@ -61,14 +62,6 @@ export function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: num
 
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
-
-/**
- * submit() prefixes the model's user text with `[YYYY-MM-DD HH:MM] ` (see submit()). Consumers
- * that recover the raw prompt — projectMessages() (for display) and retry() (for resubmit) —
- * strip it via this single definition so the format lives in one place.
- */
-const USER_STAMP_RE = /^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /
-function stripUserStamp(text: string): string { return text.replace(USER_STAMP_RE, '') }
 
 export interface PermissionPolicy {
   interactive: boolean
