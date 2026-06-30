@@ -71,30 +71,34 @@ describe('SessionService', () => {
     expect(seen).toBe(reg) // the exact callback was threaded through to createSession
   })
 
-  it('create() returns an id, list() shows it as "New chat", and a record file exists', async () => {
+  it('create() registers a live session but does NOT persist an empty record', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
 
     const { id } = await svc.create()
     expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{8}$/)
 
-    const list = await svc.list()
-    expect(list).toHaveLength(1)
-    expect(list[0]!.id).toBe(id)
-    expect(list[0]!.title).toBe('New chat')
-
-    expect(existsSync(join(dir, `${id}.json`))).toBe(true)
+    // Live in the registry (WS can reach it by id)...
+    expect(await svc.getOrLoad(id)).not.toBeNull()
+    // ...but an unused session is NOT written to disk and does NOT clutter the list
+    // (avoids empty "New chat" entries). It persists on the first turn-end (see autosave test).
+    expect(existsSync(join(dir, `${id}.json`))).toBe(false)
+    expect(await svc.list()).toHaveLength(0)
   })
 
-  it('create({title, cwd}) honors the given title and cwd', async () => {
+  it('create({title, cwd}) honors cwd and keeps the given title across the first persist', async () => {
     const dir = join(tempDir(), 'web-sessions')
     const svc = new SessionService({ dir, cwd: '/default', createSession: fakeCreateSessionFactory() })
 
     const { id } = await svc.create({ title: 'My session', cwd: '/custom' })
+    // Drive a turn so the session actually persists, then check the explicit title stuck
+    // (was kept as a manual title — not derived from the message) and the cwd was honored.
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('a message that would otherwise become the title')
+    await new Promise((r) => setTimeout(r, 20))
     const list = await svc.list()
     expect(list[0]!.title).toBe('My session')
     expect(list[0]!.cwd).toBe('/custom')
-    expect(id).toBeTruthy()
   })
 
   it('getOrLoad(): registry hit returns the same instance', async () => {
@@ -140,6 +144,10 @@ describe('SessionService', () => {
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
 
     const { id } = await svc.create()
+    // Give it content so it actually persists to disk.
+    const mgr = (await svc.getOrLoad(id))!
+    await mgr.submit('content so the session persists')
+    await new Promise((r) => setTimeout(r, 20))
     expect(existsSync(join(dir, `${id}.json`))).toBe(true)
 
     await svc.delete(id)
@@ -154,21 +162,21 @@ describe('SessionService', () => {
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
 
     const { id } = await svc.create()
-    // Initial record exists with the default title.
-    let list = await svc.list()
-    expect(list[0]!.title).toBe('New chat')
-    expect(list[0]!.messageCount).toBe(0)
+    // An unused session is not on disk yet (create no longer writes an empty record).
+    expect(await svc.list()).toHaveLength(0)
 
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('first user message here')
     await new Promise((r) => setTimeout(r, 20))
 
-    list = await svc.list()
+    // The first turn-end is the first time it hits disk.
+    const list = await svc.list()
+    expect(list).toHaveLength(1)
     expect(list[0]!.messageCount).toBeGreaterThan(0)
     // Title recomputed from the first user message (prefix stripped by submit/derive).
     expect(list[0]!.title).toBe('first user message here')
 
-    // Exactly one record file on disk (create + autosave overwrote in place).
+    // Exactly one record file on disk.
     expect(readdirSync(dir).filter((f) => f.endsWith('.json'))).toHaveLength(1)
   })
 
@@ -201,6 +209,10 @@ describe('SessionService', () => {
     // Service A creates + persists, then we discard it so service B never has it live.
     const svcA = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
     const { id } = await svcA.create()
+    // Drive a turn so the session is actually written to disk (create no longer persists empties).
+    const mgrA = (await svcA.getOrLoad(id))!
+    await mgrA.submit('content so the record exists on disk')
+    await new Promise((r) => setTimeout(r, 20))
 
     const svcB = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
     // Not loaded into svcB's registry — rename must hit the disk path.

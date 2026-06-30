@@ -126,7 +126,15 @@ describe('/api/sessions REST', () => {
     const { id } = await created.json() as { id: string }
     expect(id).toBeTruthy()
 
-    // GET /api/sessions includes the new id
+    // A brand-new empty session is NOT persisted (no empty "New chat" clutter), so it
+    // isn't listed yet. PATCH a title to give it disk presence, then it shows in the list.
+    const list0 = await (await fetch(`${base}/api/sessions`, { headers: { cookie } })).json() as Array<{ id: string }>
+    expect(list0.map((s) => s.id)).not.toContain(id)
+    await fetch(`${base}/api/sessions/${id}`, {
+      method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'CRUD test' }),
+    })
+
+    // GET /api/sessions now includes the new id
     const listed = await fetch(`${base}/api/sessions`, { headers: { cookie } })
     expect(listed.status).toBe(200)
     const list = await listed.json() as Array<{ id: string }>

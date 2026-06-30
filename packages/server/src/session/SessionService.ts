@@ -111,8 +111,13 @@ export class SessionService {
     this.tombstones.delete(id) // (re)using this id is legal
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)
-    // Persist an initial record so disk (the list source-of-truth) knows it exists.
-    await this.persist(id, mgr, opts?.title ?? 'New chat')
+    // Do NOT persist an empty session. The old behavior wrote an initial record on
+    // create, so every "+ New chat" and every first-visit bootstrap left an empty
+    // record cluttering the list. The session is live in the registry (WS can reach
+    // it by id); autosave persists it on the first turn-end, once it has real content.
+    // An explicitly supplied title is kept as a manual title so that first persist
+    // honors it instead of deriving one from the message.
+    if (opts?.title) this.manualTitles.set(id, opts.title)
     return { id }
   }
 
