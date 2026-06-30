@@ -40,13 +40,14 @@ export class MemoryService {
 
   /**
    * 列出/搜索记忆。
-   * - 有 `q` → 全文检索(`store.search(q, project ?? '', limit)`,范围 = 项目 ∪ 全局)。
+   * - 有 `q` → 全文检索。`project` 给定 → 该项目 ∪ 全局;`project` 为 undefined("全部"视图) →
+   *   跨所有项目搜索(直接透传 undefined,不强转 '',否则会退化成只搜全局、漏掉项目级记忆)。
    * - 否则 `project` 给定 → `store.list(project)`(项目 ∪ 全局)。
    * - 都没有 → `store.all()`(全量,管理面板"全部"视图)。
    */
   list(opts: { project?: string; q?: string; limit?: number } = {}): MemoryItem[] {
     const store = this.getStore()
-    if (opts.q) return store.search(opts.q, opts.project ?? '', opts.limit)
+    if (opts.q) return store.search(opts.q, opts.project, opts.limit)
     if (opts.project !== undefined) return store.list(opts.project)
     return store.all()
   }
@@ -61,15 +62,18 @@ export class MemoryService {
   }
 
   /**
-   * 原地更新;未命中返回 null。同 create 的不变量:若把类型改成 `user`(或本就是 user 由前端带上),
-   * 强制 `project=''`,不让 user 记忆挂到某个项目上。
+   * 原地更新;未命中返回 null。不变量:`user` 型恒为全局。判定按**生效后的类型**=
+   * `fields.type ?? 已存库里的类型`—— 否则只在 PATCH 显式带 type:'user' 时才强制,
+   * 编辑一条已有 user 记忆时若带上某 project(不带 type)就会把它挂到那个项目上、从全局视图消失。
    */
   update(
     id: number,
     fields: { type?: MemoryType; content?: string; hook?: string; project?: string },
   ): MemoryItem | null {
-    const f = fields.type === 'user' ? { ...fields, project: '' } : fields
-    return this.getStore().update(id, f)
+    const store = this.getStore()
+    const effectiveType = fields.type ?? store.get(id)?.type
+    const f = effectiveType === 'user' ? { ...fields, project: '' } : fields
+    return store.update(id, f)
   }
 
   /** 删除;未命中返回 false(透传 store.remove)。 */

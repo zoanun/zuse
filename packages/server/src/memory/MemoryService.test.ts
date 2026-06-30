@@ -58,6 +58,17 @@ describe('MemoryService', () => {
     expect(changed!.project).toBe('')
   })
 
+  it('user 型恒为全局:更新已有 user 记忆时即便带 project、不带 type 也不挂到项目上', () => {
+    // 这是回归测试:此前不变量只在 PATCH 显式带 type:'user' 时才强制,编辑一条已有 user
+    // 记忆(只改 content)时若带上 project,会把它挂到那个项目、从全局视图消失。修复后按
+    // 库里已存的类型判定:已存是 user → 强制 project=''。
+    const u = svc.create({ type: 'user', content: '用户偏好', project: '' })
+    expect(u.project).toBe('')
+    const edited = svc.update(u.id, { content: '用户偏好(改)', project: 'some-project' }) // 注意:无 type
+    expect(edited!.type).toBe('user')
+    expect(edited!.project).toBe('') // 仍是全局,没被挂到 some-project
+  })
+
   it('update 未知 id 返回 null;remove 未命中返回 false', () => {
     expect(svc.update(99999, { content: 'x' })).toBeNull()
     expect(svc.remove(99999)).toBe(false)

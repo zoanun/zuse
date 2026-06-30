@@ -55,6 +55,24 @@ describe('MemoryStore', () => {
     expect(en[0]!.content).toContain('80%')
   })
 
+  it('search project 为 undefined 时跨所有项目搜索(管理面板"全部"视图,不漏项目级)', () => {
+    store.save('project', 'compaction 在项目 A', 'E--proj-a')
+    store.save('project', 'compaction 在项目 B', 'E--proj-b')
+    store.save('user', 'compaction 全局', '')
+    // 不传 project:三条全中(全局 + 两个不同项目),而不是只剩全局那条。
+    const all = store.search('compaction', undefined)
+    expect(all).toHaveLength(3)
+    // 对照:传具体 project 时只见该项目 ∪ 全局。
+    const scoped = store.search('compaction', 'E--proj-a')
+    expect(scoped.map((r) => r.content).sort()).toEqual(['compaction 全局', 'compaction 在项目 A'])
+  })
+
+  it('get 按 id 取单条;未命中返回 null', () => {
+    const row = store.save('project', '取我', 'p')
+    expect(store.get(row.id)?.content).toBe('取我')
+    expect(store.get(999999)).toBeNull()
+  })
+
   it('search 对两字中文词也能命中(trigram 短查询回退 LIKE)', () => {
     store.save('insight', '压缩切点不能劈开工具配对', 'p')
     const hits = store.search('压缩', 'p')

@@ -44,10 +44,12 @@ export interface MemoryRow {
 export interface MemoryStore {
   /** 保存一条记忆,返回完整行。project 空串 = 全局;hook 为索引行钩子(可空,投影回退正文前缀)。 */
   save(type: MemoryType, content: string, project: string, hook?: string): MemoryRow
-  /** 全文检索,范围 = 指定项目 ∪ 全局。 */
-  search(query: string, project: string, limit?: number): MemoryRow[]
+  /** 全文检索。project 给定 → 范围 = 该项目 ∪ 全局;project 为 undefined → 跨所有项目搜索(管理面板"全部"视图)。 */
+  search(query: string, project: string | undefined, limit?: number): MemoryRow[]
   /** 列出指定项目 ∪ 全局的全部记忆。 */
   list(project: string): MemoryRow[]
+  /** 按 id 取单条;未命中返回 null。 */
+  get(id: number): MemoryRow | null
   /**
    * 原地更新一条记忆(保 id/createdAt 不变,刷新 updatedAt;FTS 由 memories_au 触发器同步)。
    * 只改传入的字段;未命中(无此 id)返回 null,否则查回整行返回。
@@ -164,6 +166,10 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
     },
 
     search(query, project, limit = 10) {
+      // project 给定 → 限定该项目 ∪ 全局；project 为 undefined("全部"视图) → 不加项目过滤,
+      // 跨所有项目搜索。否则从"全部"视图搜索会把 project='' 当过滤值、只搜全局,漏掉所有项目级记忆。
+      const projClause = (col: string): string => (project === undefined ? '' : ` AND (${col}.project = ? OR ${col}.project = '')`)
+      const projParams: string[] = project === undefined ? [] : [project]
       const fts = sanitizeFtsQuery(query)
       let rows: RawRow[] = []
       if (fts) {
@@ -171,10 +177,10 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
           rows = db
             .prepare(
               `SELECT m.* FROM memories_fts f JOIN memories m ON m.id = f.rowid
-               WHERE memories_fts MATCH ? AND (m.project = ? OR m.project = '')
+               WHERE memories_fts MATCH ?${projClause('m')}
                ORDER BY rank LIMIT ?`,
             )
-            .all(fts, project, limit) as unknown as RawRow[]
+            .all(fts, ...projParams, limit) as unknown as RawRow[]
         } catch {
           rows = [] // 清洗后仍极端非法的查询:按零命中走 LIKE 回退,不向上抛
         }
@@ -186,13 +192,18 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
           rows = db
             .prepare(
               `SELECT * FROM memories
-               WHERE content LIKE ? AND (project = ? OR project = '')
+               WHERE content LIKE ?${projClause('memories')}
                ORDER BY id DESC LIMIT ?`,
             )
-            .all(`%${term}%`, project, limit) as unknown as RawRow[]
+            .all(`%${term}%`, ...projParams, limit) as unknown as RawRow[]
         }
       }
       return rows.map(toRow)
+    },
+
+    get(id) {
+      const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as RawRow | undefined
+      return row ? toRow(row) : null
     },
 
     list(project) {
