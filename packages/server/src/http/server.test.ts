@@ -9,6 +9,7 @@ import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
 import { MemoryService } from '../memory/MemoryService.js'
+import { SearchService } from '../search/SearchService.js'
 import { PersonaService } from '../persona/PersonaService.js'
 import { SkillService } from '../skill/SkillService.js'
 import { UsageService } from '../usage/UsageService.js'
@@ -50,6 +51,8 @@ beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
   const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
+  // SearchService over the same web-sessions store the SessionService writes.
+  const search = new SearchService({ dir: join(dir, 'web-sessions') })
   // Temp-db MemoryService so memory routes never touch the real ~/.zuse/memory.db.
   memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
   // Temp-file PersonaService so persona routes never touch the real ~/.zuse/personas.json.
@@ -65,7 +68,7 @@ beforeEach(async () => {
   mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
     try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
   } })
-  srv = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, file, mcp, devPage: false, tokenTtlSec: 3600 }))
+  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -428,6 +431,21 @@ describe('/api/dirs + cwd (S3)', () => {
     } finally {
       rmSync(other, { recursive: true, force: true })
     }
+  })
+})
+
+describe('GET /api/search', () => {
+  it('未登录 401', async () => {
+    const r = await fetch(base + '/api/search?q=x')
+    expect(r.status).toBe(401)
+  })
+  it('带 q 返回分组结果;空 q 返回 []', async () => {
+    const cookie = await authCookie()
+    const empty = await (await fetch(base + '/api/search?q=', { headers: { cookie } })).json()
+    expect(empty).toEqual([])
+    const res = await fetch(base + '/api/search?q=anything', { headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(Array.isArray(await res.json())).toBe(true)
   })
 })
 

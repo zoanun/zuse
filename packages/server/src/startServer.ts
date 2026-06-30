@@ -7,6 +7,7 @@ import { makeRequestHandler } from './http/server.js'
 import { attachWsServer } from './ws/wsServer.js'
 import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
+import { SearchService } from './search/SearchService.js'
 import { PersonaService } from './persona/PersonaService.js'
 import { SkillService } from './skill/SkillService.js'
 import { UsageService } from './usage/UsageService.js'
@@ -138,6 +139,8 @@ export async function startServer(
   const persona = new PersonaService()
   // Token usage dashboard (M5): aggregates the same web-sessions store the SessionService writes.
   const usage = new UsageService(sessionsDir)
+  // 跨会话历史搜索 (S4): 扫同一个 web-sessions 存储目录。
+  const search = new SearchService({ dir: sessionsDir })
   // Read-only project file browser (M7), rooted at the daemon's cwd.
   const file = new FileService(cfg.cwd)
   // Skill management (M3): scans ~/.zuse/skills + project .zuse/skills under the daemon's cwd.
@@ -151,7 +154,7 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, persona, skill, usage, file, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

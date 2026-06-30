@@ -8,6 +8,7 @@ import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
 import type { MemoryService } from '../memory/MemoryService.js'
+import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
@@ -21,6 +22,7 @@ export interface RequestHandlerDeps {
   auth: AuthProvider
   service: SessionService
   memory: MemoryService
+  search: SearchService
   persona: PersonaService
   skill: SkillService
   usage: UsageService
@@ -240,6 +242,17 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty title' } })
       }
       return runIdScoped(res, () => deps.service.rename(id, title))
+    }
+
+    // GET /api/search — 跨会话全文搜索 (S4, auth-gated). query ?q=&limit=
+    if (method === 'GET' && path === '/api/search') {
+      if (!isAuthed(req)) {
+        return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      }
+      const q = url.searchParams.get('q') ?? ''
+      const limitRaw = url.searchParams.get('limit')
+      const limit = limitRaw != null && /^\d+$/.test(limitRaw) ? Number(limitRaw) : undefined
+      return sendJson(res, 200, await deps.search.search(q, { limit }))
     }
 
     // -----------------------------------------------------------------------
