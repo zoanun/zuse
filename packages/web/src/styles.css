@@ -362,3 +362,6 @@ button.head:hover .caret { opacity: 1; }
 }
 @media (max-width: 560px) { .msg.you { max-width: 90%; } }
 @media (max-width: 480px) { .manage-drawer { width: 100%; } }
+
+@keyframes msg-flash { from { background: rgba(255, 214, 102, 0.35); } to { background: transparent; } }
+.msg-anchor.flash, .msg-row.flash { animation: msg-flash 1.5s ease-out; border-radius: 8px; }

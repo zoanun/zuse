@@ -12,7 +12,7 @@ import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 
 export function Shell() {
-  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename } = useStore()
+  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, pendingScrollTo, clearScrollTo } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
@@ -96,6 +96,8 @@ export function Shell() {
             shareMode={!!shareSel}
             selected={shareSel ?? undefined}
             onToggleSelect={toggleSelect}
+            scrollToId={pendingScrollTo}
+            onScrolled={clearScrollTo}
           />
           {state.pendingPermissions.length > 0 ? (
             <div className="perm-wrap">
