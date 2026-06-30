@@ -1,7 +1,19 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import type { SessionMeta } from '@zuse/protocol'
 import { Sidebar } from './Sidebar.js'
+import { searchSessions } from '../state/session.js'
+
+vi.mock('../state/session.js', async (orig) => ({
+  ...(await orig<typeof import('../state/session.js')>()),
+  searchSessions: vi.fn(async () => [
+    {
+      session: { id: 's1', title: '会话一', cwd: '/work', updatedAt: '2026-06-30T10:00:00Z' },
+      hits: [{ msgIndex: 2, role: 'user', snippet: { pre: '前', match: 'needle', post: '后' } }],
+      hitCount: 1,
+    },
+  ]),
+}))
 
 const meta = (id: string, title: string): SessionMeta => ({
   id, title, createdAt: '', updatedAt: '', cwd: '/', messageCount: 0,
@@ -15,6 +27,7 @@ function renderSidebar(over: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     onSwitch: vi.fn(),
     onDelete: vi.fn(),
     onRename: vi.fn(),
+    onJump: vi.fn(),
     ...over,
   }
   render(<Sidebar {...props} />)
@@ -123,5 +136,33 @@ describe('Sidebar', () => {
     fireEvent.keyDown(input, { key: 'Escape' })
     fireEvent.blur(input) // unmount blur — must be suppressed by the cancel guard
     expect(props.onRename).not.toHaveBeenCalled()
+  })
+
+  it('typing enters results mode and renders the hit snippet', async () => {
+    renderSidebar()
+    fireEvent.change(screen.getByPlaceholderText(/搜索/), { target: { value: 'needle' } })
+    await waitFor(() => expect(searchSessions).toHaveBeenCalled())
+    expect(await screen.findByText('会话一')).toBeInTheDocument()
+    expect(screen.getByText('needle')).toBeInTheDocument()
+    // session list rows are gone in results mode
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+  })
+
+  it('clicking a hit calls onJump(sessionId, msgIndex)', async () => {
+    const props = renderSidebar()
+    fireEvent.change(screen.getByPlaceholderText(/搜索/), { target: { value: 'needle' } })
+    const hit = await screen.findByText('needle')
+    fireEvent.click(hit)
+    expect(props.onJump).toHaveBeenCalledWith('s1', 2)
+  })
+
+  it('clearing the search box restores the session list', async () => {
+    renderSidebar()
+    const box = screen.getByPlaceholderText(/搜索/)
+    fireEvent.change(box, { target: { value: 'needle' } })
+    expect(await screen.findByText('会话一')).toBeInTheDocument()
+    fireEvent.change(box, { target: { value: '' } })
+    await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument())
+    expect(screen.queryByText('会话一')).not.toBeInTheDocument()
   })
 })

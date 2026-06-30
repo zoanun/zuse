@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
-import type { SessionMeta } from '@zuse/protocol'
+import { useEffect, useRef, useState } from 'react'
+import type { SessionMeta, SessionSearchResult } from '@zuse/protocol'
+import { searchSessions } from '../state/session.js'
 
 interface Props {
   sessions: SessionMeta[]
@@ -8,6 +9,7 @@ interface Props {
   onSwitch: (id: string) => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
+  onJump: (sessionId: string, msgIndex: number) => void
 }
 
 function titleOf(s: SessionMeta): string {
@@ -92,23 +94,72 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
   )
 }
 
-export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename }: Props) {
+export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump }: Props) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SessionSearchResult[] | null>(null)
+  const [searchErr, setSearchErr] = useState(false)
+  const reqSeq = useRef(0)
+
+  useEffect(() => {
+    const q = query.trim()
+    if (q === '') { setResults(null); setSearchErr(false); return }
+    const seq = ++reqSeq.current
+    const ac = new AbortController()
+    const t = setTimeout(() => {
+      void searchSessions(q, ac.signal)
+        .then((r) => { if (seq === reqSeq.current) { setResults(r); setSearchErr(false) } })
+        .catch(() => { if (seq === reqSeq.current) { setSearchErr(true); setResults([]) } })
+    }, 200)
+    return () => { clearTimeout(t); ac.abort() }
+  }, [query])
+
   return (
     <aside className="sidebar">
       <div className="brand"><span className="mark">Z</span> zuse</div>
       <button className="side-btn" onClick={onNewChat}>＋&nbsp; New chat</button>
-      <ul className="session-list">
-        {sessions.map((s) => (
-          <SessionRow
-            key={s.id}
-            s={s}
-            active={s.id === currentSessionId}
-            onSwitch={onSwitch}
-            onDelete={onDelete}
-            onRename={onRename}
-          />
-        ))}
-      </ul>
+      <input
+        className="session-search"
+        placeholder="搜索历史…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {results !== null ? (
+        <div className="search-results">
+          {searchErr ? <div className="search-empty">搜索失败</div>
+            : results.length === 0 ? <div className="search-empty">无匹配</div>
+            : results.map((r) => (
+              <div key={r.session.id} className="search-group">
+                <div className="search-group-head">{r.session.title || 'New chat'}</div>
+                {r.hits.map((h) => (
+                  <button
+                    key={r.session.id + ':' + h.msgIndex}
+                    className="search-hit"
+                    onClick={() => onJump(r.session.id, h.msgIndex)}
+                  >
+                    <span className="hit-role">{h.role === 'user' ? '你' : 'zuse'}</span>
+                    <span className="hit-snippet">
+                      {h.snippet.pre}<mark>{h.snippet.match}</mark>{h.snippet.post}
+                    </span>
+                  </button>
+                ))}
+                {r.hitCount > r.hits.length ? <div className="search-more">还有 {r.hitCount - r.hits.length} 条</div> : null}
+              </div>
+            ))}
+        </div>
+      ) : (
+        <ul className="session-list">
+          {sessions.map((s) => (
+            <SessionRow
+              key={s.id}
+              s={s}
+              active={s.id === currentSessionId}
+              onSwitch={onSwitch}
+              onDelete={onDelete}
+              onRename={onRename}
+            />
+          ))}
+        </ul>
+      )}
       <div className="side-foot"><span className="eyebrow">DEV</span></div>
     </aside>
   )

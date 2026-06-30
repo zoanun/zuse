@@ -12,7 +12,7 @@ import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 
 export function Shell() {
-  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, pendingScrollTo, clearScrollTo } = useStore()
+  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
@@ -73,6 +73,7 @@ export function Shell() {
           onSwitch={(id) => { setShareSel(null); void switchSession(id); setMenuOpen(false) }}
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
+          onJump={(id, idx) => { searchJump(id, idx); setMenuOpen(false) }}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={(cwd) => { setShareSel(null); void newSession(cwd) }} />
