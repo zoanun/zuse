@@ -654,6 +654,20 @@ describe('SessionManager checkpoints + revert', () => {
     expect(reverted).toEqual(['cp-hash-1'])
   })
 
+  it('revert rejects while a turn is in progress (mirrors submit/retry)', async () => {
+    // Regression: revert() had no isThinking guard, so a mid-turn revert truncated the ledger
+    // out from under the in-flight runAgent loop — which then pushed a checkpoint and overwrote
+    // usage from the stale ledger, resurrecting the reverted turn and desyncing state.
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const p = mgr.submit('go') // held open by the gate: a turn is now in flight
+    expect(mgr.getState().isThinking).toBe(true)
+    await expect(mgr.revert('any-hash')).rejects.toThrow(/already in progress/)
+    release()
+    await p
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
   it('retry reverts the last turn then re-submits the same prompt', async () => {
     const mkScript = (): StreamEvent[] => [
       { type: 'message-start', id: 'm', model: 'fake-model' },

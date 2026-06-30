@@ -62,11 +62,11 @@ function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
 // ---------------------------------------------------------------------------
 
 describe('newSessionId', () => {
-  it('matches the expected format YYYYMMDD-HHMMSS-xxxx', () => {
+  it('matches the expected format YYYYMMDD-HHMMSS-xxxxxxxx', () => {
     const fixed = new Date('2026-06-25T14:30:00.000Z')
     const id = newSessionId(fixed)
-    // Format: 8 digits - 6 digits - 4 hex chars
-    expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{4}$/)
+    // Format: 8 digits - 6 digits - 8 hex chars (32 bits of crypto randomness, collision-resistant)
+    expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{8}$/)
   })
 
   it('encodes the passed date in the prefix (local time parts)', () => {

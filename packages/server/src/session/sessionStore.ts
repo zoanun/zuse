@@ -1,4 +1,5 @@
-import { mkdir, writeFile, rename, readFile, readdir, unlink } from 'node:fs/promises'
+import { mkdir, writeFile, rename, readFile, readdir, unlink, stat } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import type { Message, Usage } from '@zuse/core'
 import { emptyUsage } from '@zuse/core'
@@ -46,10 +47,10 @@ export function newSessionId(now: Date = new Date()): string {
   const ts =
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
     `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-  // 4 hex chars from random float (base-16 of a 0..1 float truncated at 4 chars)
-  const rand = Math.floor(Math.random() * 0xffff)
-    .toString(16)
-    .padStart(4, '0')
+  // 8 hex chars (32 bits) of CRYPTO randomness. The old 16-bit Math.random() suffix collided
+  // ~1/65535 for two creates in the same second — and saveSession overwrites on collision, so
+  // a clash silently destroyed a session. 32 crypto bits makes a same-second clash negligible.
+  const rand = randomBytes(4).toString('hex')
   return `${ts}-${rand}`
 }
 
@@ -103,6 +104,16 @@ export async function loadSession(dir: string, id: string): Promise<SessionRecor
 }
 
 /**
+ * Cache so listSessions doesn't re-read+JSON.parse every session's FULL record (which
+ * carries the entire messages[] array — hundreds of KB each) on every call. The web client
+ * calls listSessions on every turn-end to refresh the sidebar; without this, each refresh is
+ * O(total bytes of all conversations). Keyed by file path → its mtime; a session's metadata
+ * is only re-parsed when its file actually changes (i.e. the one session just written this
+ * turn), turning per-turn cost from "parse N files" into "stat N files + parse 1".
+ */
+const metaCache = new Map<string, { mtimeMs: number; meta: SessionMeta }>()
+
+/**
  * List all sessions in `dir` as lightweight metadata objects, sorted by
  * `updatedAt` descending. Corrupt or incomplete files are silently skipped.
  * Returns [] if the directory does not exist.
@@ -116,10 +127,19 @@ export async function listSessions(dir: string): Promise<SessionMeta[]> {
     return []
   }
 
+  const seen = new Set<string>()
   const metas: SessionMeta[] = []
   for (const f of files) {
+    const path = join(dir, f)
+    seen.add(path)
     try {
-      const raw = await readFile(join(dir, f), 'utf8')
+      const mtimeMs = (await stat(path)).mtimeMs
+      const cached = metaCache.get(path)
+      if (cached && cached.mtimeMs === mtimeMs) {
+        metas.push(cached.meta)
+        continue
+      }
+      const raw = await readFile(path, 'utf8')
       const rec = JSON.parse(raw) as Partial<SessionRecord>
       // Require the fields that make a SessionMeta meaningful.
       if (
@@ -132,19 +152,23 @@ export async function listSessions(dir: string): Promise<SessionMeta[]> {
       ) {
         continue
       }
-      metas.push({
+      const meta: SessionMeta = {
         id: rec.id,
         title: rec.title,
         createdAt: rec.createdAt,
         updatedAt: rec.updatedAt,
         cwd: rec.cwd,
         messageCount: rec.messages.length,
-      })
+      }
+      metaCache.set(path, { mtimeMs, meta })
+      metas.push(meta)
     } catch {
-      // Corrupt file — skip.
+      // Corrupt or vanished file — skip.
       continue
     }
   }
+  // Drop cache entries for sessions that no longer exist (deleted), so the map can't grow without bound.
+  for (const path of metaCache.keys()) if (!seen.has(path)) metaCache.delete(path)
 
   metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
   return metas

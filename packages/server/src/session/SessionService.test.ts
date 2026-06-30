@@ -76,7 +76,7 @@ describe('SessionService', () => {
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
 
     const { id } = await svc.create()
-    expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{4}$/)
+    expect(id).toMatch(/^\d{8}-\d{6}-[0-9a-f]{8}$/)
 
     const list = await svc.list()
     expect(list).toHaveLength(1)

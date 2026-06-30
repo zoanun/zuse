@@ -772,6 +772,12 @@ export class SessionManager {
    * Mirrors useConversation's revertToCheckpoint.
    */
   async revert(checkpointId: string): Promise<void> {
+    // Reject a revert while a turn is streaming (mirrors submit()/retry()). The in-flight
+    // runAgent loop holds a captured `conversation` ref and, at turn-end, pushes a checkpoint
+    // and overwrites totalUsage/contextTokens from that ledger — so truncating state out from
+    // under it here would resurrect the reverted turn and desync checkpoints/usage. retry()
+    // already guards before it calls revert(), so this never blocks the retry path.
+    if (this.isThinking) throw new Error('A turn is already in progress')
     const cp = this.checkpoints.find((c) => c.hash === checkpointId)
     if (!cp) return
     await this.snapshotStore.restore(cp.hash)
