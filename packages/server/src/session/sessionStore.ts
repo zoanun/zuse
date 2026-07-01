@@ -111,7 +111,51 @@ export async function loadSession(dir: string, id: string): Promise<SessionRecor
  * is only re-parsed when its file actually changes (i.e. the one session just written this
  * turn), turning per-turn cost from "parse N files" into "stat N files + parse 1".
  */
-const metaCache = new Map<string, { mtimeMs: number; meta: SessionMeta }>()
+const metaCache = new Map<string, ScanEntry<SessionMeta>>()
+
+/** One scanned session file's cached value, keyed by the file's mtime. */
+export interface ScanEntry<T> { mtimeMs: number; value: T }
+
+/**
+ * Scan `dir` for *.json session files with an mtime-keyed cache: a file is re-read + rebuilt via
+ * `build` only when its mtime changes; unchanged files return their cached value; files that have
+ * vanished are evicted from `cache` so it can't grow without bound. `build` returns null to skip a
+ * corrupt/incomplete record. Values come back in directory order — the caller sorts. Returns [] if
+ * `dir` does not exist. Shared by listSessions and SearchService so the scan/stat/parse/cache/skip
+ * semantics live in exactly one place.
+ */
+export async function scanSessionDir<T>(
+  dir: string,
+  cache: Map<string, ScanEntry<T>>,
+  build: (rec: unknown, path: string) => T | null,
+): Promise<T[]> {
+  let files: string[]
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.json'))
+  } catch {
+    return [] // directory doesn't exist — no sessions yet
+  }
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const f of files) {
+    const path = join(dir, f)
+    seen.add(path)
+    try {
+      const mtimeMs = (await stat(path)).mtimeMs
+      const cached = cache.get(path)
+      if (cached && cached.mtimeMs === mtimeMs) { out.push(cached.value); continue }
+      const value = build(JSON.parse(await readFile(path, 'utf8')), path)
+      if (value === null) continue // corrupt/incomplete — skip
+      cache.set(path, { mtimeMs, value })
+      out.push(value)
+    } catch {
+      continue // corrupt or vanished file — skip
+    }
+  }
+  // Drop cache entries for files that no longer exist (deleted), bounding the map.
+  for (const path of cache.keys()) if (!seen.has(path)) cache.delete(path)
+  return out
+}
 
 /**
  * List all sessions in `dir` as lightweight metadata objects, sorted by
@@ -119,58 +163,21 @@ const metaCache = new Map<string, { mtimeMs: number; meta: SessionMeta }>()
  * Returns [] if the directory does not exist.
  */
 export async function listSessions(dir: string): Promise<SessionMeta[]> {
-  let files: string[]
-  try {
-    files = (await readdir(dir)).filter((f) => f.endsWith('.json'))
-  } catch {
-    // Directory doesn't exist — no sessions yet.
-    return []
-  }
-
-  const seen = new Set<string>()
-  const metas: SessionMeta[] = []
-  for (const f of files) {
-    const path = join(dir, f)
-    seen.add(path)
-    try {
-      const mtimeMs = (await stat(path)).mtimeMs
-      const cached = metaCache.get(path)
-      if (cached && cached.mtimeMs === mtimeMs) {
-        metas.push(cached.meta)
-        continue
-      }
-      const raw = await readFile(path, 'utf8')
-      const rec = JSON.parse(raw) as Partial<SessionRecord>
-      // Require the fields that make a SessionMeta meaningful.
-      if (
-        typeof rec.id !== 'string' ||
-        typeof rec.title !== 'string' ||
-        typeof rec.createdAt !== 'string' ||
-        typeof rec.updatedAt !== 'string' ||
-        typeof rec.cwd !== 'string' ||
-        !Array.isArray(rec.messages)
-      ) {
-        continue
-      }
-      const meta: SessionMeta = {
-        id: rec.id,
-        title: rec.title,
-        createdAt: rec.createdAt,
-        updatedAt: rec.updatedAt,
-        cwd: rec.cwd,
-        messageCount: rec.messages.length,
-      }
-      metaCache.set(path, { mtimeMs, meta })
-      metas.push(meta)
-    } catch {
-      // Corrupt or vanished file — skip.
-      continue
-    }
-  }
-  // Drop cache entries for sessions that no longer exist (deleted), so the map can't grow without bound.
-  for (const path of metaCache.keys()) if (!seen.has(path)) metaCache.delete(path)
-
-  metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+  const metas = await scanSessionDir<SessionMeta>(dir, metaCache, (rec) => {
+    const r = rec as Partial<SessionRecord>
+    // Require the fields that make a SessionMeta meaningful.
+    if (
+      typeof r.id !== 'string' ||
+      typeof r.title !== 'string' ||
+      typeof r.createdAt !== 'string' ||
+      typeof r.updatedAt !== 'string' ||
+      typeof r.cwd !== 'string' ||
+      !Array.isArray(r.messages)
+    ) return null
+    return { id: r.id, title: r.title, createdAt: r.createdAt, updatedAt: r.updatedAt, cwd: r.cwd, messageCount: r.messages.length }
+  })
+  // 3-way comparator (returns 0 on equal updatedAt) so tied sessions keep a stable order.
+  metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
   return metas
 }
 

@@ -51,7 +51,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   currentIdRef.current = currentSessionId
 
   const refreshSessions = async (): Promise<void> => {
-    try { setSessions(await listSessions()) } catch { /* best-effort */ }
+    // Ignore a malformed (non-array) response rather than corrupting `sessions` into a
+    // non-iterable — displaySessions/.some() and the Sidebar map both assume an array.
+    try { const list = await listSessions(); if (Array.isArray(list)) setSessions(list) } catch { /* best-effort */ }
   }
 
   useEffect(() => {
@@ -99,6 +101,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Point the WS at `id`, clear local state, remember it, and refresh the list.
   // Shared by newSession (after creating one) and switchSession.
   const attachTo = (id: string): void => {
+    // Drop any unconsumed search-jump target: a plain switch/new-chat must not later flash a
+    // message at that stale index. searchJump re-sets it AFTER calling attachTo (same batched
+    // event → the re-set wins), so a genuine jump still scrolls.
+    setPendingScrollTo(null)
     setSessionId(id)
     clientRef.current?.reconnect(wsUrl(id))
     dispatch({ kind: 'reset' })
@@ -112,8 +118,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgIndex ↔ 快照消息 id 'h'+i。 */
   const searchJump = (sessionId: string, msgIndex: number): void => {
-    setPendingScrollTo('h' + msgIndex)
-    if (sessionId !== currentSessionId) attachTo(sessionId)
+    if (sessionId !== currentSessionId) attachTo(sessionId) // clears pendingScrollTo…
+    setPendingScrollTo('h' + msgIndex)                      // …so set it AFTER (batched → wins)
   }
 
   const switchSession = async (id: string): Promise<void> => {
@@ -137,8 +143,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void refreshSessions()
   }
 
+  // Show the current session in the sidebar even before it is persisted. Feature C keeps empty
+  // sessions off disk, so a brand-new "+ 新对话" isn't in the server list yet — synthesize a row
+  // for it so the click gives immediate feedback. It merges into the real row once the first
+  // turn-end persists it (refreshSessions then includes it, so this branch drops), and simply
+  // vanishes on reload if the session never got content.
+  const displaySessions: SessionMeta[] = currentSessionId && !sessions.some((s) => s.id === currentSessionId)
+    ? [{ id: currentSessionId, title: '', createdAt: '', updatedAt: '', cwd: state.cwd ?? '', messageCount: 0 }, ...sessions]
+    : sessions
+
   return (
-    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null) }}>
+    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null) }}>
       {children}
     </StoreCtx.Provider>
   )

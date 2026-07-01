@@ -90,6 +90,29 @@ describe('MessageList', () => {
     expect(container.querySelectorAll('.msg-check')).toHaveLength(2)
   })
 
+  it('flashes and scrolls to the jump target on the FIRST scrollToId, and clears it', () => {
+    const scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy
+    const onScrolled = vi.fn()
+    // Target not set yet → no scroll, nothing cleared.
+    const { container, rerender } = render(
+      <MessageList messages={convo} thinking={false} scrollToId={null} onScrolled={onScrolled} />,
+    )
+    scrollSpy.mockClear()
+    // First jump to 'a1'.
+    rerender(<MessageList messages={convo} thinking={false} scrollToId={'a1'} onScrolled={onScrolled} />)
+    const el = container.querySelector('#msg-a1')
+    expect(el).not.toBeNull()
+    expect(el!.classList.contains('flash')).toBe(true)   // ← the highlight the user should see
+    expect(scrollSpy).toHaveBeenCalled()
+    expect(onScrolled).toHaveBeenCalledTimes(1)
+    // Real app: onScrolled sets pendingScrollTo=null → a re-render with scrollToId=null follows.
+    // The imperatively-added 'flash' class must SURVIVE that render (React must not wipe it),
+    // or the highlight would vanish before the 1.5s animation is seen.
+    rerender(<MessageList messages={convo} thinking={false} scrollToId={null} onScrolled={onScrolled} />)
+    expect(container.querySelector('#msg-a1')!.classList.contains('flash')).toBe(true)
+  })
+
   it('selected rows carry the .sel class', () => {
     const { container } = render(
       <MessageList messages={convo} thinking={false} shareMode selected={new Set(['a1'])} onToggleSelect={vi.fn()} />,

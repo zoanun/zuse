@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Message as Msg } from '../state/types.js'
-import { Message, replyMarkdown } from './Message.js'
+import { Message, isSelectableRow } from './Message.js'
 
 export function MessageList({
   messages, thinking, pendingCount = 0, onRevert, onShare, onRetry, shareMode = false, selected, onToggleSelect, scrollToId, onScrolled,
@@ -22,16 +22,21 @@ export function MessageList({
   // When a permission card appears, scroll to the bottom so it isn't hidden.
   useEffect(() => { if (pendingCount > 0) endRef.current?.scrollIntoView({ block: 'end' }) }, [pendingCount])
 
-  // When a search hit asks us to jump, scroll its message into view and flash it briefly.
+  // When a search hit asks us to jump, scroll its message into view and flash it. The 1.5s CSS
+  // `msg-flash` animation self-terminates, so no JS timer is needed to end it. (onScrolled clears
+  // the pending target after the first successful scroll.)
   useEffect(() => {
     if (!scrollToId) return
     const el = document.getElementById('msg-' + scrollToId)
-    if (!el) return // 目标不在(会话被截短等):静默跳过
+    if (!el) return // 目标不在(索引不匹配/会话被截短等):静默跳过
     el.scrollIntoView({ block: 'center' })
+    // Restart the one-shot flash even when the class lingers from a prior jump to the SAME
+    // message: remove → force reflow → re-add. (A bare add() is a no-op if the class is already
+    // present, so the animation wouldn't replay on a repeat click.)
+    el.classList.remove('flash')
+    void (el as HTMLElement).offsetWidth
     el.classList.add('flash')
-    const t = setTimeout(() => el.classList.remove('flash'), 1500)
     onScrolled?.()
-    return () => clearTimeout(t)
   }, [scrollToId, messages, onScrolled])
 
   // Retry lives on the newest assistant reply, but never mid-stream.
@@ -41,9 +46,7 @@ export function MessageList({
   }
   // Share mode previews exactly what export keeps: questions + replies with prose; tool-only
   // turns and system notices are hidden so you select among shareable content only.
-  const visible = shareMode
-    ? messages.filter((m) => m.role === 'user' || (m.role === 'assistant' && replyMarkdown(m.parts) !== ''))
-    : messages
+  const visible = shareMode ? messages.filter(isSelectableRow) : messages
 
   return (
     <div className="stream">

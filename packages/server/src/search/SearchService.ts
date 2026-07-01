@@ -1,19 +1,19 @@
-import { readdir, readFile, stat } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { Message } from '@zuse/core'
 import type { SearchHit, SearchSnippet, SessionSearchResult } from '@zuse/protocol'
 import { stripUserStamp } from '../session/userStamp.js'
+import { scanSessionDir, type ScanEntry } from '../session/sessionStore.js'
 
 interface ProseDoc { msgIndex: number; role: 'user' | 'assistant'; text: string }
 type SessionLite = SessionSearchResult['session']
-interface CacheEntry { mtimeMs: number; meta: SessionLite; docs: ProseDoc[] }
+/** One session's searchable payload: its list metadata + the extracted prose docs. */
+interface ProseEntry { meta: SessionLite; docs: ProseDoc[] }
 
 const SNIPPET_RADIUS = 80
 const DEFAULT_LIMIT = 100
 const DEFAULT_PER_SESSION_CAP = 5
 
-/** path → 抽取出的人话 + 会话元信息,按文件 mtime 失效。与 listSessions 的 metaCache 同模式、各自一份。 */
-const proseCache = new Map<string, CacheEntry>()
+/** path → 抽取出的人话 + 会话元信息;扫描/stat/缓存失效由 scanSessionDir 统一管理。 */
+const proseCache = new Map<string, ScanEntry<ProseEntry>>()
 
 /** 仅取 user/assistant 的 text 块;user 文本剥时间戳前缀;丢空文本与工具块。 */
 function extractProse(messages: Message[]): ProseDoc[] {
@@ -25,6 +25,21 @@ function extractProse(messages: Message[]): ProseDoc[] {
     if (clean.trim() !== '') docs.push({ msgIndex: i, role: m.role, text: clean })
   })
   return docs
+}
+
+/** Build one session's searchable payload from a parsed record, or null to skip a bad record. */
+function buildProseEntry(rec: unknown): ProseEntry | null {
+  const r = rec as { id?: unknown; title?: unknown; cwd?: unknown; updatedAt?: unknown; messages?: unknown }
+  if (typeof r.id !== 'string' || !Array.isArray(r.messages)) return null
+  return {
+    meta: {
+      id: r.id,
+      title: typeof r.title === 'string' ? r.title : '',
+      cwd: typeof r.cwd === 'string' ? r.cwd : '',
+      updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : '',
+    },
+    docs: extractProse(r.messages as Message[]),
+  }
 }
 
 function makeSnippet(text: string, at: number, qlen: number): SearchSnippet {
@@ -44,44 +59,15 @@ export class SearchService {
   async search(q: string, opts: { limit?: number; perSessionCap?: number } = {}): Promise<SessionSearchResult[]> {
     const query = q.trim()
     if (query === '') return []
-    const limit = opts.limit ?? DEFAULT_LIMIT
-    const cap = opts.perSessionCap ?? DEFAULT_PER_SESSION_CAP
+    // Treat a non-positive limit/cap as "unset" — `?? DEFAULT` alone would keep 0 (not nullish),
+    // which slices everything away and yields a spurious "no matches".
+    const limit = opts.limit && opts.limit > 0 ? opts.limit : DEFAULT_LIMIT
+    const cap = opts.perSessionCap && opts.perSessionCap > 0 ? opts.perSessionCap : DEFAULT_PER_SESSION_CAP
     const needle = query.toLowerCase()
 
-    let files: string[]
-    try { files = (await readdir(this.dir)).filter((f) => f.endsWith('.json')) }
-    catch { return [] }
-
-    const seen = new Set<string>()
+    const entries = await scanSessionDir<ProseEntry>(this.dir, proseCache, buildProseEntry)
     const results: SessionSearchResult[] = []
-    for (const f of files) {
-      const path = join(this.dir, f)
-      seen.add(path)
-      let entry: CacheEntry
-      try {
-        const mtimeMs = (await stat(path)).mtimeMs
-        const cached = proseCache.get(path)
-        if (cached && cached.mtimeMs === mtimeMs) {
-          entry = cached
-        } else {
-          const rec = JSON.parse(await readFile(path, 'utf8')) as {
-            id?: unknown; title?: unknown; cwd?: unknown; updatedAt?: unknown; messages?: unknown
-          }
-          if (typeof rec.id !== 'string' || !Array.isArray(rec.messages)) continue
-          entry = {
-            mtimeMs,
-            meta: {
-              id: rec.id,
-              title: typeof rec.title === 'string' ? rec.title : '',
-              cwd: typeof rec.cwd === 'string' ? rec.cwd : '',
-              updatedAt: typeof rec.updatedAt === 'string' ? rec.updatedAt : '',
-            },
-            docs: extractProse(rec.messages as Message[]),
-          }
-          proseCache.set(path, entry)
-        }
-      } catch { continue }
-
+    for (const entry of entries) {
       const hits: SearchHit[] = []
       let hitCount = 0
       for (const d of entry.docs) {
@@ -92,10 +78,11 @@ export class SearchService {
       }
       if (hitCount > 0) results.push({ session: entry.meta, hits, hitCount })
     }
-    // 清理已消失文件的缓存项(防无界增长)。
-    for (const path of proseCache.keys()) if (!seen.has(path)) proseCache.delete(path)
-
-    results.sort((a, b) => (a.session.updatedAt < b.session.updatedAt ? 1 : -1))
+    // 3-way comparator (returns 0 on equal updatedAt) so tied sessions keep a stable order.
+    results.sort((a, b) => {
+      const x = a.session.updatedAt, y = b.session.updatedAt
+      return x < y ? 1 : x > y ? -1 : 0
+    })
     return results.slice(0, limit)
   }
 }

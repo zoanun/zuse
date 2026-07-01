@@ -11,6 +11,7 @@ import {
   type SessionRecord,
   type SessionMeta,
 } from './sessionStore.js'
+import { stripUserStamp } from './userStamp.js'
 
 export interface SessionServiceOpts {
   /** web-sessions dir — where SessionRecord json files live. */
@@ -31,10 +32,10 @@ export interface SessionServiceOpts {
  * - autosave subscribes to each manager and persists a SessionRecord on every
  *   turn-end / checkpoint-recorded (fire-and-forget, never breaks a turn).
  *
- * LIST source-of-truth choice (per spec §5): create() saves an initial record
- * immediately, so a session always has a disk record the moment it exists. That
- * makes the on-disk dir the authoritative source for list() — no need to merge
- * in registry-only entries. We take this simpler path.
+ * LIST source-of-truth = the on-disk dir. create() does NOT write an empty record — a brand-new
+ * session is live in the registry (reachable by id over WS) but hits disk only when autosave
+ * persists it on the first turn-end. So an unused session is intentionally absent from list()
+ * (no empty "New chat" clutter); list() reads disk and does not merge registry-only entries.
  */
 export class SessionService {
   private readonly dir: string
@@ -101,8 +102,10 @@ export class SessionService {
   }
 
   /**
-   * Create a fresh session: register a live manager, wire autosave, and save an
-   * initial record immediately so it shows up in list() right away.
+   * Create a fresh session: register a live manager and wire autosave. Does NOT persist an
+   * initial record — feature C keeps empty sessions off disk, so a brand-new session is live in
+   * the registry (reachable by id over WS) but stays absent from list() until the first turn-end
+   * autosave, once it has real content. An explicit `title` is remembered as an initial title.
    */
   async create(opts?: { cwd?: string; title?: string }): Promise<{ id: string }> {
     const id = newSessionId()
@@ -115,9 +118,12 @@ export class SessionService {
     // create, so every "+ New chat" and every first-visit bootstrap left an empty
     // record cluttering the list. The session is live in the registry (WS can reach
     // it by id); autosave persists it on the first turn-end, once it has real content.
-    // An explicitly supplied title is kept as a manual title so that first persist
-    // honors it instead of deriving one from the message.
-    if (opts?.title) this.manualTitles.set(id, opts.title)
+    // An explicitly supplied title seeds the *generated* title, not a manual one: the first
+    // persist writes it (persist priority: manual ?? generated ?? derived), but a small-model
+    // title-changed event can still replace it and a manual rename still overrides it — matching
+    // the old forcedTitle semantics. Writing it into manualTitles would instead pin it forever
+    // and permanently block the auto-generated title.
+    if (opts?.title) this.generatedTitles.set(id, opts.title)
     return { id }
   }
 
@@ -164,7 +170,10 @@ export class SessionService {
     this.generatedTitles.delete(id) // a manual title supersedes any generated one
     const live = this.registry.get(id)
     if (live) {
-      // Live manager → go through the normal persist path (picks up the manual title).
+      // Live manager → go through the normal persist path (picks up the manual title). A rename
+      // is an explicit user act, so persisting even a still-empty session is intended: it's how a
+      // freshly-created session gains disk presence (distinct from the auto-created empties that
+      // feature C keeps off disk at create() time). See http server.test.ts CRUD test.
       await this.persist(id, live)
       return
     }
@@ -272,7 +281,7 @@ function deriveTitle(messages: SessionRecord['messages']): string {
     if (m.role !== 'user') continue
     for (const block of m.content) {
       if (block.type === 'text') {
-        const text = block.text.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\] /, '').trim()
+        const text = stripUserStamp(block.text).trim()
         if (text) return text.slice(0, 60)
       }
     }

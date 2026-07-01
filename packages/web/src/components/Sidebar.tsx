@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { SessionMeta, SessionSearchResult } from '@zuse/protocol'
 import { searchSessions } from '../state/session.js'
+import { useDebounced } from './MemoryPanel.js'
 
 interface Props {
   sessions: SessionMeta[]
@@ -96,22 +97,22 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
 
 export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump }: Props) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<SessionSearchResult[] | null>(null)
-  const [searchErr, setSearchErr] = useState(false)
+  const dq = useDebounced(query.trim(), 200)
+  // One state models the async outcome: null = not searching, 'error' = failed, else the hits.
+  const [results, setResults] = useState<SessionSearchResult[] | 'error' | null>(null)
   const reqSeq = useRef(0)
 
   useEffect(() => {
-    const q = query.trim()
-    if (q === '') { setResults(null); setSearchErr(false); return }
+    // Bump on EVERY run (including clearing the box) so a prior in-flight request that gets
+    // aborted here can't land in .catch and flash '搜索失败' — its captured seq is now stale.
     const seq = ++reqSeq.current
+    if (dq === '') { setResults(null); return }
     const ac = new AbortController()
-    const t = setTimeout(() => {
-      void searchSessions(q, ac.signal)
-        .then((r) => { if (seq === reqSeq.current) { setResults(r); setSearchErr(false) } })
-        .catch(() => { if (seq === reqSeq.current) { setSearchErr(true); setResults([]) } })
-    }, 200)
-    return () => { clearTimeout(t); ac.abort() }
-  }, [query])
+    void searchSessions(dq, ac.signal)
+      .then((r) => { if (seq === reqSeq.current) setResults(r) })
+      .catch(() => { if (seq === reqSeq.current) setResults('error') })
+    return () => ac.abort()
+  }, [dq])
 
   return (
     <aside className="sidebar">
@@ -131,7 +132,7 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
       </div>
       {results !== null ? (
         <div className="search-results">
-          {searchErr ? <div className="search-empty">搜索失败</div>
+          {results === 'error' ? <div className="search-empty">搜索失败</div>
             : results.length === 0 ? <div className="search-empty">无匹配</div>
             : results.map((r) => (
               <div key={r.session.id} className="search-group">
