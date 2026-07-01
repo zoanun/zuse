@@ -4,12 +4,33 @@ import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
+import { isSelectableRow } from './Message.js'
+import type { Message as Msg } from '../state/types.js'
 import { TodosPanel } from './TodosPanel.js'
 import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
 import { Composer } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
+
+/**
+ * All message ids in the same "turn" as `id`: the opening user message plus every assistant
+ * message up to (not including) the next user message. A reply that used tools mid-stream is
+ * several assistant messages, so this groups those split parts (and their question) as one unit
+ * for share selection — selecting one part selects the whole exchange.
+ */
+function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
+  const i = msgs.findIndex((m) => m.id === id)
+  if (i < 0) return [id]
+  let start = i
+  while (start > 0 && msgs[start]!.role !== 'user') start-- // back to the turn's user opener (or 0)
+  let end = start + 1
+  while (end < msgs.length && msgs[end]!.role !== 'user') end++ // up to the next user opener
+  // Only ids that are actually SELECTABLE rows in share view (isSelectableRow == MessageList's
+  // share filter): a user message, or an assistant message with prose. Tool-only assistant
+  // messages have no visible checkbox, so including them would inflate the "已选 N 条" count.
+  return msgs.slice(start, end).filter(isSelectableRow).map((m) => m.id)
+}
 
 export function Shell() {
   const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo } = useStore()
@@ -29,22 +50,30 @@ export function Shell() {
   // ref instead of closing over state.messages, which changes on every stream delta.
   const messagesRef = useRef(state.messages)
   messagesRef.current = state.messages
-  // Enter share mode pre-selecting the clicked reply + its question (nearest user message above).
+  // Scroll anchor for share mode = the QUESTION (the turn's user message), per user preference.
+  // Both entering AND leaving share mode remount each row (div↔label) and reset scroll to the top,
+  // so we scroll back to this anchor on both transitions. wasShareRef distinguishes a real
+  // enter/exit from a mere checkbox toggle (which must NOT move the scroll).
+  const shareAnchorRef = useRef<string | null>(null)
+  const wasShareRef = useRef(false)
+  // Enter share mode pre-selecting the clicked reply's whole turn (question + every assistant
+  // part of the answer, including parts split across tool-use iterations).
   const onShare = useCallback((assistantId: string) => {
-    const msgs = messagesRef.current
-    const i = msgs.findIndex((m) => m.id === assistantId)
-    const ids = new Set<string>()
-    if (i >= 0) {
-      ids.add(msgs[i]!.id)
-      for (let j = i - 1; j >= 0; j--) if (msgs[j]!.role === 'user') { ids.add(msgs[j]!.id); break }
-    }
-    setShareSel(ids)
+    const ids = turnIdsOf(messagesRef.current, assistantId)
+    // ids[0] is the turn's opener — the user's question (turnIdsOf slices from the user message),
+    // which is the scroll anchor per user preference; fall back to the clicked reply.
+    shareAnchorRef.current = ids[0] ?? assistantId
+    setShareSel(new Set(ids))
   }, [])
+  // Toggle by TURN, not by single message: clicking any row checks/unchecks the whole exchange,
+  // so a reply split into several assistant messages selects as one unit.
   const toggleSelect = useCallback((id: string) => {
     setShareSel((prev) => {
       if (!prev) return prev
+      const ids = turnIdsOf(messagesRef.current, id)
+      const allSelected = ids.every((x) => prev.has(x))
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
+      for (const x of ids) { if (allSelected) next.delete(x); else next.add(x) }
       return next
     })
   }, [])
@@ -61,6 +90,18 @@ export function Shell() {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShareSel(null) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+  }, [shareSel])
+  // On entering OR leaving share mode, restore the scroll to the anchor (the question) — both
+  // transitions remount the rows and reset scroll to the top. A checkbox toggle keeps shareSel
+  // truthy (no enter/exit), so wasShareRef gates it out and the scroll stays put.
+  useEffect(() => {
+    const isShare = !!shareSel
+    if (isShare === wasShareRef.current) return // a toggle within share mode — leave scroll alone
+    wasShareRef.current = isShare
+    const anchor = shareAnchorRef.current
+    if (!anchor) return
+    requestAnimationFrame(() => document.getElementById('msg-' + anchor)?.scrollIntoView({ block: 'center' }))
+    if (!isShare) shareAnchorRef.current = null // left share mode → anchor consumed
   }, [shareSel])
 
   return (

@@ -24,6 +24,13 @@ export function replyMarkdown(parts: Part[]): string {
   return md
 }
 
+/** A shareable/selectable row: a user question, or an assistant reply that has prose (tool-only
+ *  replies render nothing and are hidden). Single source of truth for MessageList's share filter
+ *  and Shell's turn grouping — keep them from drifting apart. */
+export function isSelectableRow(m: Msg): boolean {
+  return m.role === 'user' || (m.role === 'assistant' && replyMarkdown(m.parts) !== '')
+}
+
 // memo: while streaming, the store re-renders on every delta but only the last
 // message's identity changes — memo lets the unchanged messages skip re-rendering
 // (and re-parsing their markdown). Relies on a stable `onRevert`/`onShare` (see Shell).

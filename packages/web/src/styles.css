@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --sans: "Microsoft YaHei", "微软雅黑", -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  --sans: "DengXian", "等线", -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
   --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
 }
 :root[data-theme="light"] {
@@ -27,7 +27,7 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 650; }
 .mark { width: 24px; height: 24px; border-radius: 7px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-style: italic; font-size: 14px; box-shadow: 0 0 14px var(--accent-glow); }
 .eyebrow { font: 600 9px/1 var(--mono); letter-spacing: 0.22em; color: var(--faint); text-transform: uppercase; padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; }
-.side-btn { display: flex; align-items: center; gap: 9px; width: 100%; justify-content: flex-start; background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 13.5px; padding: 10px 13px; border-radius: 12px; cursor: pointer; }
+.side-btn { display: flex; align-items: center; gap: 9px; width: 100%; justify-content: flex-start; background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 13.5px; letter-spacing: 0.05em; padding: 10px 13px; border-radius: 12px; cursor: pointer; }
 .side-btn:hover { background: var(--surface-2); }
 .side-note { font-size: 12px; color: var(--faint); line-height: 1.55; padding: 0 2px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
@@ -35,7 +35,7 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .session-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; cursor: pointer; color: var(--muted); }
 .session-item:hover { background: var(--surface-2); color: var(--text); }
 .session-item.active { background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--text); }
-.session-title { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-title { flex: 1; min-width: 0; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; background: transparent; color: var(--faint); font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; opacity: 0.5; transition: opacity .15s, color .15s, background .15s; }
 .session-item:hover .session-del, .session-del:focus-visible { opacity: 1; }
 .session-del:hover { color: var(--bad); background: var(--surface-2); }
@@ -82,7 +82,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg-error { color: var(--bad); font-size: 12.5px; margin-top: 12px; min-height: 1em; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.stream { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 26px; width: 100%; padding: 30px 7% 26px; }
+.stream { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 14px; width: 100%; padding: 30px 7% 26px; }
+/* A user turn starts a new exchange — give it extra separation above the tight 14px
+   baseline (so assistant→assistant, incl. consecutive tool-call turns, stays compact
+   while user turns still read as a fresh turn). */
+.msg-anchor:has(.msg.you) { margin-top: 12px; }
 .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 .msg.agent { align-self: stretch; max-width: 100%; }
 .msg.you { align-self: flex-end; max-width: 80%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
@@ -94,9 +98,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg.agent:hover .msg-copy, .msg-copy:focus-visible { opacity: 0.6; }
 .msg-copy:hover { color: var(--text); background: var(--surface-2); opacity: 1; }
 /* Share-selection: a vertically-centred checkbox gutter on the left of every message row. */
-.msg-row { display: flex; align-items: center; gap: 10px; align-self: stretch; width: 100%; padding: 3px 4px; border-radius: 10px; }
+.msg-row { display: flex; align-items: flex-start; gap: 10px; align-self: stretch; width: 100%; padding: 3px 4px; border-radius: 10px; }
 .msg-row.sel { background: var(--accent-soft); }
-.msg-check { flex: none; width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+/* Align the checkbox to the vertical middle of the message's FIRST line (not the middle of the
+   whole, possibly tall, message). Assistant prose starts at the row top, so a small nudge
+   centers it; a user bubble pushes its first line down by its padding, so its checkbox needs more. */
+.msg-check { flex: none; width: 16px; height: 16px; margin-top: 5px; margin-left: 6px; cursor: pointer; accent-color: var(--accent); }
+/* User messages are short bubbles → just center the checkbox on the whole (single-/few-line)
+   bubble; adapts to any bubble height without magic numbers. Assistant replies can be tall, so
+   they keep flex-start + the small first-line nudge above. */
+.msg-row:has(.msg.you) { align-items: center; }
+.msg-row:has(.msg.you) .msg-check { margin-top: 0; }
 .msg-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .share-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 8px 14px; margin-bottom: 8px; background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 10px; font-size: 13px; }
 .share-bar-label { color: var(--accent); font-weight: 600; }
@@ -105,7 +117,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .share-go { background: var(--accent); color: #fff; border-color: var(--accent); }
 .share-go:disabled { opacity: 0.5; cursor: default; }
 .share-cancel { background: transparent; color: var(--text); }
-.msg.you .bubble { background: var(--user-bubble); border-radius: 20px; padding: 10px 16px; font-size: 15px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.msg.you .bubble { background: var(--user-bubble); border-radius: 16px; padding: 7px 14px; font-size: 15px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
 .text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
 .text h1, .text h2, .text h3, .text h4 { line-height: 1.3; margin: 16px 0 8px; font-weight: 650; }
 .text h1 { font-size: 1.4em; } .text h2 { font-size: 1.22em; } .text h3 { font-size: 1.08em; }
@@ -144,7 +156,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .hljs-number, .hljs-literal { color: var(--warn); }
 .hljs-comment { color: var(--faint); font-style: italic; }
 
-.tool { align-self: stretch; max-width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; margin: 14px 0; }
+.tool { align-self: stretch; max-width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; }
+/* Tool cards get a uniform 14px gap from adjacent content WITHIN a message; cross-message
+   gap comes from .stream's 14px gap. (The old `.tool { margin: 14px 0 }` stacked on top of
+   the stream gap, so two tools in separate messages had ~54px while two in one message had 14px.) */
+.text-wrap > * + .tool, .text-wrap > .tool + * { margin-top: 14px; }
 .tool .head { color: var(--accent); font-weight: 600; }
 /* Negative margins make the button fill the whole card (eating .tool's padding), so the
    entire row is the click target — not just the text line. padding restores the inset. */
@@ -378,10 +394,10 @@ button.head:hover .caret { opacity: 1; }
 .session-search::placeholder { color: var(--faint); }
 .search-results { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 2px 4px; }
 .search-group { display: flex; flex-direction: column; gap: 1px; }
-.search-group-head { font: 600 10px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 2px 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-group-head { font: 600 13px/1.3 var(--sans); color: var(--muted); margin: 4px 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-hit { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
 .search-hit:hover { background: var(--surface-2); }
-.hit-role { font: 600 9px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); flex: none; }
+.hit-role { font: 600 11px/1 var(--sans); letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); flex: none; }
 .hit-snippet { font-size: 12.5px; line-height: 1.5; color: var(--text); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .search-hit mark { background: rgba(229,181,103,0.45); color: var(--text); border-radius: 3px; padding: 0 1px; }
 .search-more { font-size: 11px; color: var(--faint); padding: 2px 8px 4px; }
