@@ -21,6 +21,11 @@ export interface SnapshotMessage {
   parts: SnapshotPart[]
   /** 若本条用户消息开启了某次 turn，则带上该 turn 检查点的 hash（供前端渲染逐条 revert）。 */
   checkpointId?: string
+  /** 回合中插话（steer）气泡：服务端据账本消息的结构化 steer 字段还原出的用户原话，前端渲染 "↪ 插话"。 */
+  steer?: boolean
+  /** 该快照消息对应的账本索引。投影可能插入额外的 steer 气泡，使快照数组下标 != 账本下标；
+   *  历史搜索跳转按此字段而非数组位置定位，避免 steer 之后的命中错位。 */
+  ledgerIndex?: number
 }
 
 /** 检查点轻量摘要。 */
