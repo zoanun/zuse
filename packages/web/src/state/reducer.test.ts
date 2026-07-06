@@ -162,6 +162,18 @@ describe('reduce', () => {
     expect(users[1]!.checkpointId).toBe('cp2')
   })
 
+  it('checkpoint-recorded skips a mid-turn steer bubble and anchors the real turn opener', () => {
+    const s = run([
+      { kind: 'user-send', id: 'u1', text: 'the question' },
+      // Interjection sent while the reply streamed — role:'user' too, but must NOT catch the checkpoint.
+      { kind: 'user-send', id: 's1', text: 'also do X', steer: true },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 'turn 1' }) },
+    ])
+    const byId = (id: string) => s.messages.find((m) => m.id === id)!
+    expect(byId('u1').checkpointId).toBe('cp1')       // the real opener gets the revert anchor
+    expect(byId('s1').checkpointId).toBeUndefined()   // the steer bubble does not
+  })
+
   it('reverted adds an info notice', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'reverted', checkpointId: 'cp1' }) })
     const notices = s.messages.filter((m) => m.role === 'system')

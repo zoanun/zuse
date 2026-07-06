@@ -22,10 +22,13 @@ import type { ManagePanel } from './ManageDrawer.js'
 function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
   const i = msgs.findIndex((m) => m.id === id)
   if (i < 0) return [id]
+  // A turn opens on a real user message; a mid-turn steer bubble (role:'user', steer:true) is part
+  // of the turn, NOT a boundary, so it doesn't split the exchange into two share groups.
+  const isOpener = (m: Msg) => m.role === 'user' && !m.steer
   let start = i
-  while (start > 0 && msgs[start]!.role !== 'user') start-- // back to the turn's user opener (or 0)
+  while (start > 0 && !isOpener(msgs[start]!)) start-- // back to the turn's user opener (or 0)
   let end = start + 1
-  while (end < msgs.length && msgs[end]!.role !== 'user') end++ // up to the next user opener
+  while (end < msgs.length && !isOpener(msgs[end]!)) end++ // up to the next user opener
   // Only ids that are actually SELECTABLE rows in share view (isSelectableRow == MessageList's
   // share filter): a user message, or an assistant message with prose. Tool-only assistant
   // messages have no visible checkbox, so including them would inflate the "已选 N 条" count.
@@ -51,16 +54,13 @@ export function Shell() {
     // surfaces progress/result as notices.
     const command = SLASH_COMMANDS[text.trim()]
     if (command) { send(command); return }
-    if (state.thinking) {
-      // Mid-turn steer: the reply is still streaming, so inject this into the running turn rather
-      // than starting a new one. The server folds steer text into a tool_result (it never becomes
-      // a standalone ledger message), so echo it locally as a marked user bubble.
-      dispatch({ kind: 'user-send', id: nextId('u'), text, steer: true })
-      send({ type: 'steer', text })
-      return
-    }
-    dispatch({ kind: 'user-send', id: nextId('u'), text })
-    send({ type: 'send', text })
+    // While a reply is still streaming, a send becomes a mid-turn steer injected into the running
+    // turn instead of opening a new one. The server folds steer text into a tool_result (it never
+    // becomes a standalone ledger message), so either way echo it locally — marked as a steer when
+    // it interjected — as an optimistic user bubble.
+    const steer = state.thinking
+    dispatch({ kind: 'user-send', id: nextId('u'), text, steer })
+    send({ type: steer ? 'steer' : 'send', text })
   }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).

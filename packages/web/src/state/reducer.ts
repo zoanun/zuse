@@ -126,11 +126,13 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false }, '已停止', 'warn')
     case 'checkpoint-recorded': {
       // Attach the checkpoint id to the most recent user message that lacks one
-      // (one checkpoint per turn, in order → that turn's user message).
+      // (one checkpoint per turn, in order → that turn's user message). Skip mid-turn steer
+      // bubbles: they're role:'user' too, but the checkpoint anchors the turn's real opener, so
+      // attaching it to an interjection would misplace the 回退 (revert) button.
       const msgs = state.messages.slice()
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i]!
-        if (m.role === 'user' && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
+        if (m.role === 'user' && !m.steer && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
       }
       return { ...state, messages: msgs }
     }
