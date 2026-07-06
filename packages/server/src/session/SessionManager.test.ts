@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
-import { Conversation, ToolRegistry } from '@zuse/core'
+import { Conversation, ToolRegistry, steerFoldSuffix } from '@zuse/core'
 import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
 import type { SessionCheckpoint, SessionEvent } from './events.js'
 
@@ -136,15 +136,16 @@ describe('SessionManager snapshot projection', () => {
 
     const s = mgr.getState()
     expect(s.messages).toEqual([
-      { role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
+      { role: 'user', parts: [{ kind: 'text', text: 'hello' }], ledgerIndex: 0 },
       {
         role: 'assistant',
         parts: [
           { kind: 'text', text: 'running it' },
           { kind: 'tool-use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
         ],
+        ledgerIndex: 1,
       },
-      { role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }] },
+      { role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }], ledgerIndex: 2 },
     ])
     // No turn has run, so no checkpoints recorded yet.
     expect(s.checkpoints).toEqual([])
@@ -198,6 +199,66 @@ describe('SessionManager snapshot projection', () => {
     const s = mgr.getState()
     expect(s.messages[0]!.checkpointId).toBe('cp-h')
     expect(s.messages[1]!.checkpointId).toBeUndefined()
+  })
+
+  const buildMgr = (conversation: Conversation): SessionManager =>
+    new SessionManager({
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
+      settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation,
+    })
+
+  it('a message with a structural steer field → strips the fold from the card + emits a 插话 bubble', () => {
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: 'do it' }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+    // Carrier tool_result message: steer folded into content AND recorded in the structural field.
+    conversation.append({
+      role: 'user',
+      steer: ['also do X'],
+      content: [{ type: 'tool_result', tool_use_id: 't1', content: 'raw output' + steerFoldSuffix('also do X'), is_error: false }],
+    })
+
+    const s = buildMgr(conversation).getState()
+    const trPart = s.messages.flatMap((m) => m.parts).find((p) => p.kind === 'tool-result')!
+    expect(trPart).toMatchObject({ kind: 'tool-result', output: 'raw output' }) // injection stripped by exact text
+    expect(JSON.stringify(trPart)).not.toContain('USER MESSAGE')
+    const bubble = s.messages.find((m) => m.steer)!
+    expect(bubble).toMatchObject({ role: 'user', steer: true, parts: [{ kind: 'text', text: 'also do X' }] })
+  })
+
+  it('a tool_result that merely CONTAINS the marker text but has no steer field is left untouched (no phantom bubble)', () => {
+    // The #1 regression: reading a file (e.g. steer.ts) whose contents include the literal marker
+    // must NOT be mis-parsed. Identification is structural (the steer field), never by content.
+    const leaked = 'file contents: ' + steerFoldSuffix('not a real steer') + ' more'
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: 'read steer.ts' }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] })
+    conversation.append({ // NOTE: no `steer` field — this is real content, not a steer.
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 't1', content: leaked, is_error: false }],
+    })
+
+    const s = buildMgr(conversation).getState()
+    expect(s.messages.some((m) => m.steer)).toBe(false)          // no phantom 插话 bubble
+    const trPart = s.messages.flatMap((m) => m.parts).find((p) => p.kind === 'tool-result') as { output: string }
+    expect(trPart.output).toBe(leaked)                            // content NOT truncated/altered
+  })
+
+  it('sets ledgerIndex on projected messages so search-jump survives spliced steer bubbles', () => {
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', content: [{ type: 'text', text: 'q' }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+    conversation.append({ role: 'user', steer: ['mid'], content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' + steerFoldSuffix('mid'), is_error: false }] })
+    conversation.append({ role: 'assistant', content: [{ type: 'text', text: 'after' }] }) // ledger index 3
+
+    const s = buildMgr(conversation).getState()
+    // The steer bubble is spliced in, so the array is longer than the ledger — but the assistant
+    // AFTER it still reports ledgerIndex 3 (not shifted), keeping 'h3' aligned for search-jump.
+    const afterMsg = s.messages.find((m) => m.parts.some((p) => p.kind === 'text' && p.text === 'after'))!
+    expect(afterMsg.ledgerIndex).toBe(3)
+    expect(s.messages.find((m) => m.steer)!.ledgerIndex).toBeUndefined() // spliced bubble carries none
   })
 })
 

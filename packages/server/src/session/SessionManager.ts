@@ -27,6 +27,7 @@ import {
   buildConsolidationPrompt,
   parseConsolidationOps,
   generateSessionTitle,
+  steerFoldSuffix,
   type ModelClient,
   type FileReadTracker,
   type ResolvedSettings,
@@ -336,7 +337,8 @@ export class SessionManager {
    * carry no tool name in the core ContentBlock, so name is '' here.
    */
   private projectMessages(): SnapshotMessage[] {
-    return this.conversation.getMessages().map(({ role, content }, i) => {
+    const out: SnapshotMessage[] = []
+    this.conversation.getMessages().forEach(({ role, content, steer }, i) => {
       const parts: SnapshotPart[] = []
       for (const block of content) {
         if (block.type === 'text') {
@@ -349,9 +351,12 @@ export class SessionManager {
         } else if (block.type === 'tool_use') {
           parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
         } else if (block.type === 'tool_result') {
-          const output = Array.isArray(block.content)
+          let output = Array.isArray(block.content)
             ? (block.content as Array<{ text?: string }>).map((c) => c.text ?? '').join('')
             : String(block.content)
+          // Strip any steer injection folded into this tool_result by EXACT text (from the message's
+          // structural `steer` field, not by sniffing) so the scaffolding doesn't show in the card.
+          for (const s of steer ?? []) output = output.split(steerFoldSuffix(s)).join('')
           parts.push({ kind: 'tool-result', id: block.tool_use_id, name: '', output, isError: block.is_error ?? false })
         }
         // Unknown block kinds are intentionally skipped.
@@ -360,8 +365,13 @@ export class SessionManager {
       // message's ledger index. Attach the hash so the web can render a per-message revert.
       // Match by index regardless of role (only user turns will match by construction).
       const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
-      return { role, parts, checkpointId }
+      out.push({ role, parts, checkpointId, ledgerIndex: i })
+      // Emit each folded steer as its own "↪ 插话" bubble after the carrier message. Driven by the
+      // structural `steer` field — a message that merely CONTAINS the marker text (e.g. a Read of
+      // steer.ts) has no such field and is left untouched.
+      for (const s of steer ?? []) out.push({ role: 'user', parts: [{ kind: 'text', text: s }], steer: true })
     })
+    return out
   }
 
   /**
