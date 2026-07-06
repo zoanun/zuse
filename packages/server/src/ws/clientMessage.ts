@@ -4,7 +4,7 @@ import type { ClientMessage } from '@zuse/protocol'
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type SessionManagerLike = Pick<
   SessionManager,
-  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry'
+  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry' | 'compactNow'
 >
 
 /**
@@ -69,6 +69,9 @@ export function applyClientMessage(
         return
       case 'retry':
         mgr.retry().catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        return
+      case 'compact':
+        mgr.compactNow().catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       default:
         sendError(`unknown message type: ${(msg as { type: string }).type}`)

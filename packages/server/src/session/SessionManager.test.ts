@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SessionManager, remapCheckpoints } from './SessionManager.js'
+import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { Conversation, ToolRegistry } from '@zuse/core'
 import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
@@ -582,8 +582,156 @@ describe('SessionManager auto-compaction', () => {
     expect(types).toContain('compaction-done')
     expect(types).toContain('memory-notice')
     expect(summaryText).toContain('## Active Task')
-    // Conversation was replaced with a shorter, compacted ledger.
-    expect(mgr.getState().messageCount).toBeLessThan(lengthBefore)
+    // Feature B: the full ledger is NOT shortened — it keeps every message and grows by the
+    // new turn's messages (display/search see the whole history).
+    expect(mgr.getState().messageCount).toBeGreaterThan(lengthBefore)
+    // Compaction was recorded as metadata (summary + a cut into the full ledger), not by
+    // replacing the ledger.
+    const comp = mgr.getCompaction()
+    expect(comp).not.toBeNull()
+    expect(comp!.cutIndex).toBeGreaterThan(0)
+    expect(comp!.summaryText).toContain('## Active Task')
+    // The model turn (calls[1]) received the COMPACTED view (summary + recent tail), NOT the full
+    // history — proof the LLM context was shortened even though the ledger was not.
+    expect(calls[1]!.length).toBeLessThan(lengthBefore)
+  })
+
+  it('compactNow() compacts on demand regardless of the context threshold (web /compact)', async () => {
+    const seed: Message[] = []
+    for (let n = 0; n < 4; n++) {
+      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+    }
+    const conversation = Conversation.fromJSON({
+      version: 1, messages: seed, totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })
+    // Only the summary request is made (no turn). contextTokens left at 0 (below threshold) to prove
+    // manual compaction ignores the threshold.
+    const summaryScript: StreamEvent[] = [
+      { type: 'message-start', id: 'sum', model: 'fake-model' },
+      { type: 'text-delta', text: '## Active Task\nNone.' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } },
+    ]
+    const { client, calls } = fakeClient([summaryScript])
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation,
+    })
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+
+    await mgr.compactNow()
+
+    expect(calls.length).toBe(1) // the summary request ran even though we're under threshold
+    // Locks the composer (turn-start/turn-end) and runs the full compaction lifecycle.
+    expect(types).toContain('turn-start')
+    expect(types).toContain('compaction-start')
+    expect(types).toContain('compaction-done')
+    expect(types).toContain('memory-notice')
+    expect(types).toContain('turn-end')
+    expect(mgr.getCompaction()).not.toBeNull()
+  })
+})
+
+describe('SessionManager compaction failover', () => {
+  const seed = () => {
+    const s: Message[] = []
+    for (let n = 0; n < 4; n++) {
+      s.push({ role: 'user', content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
+      s.push({ role: 'assistant', content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
+    }
+    return Conversation.fromJSON({ version: 1, messages: s, totalUsage: { input_tokens: 0, output_tokens: 0 } })
+  }
+  const settingsWith = (models: string[]) => ({
+    failoverMode: 'auto',
+    providers: { p: { protocol: 'anthropic', apiKey: 'k', models } },
+    tools: {},
+    permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+  } as unknown as ResolvedSettings)
+  const quotaClient = (name: string): ModelClient => ({
+    getModel: () => name,
+    async *sendMessages() { yield { type: 'error', message: 'quota', category: 'quota' } },
+  })
+
+  it('summarize hits quota → fails over to the next model → real summary, no fallback warning', async () => {
+    const backup: ModelClient = {
+      getModel: () => 'backup',
+      async *sendMessages() {
+        yield { type: 'message-start', id: 's', model: 'backup' }
+        yield { type: 'text-delta', text: '## Active Task\nreal summary from backup' }
+        yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } }
+      },
+    }
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: quotaClient('primary'), registry: new ToolRegistry(),
+      settings: settingsWith(['primary', 'backup']), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup, conversation: seed(),
+    })
+    const types: string[] = []
+    let summaryText = '', warned = false
+    mgr.subscribe((e) => {
+      types.push(e.type)
+      if (e.type === 'compaction-done') summaryText = e.summaryText
+      if (e.type === 'warning') warned = true
+    })
+    await mgr.compact()
+    expect(types).toContain('failover')
+    expect(summaryText).toContain('real summary from backup')
+    expect(summaryText).not.toContain('Deterministic fallback')
+    expect(warned).toBe(false)
+    expect(mgr.getCompaction()).not.toBeNull()
+  })
+
+  it('summarize quota with no other model → mechanical fallback + warning', async () => {
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: quotaClient('only'), registry: new ToolRegistry(),
+      settings: settingsWith(['only']), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), providerId: 'p', conversation: seed(),
+    })
+    const types: string[] = []
+    let summaryText = ''
+    mgr.subscribe((e) => { types.push(e.type); if (e.type === 'compaction-done') summaryText = e.summaryText })
+    await mgr.compact()
+    expect(types).toContain('warning')
+    expect(summaryText).toContain('Deterministic fallback')
+    expect(mgr.getCompaction()).not.toBeNull()
+  })
+
+  it('no-op when nothing new to fold since the last compaction (no model call, no events)', async () => {
+    let called = false
+    const client: ModelClient = {
+      getModel: () => 'm',
+      async *sendMessages() { called = true; yield { type: 'error', message: 'should not be called', category: 'quota' } },
+    }
+    const conv = Conversation.fromJSON({
+      version: 1,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'q1' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
+        { role: 'user', content: [{ type: 'text', text: 'q2' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+      ],
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: settingsWith(['m']),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), providerId: 'p', conversation: conv,
+      compaction: { summaryText: 'old summary', cutIndex: 0 },   // already compacted; nothing new to fold
+    })
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+    const msg = await mgr.compact()
+    expect(msg).toContain('没有新内容')
+    expect(called).toBe(false)                       // never hit the model
+    expect(types).not.toContain('compaction-start')  // no compaction events emitted
+    expect(types).not.toContain('compaction-done')
+    expect(mgr.getCompaction()).toMatchObject({ cutIndex: 0 })  // metadata unchanged
   })
 })
 
@@ -940,44 +1088,6 @@ describe('SessionManager steer', () => {
   })
 })
 
-describe('remapCheckpoints', () => {
-  const cp = (messageIndex: number): SessionCheckpoint => ({
-    messageIndex,
-    hash: `h${messageIndex}`,
-    at: '2026-01-01T00:00:00.000Z',
-    label: `cp${messageIndex}`,
-  })
-
-  it('drops checkpoints inside the folded range [0, cut) and remaps the kept ones (− cut + 1)', () => {
-    // Checkpoints at [0, 2, 5], cut = 3.
-    //  - 0 and 2 are < cut → folded away (dropped).
-    //  - 5 is >= cut → kept, remapped to 5 - 3 + 1 = 3 (the summary placeholder shifts it).
-    const result = remapCheckpoints([cp(0), cp(2), cp(5)], 3)
-    expect(result).toHaveLength(1)
-    expect(result[0]!.messageIndex).toBe(3)
-    // Identity-bearing fields are preserved on the survivor.
-    expect(result[0]!.hash).toBe('h5')
-    expect(result[0]!.label).toBe('cp5')
-  })
-
-  it('a checkpoint exactly at the cut index is kept and remaps to 1 (cut - cut + 1)', () => {
-    const result = remapCheckpoints([cp(3)], 3)
-    expect(result.map((c) => c.messageIndex)).toEqual([1])
-  })
-
-  it('remaps multiple survivors preserving order: [4, 7] with cut 3 → [2, 5]', () => {
-    const result = remapCheckpoints([cp(1), cp(4), cp(7)], 3)
-    // 1 dropped; 4 → 4-3+1=2; 7 → 7-3+1=5.
-    expect(result.map((c) => c.messageIndex)).toEqual([2, 5])
-  })
-
-  it('does not mutate the input checkpoints', () => {
-    const input = [cp(5)]
-    remapCheckpoints(input, 3)
-    expect(input[0]!.messageIndex).toBe(5)
-  })
-})
-
 describe('SessionManager reset ("New chat")', () => {
   it('clears todos/usage/context, zeroes messageCount, and emits an empty todos-update', async () => {
     // Run a real turn so totalUsage/contextTokens and the conversation are populated,
@@ -1033,6 +1143,20 @@ describe('SessionManager reset ("New chat")', () => {
       (e): e is Extract<SessionEvent, { type: 'permission-resolved' }> => e.type === 'permission-resolved',
     )
     expect(resolved?.verdict).toBe('deny')
+  })
+
+  it('clears compaction metadata (feature B: compaction lives outside the ledger now)', () => {
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      compaction: { summaryText: 'old summary', cutIndex: 3 },
+    })
+    expect(mgr.getCompaction()).not.toBeNull()
+    mgr.reset()
+    expect(mgr.getCompaction()).toBeNull()   // a fresh chat must not inherit the previous summary
   })
 })
 

@@ -39,6 +39,23 @@ describe('SearchService', () => {
     expect((await svc.search('压缩'))[0]!.hits[0]!.snippet.match).toBe('压缩')
   })
 
+  it('大小写折叠改变长度(İ→i̇)时高亮偏移不错位', async () => {
+    // 'İ'.toLowerCase() is two code units, so an offset from text.toLowerCase().indexOf would be
+    // shifted; matching on the original text keeps the <mark> aligned to the real "app".
+    writeSession('s1', '2026-06-30T10:00:00Z', [userMsg('İapp')])
+    const svc = new SearchService({ dir })
+    expect((await svc.search('app'))[0]!.hits[0]!.snippet.match).toBe('app')
+  })
+
+  it('某条消息缺 content 时不搞崩整会话搜索(仍命中其它消息)', async () => {
+    // A content-less message (old schema / partial write) must not throw and drop the whole file.
+    writeSession('s1', '2026-06-30T10:00:00Z', [{ role: 'assistant' }, userMsg('findme here')])
+    const svc = new SearchService({ dir })
+    const r = await svc.search('findme')
+    expect(r).toHaveLength(1)
+    expect(r[0]!.hits[0]!).toMatchObject({ msgIndex: 1, role: 'user' })
+  })
+
   it('排除 tool_use / tool_result / system,只搜人话', async () => {
     writeSession('s1', '2026-06-30T10:00:00Z', [
       { role: 'assistant', content: [{ type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'grep needle' } }] },
@@ -64,13 +81,15 @@ describe('SearchService', () => {
     expect(r[0]!.hits.map((h) => h.msgIndex)).toEqual([0, 1])
   })
 
-  it('每会话封顶 perSessionCap,hitCount 记总数', async () => {
+  it('每会话封顶 perSessionCap,保留最近的,hitCount 记总数', async () => {
     const msgs = Array.from({ length: 8 }, (_, i) => userMsg('match ' + i))
     writeSession('s1', '2026-06-30T10:00:00Z', msgs)
     const svc = new SearchService({ dir })
     const r = await svc.search('match', { perSessionCap: 3 })
     expect(r[0]!.hits).toHaveLength(3)
     expect(r[0]!.hitCount).toBe(8)
+    // Keeps the LAST 3 hits (highest msgIndex), dropping the earlier ones.
+    expect(r[0]!.hits.map((h) => h.msgIndex)).toEqual([5, 6, 7])
   })
 
   it('空/空白 q 返回 []', async () => {

@@ -7,8 +7,9 @@ import {
   findCompactionCut,
   findCompactionCutByBudget,
   summarizeForCompaction,
+  buildFallbackSummary,
   applyCompaction,
-  extractPreviousSummary,
+  emptyUsage,
   splitMemoryCandidates,
   estimateCompactionSavings,
   COMPACTION_THRESHOLD,
@@ -46,19 +47,8 @@ import type {
   SnapshotStore,
 } from './events.js'
 import type { SnapshotPart, SnapshotMessage } from '@zuse/protocol'
-import { stripUserStamp } from './userStamp.js'
-
-/**
- * Compaction folds messages[0..cut) into a single summary message, so checkpoint
- * indices shift: checkpoints inside the folded range are dropped, those in the kept
- * range are remapped (− cut + 1 for the summary placeholder). Server-local mirror of
- * the TUI's remapCheckpoints (which lives in @zuse/tui and must not be imported here).
- */
-export function remapCheckpoints(checkpoints: SessionCheckpoint[], cutIndex: number): SessionCheckpoint[] {
-  return checkpoints
-    .filter((c) => c.messageIndex >= cutIndex)
-    .map((c) => ({ ...c, messageIndex: c.messageIndex - cutIndex + 1 }))
-}
+import type { CompactionMeta } from './sessionStore.js'
+import { stripUserStamp, applyUserStamp } from './userStamp.js'
 
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -80,6 +70,8 @@ export interface SessionManagerOptions {
   conversation?: Conversation
   /** Pre-seed checkpoint anchors (e.g. restored from persistence, or for tests). Defaults to []. */
   checkpoints?: SessionCheckpoint[]
+  /** Pre-seed compaction state (feature B), restored from persistence. Absent = never compacted. */
+  compaction?: CompactionMeta
   createdAt?: string
   /** Max output tokens per turn. Defaults to DEFAULT_MAX_OUTPUT_TOKENS. */
   maxTokens?: number
@@ -136,6 +128,12 @@ export class SessionManager {
   private todos: TodoItemLite[] = []
   /** Shadow-git checkpoint anchors recorded per turn (Phase 12); drives revert(). */
   private checkpoints: SessionCheckpoint[] = []
+  /**
+   * Feature B compaction state, or null when never compacted. The full ledger (this.conversation)
+   * is never folded; this metadata drives the transient per-turn LLM view built in
+   * buildContextView(). Persisted + restored so the view survives a daemon restart.
+   */
+  private compaction: CompactionMeta | null = null
   /** Guards against concurrent memory-consolidation passes (fire-and-forget). */
   private consolidating = false
   private contextTokens: number | undefined = undefined
@@ -170,6 +168,7 @@ export class SessionManager {
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
     this.checkpoints = opts.checkpoints ?? []
+    this.compaction = opts.compaction ?? null
     this.createdAt = opts.createdAt ?? new Date().toISOString()
     this.maxTokens = opts.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS
     this.currentProviderId = opts.providerId ?? 'unknown'
@@ -239,6 +238,26 @@ export class SessionManager {
 
   getConversation(): Conversation {
     return this.conversation
+  }
+
+  /** Feature B: current compaction state (summary + cut), or null. Persisted by SessionService. */
+  getCompaction(): CompactionMeta | null {
+    return this.compaction
+  }
+
+  /**
+   * The conversation to send to the LLM this turn (feature B). With no compaction it IS the full
+   * ledger (unchanged behavior). With compaction it's a transient view
+   * `[framed summary, ...ledger.slice(cutIndex)]`, rebuilt each turn. applyCompaction seeds the
+   * view with the ledger's usage, so we re-seed it to zero: the turn's usage then lands only on
+   * the view and submit() folds it back onto the ledger, which stays the authoritative tally.
+   */
+  private buildContextView(): Conversation {
+    const c = this.compaction
+    if (c === null) return this.conversation
+    // Pass emptyUsage() into applyCompaction so it stamps the framed view directly — avoids the extra
+    // deep-clone (framed.getMessages()) that previously existed only to reset totalUsage to zero.
+    return applyCompaction(this.conversation, c.summaryText, c.cutIndex, emptyUsage())
   }
 
   getCheckpoints(): SessionCheckpoint[] {
@@ -438,31 +457,111 @@ export class SessionManager {
     this.sessionAllow.length = 0
     this.badModels.clear()
     this.ineffectiveCompaction = 0
+    // Feature B: compaction is now a separate field (not inside the ledger), so clearing the
+    // conversation no longer erases it — a fresh session would otherwise inherit the old summary.
+    this.compaction = null
     this.isThinking = false
 
     this.emit({ type: 'todos-update', todos: [] })
   }
 
   /**
-   * Compact the conversation: summarize old history, keep recent turns verbatim.
-   * Port of the TUI's compactConversation (minus React). Replaces this.conversation
-   * with a new compacted ledger and resets contextTokens (next turn re-measures).
-   * On a too-short history it returns a message and does nothing. The summary request
-   * always succeeds (summarizeForCompaction falls back to a deterministic summary).
+   * True when the last measured context usage crossed the compaction threshold and we're not in an
+   * ineffective-compaction backoff. SYNC so callers can gate the await — a no-op turn then stays
+   * fully synchronous up to `this.abort = controller`, preserving interrupt()'s ordering.
    */
-  async compact(): Promise<string> {
-    const conv = this.conversation
-    const messages = conv.getMessages()
+  private overContextThreshold(): boolean {
+    const windowSize = resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
+    return (this.contextTokens ?? 0) > windowSize * COMPACTION_THRESHOLD && this.ineffectiveCompaction < 2
+  }
+
+  /** Run one auto-compaction, surfacing the result as a memory-notice; a failure is warned and
+   *  swallowed (never blocks a turn). Callers gate with overContextThreshold() first. */
+  private async maybeAutoCompact(signal?: AbortSignal): Promise<void> {
+    try {
+      this.emit({ type: 'memory-notice', text: await this.compact(signal) })
+    } catch (err) {
+      if (signal?.aborted) return   // user Stop mid-compaction — the turn already emits 'aborted'; no scary warning
+      this.emit({ type: 'warning', message: `auto-compaction failed: ${err instanceof Error ? err.message : String(err)}` })
+    }
+  }
+
+  /**
+   * Manual compaction (web `/compact`). Unlike the auto path this ignores the context threshold —
+   * the user asked for it. Locks the composer for the duration (turn-start/turn-end, so a concurrent
+   * submit is rejected) and is Stop-interruptible (its AbortController is this.abort while running).
+   * Result surfaces as a memory-notice; a failure warns; an interrupt emits 'aborted'.
+   */
+  async compactNow(): Promise<void> {
+    if (this.isThinking) { this.emit({ type: 'warning', message: '回合进行中,无法手动压缩' }); return }
+    this.isThinking = true
+    this.emit({ type: 'turn-start', isResend: false })
+    const controller = new AbortController()
+    this.abort = controller
+    try {
+      this.emit({ type: 'memory-notice', text: await this.compact(controller.signal) })
+    } catch (err) {
+      if (controller.signal.aborted) this.emit({ type: 'aborted' })
+      else this.emit({ type: 'warning', message: `压缩失败: ${err instanceof Error ? err.message : String(err)}` })
+    } finally {
+      this.isThinking = false
+      this.abort = null
+      this.emit({ type: 'turn-end' })
+    }
+  }
+
+  /**
+   * Failover core, shared by submit()'s post-turn resend and compact()'s summarize retry: mark the
+   * current model bad for `cat`, pick the next available model in the same provider, and hot-swap
+   * this.client to it. Returns {fromModel, toModel, reason} on success, or null when there is no
+   * target (dialog failover mode, or every model already bad). Does NOT emit — the caller emits
+   * 'failover' / 'model-select-needed' as appropriate.
+   */
+  private failoverToNext(cat: ErrorCategory): { fromModel: string; toModel: string; reason: string } | null {
+    const pid = this.currentProviderId
+    const fromModel = this.client.getModel()
+    const models = modelNames(this.settings.providers[pid])
+    // Mark bad: auth invalidates the whole provider (shared key); others only this model.
+    for (const k of badKeysForFailure(pid, fromModel, cat, models)) {
+      this.badModels.set(k, k === modelKey(pid, fromModel) ? cat : 'auth')
+    }
+    const action = decideFailover({
+      category: cat,
+      mode: resolveFailoverMode(this.settings),
+      providerId: pid,
+      models,
+      currentModel: fromModel,
+      bad: new Set(this.badModels.keys()),
+    })
+    if (action.kind !== 'retry') return null
+    this.client = this.createClient(getProviderConfig(this.settings, pid), action.model)
+    const reason = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
+    return { fromModel, toModel: action.model, reason }
+  }
+
+  async compact(signal?: AbortSignal): Promise<string> {
+    const prevCut = this.compaction?.cutIndex ?? 0
+    const prevSummary = this.compaction?.summaryText
+    // Find the cut on the current in-context view ([summary?, ...ledger.slice(prevCut)]), not on
+    // the full ledger — we compact what the model actually sees.
+    const viewMessages = this.buildContextView().getMessages()
 
     // Tail-budget protection scaled to the context window; falls back to a fixed
     // turn count when the budget path finds no cut.
     const windowSize = resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
     const tailBudgetChars = Math.round(windowSize * COMPACTION_THRESHOLD * TAIL_BUDGET_RATIO * 4)
-    const cut = findCompactionCutByBudget(messages, tailBudgetChars) ?? findCompactionCut(messages)
-    if (cut === null) return 'History too short; nothing to compact.'
+    const viewCut = findCompactionCutByBudget(viewMessages, tailBudgetChars) ?? findCompactionCut(viewMessages)
+    if (viewCut === null) return 'History too short; nothing to compact.'
 
-    this.emit({ type: 'compaction-start' })
-    const before = conv.length
+    // viewMessages[0] is the prior summary when already compacted (foldStart=1); the new turns to
+    // fold are viewMessages[foldStart..viewCut). If that's empty there's nothing new to summarize —
+    // bail BEFORE emitting compaction events or re-running the summary, so a no-op /compact doesn't
+    // burn a model call, re-store the (possibly stale/fallback) summary, or misreport "已压缩".
+    const foldStart = this.compaction !== null ? 1 : 0
+    if (viewCut - foldStart <= 0) return '没有新内容需要压缩(距上次压缩以来没有足够的新消息)。'
+
+    const keptCount = viewMessages.length - viewCut   // recent messages kept verbatim after the cut
+    this.emit({ type: 'compaction-start', keep: keptCount })
 
     // TodoWrite state injected into the summary prompt so Pending Items survives.
     const todoIcons: Record<TodoItemLite['status'], string> = { completed: '✓', in_progress: '●', pending: '○' }
@@ -470,33 +569,60 @@ export class SessionManager {
       ? this.todos.map((t) => `${todoIcons[t.status]} ${t.content}`).join('\n')
       : undefined
 
-    // Iterative summary: if the ledger already opens with a prior summary, update it.
-    const previousSummary = extractPreviousSummary(messages)
-    const raw = await summarizeForCompaction(
-      this.client,
-      messages.slice(0, cut),
-      { model: this.client.getModel(), max_tokens: this.maxTokens },
-      undefined,
-      previousSummary ?? undefined,
-      todoState,
-    )
+    // Iterative summary: fold only the NEW turns since the last summary (viewMessages[foldStart..
+    // viewCut); foldStart computed above). When a prior summary exists it occupies viewMessages[0].
+    const toSummarize = viewMessages.slice(foldStart, viewCut)
+    // Summarize WITH failover (B): on a quota/auth/unavailable error, swap to the next available
+    // model (exactly what a turn does) and retry, instead of silently degrading. Only when no model
+    // can serve it do we drop to the deterministic fallback — and flag it (A) below so the notice
+    // isn't misreported as a clean success.
+    let raw: string
+    let usedFallback = false
+    for (;;) {
+      try {
+        raw = await summarizeForCompaction(
+          this.client,
+          toSummarize,
+          { model: this.client.getModel(), max_tokens: this.maxTokens },
+          signal,
+          prevSummary,
+          todoState,
+          { throwOnError: true },
+        )
+        break
+      } catch (err) {
+        if (signal?.aborted) throw err   // user Stop — let the caller surface 'aborted', don't degrade
+        const cat = (err as { category?: ErrorCategory } | null)?.category
+        const fo = cat && cat !== 'other' ? this.failoverToNext(cat) : null
+        if (fo) {
+          this.emit({ type: 'failover', fromModel: fo.fromModel, toModel: fo.toModel, reason: fo.reason })
+          continue   // retry the summary on the newly-swapped model
+        }
+        // No model left / non-failover error. Feed the mechanical summary viewMessages[0..viewCut) —
+        // i.e. INCLUDE the prior summary at viewMessages[0] (when foldStart=1). The model path carries
+        // it via the prevSummary arg; the fallback has no such arg, so slicing from foldStart would
+        // silently drop all earlier summarized context. slice(0, viewCut) == toSummarize when foldStart=0.
+        raw = buildFallbackSummary(viewMessages.slice(0, viewCut), todoState)
+        usedFallback = true
+        break
+      }
+    }
 
     const { summary, candidates } = splitMemoryCandidates(raw)
 
     // Debounce: track savings; consecutive ineffective compactions disable auto-trigger.
-    const savings = estimateCompactionSavings(messages, cut, summary.length)
+    const savings = estimateCompactionSavings(viewMessages, viewCut, summary.length)
     if (savings.savingsRatio < 0.1) this.ineffectiveCompaction++
     else this.ineffectiveCompaction = 0
 
-    this.conversation = applyCompaction(conv, summary, cut)
+    // Translate the view-coordinate cut to a full-ledger index and store it as metadata — the
+    // ledger is never folded. viewMessages[foldStart..] correspond to ledger[prevCut..].
+    this.compaction = { summaryText: summary, cutIndex: prevCut + (viewCut - foldStart) }
     // Window usage is unknown post-compaction (next turn measures it); clear it so the
     // stale value cannot re-trigger auto-compaction.
     this.contextTokens = undefined
     this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
-
-    // Checkpoint remap: applyCompaction folds [0..cut) into one summary message, so
-    // indices shift. Drop folded-range checkpoints, remap kept-range ones.
-    this.checkpoints = remapCheckpoints(this.checkpoints, cut)
+    // No checkpoint remap: the full ledger never folds, so checkpoint indices stay stable.
 
     // Memory flush (Phase 13): the summary request also extracted persistent facts;
     // persist them via the Memory tool. Failure is silent — flush is value-add and must
@@ -523,9 +649,19 @@ export class SessionManager {
     // NOTE: reloading MEMORY.md into systemPrompt after compaction is deferred (the
     // server's systemPrompt is built by the transport/owner, not here).
 
-    const flushSuffix = flushed > 0 ? `; saved ${flushed} memories` : ''
-    const msg = `Compacted: ${before} → ${this.conversation.length} messages (${Math.round(savings.savingsRatio * 100)}% saved)${flushSuffix}`
+    const flushSuffix = flushed > 0 ? `;已存 ${flushed} 条记忆` : ''
+    // 只报事实,不报误导的"节省百分比"——那个比例(estimateCompactionSavings)只反映被折叠旧历史
+    // 自身的收缩,不是总上下文降幅(保留的近期消息 + 系统提示才是剩余大头)。真实降幅看上下文计量条。
+    // Fold count excludes the prior summary at viewMessages[0] (foldStart=1 on 2nd+ compaction),
+    // so it reports real old messages folded, not viewCut which counts that summary too.
+    const foldedCount = viewCut - foldStart
+    const msg = `上下文已压缩:折叠 ${foldedCount} 条旧消息为摘要,保留最近 ${keptCount} 条${flushSuffix}`
     this.emit({ type: 'compaction-done', summaryText: summary })
+    // A: only degrade to the mechanical summary when no model could serve it — and say so, so the
+    // "已压缩" notice above isn't mistaken for a clean, model-generated summary.
+    if (usedFallback) {
+      this.emit({ type: 'warning', message: '⚠ 摘要生成失败(所有可用模型均不可用),已用机械兜底摘要,质量较差;模型恢复后可重新 /compact。' })
+    }
     return msg
   }
 
@@ -543,41 +679,61 @@ export class SessionManager {
     this.isThinking = true
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
 
+    // Publish the abort controller SYNCHRONOUSLY, before any await below, so the Stop button works
+    // during the pre-send / background-compaction waits too (interrupt() checks this.abort).
+    const controller = new AbortController()
+    this.abort = controller
+
     // Title generation fires the moment a message is sent (not on turn-end): generate
     // from this text in parallel with the turn, so the sidebar title updates without
     // waiting for the assistant reply. Guarded to run once per session; resends skip.
     if (!opts?.isResend) this.kickTitleGeneration(text)
 
-    // Auto-compaction (Phase 10B): if the last turn's measured context usage crossed
-    // the window threshold, compact BEFORE sending. Skip on resend (failover): the just-
-    // failed turn added no usage and resends must be fast. A failed compaction does not
-    // block the send — we warn and proceed on the original history.
-    if (!opts?.isResend) {
-      const windowSize = resolveContextWindow(this.settings, this.currentProviderId, this.client.getModel())
-      if ((this.contextTokens ?? 0) > windowSize * COMPACTION_THRESHOLD && this.ineffectiveCompaction < 2) {
-        try {
-          this.emit({ type: 'memory-notice', text: await this.compact() })
-        } catch (err) {
-          this.emit({ type: 'warning', message: `auto-compaction failed: ${err instanceof Error ? err.message : String(err)}` })
-        }
-      }
+    // Auto-compaction: the PRIMARY trigger is post-response (awaited before turn-end — see below), so
+    // the next turn usually starts already compacted. This PRE-send call is the FALLBACK for a last
+    // turn that ended over-threshold without compacting (restored session's first turn, or after an
+    // ineffective-compaction backoff reset). Signal-bound so Stop can cancel it. Resends skip.
+    if (!opts?.isResend && this.overContextThreshold()) await this.maybeAutoCompact(controller.signal)
+    // If the user hit Stop DURING that pre-send compaction, end the turn cleanly here instead of
+    // falling into runAgent with an already-aborted signal (which would emit a 'warning', not
+    // 'aborted', leaving the web's "正在压缩…" notice stuck). 'aborted' clears that notice.
+    if (controller.signal.aborted) {
+      this.isThinking = false
+      this.abort = null
+      this.emit({ type: 'aborted' })
+      this.emit({ type: 'turn-end' })
+      return
     }
 
-    // The ledger ref must be read AFTER auto-compaction: compact() swaps this.conversation
-    // for a new instance, so reading earlier would run the turn against the stale ledger.
-    const conversation = this.conversation
+    // Build the LLM context view AFTER auto-compaction (which may have updated this.compaction).
+    // With no compaction this returns the full ledger itself (unchanged behavior); otherwise a
+    // transient [summary, ...tail] view whose new tail is folded back into the ledger after the
+    // turn. viewPreLen marks the view's length before runAgent appends this turn's messages.
+    const conversation = this.buildContextView()
+    const viewPreLen = conversation.length
+
+    // Runtime self-awareness: append the LIVE model + context window to the (cached) system prompt
+    // so the model always knows its current runtime. Overrides stale knowledge from earlier in the
+    // chat — e.g. after an automatic failover swapped the model, or if the window was misstated.
+    // Stable between failovers, so the system block stays byte-identical turn-to-turn (cache-friendly)
+    // and only changes when the model actually does. (Surface web/tui lives in this.systemPrompt.)
+    const windowK = Math.round(this.ctxWindow() / 1000)
+    const systemWithRuntime =
+      `${this.systemPrompt}\n\n## Current runtime (authoritative)\n` +
+      `Model: ${this.client.getModel()}\n` +
+      `Context window: ~${windowK}k tokens.\n` +
+      `Trust these over any model name or context-window size mentioned earlier in this conversation — ` +
+      `earlier values can be stale (e.g. after an automatic model failover).`
 
     // Checkpoint (Phase 12): snapshot the workspace BEFORE the turn. fire-and-forget;
     // failure degrades to no checkpoint for this turn (D5). The hash is awaited at
     // turn end. Resends skip — the original send's snapshot is the correct anchor.
-    const checkpointIndex = conversation.length
+    // Index into the FULL ledger (never folded → stable), not the transient view.
+    const checkpointIndex = this.conversation.length
     const trackAt = new Date().toISOString()
     const trackPromise: Promise<string | null> = opts?.isResend
       ? Promise.resolve(null)
       : this.snapshotStore.track().catch(() => null)
-
-    const controller = new AbortController()
-    this.abort = controller
 
     let accumulated = ''
     let assistantStarted = false
@@ -594,8 +750,8 @@ export class SessionManager {
         conversation,
         client: this.client,
         registry: this.registry,
-        userText: `[${new Date().toISOString().slice(0, 16).replace('T', ' ')}] ${text}`,
-        config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: this.systemPrompt },
+        userText: applyUserStamp(text),
+        config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: systemWithRuntime },
         cwd: this.cwd,
         signal: controller.signal,
         settings: this.settings,
@@ -657,7 +813,17 @@ export class SessionManager {
       }
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
-      this.totalUsage = conversation.totalUsage
+      // Feature B: if we ran against a transient compacted view, fold the turn's new tail back into
+      // the full ledger (never folded) and carry the turn's usage onto it. When there was no
+      // compaction, `conversation` IS the ledger — runAgent already appended to it, so skip. The
+      // view was seeded with zero usage, so its totalUsage equals exactly this turn's usage.
+      if (conversation !== this.conversation) {
+        // sliceMessages clones only the turn's new tail; getMessages().slice would deep-clone the
+        // whole compacted view (summary + kept tail) every post-compaction turn just to drop it.
+        for (const m of conversation.sliceMessages(viewPreLen)) this.conversation.append(m)
+        this.conversation.addUsage(conversation.totalUsage)
+      }
+      this.totalUsage = this.conversation.totalUsage
       this.emit({ type: 'usage-update', totalUsage: this.totalUsage })
       this.emit({ type: 'context-update', contextTokens: this.contextTokens, contextWindow: this.ctxWindow() })
 
@@ -673,41 +839,18 @@ export class SessionManager {
       }
 
       // Failover: the for-await has ended (client returned), so it is safe to swap
-      // the client and resend. Port of useConversation's post-loop failover block.
+      // the client and resend. Shares failoverToNext() with compaction's summarize retry.
       if (failoverDecision) {
         const cat = failoverDecision
-        const pid = this.currentProviderId
-        // The model that just failed = the client currently in use (auto chain-failover
-        // hot-swaps this.client, so getModel() is the true failed model, not a stale local).
-        const failedModel = this.client.getModel()
-        const models = modelNames(this.settings.providers[pid])
-        // Mark bad: auth invalidates the whole provider (shared key); others only this model.
-        for (const k of badKeysForFailure(pid, failedModel, cat, models)) {
-          this.badModels.set(k, k === modelKey(pid, failedModel) ? cat : 'auth')
-        }
-        const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
-        const action = decideFailover({
-          category: cat,
-          mode: resolveFailoverMode(this.settings),
-          providerId: pid,
-          models,
-          currentModel: failedModel,
-          bad: new Set(this.badModels.keys()),
-        })
-        if (action.kind === 'retry') {
-          this.emit({ type: 'failover', fromModel: failedModel, toModel: action.model, reason: reasonText })
-          // Hot-swap the client within the same provider (no persist, providerId unchanged).
-          this.client = this.createClient(getProviderConfig(this.settings, pid), action.model)
+        const fo = this.failoverToNext(cat)
+        if (fo) {
+          this.emit({ type: 'failover', fromModel: fo.fromModel, toModel: fo.toModel, reason: fo.reason })
           // The new model's window may be much smaller. The failed turn committed nothing
           // (history unchanged), so the prior input_tokens still estimate occupancy: if it
           // overflows the new window threshold, compact first so the resend keeps context.
-          const newWindow = resolveContextWindow(this.settings, pid, action.model)
+          const newWindow = resolveContextWindow(this.settings, this.currentProviderId, fo.toModel)
           if (this.contextTokens && this.contextTokens > newWindow * COMPACTION_THRESHOLD) {
-            try {
-              this.emit({ type: 'memory-notice', text: await this.compact() })
-            } catch (err) {
-              this.emit({ type: 'warning', message: `compaction before resend failed: ${err instanceof Error ? err.message : String(err)}` })
-            }
+            await this.maybeAutoCompact()   // shares the emit/error contract with the pre-send & post-response triggers
           }
           // The resend's runAgent reads this.client.getModel() (the new model). Resend.
           this.abort = null
@@ -715,8 +858,20 @@ export class SessionManager {
           await this.submit(text, undefined, { isResend: true })
         } else {
           // dialog mode / auth / no available next model: hand off to client model picker.
+          const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
           this.emit({ type: 'model-select-needed', reason: reasonText })
         }
+      }
+
+      // Auto-compaction PRIMARY trigger: this turn's usage is now measured, so compact in the
+      // post-response window if we crossed the threshold. AWAITED here (still inside isThinking=true,
+      // before the finally emits turn-end) so it holds mutual exclusion — revert()/retry()/compactNow
+      // are all isThinking-guarded, so none can interleave and clobber this.compaction. The next send
+      // then starts already compacted. Skip on a failover resend (nested submit ran its own turn) and
+      // when the turn was aborted (Stop) — a just-aborted turn must not spawn a spurious "正在压缩…"
+      // notice + failure warning. Signal-bound so a Stop during the summary round-trip cancels it.
+      if (!resent && !controller.signal.aborted && this.overContextThreshold()) {
+        await this.maybeAutoCompact(controller.signal)
       }
 
       // Memory consolidation (Phase 13, lightweight autoDream): after a real turn (not a
@@ -783,6 +938,10 @@ export class SessionManager {
     })
     // Checkpoints at/after the revert point are invalidated (incl. same-index error-turn ones).
     this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cp.messageIndex)
+    // Feature B: if the revert truncated to before the compaction boundary, the stored summary/cut
+    // no longer describe the (now-shorter) ledger — drop it so the next turn's view is the full
+    // remaining ledger (which re-compacts if still too large).
+    if (this.compaction && cp.messageIndex <= this.compaction.cutIndex) this.compaction = null
     this.contextTokens = undefined
     this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
     // Notify clients a revert happened so they can re-sync (wsServer re-pushes a fresh

@@ -10,6 +10,7 @@ function fakeMgr(): SessionManagerLike & {
   reset: ReturnType<typeof vi.fn>
   revert: ReturnType<typeof vi.fn>
   retry: ReturnType<typeof vi.fn>
+  compactNow: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -20,6 +21,7 @@ function fakeMgr(): SessionManagerLike & {
     reset: vi.fn(),
     revert: vi.fn(async () => {}),
     retry: vi.fn(async () => {}),
+    compactNow: vi.fn(async () => {}),
   }
 }
 
@@ -43,6 +45,14 @@ describe('applyClientMessage', () => {
     expect(mgr.steer).toHaveBeenCalledWith('go')
     expect(mgr.resolvePermission).toHaveBeenCalledWith('p1', 'allow')
     expect(mgr.switchModel).toHaveBeenCalledWith('anthropic', 'x')
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('dispatches compact to compactNow (no payload required)', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'compact' }), err)
+    expect(mgr.compactNow).toHaveBeenCalledTimes(1)
     expect(err).not.toHaveBeenCalled()
   })
 

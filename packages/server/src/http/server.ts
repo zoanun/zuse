@@ -252,7 +252,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       const q = url.searchParams.get('q') ?? ''
       const limitRaw = url.searchParams.get('limit')
       const limit = limitRaw != null && /^\d+$/.test(limitRaw) ? Number(limitRaw) : undefined
-      return sendJson(res, 200, await deps.search.search(q, { limit }))
+      // Generous per-session cap: keep the LAST 100 hits per session (most recent), drop older
+      // ones — bounds payload/DOM on common-substring queries while showing effectively everything.
+      return sendJson(res, 200, await deps.search.search(q, { limit, perSessionCap: 100 }))
     }
 
     // -----------------------------------------------------------------------

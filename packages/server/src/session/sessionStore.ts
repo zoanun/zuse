@@ -15,6 +15,16 @@ export type { SessionMeta } from '@zuse/protocol'
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Compaction state (feature B): a summary covering ledger[0..cutIndex). Stored as metadata so the
+ * full conversation ledger is NEVER physically folded — display/search keep every message, while
+ * the LLM context view ([summary, ...ledger.slice(cutIndex)]) is rebuilt from this each turn.
+ */
+export interface CompactionMeta {
+  summaryText: string
+  cutIndex: number
+}
+
 export interface SessionRecord {
   version: 1
   id: string
@@ -32,6 +42,8 @@ export interface SessionRecord {
   messages: Message[]
   totalUsage: Usage
   checkpoints: SessionCheckpoint[]
+  /** Feature B: compaction state, if the session has been compacted. Absent = never compacted. */
+  compaction?: CompactionMeta
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +129,14 @@ const metaCache = new Map<string, ScanEntry<SessionMeta>>()
 export interface ScanEntry<T> { mtimeMs: number; value: T }
 
 /**
+ * Newest-first order by ISO `updatedAt` (descending). 3-way (returns 0 on equal) so tied sessions
+ * keep a stable relative order. Shared by listSessions and SearchService so the two never drift.
+ */
+export function byUpdatedAtDesc(a: string, b: string): number {
+  return a < b ? 1 : a > b ? -1 : 0
+}
+
+/**
  * Scan `dir` for *.json session files with an mtime-keyed cache: a file is re-read + rebuilt via
  * `build` only when its mtime changes; unchanged files return their cached value; files that have
  * vanished are evicted from `cache` so it can't grow without bound. `build` returns null to skip a
@@ -176,8 +196,7 @@ export async function listSessions(dir: string): Promise<SessionMeta[]> {
     ) return null
     return { id: r.id, title: r.title, createdAt: r.createdAt, updatedAt: r.updatedAt, cwd: r.cwd, messageCount: r.messages.length }
   })
-  // 3-way comparator (returns 0 on equal updatedAt) so tied sessions keep a stable order.
-  metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+  metas.sort((a, b) => byUpdatedAtDesc(a.updatedAt, b.updatedAt))
   return metas
 }
 

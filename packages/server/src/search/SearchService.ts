@@ -1,7 +1,7 @@
 import type { Message } from '@zuse/core'
 import type { SearchHit, SearchSnippet, SessionSearchResult } from '@zuse/protocol'
 import { stripUserStamp } from '../session/userStamp.js'
-import { scanSessionDir, type ScanEntry } from '../session/sessionStore.js'
+import { scanSessionDir, byUpdatedAtDesc, type ScanEntry } from '../session/sessionStore.js'
 
 interface ProseDoc { msgIndex: number; role: 'user' | 'assistant'; text: string }
 type SessionLite = SessionSearchResult['session']
@@ -20,7 +20,9 @@ function extractProse(messages: Message[]): ProseDoc[] {
   const docs: ProseDoc[] = []
   messages.forEach((m, i) => {
     if (m.role !== 'user' && m.role !== 'assistant') return
-    const text = m.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('')
+    // Guard m.content: a message missing it (older schema / partial write / hand-edit) would throw,
+    // and scanSessionDir's per-file catch would then drop the WHOLE session from search results.
+    const text = (m.content ?? []).filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('')
     const clean = m.role === 'user' ? stripUserStamp(text) : text
     if (clean.trim() !== '') docs.push({ msgIndex: i, role: m.role, text: clean })
   })
@@ -40,6 +42,11 @@ function buildProseEntry(rec: unknown): ProseEntry | null {
     },
     docs: extractProse(r.messages as Message[]),
   }
+}
+
+/** Escape regex metacharacters so a raw query matches literally inside `new RegExp`. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function makeSnippet(text: string, at: number, qlen: number): SearchSnippet {
@@ -63,26 +70,27 @@ export class SearchService {
     // which slices everything away and yields a spurious "no matches".
     const limit = opts.limit && opts.limit > 0 ? opts.limit : DEFAULT_LIMIT
     const cap = opts.perSessionCap && opts.perSessionCap > 0 ? opts.perSessionCap : DEFAULT_PER_SESSION_CAP
-    const needle = query.toLowerCase()
+    // Case-insensitive match ON THE ORIGINAL text: m.index is an original-text offset (unlike
+    // text.toLowerCase().indexOf, whose offset desyncs when folding changes length, e.g. İ→i̇),
+    // and m[0] is the actually-matched substring so the highlight length is correct too.
+    const re = new RegExp(escapeRegExp(query), 'i')
 
     const entries = await scanSessionDir<ProseEntry>(this.dir, proseCache, buildProseEntry)
     const results: SessionSearchResult[] = []
     for (const entry of entries) {
-      const hits: SearchHit[] = []
-      let hitCount = 0
+      const all: SearchHit[] = []
       for (const d of entry.docs) {
-        const at = d.text.toLowerCase().indexOf(needle)
-        if (at < 0) continue
-        hitCount++
-        if (hits.length < cap) hits.push({ msgIndex: d.msgIndex, role: d.role, snippet: makeSnippet(d.text, at, query.length) })
+        const m = re.exec(d.text)
+        if (m === null) continue
+        all.push({ msgIndex: d.msgIndex, role: d.role, snippet: makeSnippet(d.text, m.index, m[0].length) })
       }
-      if (hitCount > 0) results.push({ session: entry.meta, hits, hitCount })
+      if (all.length === 0) continue
+      // Keep the LAST `cap` hits (most recent by message order), dropping older ones; hitCount
+      // records the true total so the UI's "还有 N 条" reflects how many earlier hits were dropped.
+      const hits = all.length > cap ? all.slice(all.length - cap) : all
+      results.push({ session: entry.meta, hits, hitCount: all.length })
     }
-    // 3-way comparator (returns 0 on equal updatedAt) so tied sessions keep a stable order.
-    results.sort((a, b) => {
-      const x = a.session.updatedAt, y = b.session.updatedAt
-      return x < y ? 1 : x > y ? -1 : 0
-    })
+    results.sort((a, b) => byUpdatedAtDesc(a.session.updatedAt, b.session.updatedAt))
     return results.slice(0, limit)
   }
 }

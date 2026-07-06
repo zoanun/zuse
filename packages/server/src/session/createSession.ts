@@ -25,6 +25,7 @@ import { SessionManager } from './SessionManager.js'
 import { loadActivePersonaSync } from '../persona/personaStore.js'
 import { loadDisabledSkillsSync, skillsDisabledFile } from '../skill/skillStore.js'
 import type { SnapshotStore, SessionCheckpoint } from './events.js'
+import type { CompactionMeta } from './sessionStore.js'
 
 export interface CreateSessionOpts {
   sessionId: string
@@ -33,6 +34,8 @@ export interface CreateSessionOpts {
   conversation?: Conversation
   /** 恢复用：预置 checkpoint 锚点。 */
   checkpoints?: SessionCheckpoint[]
+  /** 恢复用：预置压缩元数据(feature B)——完整账本存盘,视图从它重建。 */
+  compaction?: CompactionMeta
   /** 恢复用：原始创建时间戳。 */
   createdAt?: string
   /** 注入用：协议/工厂单测传 fake client，离线不烧 token。缺省走 createModelClient。 */
@@ -120,6 +123,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
       shell: getShellLabel(),
       cwd,
       date: new Date().toISOString().slice(0, 10),
+      surface: 'web', // daemon serves the web UI — keeps the model from giving TUI-only advice
     },
     sections,
     sel.model,
@@ -139,6 +143,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     providerId: sel.providerId,
     conversation: opts.conversation,
     checkpoints: opts.checkpoints,
+    compaction: opts.compaction,
     createdAt: opts.createdAt,
     titleClient,
     titleModel,

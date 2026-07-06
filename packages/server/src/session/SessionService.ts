@@ -85,6 +85,8 @@ export class SessionService {
         totalUsage: rec.totalUsage,
       }),
       checkpoints: rec.checkpoints,
+      // Feature B: restore compaction state so the next turn's LLM view is rebuilt correctly.
+      compaction: rec.compaction,
       createdAt: rec.createdAt,
       // A restored session has already passed its "first message" moment (or was
       // manually titled) → don't auto-generate a title again on its next message.
@@ -197,16 +199,22 @@ export class SessionService {
     // Keep the unsubscribe fn so delete() can stop autosave (otherwise a stray
     // turn-end could re-persist a just-deleted session — the "resurrection" bug).
     const unsub = mgr.subscribe((e) => {
-      if (e.type === 'turn-end' || e.type === 'checkpoint-recorded') {
+      // Never persist a still-empty session (feature C: no empty sessions until they have content).
+      // A first turn that ERRORS discards its staged messages but still fires turn-end (and records
+      // a checkpoint), and a title can be generated before any content commits — persisting on any
+      // of those would write the empty '新对话' record feature C exists to prevent. The in-memory
+      // generated title survives; the first content-bearing persist writes it out.
+      const hasContent = mgr.getConversation().length > 0
+      if ((e.type === 'turn-end' || e.type === 'checkpoint-recorded') && hasContent) {
         void this.persist(id, mgr)
       }
       // The manager generates a title (small model) the moment a message is sent and
       // emits `title-changed`. Record it as the generated title and persist — unless a
-      // manual rename already won, or the session was deleted.
+      // manual rename already won, or the session was deleted (or it's still empty).
       if (e.type === 'title-changed') {
         if (this.manualTitles.has(id) || this.tombstones.has(id)) return
         this.generatedTitles.set(id, e.title)
-        void this.persist(id, mgr)
+        if (hasContent) void this.persist(id, mgr)
       }
     })
     this.unsubs.set(id, unsub)
@@ -252,6 +260,8 @@ export class SessionService {
         messages: snap.messages,
         totalUsage: snap.totalUsage,
         checkpoints: mgr.getCheckpoints(),
+        // Feature B: persist compaction state so the full ledger + view survive a restart.
+        compaction: mgr.getCompaction() ?? undefined,
       }
       // Re-check after building the record: if delete() tombstoned this id while
       // we were synchronously assembling rec, bail before the write so we don't
