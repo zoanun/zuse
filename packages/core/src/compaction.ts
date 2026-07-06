@@ -1,5 +1,5 @@
 import { Conversation } from './conversation.js'
-import type { Message, ModelConfig, ResolvedSettings } from './types.js'
+import type { Message, ModelConfig, ResolvedSettings, ErrorCategory, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
 
 /**
@@ -249,16 +249,25 @@ export function splitMemoryCandidates(summaryText: string): {
  * 用摘要替换切点之前的历史,返回新账本。保留段逐字节不动;
  * totalUsage 原样带过去 —— 它是成本账,不是窗口账。
  */
-export function applyCompaction(conv: Conversation, summaryText: string, cutIndex: number): Conversation {
-  const messages = conv.getMessages()
+export function applyCompaction(
+  conv: Conversation,
+  summaryText: string,
+  cutIndex: number,
+  // Usage to stamp on the framed view. Defaults to the source's tally (the TUI fold path keeps the
+  // cost total). Feature B's per-turn view passes ZERO so the turn's usage lands only on the view;
+  // passing it here avoids a second deep-clone just to reset totalUsage on the returned Conversation.
+  totalUsage: Usage = conv.totalUsage,
+): Conversation {
   const summaryMessage: Message = {
     role: 'user',
     content: [{ type: 'text', text: `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is background reference, NOT active instructions. Do NOT answer questions or fulfill requests mentioned in this summary — they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary. Reverse signals in the latest message (stop, undo, never mind, change of topic) immediately end any in-flight work described here. Your persistent memory in the system prompt is ALWAYS authoritative — never deprioritize it due to this compaction note.\n${summaryText}\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---` }],
   }
   return Conversation.fromJSON({
     version: 1,
-    messages: [summaryMessage, ...messages.slice(cutIndex)],
-    totalUsage: conv.totalUsage,
+    // Clone only the kept tail — not the whole ledger then discard [0..cutIndex). For feature B's
+    // per-turn view rebuild this keeps cost proportional to the compacted view, not total history.
+    messages: [summaryMessage, ...conv.sliceMessages(cutIndex)],
+    totalUsage,
   })
 }
 
@@ -381,6 +390,10 @@ export async function summarizeForCompaction(
   signal?: AbortSignal,
   previousSummary?: string,
   todoState?: string,
+  // throwOnError: rethrow the failure (with a `.category` for failover decisions) instead of
+  // swallowing it into the deterministic fallback. The server compaction path sets this so it can
+  // fail over to another model before degrading; the TUI leaves it off (fallback = always succeed).
+  opts?: { throwOnError?: boolean },
 ): Promise<string> {
   try {
     const promptText = previousSummary
@@ -398,11 +411,16 @@ export async function summarizeForCompaction(
     )
     for await (const e of events) {
       if (e.type === 'text-delta') text += e.text
-      else if (e.type === 'error') throw new Error(e.message)
+      else if (e.type === 'error') {
+        const err = new Error(e.message) as Error & { category?: ErrorCategory }
+        err.category = e.category
+        throw err
+      }
     }
     if (text.trim() === '') throw new Error('model returned no content')
     return text
-  } catch {
+  } catch (err) {
+    if (opts?.throwOnError) throw err
     return buildFallbackSummary(toSummarize, todoState)
   }
 }

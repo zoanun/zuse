@@ -41,6 +41,15 @@ export class Conversation {
     return structuredClone(this.messages)
   }
 
+  /**
+   * Deep-clone only the messages from `start` onward. Same per-element clone semantics as
+   * getMessages(), but skips cloning the discarded prefix — so building a compacted view
+   * (summary + kept tail) costs O(tail), not O(whole ledger). start ≤ 0 ≡ getMessages().
+   */
+  sliceMessages(start: number): Message[] {
+    return structuredClone(this.messages.slice(start))
+  }
+
   get length(): number {
     return this.messages.length
   }

@@ -114,6 +114,12 @@ export interface AgentEnvironment {
   cwd: string
   /** 当前日期，YYYY-MM-DD。 */
   date: string
+  /**
+   * 当前前端界面：'web' = daemon 托管的 Web UI，'tui' = 终端 TUI。让模型按真实界面给建议
+   * —— 否则它分不清自己在哪，会在 Web 里让用户去 TUI 敲 /model、"重启 TUI"之类。省略则不注入
+   * 该行（保持旧调用方与 prompt 缓存前缀不变）。
+   */
+  surface?: 'web' | 'tui'
 }
 
 /**
@@ -134,6 +140,11 @@ export function buildSystemPrompt(
     `- Operating system: ${env.platform}${env.osVersion ? ` (${env.osVersion})` : ''}`,
     `- Shell: ${env.shell} — the Bash tool runs commands through this shell; use its command syntax.`,
     `- Working directory: ${env.cwd}`,
+    ...(env.surface === 'web'
+      ? ['- Interface: the zuse web UI (served by the daemon). This is NOT the terminal TUI — do not tell the user to run TUI slash commands (e.g. /model, /compact) or to "restart the TUI". Point them at the web UI\'s own controls, or say the action is not available in the web UI yet.']
+      : env.surface === 'tui'
+        ? ['- Interface: the zuse terminal TUI. The user can run slash commands here (e.g. /model, /compact).']
+        : []),
   ].join('\n')
   // 非 Claude 模型追加强制执行约束，紧跟在环境块之后、附加段之前。
   // Claude 系或未指定 modelId 时不追加，保持 prompt cache 前缀不抖动。
