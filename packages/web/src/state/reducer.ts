@@ -1,5 +1,5 @@
 import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart } from '@zuse/protocol'
-import type { AppState, Connection, Part } from './types.js'
+import { isTurnOpener, type AppState, type Connection, type Part } from './types.js'
 
 export const initialState: AppState = {
   messages: [], todos: [], pendingPermissions: [],
@@ -132,7 +132,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
       const msgs = state.messages.slice()
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i]!
-        if (m.role === 'user' && !m.steer && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
+        if (isTurnOpener(m) && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
       }
       return { ...state, messages: msgs }
     }

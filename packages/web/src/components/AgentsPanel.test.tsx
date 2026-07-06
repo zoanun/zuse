@@ -78,6 +78,17 @@ describe('AgentsPanel', () => {
     expect(container.querySelector('.th')?.textContent).toContain('0 / 1')
   })
 
+  it('a mid-turn steer bubble does not drop the still-running sub-agents from the panel', () => {
+    const { container } = render(<AgentsPanel messages={[
+      userMsg('spawn some agents'),
+      msg([agentUse('a1', 'running agent')]),                     // launched this turn, still running
+      { id: 's1', role: 'user', parts: [{ kind: 'text', text: 'also do X' }], steer: true }, // interjection
+    ]} />)
+    // The steer bubble is NOT the turn opener, so the agent launched before it stays in scope.
+    expect(screen.getByText('running agent')).toBeInTheDocument()
+    expect(container.querySelector('.agents')).not.toBeNull()
+  })
+
   it('lists sub-agents with a done/total count', () => {
     const { container } = render(<AgentsPanel messages={[
       msg([agentUse('a1', 'finished one'), toolResult('a1', 'ok')]),

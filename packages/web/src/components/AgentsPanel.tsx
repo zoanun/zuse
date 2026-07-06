@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { Message, Part } from '../state/types.js'
+import { isTurnOpener, type Message, type Part } from '../state/types.js'
 
 type AgentStatus = 'done' | 'doing' | 'failed'
 
@@ -41,10 +41,12 @@ function AgentMarker({ status }: { status: AgentStatus }) {
   return <span className="ag-mark ag-run" aria-hidden="true" />
 }
 
-/** Messages of the current turn: everything from the last user message onward. */
+/** Messages of the current turn: everything from the last turn opener onward. A mid-turn steer
+ *  bubble is NOT the opener (isTurnOpener), so interjecting doesn't drop the turn's earlier
+ *  tool-use/tool-result parts and hide the sub-agents still running. */
 function currentTurn(messages: Message[]): Message[] {
   let start = 0
-  for (let i = messages.length - 1; i >= 0; i--) if (messages[i]!.role === 'user') { start = i; break }
+  for (let i = messages.length - 1; i >= 0; i--) if (isTurnOpener(messages[i]!)) { start = i; break }
   return messages.slice(start)
 }
 

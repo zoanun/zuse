@@ -96,6 +96,18 @@ describe('MessageList', () => {
     expect(container.querySelector('.steer-tag')?.textContent).toContain('插话')
   })
 
+  it('still footers the final reply when a steer bubble is the LAST message in the stream', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'the finished answer' }] },
+      // A steer landed after the reply finished, with no further assistant message — a1 is still
+      // the turn's final reply and MUST keep its copy/share footer (regression guard).
+      { id: 'u2', role: 'user', parts: [{ kind: 'text', text: 'one more thing' }], steer: true },
+    ]
+    const { container } = render(<MessageList messages={messages} thinking={false} onShare={vi.fn()} />)
+    expect(within(container.querySelector('#msg-a1') as HTMLElement).getByLabelText('复制回复')).toBeInTheDocument()
+  })
+
   it('in share mode shows a checkbox only for prose messages and toggles selection', () => {
     const onToggle = vi.fn()
     const { container } = render(

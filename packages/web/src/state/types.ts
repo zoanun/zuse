@@ -18,6 +18,17 @@ export interface Message {
   // being treated as turn-final (so it doesn't spuriously grow a copy/share footer mid-turn).
   steer?: boolean
 }
+/**
+ * A "turn opener" is a real user message — the start of a turn. A mid-turn steer bubble is also
+ * role:'user', but it's an interjection, NOT a turn boundary. Anything that walks back to "this
+ * turn's user message" — the checkpoint/revert anchor (reducer), share grouping (Shell.turnIdsOf),
+ * the running sub-agent panel's scope (AgentsPanel.currentTurn) — must use this so a steer doesn't
+ * get mistaken for the turn's start. Single source of truth so a new scan can't silently drift.
+ */
+export function isTurnOpener(m: Message): boolean {
+  return m.role === 'user' && !m.steer
+}
+
 export type Connection = 'connecting' | 'live' | 'down'
 
 export interface AppState {

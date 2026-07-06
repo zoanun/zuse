@@ -50,16 +50,20 @@ export function MessageList({
   // foldToolResults). Show the copy/share footer only on each turn's LAST assistant message — the
   // one whose next message isn't another assistant — so the model's between-tool prose doesn't
   // sprout a footer mid-turn. (Retry is already restricted to the single newest reply above.)
-  // A mid-turn steer bubble (role:'user', steer:true) sits between two assistant messages while the
-  // turn is still running, so it doesn't count as a turn boundary either — otherwise the assistant
-  // message just before an inserted steer would spuriously get a footer.
+  // A mid-turn steer bubble (role:'user', steer:true) is an interjection, not a turn boundary, so
+  // look PAST any steer bubbles when deciding what follows an assistant message: it's turn-final
+  // iff the next non-steer message isn't another assistant (or there is none). Checking only the
+  // immediate neighbour would both (a) footer the reply before an inserted steer, and (b) FAIL to
+  // footer the final reply when a steer is the very last message in the stream.
   // Memoized on `messages` so it isn't rebuilt on scroll/thinking-only re-renders.
   const turnFinalIds = useMemo(() => {
     const ids = new Set<string>()
     for (let i = 0; i < messages.length; i++) {
       if (messages[i]!.role !== 'assistant') continue
-      const next = messages[i + 1]
-      if (!next || (next.role !== 'assistant' && !next.steer)) ids.add(messages[i]!.id)
+      let j = i + 1
+      while (j < messages.length && messages[j]!.steer) j++ // skip interjected steer bubbles
+      const next = messages[j]
+      if (!next || next.role !== 'assistant') ids.add(messages[i]!.id)
     }
     return ids
   }, [messages])

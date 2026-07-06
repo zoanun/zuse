@@ -5,7 +5,7 @@ import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
 import { isSelectableRow } from './Message.js'
-import type { Message as Msg } from '../state/types.js'
+import { isTurnOpener, type Message as Msg } from '../state/types.js'
 import { TodosPanel } from './TodosPanel.js'
 import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
@@ -22,13 +22,12 @@ import type { ManagePanel } from './ManageDrawer.js'
 function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
   const i = msgs.findIndex((m) => m.id === id)
   if (i < 0) return [id]
-  // A turn opens on a real user message; a mid-turn steer bubble (role:'user', steer:true) is part
-  // of the turn, NOT a boundary, so it doesn't split the exchange into two share groups.
-  const isOpener = (m: Msg) => m.role === 'user' && !m.steer
+  // A turn opens on a real user message; a mid-turn steer bubble is part of the turn, NOT a
+  // boundary (isTurnOpener), so it doesn't split the exchange into two share groups.
   let start = i
-  while (start > 0 && !isOpener(msgs[start]!)) start-- // back to the turn's user opener (or 0)
+  while (start > 0 && !isTurnOpener(msgs[start]!)) start-- // back to the turn's user opener (or 0)
   let end = start + 1
-  while (end < msgs.length && !isOpener(msgs[end]!)) end++ // up to the next user opener
+  while (end < msgs.length && !isTurnOpener(msgs[end]!)) end++ // up to the next user opener
   // Only ids that are actually SELECTABLE rows in share view (isSelectableRow == MessageList's
   // share filter): a user message, or an assistant message with prose. Tool-only assistant
   // messages have no visible checkbox, so including them would inflate the "已选 N 条" count.
