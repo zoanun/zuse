@@ -230,6 +230,7 @@ export function useConversation({
           shell: getShellLabel(),
           cwd,
           date: new Date().toISOString().slice(0, 10),
+          surface: 'tui', // terminal TUI — slash commands (/model, /compact) apply here
         },
         sections,
         currentModel,
