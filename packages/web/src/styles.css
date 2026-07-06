@@ -118,6 +118,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .share-go:disabled { opacity: 0.5; cursor: default; }
 .share-cancel { background: transparent; color: var(--text); }
 .msg.you .bubble { background: var(--user-bubble); border-radius: 16px; padding: 7px 14px; font-size: 15px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+/* Mid-turn steer marker: a small pill to the left of the bubble, so an inserted message reads as
+   "interjected into the running turn" rather than a normal new question. */
+.msg.you .steer-tag { flex: none; font-size: 11px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 8px; white-space: nowrap; align-self: center; }
 .text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
 .text h1, .text h2, .text h3, .text h4 { line-height: 1.3; margin: 16px 0 8px; font-weight: 650; }
 .text h1 { font-size: 1.4em; } .text h2 { font-size: 1.22em; } .text h3 { font-size: 1.08em; }

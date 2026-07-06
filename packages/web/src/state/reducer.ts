@@ -8,7 +8,7 @@ export const initialState: AppState = {
 
 export type Action =
   | { kind: 'server'; msg: ServerMessage }
-  | { kind: 'user-send'; id: string; text: string }
+  | { kind: 'user-send'; id: string; text: string; steer?: boolean }
   | { kind: 'connection'; status: Connection }
   | { kind: 'reset' }
 
@@ -146,7 +146,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
 export function reduce(state: AppState, action: Action): AppState {
   switch (action.kind) {
     case 'user-send':
-      return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }] }] }
+      return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }], steer: action.steer }] }
     case 'connection':
       return { ...state, connection: action.status }
     case 'reset':

@@ -51,6 +51,14 @@ export function Shell() {
     // surfaces progress/result as notices.
     const command = SLASH_COMMANDS[text.trim()]
     if (command) { send(command); return }
+    if (state.thinking) {
+      // Mid-turn steer: the reply is still streaming, so inject this into the running turn rather
+      // than starting a new one. The server folds steer text into a tool_result (it never becomes
+      // a standalone ledger message), so echo it locally as a marked user bubble.
+      dispatch({ kind: 'user-send', id: nextId('u'), text, steer: true })
+      send({ type: 'steer', text })
+      return
+    }
     dispatch({ kind: 'user-send', id: nextId('u'), text })
     send({ type: 'send', text })
   }
@@ -161,7 +169,7 @@ export function Shell() {
           ) : null}
           <TodosPanel todos={state.todos} />
           <AgentsPanel messages={state.messages} />
-          <Composer disabled={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
+          <Composer thinking={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
         </main>
       </div>
       <ManageDrawer

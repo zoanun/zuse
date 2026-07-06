@@ -4,24 +4,24 @@ import { Composer } from './Composer.js'
 
 describe('Composer', () => {
   it('auto-focuses the textarea on mount', () => {
-    render(<Composer disabled={false} onSend={() => {}} onStop={() => {}} />)
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…')
     expect(document.activeElement).toBe(ta)
   })
 
-  it('refocuses the textarea when disabled transitions from true to false (reply finishes)', () => {
-    const { rerender } = render(<Composer disabled={true} onSend={() => {}} onStop={() => {}} />)
-    const ta = screen.getByPlaceholderText('给 zuse 发消息…')
-    // While disabled the textarea cannot hold focus; re-enable it
+  it('refocuses the textarea when thinking transitions from true to false (reply finishes)', () => {
+    const { rerender } = render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
+    // While thinking the composer stays enabled (steer), so target it by its thinking placeholder.
+    const ta = screen.getByPlaceholderText('插入消息到当前回合…')
     act(() => {
-      rerender(<Composer disabled={false} onSend={() => {}} onStop={() => {}} />)
+      rerender(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     })
     expect(document.activeElement).toBe(ta)
   })
 
   it('sends on Enter and clears', () => {
     const onSend = vi.fn()
-    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'hello' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
@@ -29,9 +29,19 @@ describe('Composer', () => {
     expect(ta.value).toBe('')
   })
 
+  it('still sends while thinking (mid-turn steer) — Shell routes it to a steer', () => {
+    const onSend = vi.fn()
+    render(<Composer thinking={true} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('插入消息到当前回合…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'wait, also do X' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('wait, also do X')
+    expect(ta.value).toBe('')
+  })
+
   it('does not send on Shift+Enter (newline)', () => {
     const onSend = vi.fn()
-    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'hello' } })
     fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true })
@@ -40,7 +50,7 @@ describe('Composer', () => {
 
   it('does not send whitespace-only input', () => {
     const onSend = vi.fn()
-    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: '   ' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
@@ -49,16 +59,16 @@ describe('Composer', () => {
 
   it('does not send the Enter that confirms an IME composition', () => {
     const onSend = vi.fn()
-    render(<Composer disabled={false} onSend={onSend} onStop={() => {}} />)
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: '你好' } })
     fireEvent.keyDown(ta, { key: 'Enter', isComposing: true })
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('shows Stop and fires onStop when disabled (thinking)', () => {
+  it('shows Stop and fires onStop while thinking', () => {
     const onStop = vi.fn()
-    render(<Composer disabled={true} onSend={() => {}} onStop={onStop} />)
+    render(<Composer thinking={true} onSend={() => {}} onStop={onStop} />)
     fireEvent.click(screen.getByText('停止'))
     expect(onStop).toHaveBeenCalled()
   })

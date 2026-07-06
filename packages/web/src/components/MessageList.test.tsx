@@ -78,6 +78,24 @@ describe('MessageList', () => {
     expect(screen.getAllByLabelText('分享')).toHaveLength(1)
   })
 
+  it('a mid-turn steer bubble does not make the assistant before it turn-final (no premature footer)', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+      // Reply's first part, still streaming when the user interjects.
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'working on it' }] },
+      // Steer inserted mid-turn — must NOT close the turn, so a1 keeps no footer.
+      { id: 'u2', role: 'user', parts: [{ kind: 'text', text: 'also do X' }], steer: true },
+      // The turn continues and finishes here → this one gets the footer.
+      { id: 'a2', role: 'assistant', parts: [{ kind: 'text', text: 'done both' }] },
+    ]
+    const { container } = render(<MessageList messages={messages} thinking={false} onShare={vi.fn()} />)
+    expect(container.querySelectorAll('.msg-actions')).toHaveLength(1)
+    // The footer belongs to a2 (the real turn end), not a1.
+    expect(within(container.querySelector('#msg-a2') as HTMLElement).getByLabelText('复制回复')).toBeInTheDocument()
+    // And the steer bubble carries its "↪ 插话" marker.
+    expect(container.querySelector('.steer-tag')?.textContent).toContain('插话')
+  })
+
   it('in share mode shows a checkbox only for prose messages and toggles selection', () => {
     const onToggle = vi.fn()
     const { container } = render(

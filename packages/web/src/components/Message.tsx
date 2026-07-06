@@ -65,6 +65,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     const cp = msg.checkpointId
     return (
       <div className="msg you">
+        {msg.steer ? <div className="steer-tag" title="回合进行中插入的消息">↪ 插话</div> : null}
         <div className="bubble">{text}</div>
         {cp && onRevert ? (
           <button

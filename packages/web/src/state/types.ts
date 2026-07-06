@@ -13,6 +13,10 @@ export interface Message {
   // transient "正在压缩…" start notice (dropped when compaction ends — matched by kind, not by text).
   noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting'
   checkpointId?: string                     // only set for role:'user' — the turn's shadow-git checkpoint
+  // only set for role:'user' — true if this was a mid-turn steer (sent while the reply was still
+  // streaming). Rendered with a "↪ 插话" marker; also stops the preceding assistant message from
+  // being treated as turn-final (so it doesn't spuriously grow a copy/share footer mid-turn).
+  steer?: boolean
 }
 export type Connection = 'connecting' | 'live' | 'down'
 
