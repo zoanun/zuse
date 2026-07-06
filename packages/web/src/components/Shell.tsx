@@ -53,13 +53,16 @@ export function Shell() {
     // surfaces progress/result as notices.
     const command = SLASH_COMMANDS[text.trim()]
     if (command) { send(command); return }
-    // While a reply is still streaming, a send becomes a mid-turn steer injected into the running
-    // turn instead of opening a new one. The server folds steer text into a tool_result (it never
-    // becomes a standalone ledger message), so either way echo it locally — marked as a steer when
-    // it interjected — as an optimistic user bubble.
-    const steer = state.thinking
-    dispatch({ kind: 'user-send', id: nextId('u'), text, steer })
-    send({ type: steer ? 'steer' : 'send', text })
+    if (state.thinking) {
+      // Mid-turn steer: don't echo optimistically — the client can't know WHERE it lands, and an
+      // instant bubble splits the streaming reply. The server echoes it at the real delivery point
+      // (a "↪ 插话" bubble after the tool card when folded, or a normal user bubble opening the
+      // follow-up turn when idle-drained), via user-echo.
+      send({ type: 'steer', text })
+      return
+    }
+    dispatch({ kind: 'user-send', id: nextId('u'), text })
+    send({ type: 'send', text })
   }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).

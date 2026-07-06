@@ -146,7 +146,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // Retry re-submits a question server-side; echo it back as a user message so it shows
     // immediately (the post-revert snapshot had dropped it). checkpoint-recorded re-attaches
     // this turn's checkpoint to it at turn end.
-    case 'user-echo': return { ...state, messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }] }] }
+    case 'user-echo': return { ...state, messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer }] }
     default: return state
   }
 }
