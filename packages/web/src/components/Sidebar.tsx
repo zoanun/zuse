@@ -100,12 +100,16 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
   const dq = useDebounced(query.trim(), 200)
   // One state models the async outcome: null = not searching, 'error' = failed, else the hits.
   const [results, setResults] = useState<SessionSearchResult[] | 'error' | null>(null)
+  // Session ids whose hit list is collapsed. Reset on every new query so a fresh search
+  // always starts fully expanded.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const reqSeq = useRef(0)
 
   useEffect(() => {
     // Bump on EVERY run (including clearing the box) so a prior in-flight request that gets
     // aborted here can't land in .catch and flash '搜索失败' — its captured seq is now stale.
     const seq = ++reqSeq.current
+    setCollapsed(new Set())
     if (dq === '') { setResults(null); return }
     const ac = new AbortController()
     void searchSessions(dq, ac.signal)
@@ -134,24 +138,48 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
         <div className="search-results">
           {results === 'error' ? <div className="search-empty">搜索失败</div>
             : results.length === 0 ? <div className="search-empty">无匹配</div>
-            : results.map((r) => (
-              <div key={r.session.id} className="search-group">
-                <div className="search-group-head">{r.session.title || '新对话'}</div>
-                {r.hits.map((h) => (
+            : results.map((r, i) => {
+              const isCollapsed = collapsed.has(r.session.id)
+              return (
+                <div key={r.session.id} className="search-group">
+                  {i > 0 ? <div className="search-divider" aria-hidden="true" /> : null}
                   <button
-                    key={r.session.id + ':' + h.msgIndex}
-                    className="search-hit"
-                    onClick={() => onJump(r.session.id, h.msgIndex)}
+                    type="button"
+                    className="search-group-head"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => setCollapsed((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(r.session.id)) next.delete(r.session.id)
+                      else next.add(r.session.id)
+                      return next
+                    })}
                   >
-                    <span className="hit-role">{h.role === 'user' ? '你' : 'zuse'}</span>
-                    <span className="hit-snippet">
-                      {h.snippet.pre}<mark>{h.snippet.match}</mark>{h.snippet.post}
-                    </span>
+                    <svg className={'search-caret' + (isCollapsed ? ' collapsed' : '')} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M4 6l4 4 4-4" />
+                    </svg>
+                    <span className="search-group-title">{r.session.title || '新对话'}</span>
+                    <span className="search-group-count">{r.hitCount}</span>
                   </button>
-                ))}
-                {r.hitCount > r.hits.length ? <div className="search-more">还有 {r.hitCount - r.hits.length} 条</div> : null}
-              </div>
-            ))}
+                  {!isCollapsed ? (
+                    <>
+                      {r.hits.map((h) => (
+                        <button
+                          key={r.session.id + ':' + h.msgIndex}
+                          className="search-hit"
+                          onClick={() => onJump(r.session.id, h.msgIndex)}
+                        >
+                          <span className="hit-role">{h.role === 'user' ? '你' : 'zuse'}</span>
+                          <span className="hit-snippet">
+                            {h.snippet.pre}<mark>{h.snippet.match}</mark>{h.snippet.post}
+                          </span>
+                        </button>
+                      ))}
+                      {r.hitCount > r.hits.length ? <div className="search-more">还有 {r.hitCount - r.hits.length} 条</div> : null}
+                    </>
+                  ) : null}
+                </div>
+              )
+            })}
         </div>
       ) : (
         <ul className="session-list">

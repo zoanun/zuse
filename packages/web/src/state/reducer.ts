@@ -12,8 +12,15 @@ export type Action =
   | { kind: 'connection'; status: Connection }
   | { kind: 'reset' }
 
-function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error'): AppState {
+function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error' | 'summary' | 'compacting'): AppState {
   return { ...state, messages: [...state.messages, { id: 'sys-' + state.messages.length, role: 'system', parts: [{ kind: 'text', text }], noticeKind: kind }] }
+}
+
+/** Drop the transient "正在压缩…" start notice once compaction ends (done or aborted); without this
+ *  it would linger forever, reading as if compaction were still in progress. Matched by its own
+ *  noticeKind ('compacting') — not a localized text prefix that would break if the wording changed. */
+function dropCompactionStart(msgs: AppState['messages']): AppState['messages'] {
+  return msgs.filter((m) => m.noticeKind !== 'compacting')
 }
 
 /** Append a part to the current (last) assistant message, creating one if needed. */
@@ -109,13 +116,14 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'permission-resolved': return { ...state, pendingPermissions: state.pendingPermissions.filter((p) => p.id !== e.id) }
     case 'failover': return withNotice({ ...state, model: e.toModel }, '故障切换：' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
     case 'model-select-needed': return withNotice(state, '需要选择模型：' + e.reason, 'warn')
-    case 'compaction-start': return state
-    case 'compaction-done': return withNotice(state, '上下文已压缩', 'info')
+    case 'compaction-start': return withNotice(state, `正在压缩上下文…(保留最近 ${e.keep} 条)`, 'compacting')
+    // Compaction finished: drop the transient start notice, then show the summary (dimmed italic).
+    case 'compaction-done': return withNotice({ ...state, messages: dropCompactionStart(state.messages) }, e.summaryText, 'summary')
     case 'memory-notice': return withNotice(state, e.text, 'info')
     case 'cwd-change': return state
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
-    case 'aborted': return withNotice({ ...state, thinking: false }, '已停止', 'warn')
+    case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false }, '已停止', 'warn')
     case 'checkpoint-recorded': {
       // Attach the checkpoint id to the most recent user message that lacks one
       // (one checkpoint per turn, in order → that turn's user message).

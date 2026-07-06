@@ -116,7 +116,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     attachTo(await createSession(cwd))
   }
 
-  /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgIndex ↔ 快照消息 id 'h'+i。 */
+  /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgIndex ↔ 快照消息 id 'h'+i。
+   *  同会话不 attachTo:重连会 reset+重拉快照,把一次性 flash 冲掉(且当前会话消息已在)。
+   *  代价:自上次快照后实时追加、尚未随快照重编号的消息,其 DOM id 非 'h'+i,跳转会静默失效——
+   *  切走再回来(或刷新)后即可跳转。要彻底修需服务端在实时事件里带账本索引,另议。 */
   const searchJump = (sessionId: string, msgIndex: number): void => {
     if (sessionId !== currentSessionId) attachTo(sessionId) // clears pendingScrollTo…
     setPendingScrollTo('h' + msgIndex)                      // …so set it AFTER (batched → wins)

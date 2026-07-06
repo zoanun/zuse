@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { Message as Msg } from '../state/types.js'
 import { Message, isSelectableRow } from './Message.js'
 
@@ -29,7 +29,9 @@ export function MessageList({
     if (!scrollToId) return
     const el = document.getElementById('msg-' + scrollToId)
     if (!el) return // 目标不在(索引不匹配/会话被截短等):静默跳过
-    el.scrollIntoView({ block: 'center' })
+    // Align the message's TOP to the viewport top (not centered) so a long message's start is
+    // visible instead of landing mid-content.
+    el.scrollIntoView({ block: 'start' })
     // Restart the one-shot flash even when the class lingers from a prior jump to the SAME
     // message: remove → force reflow → re-add. (A bare add() is a no-op if the class is already
     // present, so the animation wouldn't replay on a repeat click.)
@@ -44,6 +46,20 @@ export function MessageList({
   if (!thinking && !shareMode) {
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i]!.role === 'assistant') { lastAssistantId = messages[i]!.id; break }
   }
+  // A turn is a run of consecutive assistant messages (tool-result user turns are folded away by
+  // foldToolResults). Show the copy/share footer only on each turn's LAST assistant message — the
+  // one whose next message isn't another assistant — so the model's between-tool prose doesn't
+  // sprout a footer mid-turn. (Retry is already restricted to the single newest reply above.)
+  // Memoized on `messages` so it isn't rebuilt on scroll/thinking-only re-renders.
+  const turnFinalIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i]!.role !== 'assistant') continue
+      const next = messages[i + 1]
+      if (!next || next.role !== 'assistant') ids.add(messages[i]!.id)
+    }
+    return ids
+  }, [messages])
   // Share mode previews exactly what export keeps: questions + replies with prose; tool-only
   // turns and system notices are hidden so you select among shareable content only.
   const visible = shareMode ? messages.filter(isSelectableRow) : messages
@@ -60,6 +76,7 @@ export function MessageList({
             onShare={shareMode ? undefined : onShare}
             onRetry={m.id === lastAssistantId ? onRetry : undefined}
             shareMode={shareMode}
+            showActions={turnFinalIds.has(m.id)}
           />
         )
         if (shareMode) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict } from '@zuse/protocol'
+import type { PermissionVerdict, ClientMessage } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
@@ -32,6 +32,12 @@ function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
   return msgs.slice(start, end).filter(isSelectableRow).map((m) => m.id)
 }
 
+// Web slash commands → the uplink they send (parity with TUI's /compact, /clear, …). Table-driven
+// so adding a command is one entry, and trimming/dispatch live in one place. Extend as needed.
+const SLASH_COMMANDS: Record<string, ClientMessage> = {
+  '/compact': { type: 'compact' },
+}
+
 export function Shell() {
   const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -40,7 +46,14 @@ export function Shell() {
   // null = not sharing; a Set = share-selection mode with the chosen message ids.
   const [shareSel, setShareSel] = useState<Set<string> | null>(null)
 
-  const onSend = (text: string) => { dispatch({ kind: 'user-send', id: nextId('u'), text }); send({ type: 'send', text }) }
+  const onSend = (text: string) => {
+    // Slash command? Dispatch its uplink instead of sending it as a chat message; the server
+    // surfaces progress/result as notices.
+    const command = SLASH_COMMANDS[text.trim()]
+    if (command) { send(command); return }
+    dispatch({ kind: 'user-send', id: nextId('u'), text })
+    send({ type: 'send', text })
+  }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
   const onRevert = useCallback((checkpointId: string) => send({ type: 'revert', checkpointId }), [send])

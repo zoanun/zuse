@@ -34,15 +34,29 @@ export function isSelectableRow(m: Msg): boolean {
 // memo: while streaming, the store re-renders on every delta but only the last
 // message's identity changes — memo lets the unchanged messages skip re-rendering
 // (and re-parsing their markdown). Relies on a stable `onRevert`/`onShare` (see Shell).
-export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, shareMode }: {
+export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, shareMode, showActions = true }: {
   msg: Msg
   onRevert?: (checkpointId: string) => void
   onShare?: (id: string) => void
   onRetry?: () => void          // only supplied for the latest assistant reply
   shareMode?: boolean
+  // Whether to render the copy/share/retry footer. MessageList sets this only for a turn's FINAL
+  // assistant message, so intermediate replies (model text between tool calls) don't each get a
+  // footer mid-turn. Default true keeps standalone use unchanged.
+  showActions?: boolean
 }) {
   if (msg.role === 'system') {
     const kind = msg.noticeKind
+    // Compaction summary: collapsible card, collapsed by default (like a tool/think block) so a
+    // long summary doesn't dominate the transcript. Click the head to expand.
+    if (kind === 'summary') {
+      return (
+        <details className="note summary">
+          <summary className="summary-head">上下文摘要</summary>
+          <div className="summary-body">{partsText(msg.parts)}</div>
+        </details>
+      )
+    }
     const cls = kind === 'error' ? 'bad' : kind === 'warn' ? 'warn' : 'live'
     return <div className={'note ' + cls}>{partsText(msg.parts)}</div>
   }
@@ -72,7 +86,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
       {/* Share mode renders the exact prose export keeps (replyMarkdown) — not a parts filter,
           which would diverge (e.g. leave <think> blocks the export drops). */}
       <div className="text-wrap">{shareMode ? <Markdown text={md} /> : renderParts(msg.parts)}</div>
-      {!shareMode && md ? (
+      {!shareMode && md && showActions ? (
         <div className="msg-actions">
           <CopyButton text={md} />
           {onShare ? (

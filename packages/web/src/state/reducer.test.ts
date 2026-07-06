@@ -169,4 +169,27 @@ describe('reduce', () => {
     expect(notices[0]!.noticeKind).toBe('info')
     expect(notices[0]!.parts[0]).toEqual({ kind: 'text', text: '已回退到检查点' })
   })
+
+  it('compaction-done removes the transient "正在压缩" start notice and shows the summary', () => {
+    const s = run([
+      { kind: 'server', msg: ev({ type: 'compaction-start', keep: 4 }) },
+      { kind: 'server', msg: ev({ type: 'compaction-done', summaryText: 'the summary' }) },
+    ])
+    const notices = s.messages.filter((m) => m.role === 'system')
+    // The start notice is gone; only the summary remains.
+    expect(notices.some((m) => m.parts.some((p) => p.kind === 'text' && p.text.startsWith('正在压缩上下文')))).toBe(false)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]!.noticeKind).toBe('summary')
+    expect(notices[0]!.parts[0]).toEqual({ kind: 'text', text: 'the summary' })
+  })
+
+  it('aborted also clears a lingering "正在压缩" start notice', () => {
+    const s = run([
+      { kind: 'server', msg: ev({ type: 'compaction-start', keep: 4 }) },
+      { kind: 'server', msg: ev({ type: 'aborted' }) },
+    ])
+    const notices = s.messages.filter((m) => m.role === 'system')
+    expect(notices.some((m) => m.parts.some((p) => p.kind === 'text' && p.text.startsWith('正在压缩上下文')))).toBe(false)
+    expect(notices.map((m) => m.parts[0])).toContainEqual({ kind: 'text', text: '已停止' })
+  })
 })

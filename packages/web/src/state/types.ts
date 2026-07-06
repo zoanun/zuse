@@ -9,7 +9,9 @@ export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
   parts: Part[]
-  noticeKind?: 'info' | 'warn' | 'error'   // only set for role:'system'
+  // only set for role:'system'. 'summary' = dimmed italic compaction summary; 'compacting' = the
+  // transient "正在压缩…" start notice (dropped when compaction ends — matched by kind, not by text).
+  noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting'
   checkpointId?: string                     // only set for role:'user' — the turn's shadow-git checkpoint
 }
 export type Connection = 'connecting' | 'live' | 'down'

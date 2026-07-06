@@ -64,6 +64,20 @@ describe('MessageList', () => {
     expect(screen.queryByLabelText('重试')).toBeNull()
   })
 
+  it('shows the copy/share footer only on a turn\'s final assistant message, not mid-turn ones', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+      // Mid-turn: prose between tool calls, followed by another assistant message → no footer.
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: 'let me look' }, { kind: 'tool-use', id: 't1', name: 'Bash', input: {} }] },
+      // Turn-final: next message is not an assistant → gets the footer.
+      { id: 'a2', role: 'assistant', parts: [{ kind: 'text', text: 'final answer' }] },
+    ]
+    const { container } = render(<MessageList messages={messages} thinking={false} onShare={vi.fn()} />)
+    expect(container.querySelectorAll('.msg-actions')).toHaveLength(1)
+    expect(screen.getAllByLabelText('复制回复')).toHaveLength(1)
+    expect(screen.getAllByLabelText('分享')).toHaveLength(1)
+  })
+
   it('in share mode shows a checkbox only for prose messages and toggles selection', () => {
     const onToggle = vi.fn()
     const { container } = render(
