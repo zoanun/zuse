@@ -205,7 +205,7 @@ export type SessionEvent =
   | { type: 'context-update'; contextTokens: number | undefined; contextWindow: number | undefined }
   | { type: 'permission-request'; id: string; req: PermissionRequest }
   | { type: 'permission-resolved'; id: string; verdict: PermissionVerdict }
-  | { type: 'compaction-start' }
+  | { type: 'compaction-start'; keep: number }
   | { type: 'compaction-done'; summaryText: string }
   | { type: 'failover'; fromModel: string; toModel: string; reason: string }
   | { type: 'checkpoint-recorded'; id: string; messageIndex: number; label: string }
@@ -246,6 +246,7 @@ export type ClientMessage =
   | { type: 'reset-session' }
   | { type: 'revert'; checkpointId: string }
   | { type: 'retry' }
+  | { type: 'compact' }
 
 /** 下行 server → client。 */
 export type ServerMessage =
