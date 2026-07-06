@@ -420,6 +420,23 @@ describe('SessionManager turn loop', () => {
     expect(mgr.getState().isThinking).toBe(false)
   })
 
+  it('idle-drain: a steer queued during a pure-text turn is delivered as its own follow-up turn', async () => {
+    const textTurn = (t: string): StreamEvent[] => [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: t },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    // Two pure-text turns: the original reply, then the auto-drained steer's turn.
+    const { mgr, calls } = makeManagerWith([textTurn('reply'), textTurn('addressed')])
+    mgr.steer('also do X') // queued; a pure-text turn has no tool batch to consume it
+    await mgr.submit('Q')
+    // The idle-drain re-submitted the steer as a SECOND turn (a follow-up), not left in the queue.
+    expect(calls).toHaveLength(2)
+    const texts = mgr.getConversation().getMessages()
+      .flatMap((m) => m.content).filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('also do X'))).toBe(true) // the steer became a real user turn
+  })
+
   it('tool-result is emitted with full raw output (no truncation)', async () => {
     const big = 'x'.repeat(5000)
     // Turn 0: model asks for a tool (stop_reason 'tool_use' makes core run it).

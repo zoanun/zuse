@@ -898,6 +898,19 @@ export class SessionManager {
       // outer one to avoid a double turn-end. isThinking/abort resets are idempotent.
       if (!resent) this.emit({ type: 'turn-end' })
     }
+
+    // Idle-drain (Phase 2, cc-haha's model): consumeSteer drains the queue at tool-batch
+    // boundaries, so a steer sent during a PURE-TEXT reply (no tool_result to fold into) is still
+    // queued when the turn ends. Deliver it now as its OWN fresh turn — addressed right after this
+    // reply — instead of letting it bleed into some later, unrelated turn's tool batch. Runs after
+    // the finally (isThinking already reset) so the recursive submit starts a clean turn with its
+    // own checkpoint/abort. Skipped on a resend (the outer call drains) and after a Stop (an aborted
+    // turn must not auto-fire a queued interjection).
+    if (!opts?.isResend && !controller.signal.aborted && this.steerQueue.length > 0) {
+      const drained = this.steerQueue.join('\n')
+      this.steerQueue.length = 0
+      await this.submit(drained)
+    }
   }
 
   /**
