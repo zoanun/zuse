@@ -438,9 +438,9 @@ async function gateAndRunTool(
 function invalidJsonResult(tu: PendingToolUse): { output: string; isError: boolean } {
   return {
     output:
-      `Tool call arguments were not valid JSON (tool: ${tu.name}). ` +
-      `Raw arguments (truncated): ${tu.invalidArgs}. ` +
-      'Re-issue the tool call with well-formed JSON arguments.',
+      `工具调用参数不是合法 JSON(工具:${tu.name})。` +
+      `原始参数(已截断):${tu.invalidArgs}。` +
+      '请用格式正确的 JSON 参数重新发起该工具调用。',
     isError: true,
   }
 }
@@ -451,7 +451,7 @@ function unknownToolResult(
   name: string,
 ): { output: string; isError: boolean } {
   const names = registry.list().map((t) => t.name).join(', ') || '(none)'
-  return { output: `Unknown tool: ${name}. Available tools: ${names}.`, isError: true }
+  return { output: `未知工具:${name}。可用工具:${names}。`, isError: true }
 }
 
 /** 运行单个工具，把"未知工具"和抛出的错误转换成 is_error 结果（故障模式④）。 */
@@ -474,6 +474,6 @@ async function runOneTool(
     return { output, isError }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return { output: `Tool "${tu.name}" failed: ${message}`, isError: true }
+    return { output: `工具「${tu.name}」执行失败:${message}`, isError: true }
   }
 }

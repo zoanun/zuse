@@ -353,8 +353,8 @@ describe('runAgent', () => {
     const tr = events.find((e) => e.type === 'tool-result') as { is_error: boolean; output: string }
     expect(tr.is_error).toBe(true)
     // 错误回传契约(Phase 8):报未知工具时列出可用工具清单,模型才能自纠工具名。
-    expect(tr.output).toContain('Unknown tool: nope')
-    expect(tr.output).toContain('Available tools:')
+    expect(tr.output).toContain('未知工具:nope')
+    expect(tr.output).toContain('可用工具:')
   })
 
   it('unknown tool error lists the registered tool names', async () => {
@@ -477,9 +477,9 @@ describe('runAgent', () => {
     expect(ran).toBe(false) // 绝不空参运行
     const tr = events.find((e) => e.type === 'tool-result') as Extract<StreamEvent, { type: 'tool-result' }>
     expect(tr.is_error).toBe(true)
-    expect(tr.output).toContain('not valid JSON')
+    expect(tr.output).toContain('不是合法 JSON')
     expect(tr.output).toContain('{"value":') // 回显原始串
-    expect(tr.output).toContain('Re-issue') // 下一步指令
+    expect(tr.output).toContain('重新发起') // 下一步指令
 
     // 第二次模型调用看到了回喂的 tool_result；账本 4 条且角色合法。
     expect(calls).toHaveLength(2)
@@ -571,7 +571,7 @@ describe('runAgent', () => {
     const tr = events.find((e) => e.type === 'tool-result') as { is_error: boolean; output: string }
     expect(tr.is_error).toBe(true)
     // 错误回传契约(Phase 8):settings deny 是硬护栏,要点明"别原样重试"与改法。
-    expect(tr.output).toContain('do not retry')
+    expect(tr.output).toContain('不要重试')
     expect(tr.output).toContain('echo')
   })
 
@@ -585,8 +585,8 @@ describe('runAgent', () => {
     const deniedTr = denied.find((e) => e.type === 'tool-result') as { is_error?: boolean; output: string }
     expect(deniedTr.is_error).toBe(true)
     // 错误回传契约(Phase 8):用户拒绝是本次裁决,下一步是问用户,而非原样重发。
-    expect(deniedTr.output).toContain('user declined')
-    expect(deniedTr.output).toContain('Ask the user')
+    expect(deniedTr.output).toContain('用户拒绝')
+    expect(deniedTr.output).toContain('请询问用户')
 
     const { client: client2 } = fakeClient(askScript())
     const allowed = await collect(runAgent({
