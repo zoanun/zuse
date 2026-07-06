@@ -781,6 +781,10 @@ export class SessionManager {
           if (this.steerQueue.length === 0) return null
           const combined = this.steerQueue.join('\n')
           this.steerQueue.length = 0
+          // Folded into a tool_result: echo it now (after the tool cards the client just received)
+          // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
+          // optimistically mid-stream where it would split the reply.
+          this.emit({ type: 'user-echo', text: combined, steer: true })
           return combined
         },
         canUseTool: this.canUseTool,
@@ -904,11 +908,16 @@ export class SessionManager {
     // queued when the turn ends. Deliver it now as its OWN fresh turn — addressed right after this
     // reply — instead of letting it bleed into some later, unrelated turn's tool batch. Runs after
     // the finally (isThinking already reset) so the recursive submit starts a clean turn with its
-    // own checkpoint/abort. Skipped on a resend (the outer call drains) and after a Stop (an aborted
-    // turn must not auto-fire a queued interjection).
-    if (!opts?.isResend && !controller.signal.aborted && this.steerQueue.length > 0) {
+    // own checkpoint/abort. Also runs after a Stop: interjecting then hitting Stop reads as "drop
+    // what you're doing and get to MY message" — the aborted turn is discarded, then the steer runs.
+    // Only skipped on a failover resend (the outer call drains).
+    if (!opts?.isResend && this.steerQueue.length > 0) {
       const drained = this.steerQueue.join('\n')
       this.steerQueue.length = 0
+      // Echo it as a NORMAL user bubble opening the follow-up turn (between this reply and the next),
+      // per the chosen UX — an idle-drained steer reads as an ordinary follow-up, not a "↪ 插话"
+      // interjection. submit() also writes it to the ledger, so reload matches this live view.
+      this.emit({ type: 'user-echo', text: drained })
       await this.submit(drained)
     }
   }

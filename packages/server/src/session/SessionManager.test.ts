@@ -428,6 +428,8 @@ describe('SessionManager turn loop', () => {
     ]
     // Two pure-text turns: the original reply, then the auto-drained steer's turn.
     const { mgr, calls } = makeManagerWith([textTurn('reply'), textTurn('addressed')])
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
     mgr.steer('also do X') // queued; a pure-text turn has no tool batch to consume it
     await mgr.submit('Q')
     // The idle-drain re-submitted the steer as a SECOND turn (a follow-up), not left in the queue.
@@ -435,6 +437,9 @@ describe('SessionManager turn loop', () => {
     const texts = mgr.getConversation().getMessages()
       .flatMap((m) => m.content).filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
     expect(texts.some((t) => t.includes('also do X'))).toBe(true) // the steer became a real user turn
+    // It's echoed as a NORMAL user bubble (no steer marker) opening the follow-up turn, so the
+    // two replies aren't glued together and there's no mid-stream interjection.
+    expect(echoes).toEqual([{ text: 'also do X', steer: undefined }])
   })
 
   it('tool-result is emitted with full raw output (no truncation)', async () => {
@@ -461,6 +466,25 @@ describe('SessionManager turn loop', () => {
     mgr.subscribe((e) => { if (e.type === 'tool-result') toolOut = e.output })
     await mgr.submit('go')
     expect(toolOut.length).toBe(5000)
+  })
+
+  it('a steer folded during a tool batch is echoed as a "↪ 插话" bubble (user-echo steer:true)', async () => {
+    const script: StreamEvent[] = [
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true,
+      run: async (): Promise<ToolResult> => ({ output: 'done' }),
+    })
+    const { mgr } = makeManagerWith([script, []], registry)
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+    mgr.steer('change direction') // consumed at the tool batch → folded → echoed as a steer bubble
+    await mgr.submit('go')
+    expect(echoes).toEqual([{ text: 'change direction', steer: true }])
   })
 })
 
@@ -521,6 +545,26 @@ describe('SessionManager re-entrancy guard', () => {
     const turnEndIdx = types.indexOf('turn-end')
     expect(turnEndIdx).toBeGreaterThan(abortedIdx)
     expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('Stop after a steer discards the current turn but still runs the steer as a follow-up', async () => {
+    // "Interject, then hit Stop" reads as: drop what you're doing and get to MY message. The
+    // aborted turn is discarded, then the queued steer runs as its own fresh turn.
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const echoes: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push(e.text) })
+
+    const p = mgr.submit('go')          // held open at the gate
+    mgr.steer('do Y instead')           // queued during the (gated) turn
+    expect(mgr.interrupt()).toBe(true)  // Stop
+    release()                           // gated client sees the abort → turn 1 is discarded
+    await p                             // awaits the idle-drained follow-up turn as well
+
+    expect(echoes).toContain('do Y instead') // echoed as the follow-up's user message
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('do Y instead'))).toBe(true) // the steer actually ran
   })
 })
 
