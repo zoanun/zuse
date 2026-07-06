@@ -32,6 +32,24 @@ function gatedClient(model = 'fake-model'): { client: ModelClient; release: () =
   return { client, release }
 }
 
+/** Like gatedClient but streams some text BEFORE the gate, so a test can abort MID-STREAM (after
+ *  content has already flowed) — the real "hit Stop while the reply is streaming" scenario. */
+function midStreamGatedClient(model = 'fake-model'): { client: ModelClient; release: () => void } {
+  let release!: () => void
+  const gate = new Promise<void>((r) => { release = r })
+  const client: ModelClient = {
+    getModel: () => model,
+    async *sendMessages(_messages, _config, _tools, signal) {
+      yield { type: 'message-start', id: 'm1', model }
+      yield { type: 'text-delta', text: 'partial answer' }
+      await gate
+      if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+      yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+    },
+  }
+  return { client, release }
+}
+
 function makeManagerFromClient(client: ModelClient) {
   return new SessionManager({
     sessionId: 's1',
@@ -565,6 +583,92 @@ describe('SessionManager re-entrancy guard', () => {
     const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
       .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
     expect(texts.some((t) => t.includes('do Y instead'))).toBe(true) // the steer actually ran
+  })
+
+  it('Stop MID-STREAM (after content streamed) after a steer still runs the steer — repro of 用例6', async () => {
+    const { client, release } = midStreamGatedClient()
+    const mgr = makeManagerFromClient(client)
+    const echoes: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push(e.text) })
+
+    const p = mgr.submit('go')          // streams 'partial answer', then holds at the gate
+    mgr.steer('do Y instead')           // interject mid-stream
+    expect(mgr.interrupt()).toBe(true)  // Stop
+    release()                           // gated client observes the abort → error → turn 1 discarded
+    await p
+
+    expect(echoes).toContain('do Y instead')
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('do Y instead'))).toBe(true)
+  })
+
+  it('reverts todos on abort so a stopped turn leaves no stale plan (survives reload)', async () => {
+    const { client, release } = gatedClient()
+    const mgr = makeManagerFromClient(client)
+    const todoLens: number[] = []
+    mgr.subscribe((e) => { if (e.type === 'todos-update') todoLens.push(e.todos.length) })
+
+    const p = mgr.submit('go') // held open at the gate
+    // Simulate the turn's TodoWrite building a plan.
+    mgr.setTodos([{ content: 'step 1', status: 'in_progress' }, { content: 'step 2', status: 'pending' }] as unknown as Parameters<typeof mgr.setTodos>[0])
+    expect(mgr.getState().todos).toHaveLength(2)
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+
+    // Aborted → todos reverted to the pre-turn (empty) state; the snapshot the client reloads from
+    // no longer carries the stale plan.
+    expect(mgr.getState().todos).toEqual([])
+    expect(todoLens).toEqual([2, 0]) // set to 2 by setTodos, then reverted to 0 on abort
+  })
+
+  it('用例6: a steer FOLDED into a tool turn then Stop is re-run as a follow-up, echoed once', async () => {
+    let call = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages(_m, _c, _t, signal) {
+        call++
+        if (call === 1) { // turn 0: ask for a tool → its result is where the steer gets folded
+          yield { type: 'message-start', id: 'm1', model: 'fake' }
+          yield { type: 'tool-use', id: 't1', name: 'Bash', input: {} }
+          yield { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else if (call === 2) { // turn 1: held at the gate so we can Stop after the fold happened
+          await gate
+          if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else { // the re-delivered follow-up turn
+          yield { type: 'message-start', id: 'm', model: 'fake' }
+          yield { type: 'text-delta', text: 'now addressing it' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+      },
+    }
+    const registry = new ToolRegistry()
+    registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+    })
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+
+    mgr.steer('actually use path Y')                      // queued before the turn
+    const p = mgr.submit('go')                            // turn 0 runs the tool → folds the steer
+    await new Promise((r) => setTimeout(r, 20))           // let turn 0 fold + turn 1 reach the gate
+    expect(mgr.interrupt()).toBe(true)                    // Stop AFTER the fold
+    release()
+    await p
+
+    // Folded steer was discarded with the aborted turn, then re-queued and re-run as a follow-up.
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('actually use path Y'))).toBe(true)
+    // Echoed ONCE — as the "↪ 插话" fold bubble; the re-delivery must NOT add a second normal bubble.
+    expect(echoes).toEqual([{ text: 'actually use path Y', steer: true }])
   })
 })
 

@@ -141,6 +141,15 @@ export class SessionManager {
   private ineffectiveCompaction = 0
   private totalUsage: Usage | undefined = undefined
   private isThinking = false
+  // Whether a folded steer already emitted a "↪ 插话" bubble this (outer) turn. Instance-level so it
+  // spans the outer turn AND its failover resend (each is a separate submit): the outer's idle-drain
+  // must not re-echo a steer the resend already fold-echoed. Reset at the start of a non-resend turn.
+  private steerFoldEchoedThisTurn = false
+  // The todo list as it stood BEFORE the current (outer) turn — a reference snapshot (setTodos
+  // always swaps in a fresh array, never mutates, so this ref stays intact). On abort we revert to
+  // it: the aborted turn's conversation is discarded, so its todo changes must be discarded too,
+  // or a reload shows a stale plan from a turn that never committed.
+  private todosBeforeTurn: TodoItemLite[] = []
   private readonly pending = new Map<string, Pending>()
   private permSeq = 0
   /** In-memory session permission overlay (extra allow rules). Persisted across turns. */
@@ -687,6 +696,10 @@ export class SessionManager {
       throw new Error('A turn is already in progress')
     }
     this.isThinking = true
+    if (!opts?.isResend) {
+      this.steerFoldEchoedThisTurn = false // reset per outer turn (spans resends)
+      this.todosBeforeTurn = this.todos    // ref snapshot to revert to if this turn is aborted
+    }
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
 
     // Publish the abort controller SYNCHRONOUSLY, before any await below, so the Stop button works
@@ -754,6 +767,11 @@ export class SessionManager {
     // Set right before the recursive resend so the OUTER finally does not emit a second
     // turn-end (the nested submit already emitted one).
     let resent = false
+    // Steers folded into THIS turn's tool_results (via consumeSteer). Tracked so that if the turn
+    // is aborted (Stop) — which discards the whole staged turn, folded steer included — we can
+    // re-queue them and let idle-drain re-deliver as a fresh turn (this.steerFoldEchoedThisTurn
+    // then stops idle-drain from double-echoing what the fold already showed).
+    const consumedThisTurn: string[] = []
 
     try {
       for await (const event of runAgent({
@@ -781,10 +799,12 @@ export class SessionManager {
           if (this.steerQueue.length === 0) return null
           const combined = this.steerQueue.join('\n')
           this.steerQueue.length = 0
+          consumedThisTurn.push(combined) // so an abort can re-queue it (staged is discarded)
           // Folded into a tool_result: echo it now (after the tool cards the client just received)
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
           // optimistically mid-stream where it would split the reply.
           this.emit({ type: 'user-echo', text: combined, steer: true })
+          this.steerFoldEchoedThisTurn = true
           return combined
         },
         canUseTool: this.canUseTool,
@@ -911,13 +931,30 @@ export class SessionManager {
     // own checkpoint/abort. Also runs after a Stop: interjecting then hitting Stop reads as "drop
     // what you're doing and get to MY message" — the aborted turn is discarded, then the steer runs.
     // Only skipped on a failover resend (the outer call drains).
+    //
+    // 用例6 fix: a steer folded into THIS turn's tool_result was discarded when the turn was
+    // aborted (Stop). Re-queue those so the drain below re-delivers them as a fresh turn —
+    // "stop what you're doing and run my message". They were already echoed as "↪ 插话" bubbles,
+    // so suppress the follow-up's normal echo to avoid showing the same interjection twice.
+    if (controller.signal.aborted) {
+      // Revert this turn's todo changes — its conversation was discarded, so a stale "N/M done"
+      // plan must not survive (and persist through a reload). Only if the turn actually changed them.
+      if (this.todos !== this.todosBeforeTurn) {
+        this.todos = this.todosBeforeTurn
+        this.emit({ type: 'todos-update', todos: this.todos })
+      }
+      // Re-queue any steer folded into this (discarded) turn so idle-drain re-delivers it (用例6).
+      if (consumedThisTurn.length > 0) this.steerQueue.unshift(...consumedThisTurn)
+    }
     if (!opts?.isResend && this.steerQueue.length > 0) {
       const drained = this.steerQueue.join('\n')
       this.steerQueue.length = 0
       // Echo it as a NORMAL user bubble opening the follow-up turn (between this reply and the next),
       // per the chosen UX — an idle-drained steer reads as an ordinary follow-up, not a "↪ 插话"
-      // interjection. submit() also writes it to the ledger, so reload matches this live view.
-      this.emit({ type: 'user-echo', text: drained })
+      // interjection. Skip when a fold echo already showed it this turn (the aborted-fold case,
+      // including when the fold happened in a failover resend). submit() also writes it to the
+      // ledger, so reload matches this live view.
+      if (!this.steerFoldEchoedThisTurn) this.emit({ type: 'user-echo', text: drained })
       await this.submit(drained)
     }
   }
