@@ -392,8 +392,8 @@ async function gateAndRunTool(
     // settings deny 是硬护栏:配置写死,原样重试必然再拒,要把"换路子"说给模型听。
     return {
       output:
-        `Permission denied by settings rule "${matched ?? rule}". This is a hard guardrail; ` +
-        'do not retry the same call. Take a different approach, or ask the user to change their permission settings.',
+        `此调用被配置规则「${matched ?? rule}」拒绝。这是硬性护栏；` +
+        '不要重试同一调用。请改用其他方式，或让用户修改其权限设置。',
       isError: true,
     }
   }
@@ -406,8 +406,8 @@ async function gateAndRunTool(
       // 用户拒绝是本次裁决:下一步是问用户意图,而非立刻原样重发。
       return {
         output:
-          `The user declined this ${tu.name} call (rule: ${rule}). Do not retry the same call. ` +
-          'Ask the user how to proceed, or take a different approach.',
+          `用户拒绝了这次 ${tu.name} 调用（规则：${rule}）。不要重试同一调用。` +
+          '请询问用户如何继续，或改用其他方式。',
         isError: true,
       }
     }
