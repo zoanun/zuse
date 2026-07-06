@@ -9,6 +9,7 @@ import { decide } from './permission.js'
 import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import { runHooks } from './hooks.js'
+import { steerFoldSuffix } from './steer.js'
 import type { Conversation } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
@@ -337,14 +338,17 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // Mid-turn steer: if the user sent a message while tools were running,
     // append it to the last tool result so the model sees it on the next turn.
     const steer = opts.consumeSteer?.()
+    const toolResultMsg: Message = { role: 'user', content: resultBlocks }
     if (steer && resultBlocks.length > 0) {
-      const injection = `\n\n[USER MESSAGE — sent while you were working]\n${steer}\n[/USER MESSAGE]\nIMPORTANT: Address the user's message above. It takes priority over your current task. You may continue your current work after acknowledging it, or change direction if they asked you to.`
       const last = resultBlocks[resultBlocks.length - 1]!
       if (last.type === 'tool_result') {
-        last.content += injection
+        last.content += steerFoldSuffix(steer)
+        // Record the fold structurally on the carrier message so the snapshot projector shows it as
+        // a distinct "↪ 插话" bubble and strips it from the tool card by exact text — not by sniffing.
+        toolResultMsg.steer = [steer]
       }
     }
-    staged.push({ role: 'user', content: resultBlocks })
+    staged.push(toolResultMsg)
     // 循环：把工具结果回喂给模型
   }
 

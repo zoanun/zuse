@@ -15,6 +15,14 @@ export type ContentBlock =
 export interface Message {
   role: 'user' | 'assistant'
   content: ContentBlock[]
+  /**
+   * Mid-turn steer texts folded into THIS message's tool_result(s), recorded structurally so the
+   * snapshot projector can show them as distinct "↪ 插话" bubbles and strip them from the tool card
+   * by exact text — never by sniffing content (which collides with real content, e.g. a tool that
+   * reads steer.ts). Metadata only: the model-bound client sends role+content, so this is dropped
+   * at the API boundary but persists in the ledger JSON and travels through compaction/revert.
+   */
+  steer?: string[]
 }
 
 /** 模型调用错误的归类:供编排层决定是否降级。 */

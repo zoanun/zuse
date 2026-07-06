@@ -750,6 +750,9 @@ describe('runAgent', () => {
       expect(lastBlock.content).toContain('[USER MESSAGE')
       expect(lastBlock.content).toContain('skip test files')
     }
+    // The fold is ALSO recorded structurally on the carrier message, so the snapshot projector can
+    // identify + strip it by exact text without sniffing content.
+    expect(toolResultMsg.steer).toEqual(['skip test files'])
   })
 
   it('does not inject when consumeSteer returns null', async () => {
