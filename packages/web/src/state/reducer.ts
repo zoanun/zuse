@@ -56,7 +56,13 @@ function mapPart(p: SnapshotPart): Part {
 }
 
 function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
-  const mapped = s.messages.map((m, i) => ({ id: 'h' + i, role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId }))
+  // Id by LEDGER index, not array position: the projection can splice extra steer bubbles, so
+  // array index != ledger index. History-search jumps to 'h'+ledgerIndex, so real messages must
+  // keep that id (steer bubbles, never search targets, get a collision-free 'hs'+i id).
+  const mapped = s.messages.map((m, i) => ({
+    id: m.steer ? 'hs' + i : 'h' + (m.ledgerIndex ?? i),
+    role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId, steer: m.steer,
+  }))
   return {
     ...state,
     model: s.model,
@@ -71,7 +77,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   }
 }
 
-type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string }
+type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string; steer?: boolean }
 
 /**
  * In the API ledger a tool's result is a `role: 'user'` message holding only a tool_result
