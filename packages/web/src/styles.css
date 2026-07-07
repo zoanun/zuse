@@ -247,6 +247,16 @@ button.head:hover .caret { opacity: 1; }
 @keyframes ag-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 
 .composer-wrap { width: 100%; padding: 0 7% 18px; }
+/* Slash-command autocomplete menu, pinned above the composer (same 7% inset as chat content). */
+.slash-menu { list-style: none; margin: 0 7% 8px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 18px var(--shadow); max-height: 260px; overflow-y: auto; }
+.slash-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; }
+.slash-item.active, .slash-item:hover { background: var(--surface-2); }
+.slash-name { font-weight: 600; font-size: 14px; }
+.slash-desc { color: var(--muted); font-size: 12px; }
+/* Send button: accent-filled, dims + no-cursor when disabled (empty input). */
+.send-btn:disabled { opacity: 0.4; cursor: default; }
+.send-btn svg, .stop-btn svg { display: block; }
+.stop-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
 .composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); }
 .composer:focus-within { border-color: var(--accent-border); box-shadow: 0 2px 14px var(--shadow), 0 0 0 3px var(--accent-soft); }
 .composer textarea { flex: 1; resize: none; border: none; background: transparent; padding: 9px 0; min-height: 24px; max-height: 168px; line-height: 1.5; font-size: 15px; }
