@@ -677,6 +677,52 @@ describe('SessionManager re-entrancy guard', () => {
     expect(todoLens).toEqual([2, 0]) // set to 2 by setTodos, then reverted to 0 on abort
   })
 
+  it('reverts a cwd change on abort so a discarded turn leaves no stale cwd (#10)', async () => {
+    // A tool cd's mid-turn (onCwdChange → this.cwd), then Stop. The staged turn is discarded and
+    // leaves no ledger record of the cd, so this.cwd must revert — otherwise the live session runs
+    // the next turn from a cwd a reload would never reconstruct.
+    let call = 0
+    let releaseCont!: () => void
+    let signalReached!: () => void
+    const gate = new Promise<void>((r) => { releaseCont = r })
+    const reached = new Promise<void>((r) => { signalReached = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages(_m, _c, _t, signal) {
+        call++
+        if (call === 1) { // run the Cd tool (changes cwd)
+          yield { type: 'message-start', id: 'm1', model: 'fake' }
+          yield { type: 'tool-use', id: 't1', name: 'Cd', input: {} }
+          yield { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else { // continuation held at the gate so we can Stop after the cd happened
+          signalReached()
+          await gate
+          if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+      },
+    }
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Cd', description: 'cd', inputSchema: { type: 'object', properties: {} }, readOnly: true,
+      run: async (_input, ctx): Promise<ToolResult> => { ctx.setCwd!('/changed'); return { output: 'ok' } },
+    })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+    })
+
+    const p = mgr.submit('go')
+    await reached                          // Cd ran → cwd changed; now at the continuation gate
+    expect(mgr.getState().cwd).toBe('/changed')
+    expect(mgr.interrupt()).toBe(true)     // Stop mid-turn
+    releaseCont()
+    await p
+
+    expect(mgr.getState().cwd).toBe('/work') // reverted: the discarded turn's cd does not survive
+  })
+
   it('用例6: a steer FOLDED into a tool turn then Stop is re-run as a follow-up, echoed once', async () => {
     let call = 0
     let release!: () => void

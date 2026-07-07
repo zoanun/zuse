@@ -150,6 +150,12 @@ export class SessionManager {
   // it: the aborted turn's conversation is discarded, so its todo changes must be discarded too,
   // or a reload shows a stale plan from a turn that never committed.
   private todosBeforeTurn: TodoItemLite[] = []
+  // The session cwd as it stood BEFORE the current (outer) turn. Reverted on abort for the same
+  // reason as todos: a tool's `cd` (onCwdChange) in a discarded turn left no ledger record, so
+  // keeping the mutated cwd would desync the live session from what a reload rebuilds. (The
+  // file-read tracker is deliberately NOT reverted — it's session-scoped by design, keeping
+  // read-before-write across turns.)
+  private cwdBeforeTurn = ''
   private readonly pending = new Map<string, Pending>()
   private permSeq = 0
   /** In-memory session permission overlay (extra allow rules). Persisted across turns. */
@@ -698,6 +704,7 @@ export class SessionManager {
     this.isThinking = true
     if (!opts?.isResend) {
       this.todosBeforeTurn = this.todos    // ref snapshot to revert to if this turn is aborted
+      this.cwdBeforeTurn = this.cwd        // likewise for the session cwd (a discarded turn's cd reverts)
     }
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
     // A steer that raced past turn-end is delivered as a normal turn (ws layer), but the client took
@@ -960,6 +967,12 @@ export class SessionManager {
       if (this.todos !== this.todosBeforeTurn) {
         this.todos = this.todosBeforeTurn
         this.emit({ type: 'todos-update', todos: this.todos })
+      }
+      // Revert a cwd change made by a discarded turn's tool (cd) for the same reason: it left no
+      // ledger record, so keeping it would desync the live session from a reload.
+      if (this.cwd !== this.cwdBeforeTurn) {
+        this.cwd = this.cwdBeforeTurn
+        this.emit({ type: 'cwd-change', cwd: this.cwd })
       }
       // Re-queue any steer folded into this (discarded) turn so idle-drain re-delivers it (用例6).
       // Same gate: a steer folded into a committed turn was already answered — never re-deliver it.
