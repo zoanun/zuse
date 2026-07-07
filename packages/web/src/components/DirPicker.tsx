@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DirNav } from '@zuse/protocol'
 import { navigateDirs } from '../state/manageApi.js'
@@ -14,7 +14,10 @@ function basename(p: string): string {
  * dir-only browser: jump between drives, go up to the parent, descend into subfolders, then
  * confirm — which starts a NEW session rooted at the chosen folder (current session untouched).
  */
-export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: string) => void }) {
+export interface DirPickerHandle { open: () => void }
+
+export const DirPicker = forwardRef<DirPickerHandle, { cwd: string; onChange: (cwd: string) => void }>(
+  function DirPicker({ cwd, onChange }, ref) {
   const [open, setOpen] = useState(false)
   const [nav, setNav] = useState<DirNav | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -39,6 +42,7 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
     setOpen(true)
     void go(cwd || undefined)
   }
+  useImperativeHandle(ref, () => ({ open: openPicker }), [cwd])
   const confirm = () => {
     if (nav) {
       onChange(nav.path)
@@ -83,4 +87,4 @@ export function DirPicker({ cwd, onChange }: { cwd: string; onChange: (cwd: stri
       ) : null}
     </div>
   )
-}
+})

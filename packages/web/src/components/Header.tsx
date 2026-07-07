@@ -2,13 +2,14 @@ import type { AppState } from '../state/types.js'
 import { getTheme, toggleTheme } from '../theme.js'
 import { useState } from 'react'
 import { DirPicker } from './DirPicker.js'
+import type { DirPickerHandle } from './DirPicker.js'
 
 function fmt(n: number | undefined): string {
   if (n === null || n === undefined) return '—'
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu, onOpenManage, onChangeCwd }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void }) {
+export function Header({ state, onMenu, onOpenManage, onChangeCwd, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
   const [, force] = useState(0)
   const ctx = state.contextTokens
   const win = state.contextWindow
@@ -24,7 +25,7 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd }: { state: Ap
       <div className="mh-left">
         <button className="icon-btn menu-btn" aria-label="打开侧边栏" onClick={onMenu}>☰</button>
         <div className="brand mh-brand"><span className="mark">Z</span> zuse</div>
-        <DirPicker cwd={state.cwd ?? ''} onChange={onChangeCwd} />
+        <DirPicker ref={dirPickerRef} cwd={state.cwd ?? ''} onChange={onChangeCwd} />
         {state.model ? <span className="chip">模型 {state.model}</span> : null}
         {ctxText ? <span className="chip">{ctxText}{tok ? ' · ' + tok : ''}</span> : null}
         <span className={'chip ' + (conn === 'live' ? 'live' : conn === 'connecting' ? 'warn' : 'down')}>
