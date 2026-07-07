@@ -176,3 +176,41 @@ describe('Composer input history', () => {
     expect(ta.value).toBe('line1\nline2') // caret moves within textarea; no recall
   })
 })
+
+describe('Composer Esc-to-stop and disabled send', () => {
+  it('Escape stops the turn while thinking and menu is closed', () => {
+    const onStop = vi.fn()
+    render(<Composer thinking={true} onSend={() => {}} onStop={onStop} />)
+    const ta = screen.getByPlaceholderText('插入消息到当前回合…') as HTMLTextAreaElement
+    fireEvent.keyDown(ta, { key: 'Escape' })
+    expect(onStop).toHaveBeenCalled()
+  })
+
+  it('Escape does not stop when not thinking', () => {
+    const onStop = vi.fn()
+    render(<Composer thinking={false} onSend={() => {}} onStop={onStop} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.keyDown(ta, { key: 'Escape' })
+    expect(onStop).not.toHaveBeenCalled()
+  })
+
+  it('Escape closes the menu instead of stopping, even while thinking', () => {
+    const onStop = vi.fn()
+    const onRunCommand = vi.fn()
+    render(<Composer thinking={true} onSend={() => {}} onStop={onStop} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('插入消息到当前回合…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/comp' } })
+    fireEvent.keyDown(ta, { key: 'Escape' })
+    expect(onStop).not.toHaveBeenCalled() // menu-close took precedence
+    expect(screen.queryByText('/compact')).not.toBeInTheDocument()
+  })
+
+  it('disables the send button when input is empty or whitespace', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const btn = screen.getByLabelText('发送消息')
+    expect(btn).toBeDisabled()
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'hi' } })
+    expect(btn).not.toBeDisabled()
+  })
+})

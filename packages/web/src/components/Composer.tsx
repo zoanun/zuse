@@ -120,6 +120,8 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
               if (e.key === 'ArrowUp' && caretOnFirstLine()) { e.preventDefault(); recallPrev(); return }
               if (e.key === 'ArrowDown' && caretOnLastLine()) { e.preventDefault(); recallNext(); return }
             }
+            // 4) Menu closed: Escape stops the turn if one is running.
+            if (e.key === 'Escape' && thinking) { e.preventDefault(); onStop(); return }
           }}
         />
         {thinking ? (
