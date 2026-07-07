@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { Composer } from './Composer.js'
+import { SLASH_COMMANDS } from './commands.js'
 
 describe('Composer', () => {
   it('auto-focuses the textarea on mount', () => {
@@ -69,7 +70,34 @@ describe('Composer', () => {
   it('shows Stop and fires onStop while thinking', () => {
     const onStop = vi.fn()
     render(<Composer thinking={true} onSend={() => {}} onStop={onStop} />)
-    fireEvent.click(screen.getByText('停止'))
+    fireEvent.click(screen.getByLabelText('停止'))
     expect(onStop).toHaveBeenCalled()
+  })
+})
+
+describe('Composer slash menu', () => {
+  it('shows a filtered command menu while input starts with "/"', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/co' } })
+    expect(screen.getByText('/compact')).toBeInTheDocument()
+    expect(screen.queryByText('/clear')).not.toBeInTheDocument()
+  })
+
+  it('hides the menu when input has no leading slash', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'hello' } })
+    expect(screen.queryByText('/compact')).not.toBeInTheDocument()
+  })
+
+  it('clicking a menu item runs it and clears input', () => {
+    const onRunCommand = vi.fn()
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/comp' } })
+    fireEvent.click(screen.getByText('/compact'))
+    expect(onRunCommand).toHaveBeenCalledWith(SLASH_COMMANDS.find((c) => c.name === '/compact'))
+    expect(ta.value).toBe('')
   })
 })
