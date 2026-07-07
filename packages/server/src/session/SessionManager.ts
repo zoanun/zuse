@@ -151,11 +151,16 @@ export class SessionManager {
   // or a reload shows a stale plan from a turn that never committed.
   private todosBeforeTurn: TodoItemLite[] = []
   // The session cwd as it stood BEFORE the current (outer) turn. Reverted on abort for the same
-  // reason as todos: a tool's `cd` (onCwdChange) in a discarded turn left no ledger record, so
-  // keeping the mutated cwd would desync the live session from what a reload rebuilds. (The
-  // file-read tracker is deliberately NOT reverted — it's session-scoped by design, keeping
-  // read-before-write across turns.)
+  // reason as todos — a discarded turn should leave no trace: a tool's `cd` (onCwdChange) in it left
+  // no ledger record, so the policy is to drop it rather than let a cancelled turn silently move the
+  // session's cwd. (cwd is persisted from getState() AFTER this revert, so reload matches the live
+  // reverted value. The file-read tracker is deliberately NOT reverted — it's session-scoped by
+  // design, keeping read-before-write across turns.)
   private cwdBeforeTurn = ''
+  // Bumped by reset() ("new chat"). A running turn captures it at start and checks it before its
+  // post-turn tail (abort-revert of todos/cwd, steer re-queue, idle-drain). If reset() ran mid-turn
+  // the epoch differs, so the tail bails instead of re-populating the freshly-cleared state.
+  private turnEpoch = 0
   private readonly pending = new Map<string, Pending>()
   private permSeq = 0
   /** In-memory session permission overlay (extra allow rules). Persisted across turns. */
@@ -440,6 +445,12 @@ export class SessionManager {
     this.steerQueue.push({ text: trimmed, echoed: false })
   }
 
+  /** Cheap liveness check — true while a turn is running. Lets callers avoid a full getState()
+   *  projection just to read this flag (e.g. the ws steer/idle routing). */
+  isBusy(): boolean {
+    return this.isThinking
+  }
+
   /** Abort the in-flight turn, if any. Returns true if a turn was aborted. */
   interrupt(): boolean {
     if (this.abort) {
@@ -486,6 +497,9 @@ export class SessionManager {
     // conversation no longer erases it — a fresh session would otherwise inherit the old summary.
     this.compaction = null
     this.isThinking = false
+    // Invalidate any in-flight turn's post-turn tail: its finally/drain run async AFTER this reset,
+    // and would otherwise re-queue the discarded steer + re-emit the old todos onto the blank session.
+    this.turnEpoch++
 
     this.emit({ type: 'todos-update', todos: [] })
   }
@@ -702,6 +716,7 @@ export class SessionManager {
       throw new Error('A turn is already in progress')
     }
     this.isThinking = true
+    const epoch = this.turnEpoch // if reset() bumps this mid-turn, the post-turn tail below bails
     if (!opts?.isResend) {
       this.todosBeforeTurn = this.todos    // ref snapshot to revert to if this turn is aborted
       this.cwdBeforeTurn = this.cwd        // likewise for the session cwd (a discarded turn's cd reverts)
@@ -941,48 +956,45 @@ export class SessionManager {
     } finally {
       this.isThinking = false
       this.abort = null
+      // Revert an aborted turn's side effects BEFORE turn-end: the autosave listener reads
+      // getState().cwd synchronously on turn-end, so the revert must precede it or the discarded
+      // turn's cwd is what gets persisted (a reload then opens the wrong dir). Gated on abortedMidTurn
+      // (not signal.aborted): a Stop during post-response compaction aborts an ALREADY-COMMITTED turn,
+      // whose todos/cwd are real history and must be kept. Skipped if reset() ran out from under this
+      // turn (epoch changed) — its state is void, and re-emitting the old todos/cwd would fight reset.
+      if (abortedMidTurn && this.turnEpoch === epoch) {
+        if (this.todos !== this.todosBeforeTurn) {
+          this.todos = this.todosBeforeTurn
+          this.emit({ type: 'todos-update', todos: this.todos })
+        }
+        if (this.cwd !== this.cwdBeforeTurn) {
+          this.cwd = this.cwdBeforeTurn
+          this.emit({ type: 'cwd-change', cwd: this.cwd })
+        }
+      }
       // On a failover resend the nested submit already emitted turn-end; suppress the
       // outer one to avoid a double turn-end. isThinking/abort resets are idempotent.
       if (!resent) this.emit({ type: 'turn-end' })
     }
 
-    // Idle-drain (Phase 2, cc-haha's model): consumeSteer drains the queue at tool-batch
-    // boundaries, so a steer sent during a PURE-TEXT reply (no tool_result to fold into) is still
-    // queued when the turn ends. Deliver it now as its OWN fresh turn — addressed right after this
-    // reply — instead of letting it bleed into some later, unrelated turn's tool batch. Runs after
-    // the finally (isThinking already reset) so the recursive submit starts a clean turn with its
-    // own checkpoint/abort. Also runs after a Stop: interjecting then hitting Stop reads as "drop
-    // what you're doing and get to MY message" — the aborted turn is discarded, then the steer runs.
-    // Only skipped on a failover resend (the outer call drains).
-    //
-    // 用例6 fix: a steer folded into THIS turn's tool_result was discarded when the turn was
-    // aborted (Stop). Re-queue those so the drain below re-delivers them as a fresh turn —
-    // "stop what you're doing and run my message". They were already echoed as "↪ 插话" bubbles,
-    // so suppress the follow-up's normal echo to avoid showing the same interjection twice.
-    if (abortedMidTurn) {
-      // Revert this turn's todo changes — its conversation was discarded, so a stale "N/M done"
-      // plan must not survive (and persist through a reload). Only if the turn actually changed them.
-      // Gated on abortedMidTurn (not signal.aborted): a Stop during post-response compaction aborts
-      // an ALREADY-COMMITTED turn, whose todos are real history and must be kept.
-      if (this.todos !== this.todosBeforeTurn) {
-        this.todos = this.todosBeforeTurn
-        this.emit({ type: 'todos-update', todos: this.todos })
-      }
-      // Revert a cwd change made by a discarded turn's tool (cd) for the same reason: it left no
-      // ledger record, so keeping it would desync the live session from a reload.
-      if (this.cwd !== this.cwdBeforeTurn) {
-        this.cwd = this.cwdBeforeTurn
-        this.emit({ type: 'cwd-change', cwd: this.cwd })
-      }
-      // Re-queue any steer folded into this (discarded) turn so idle-drain re-delivers it (用例6).
-      // Same gate: a steer folded into a committed turn was already answered — never re-deliver it.
-      // Marked echoed=true: they were already shown as "↪ 插话" bubbles, so the drain re-delivers
-      // them without a second echo.
-      if (consumedThisTurn.length > 0) {
-        this.steerQueue.unshift(...consumedThisTurn.map((text) => ({ text, echoed: true })))
-      }
+    // reset() ("new chat") ran mid-turn → this turn's transient tail targets state that's already
+    // been thrown away; drop it so it can't resurrect the discarded steer or the old todos.
+    if (this.turnEpoch !== epoch) return
+
+    // 用例6: a steer folded into THIS turn's tool_result was discarded when the turn was aborted
+    // (Stop). Re-queue those so the idle-drain below re-delivers them as a fresh turn — "stop what
+    // you're doing and run my message". They were already echoed as "↪ 插话" bubbles, so they're
+    // marked echoed=true and the drain re-delivers them without a second echo.
+    if (abortedMidTurn && consumedThisTurn.length > 0) {
+      this.steerQueue.unshift(...consumedThisTurn.map((text) => ({ text, echoed: true })))
     }
-    // Deliver any steer left in the queue as its own follow-up turn (see drainSteerAsFollowUp).
+
+    // Idle-drain (Phase 2, cc-haha's model): consumeSteer drains the queue at tool-batch boundaries,
+    // so a steer sent during a PURE-TEXT reply (no tool_result to fold into) is still queued at turn
+    // end. Deliver it now as its OWN fresh turn — addressed right after this reply — instead of
+    // letting it bleed into a later, unrelated turn's tool batch. Runs after the finally (isThinking
+    // reset) so the recursive submit starts clean. Also covers the aborted-then-re-queued case above.
+    // Skipped on a failover resend (the outer call drains).
     if (!opts?.isResend) await this.drainSteerAsFollowUp()
   }
 

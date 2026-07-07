@@ -11,7 +11,7 @@ function fakeMgr(): SessionManagerLike & {
   revert: ReturnType<typeof vi.fn>
   retry: ReturnType<typeof vi.fn>
   compactNow: ReturnType<typeof vi.fn>
-  getState: ReturnType<typeof vi.fn>
+  isBusy: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -24,7 +24,7 @@ function fakeMgr(): SessionManagerLike & {
     retry: vi.fn(async () => {}),
     compactNow: vi.fn(async () => {}),
     // Default to idle; the steer dispatch routes on this (idle → submit, thinking → steer).
-    getState: vi.fn(() => ({ isThinking: false }) as never),
+    isBusy: vi.fn(() => false),
   }
 }
 
@@ -39,7 +39,7 @@ describe('applyClientMessage', () => {
 
   it('dispatches interrupt / steer / permission-reply / switch-model', () => {
     const mgr = fakeMgr()
-    mgr.getState.mockReturnValue({ isThinking: true } as never) // a turn is running → steer folds in
+    mgr.isBusy.mockReturnValue(true) // a turn is running → steer folds in
     const err = vi.fn()
     applyClientMessage(mgr, JSON.stringify({ type: 'interrupt' }), err)
     applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: 'go' }), err)

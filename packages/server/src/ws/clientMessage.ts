@@ -4,7 +4,7 @@ import type { ClientMessage } from '@zuse/protocol'
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type SessionManagerLike = Pick<
   SessionManager,
-  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry' | 'compactNow' | 'getState'
+  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry' | 'compactNow' | 'isBusy'
 >
 
 /**
@@ -45,7 +45,7 @@ export function applyClientMessage(
         // idle (the steer raced past turn-end), there's no turn to fold into — queuing it would let
         // it bleed into a later, unrelated turn. Deliver it as a normal turn instead, echoed so the
         // client's transient "queued" preview resolves into a real message.
-        if (mgr.getState().isThinking) mgr.steer(msg.text)
+        if (mgr.isBusy()) mgr.steer(msg.text)
         else mgr.submit(msg.text, undefined, { echo: true }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'permission-reply': {

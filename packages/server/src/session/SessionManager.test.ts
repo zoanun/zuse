@@ -713,6 +713,9 @@ describe('SessionManager re-entrancy guard', () => {
       snapshotStore: fakeSnapshotStore(),
     })
 
+    const order: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'cwd-change' || e.type === 'turn-end') order.push(e.type) })
+
     const p = mgr.submit('go')
     await reached                          // Cd ran → cwd changed; now at the continuation gate
     expect(mgr.getState().cwd).toBe('/changed')
@@ -721,6 +724,57 @@ describe('SessionManager re-entrancy guard', () => {
     await p
 
     expect(mgr.getState().cwd).toBe('/work') // reverted: the discarded turn's cd does not survive
+    // #3: the REVERT cwd-change (the last one — an earlier cwd-change fired when the tool cd'd) must
+    // precede turn-end, because autosave reads getState().cwd synchronously on turn-end — otherwise
+    // the discarded /changed dir gets persisted.
+    expect(order.lastIndexOf('cwd-change')).toBeGreaterThanOrEqual(0)
+    expect(order.lastIndexOf('cwd-change')).toBeLessThan(order.indexOf('turn-end'))
+  })
+
+  it('reset() ("new chat") during a folded-steer turn is not undone by the aborted turn tail (#2)', async () => {
+    // A steer folds into a tool batch, then the user hits "New chat" (reset) mid-turn. The aborted
+    // turn's tail (re-queue + idle-drain) runs async AFTER reset cleared everything; it must NOT
+    // resurrect the folded steer as a ghost follow-up turn or re-emit the old todos.
+    let call = 0
+    let releaseCont!: () => void
+    let signalReached!: () => void
+    const gate = new Promise<void>((r) => { releaseCont = r })
+    const reached = new Promise<void>((r) => { signalReached = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages(_m, _c, _t, signal) {
+        call++
+        if (call === 1) { // tool batch: the queued steer folds into t1's result
+          yield { type: 'message-start', id: 'm1', model: 'fake' }
+          yield { type: 'tool-use', id: 't1', name: 'Bash', input: {} }
+          yield { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else { // continuation held at the gate so we can reset() after the fold happened
+          signalReached()
+          await gate
+          if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+      },
+    }
+    const registry = new ToolRegistry()
+    registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+    })
+
+    mgr.steer('old interjection')     // queued → folded into the tool batch
+    const p = mgr.submit('go')
+    await reached                     // steer folded; now at the continuation gate
+    mgr.reset()                       // "new chat" mid-turn
+    releaseCont()
+    await p
+
+    // No ghost follow-up turn (would be a 3rd client call), and the conversation reset stays clean.
+    expect(call).toBe(2)
+    expect(mgr.getConversation().getMessages()).toEqual([])
+    expect(mgr.getState().todos).toEqual([])
   })
 
   it('用例6: a steer FOLDED into a tool turn then Stop is re-run as a follow-up, echoed once', async () => {
