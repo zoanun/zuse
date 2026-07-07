@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { SessionMeta, SessionSearchResult } from '@zuse/protocol'
 import { searchSessions } from '../state/session.js'
 import { useDebounced } from './MemoryPanel.js'
+
+/** Imperative handle so the /history command can focus the search box (parity with DirPicker's). */
+export interface SidebarHandle { focusSearch: () => void }
 
 interface Props {
   sessions: SessionMeta[]
@@ -95,9 +98,13 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
   )
 }
 
-export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump }: Props) {
+export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
+  { sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump }, ref,
+) {
   const [query, setQuery] = useState('')
   const dq = useDebounced(query.trim(), 200)
+  const searchRef = useRef<HTMLInputElement>(null)
+  useImperativeHandle(ref, () => ({ focusSearch: () => searchRef.current?.focus() }), [])
   // One state models the async outcome: null = not searching, 'error' = failed, else the hits.
   const [results, setResults] = useState<SessionSearchResult[] | 'error' | null>(null)
   // Session ids whose hit list is collapsed. Reset on every new query so a fresh search
@@ -128,6 +135,7 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
         <input
+          ref={searchRef}
           className="session-search"
           placeholder="搜索历史…"
           value={query}
@@ -198,4 +206,4 @@ export function Sidebar({ sessions, currentSessionId, onNewChat, onSwitch, onDel
       <div className="side-foot"><span className="eyebrow">DEV</span></div>
     </aside>
   )
-}
+})

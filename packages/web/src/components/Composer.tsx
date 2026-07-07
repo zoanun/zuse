@@ -49,7 +49,6 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     onRunCommand?.(cmd)
     setValue(''); setHistIdx(null)
     if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.focus() }
-    setMenuDismissed(false)
   }
 
   // Caret-position helpers so multi-line editing keeps normal arrow behavior; history only kicks in

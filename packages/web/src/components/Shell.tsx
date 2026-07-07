@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PermissionVerdict } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
-import { Sidebar } from './Sidebar.js'
+import { Sidebar, type SidebarHandle } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
 import { isSelectableRow } from './Message.js'
 import { isTurnOpener, type Message as Msg } from '../state/types.js'
@@ -48,20 +48,24 @@ export function Shell() {
 
   const historyRef = useRef<Map<string, string[]>>(new Map())
   const dirPickerRef = useRef<DirPickerHandle>(null)
+  const sidebarRef = useRef<SidebarHandle>(null)
   const focusHistorySearch = useCallback(() => {
     setMenuOpen(true)
-    // The search box lives in the (now-open) Sidebar; focus it once it's on-screen.
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.session-search')?.focus())
+    // Focus the search box once the (now-open) Sidebar has it on-screen (parity with /work's ref).
+    requestAnimationFrame(() => sidebarRef.current?.focusSearch())
   }, [])
-  const commandCtx: CommandContext = useMemo(() => ({
+  // Plain object, not memoized: newSession's identity churns every render (unmemoized store fn), so
+  // a useMemo here never held — and Composer isn't memoized, so a stable ctx buys nothing. Rebuilding
+  // this tiny object per render is free.
+  const commandCtx: CommandContext = {
     send,
     newSession: () => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) },
     openPanel: (panel) => { setActivePanel(panel); setDrawerOpen(true) },
     focusHistorySearch,
     showHelp: () => dispatch({ kind: 'notice', text: SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n'), noticeKind: 'help' }),
     openDirPicker: () => dirPickerRef.current?.open(),
-  }), [send, dispatch, newSession, state.cwd, focusHistorySearch])
-  const onRunCommand = useCallback((cmd: SlashCommand) => cmd.run(commandCtx), [commandCtx])
+  }
+  const onRunCommand = (cmd: SlashCommand) => cmd.run(commandCtx)
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
   const onSend = (text: string) => {
@@ -145,6 +149,7 @@ export function Shell() {
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
       <Sidebar
+          ref={sidebarRef}
           sessions={sessions}
           currentSessionId={currentSessionId}
           onNewChat={() => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) }}
