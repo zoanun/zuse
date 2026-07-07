@@ -135,15 +135,24 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // or on abort). A re-delivered steer re-appears via its own user-echo below.
     case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false, pendingSteers: [] }, '已停止', 'warn')
     case 'checkpoint-recorded': {
-      // Attach the checkpoint id to the most recent user message that lacks one
-      // (one checkpoint per turn, in order → that turn's user message). Skip mid-turn steer
-      // bubbles: they're role:'user' too, but the checkpoint anchors the turn's real opener, so
-      // attaching it to an interjection would misplace the 回退 (revert) button.
+      // Attach the checkpoint id to the most recent turn opener (real user message) that lacks one
+      // — one checkpoint per turn, in order → that turn's opener. Prefer a real opener over a
+      // mid-turn steer bubble so the 回退 button anchors the turn's start, not an interjection.
       const msgs = state.messages.slice()
+      let idx = -1
       for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i]!
-        if (isTurnOpener(m) && !m.checkpointId) { msgs[i] = { ...m, checkpointId: e.id }; break }
+        if (isTurnOpener(msgs[i]!) && !msgs[i]!.checkpointId) { idx = i; break }
       }
+      // Fallback (#5): a folded-steer-then-Stop re-run has NO opener bubble live — its echo was
+      // suppressed because it was already shown as a "↪ 插话" bubble. Anchor on the most recent user
+      // bubble lacking a checkpoint (that steer bubble) so the re-run's reply still gets a 回退
+      // button, matching what a reload (which renders the re-run as a normal opener) shows.
+      if (idx === -1) {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i]!.role === 'user' && !msgs[i]!.checkpointId) { idx = i; break }
+        }
+      }
+      if (idx >= 0) msgs[idx] = { ...msgs[idx]!, checkpointId: e.id }
       return { ...state, messages: msgs }
     }
     case 'reverted': return withNotice(state, '已回退到检查点', 'info')

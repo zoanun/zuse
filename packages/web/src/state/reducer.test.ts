@@ -174,6 +174,21 @@ describe('reduce', () => {
     expect(byId('s1').checkpointId).toBeUndefined()   // the steer bubble does not
   })
 
+  it('checkpoint-recorded falls back to the steer bubble when a re-run has no opener (#5)', () => {
+    const s = run([
+      { kind: 'user-send', id: 'u1', text: 'the question' },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 't1' }) }, // u1 → cp1
+      // A folded steer echoed as a "↪ 插话" bubble; then Stop → the re-run turn delivers it WITHOUT an
+      // opener echo (it was already shown), so its checkpoint has only this steer bubble to anchor on.
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'actually use path Y', steer: true }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 1, label: 't2' }) },
+    ])
+    const byId = (id: string) => s.messages.find((m) => m.id === id)!
+    expect(byId('u1').checkpointId).toBe('cp1')                 // the original opener is untouched
+    const steerBubble = s.messages.find((m) => m.steer)!
+    expect(steerBubble.checkpointId).toBe('cp2')                // re-run's revert anchors on the steer bubble
+  })
+
   it('reverted adds an info notice', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'reverted', checkpointId: 'cp1' }) })
     const notices = s.messages.filter((m) => m.role === 'system')
