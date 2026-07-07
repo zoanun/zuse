@@ -124,8 +124,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* Transient "queued steer" previews pinned just above the composer: immediate feedback for a mid-turn
    send, before the server echoes it into the transcript at its real position. Dimmed + indented so it
    reads as pending/queued, not a committed message. Clears when the server echoes it (or on abort). */
-.pending-steers { display: flex; flex-direction: column; gap: 4px; padding: 6px 4px 2px; }
-.pending-steer { display: flex; align-items: baseline; gap: 8px; padding-left: 14px; opacity: 0.65; }
+/* 7% side inset matches .stream / .composer-wrap so previews line up with the chat content column
+   (not hugging the window edge); the inner 4px matches .msg-row so the tag aligns with message text. */
+.pending-steers { display: flex; flex-direction: column; gap: 4px; padding: 6px 7% 2px; }
+.pending-steer { display: flex; align-items: baseline; gap: 8px; padding-left: 4px; opacity: 0.65; }
 .pending-steer-tag { flex: none; font-size: 11px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
 .pending-steer-text { font-size: 14px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
 .text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
