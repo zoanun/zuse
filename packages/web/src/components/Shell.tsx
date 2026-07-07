@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict, ClientMessage } from '@zuse/protocol'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { PermissionVerdict } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar } from './Sidebar.js'
@@ -12,6 +12,8 @@ import { PermissionCard } from './PermissionCard.js'
 import { Composer } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
+import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
+import type { DirPickerHandle } from './DirPicker.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -34,11 +36,7 @@ function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
   return msgs.slice(start, end).filter(isSelectableRow).map((m) => m.id)
 }
 
-// Web slash commands → the uplink they send (parity with TUI's /compact, /clear, …). Table-driven
-// so adding a command is one entry, and trimming/dispatch live in one place. Extend as needed.
-const SLASH_COMMANDS: Record<string, ClientMessage> = {
-  '/compact': { type: 'compact' },
-}
+const EMPTY_HISTORY: string[] = []
 
 export function Shell() {
   const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo } = useStore()
@@ -48,16 +46,31 @@ export function Shell() {
   // null = not sharing; a Set = share-selection mode with the chosen message ids.
   const [shareSel, setShareSel] = useState<Set<string> | null>(null)
 
+  const historyRef = useRef<Map<string, string[]>>(new Map())
+  const dirPickerRef = useRef<DirPickerHandle>(null)
+  const focusHistorySearch = useCallback(() => {
+    setMenuOpen(true)
+    // The search box lives in the (now-open) Sidebar; focus it once it's on-screen.
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.session-search')?.focus())
+  }, [])
+  const commandCtx: CommandContext = useMemo(() => ({
+    send,
+    newSession: () => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) },
+    openPanel: (panel) => { setActivePanel(panel); setDrawerOpen(true) },
+    focusHistorySearch,
+    showHelp: () => { setActivePanel('memory'); setDrawerOpen(false); alert(SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n')) },
+    openDirPicker: () => dirPickerRef.current?.open(),
+  }), [send, newSession, state.cwd, focusHistorySearch])
+  const onRunCommand = useCallback((cmd: SlashCommand) => cmd.run(commandCtx), [commandCtx])
+  const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
+
   const onSend = (text: string) => {
-    // Slash command? Dispatch its uplink instead of sending it as a chat message; the server
-    // surfaces progress/result as notices.
-    const command = SLASH_COMMANDS[text.trim()]
-    if (command) { send(command); return }
+    // Record into this session's in-memory history (slash commands never reach here — the menu runs
+    // them via onRunCommand — so history stays clean).
+    const key = currentSessionId ?? ''
+    const arr = historyRef.current.get(key) ?? []
+    historyRef.current.set(key, [...arr, text])
     if (state.thinking) {
-      // Mid-turn steer. Don't insert a real bubble optimistically — its final position (folded into a
-      // tool_result vs. opening a follow-up turn) isn't known yet, and inserting it would split the
-      // streaming reply. Instead show a TRANSIENT preview pinned at the bottom; it resolves into a
-      // real, positioned bubble when the server echoes it at delivery (user-echo), or clears on abort.
       dispatch({ kind: 'steer-queued', id: nextId('ps'), text })
       send({ type: 'steer', text })
       return
@@ -141,7 +154,7 @@ export function Shell() {
           onJump={(id, idx) => { searchJump(id, idx); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={(cwd) => { setShareSel(null); void newSession(cwd) }} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={(cwd) => { setShareSel(null); void newSession(cwd) }} dirPickerRef={dirPickerRef} />
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">
@@ -182,7 +195,14 @@ export function Shell() {
               ))}
             </div>
           ) : null}
-          <Composer thinking={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
+          <Composer
+            thinking={state.thinking}
+            onSend={onSend}
+            onStop={() => send({ type: 'interrupt' })}
+            history={currentHistory}
+            commands={SLASH_COMMANDS}
+            onRunCommand={onRunCommand}
+          />
         </main>
       </div>
       <ManageDrawer
