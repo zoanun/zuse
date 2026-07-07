@@ -2,13 +2,14 @@ import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart } from 
 import { isTurnOpener, type AppState, type Connection, type Part } from './types.js'
 
 export const initialState: AppState = {
-  messages: [], todos: [], pendingPermissions: [],
+  messages: [], todos: [], pendingPermissions: [], pendingSteers: [],
   thinking: false, connection: 'connecting',
 }
 
 export type Action =
   | { kind: 'server'; msg: ServerMessage }
   | { kind: 'user-send'; id: string; text: string; steer?: boolean }
+  | { kind: 'steer-queued'; id: string; text: string }
   | { kind: 'connection'; status: Connection }
   | { kind: 'reset' }
 
@@ -74,6 +75,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
     messages: foldToolResults(mapped),
+    pendingSteers: [], // a fresh snapshot is authoritative — drop any transient queued-steer previews
   }
 }
 
@@ -129,7 +131,9 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'cwd-change': return state
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
-    case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false }, '已停止', 'warn')
+    // Stop also drops any transient queued-steer previews (per the chosen UX: they clear when shown
+    // or on abort). A re-delivered steer re-appears via its own user-echo below.
+    case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false, pendingSteers: [] }, '已停止', 'warn')
     case 'checkpoint-recorded': {
       // Attach the checkpoint id to the most recent user message that lacks one
       // (one checkpoint per turn, in order → that turn's user message). Skip mid-turn steer
@@ -146,7 +150,17 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // Retry re-submits a question server-side; echo it back as a user message so it shows
     // immediately (the post-revert snapshot had dropped it). checkpoint-recorded re-attaches
     // this turn's checkpoint to it at turn end.
-    case 'user-echo': return { ...state, messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer }] }
+    case 'user-echo': {
+      // The steer just got its real, positioned bubble (folded "↪ 插话" or a follow-up opener) — so
+      // resolve its transient bottom preview. The server may combine several queued steers into one
+      // echo (join '\n'), so clear every preview whose text is a line of (or equals) the echo.
+      const echoLines = new Set(e.text.split('\n'))
+      return {
+        ...state,
+        messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer }],
+        pendingSteers: state.pendingSteers.filter((p) => !(echoLines.has(p.text) || p.text === e.text)),
+      }
+    }
     default: return state
   }
 }
@@ -155,6 +169,8 @@ export function reduce(state: AppState, action: Action): AppState {
   switch (action.kind) {
     case 'user-send':
       return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }], steer: action.steer }] }
+    case 'steer-queued':
+      return { ...state, pendingSteers: [...state.pendingSteers, { id: action.id, text: action.text }] }
     case 'connection':
       return { ...state, connection: action.status }
     case 'reset':

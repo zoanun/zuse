@@ -54,10 +54,11 @@ export function Shell() {
     const command = SLASH_COMMANDS[text.trim()]
     if (command) { send(command); return }
     if (state.thinking) {
-      // Mid-turn steer: don't echo optimistically — the client can't know WHERE it lands, and an
-      // instant bubble splits the streaming reply. The server echoes it at the real delivery point
-      // (a "↪ 插话" bubble after the tool card when folded, or a normal user bubble opening the
-      // follow-up turn when idle-drained), via user-echo.
+      // Mid-turn steer. Don't insert a real bubble optimistically — its final position (folded into a
+      // tool_result vs. opening a follow-up turn) isn't known yet, and inserting it would split the
+      // streaming reply. Instead show a TRANSIENT preview pinned at the bottom; it resolves into a
+      // real, positioned bubble when the server echoes it at delivery (user-echo), or clears on abort.
+      dispatch({ kind: 'steer-queued', id: nextId('ps'), text })
       send({ type: 'steer', text })
       return
     }
@@ -171,6 +172,16 @@ export function Shell() {
           ) : null}
           <TodosPanel todos={state.todos} />
           <AgentsPanel messages={state.messages} />
+          {state.pendingSteers.length > 0 ? (
+            <div className="pending-steers">
+              {state.pendingSteers.map((p) => (
+                <div key={p.id} className="pending-steer">
+                  <span className="pending-steer-tag">↪ 插话</span>
+                  <span className="pending-steer-text">{p.text}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <Composer thinking={state.thinking} onSend={onSend} onStop={() => send({ type: 'interrupt' })} />
         </main>
       </div>

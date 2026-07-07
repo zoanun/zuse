@@ -35,6 +35,10 @@ export interface AppState {
   messages: Message[]
   todos: TodoItemLite[]
   pendingPermissions: PendingPermissionLite[]
+  // Mid-turn steers the user just sent, shown as a transient preview pinned at the bottom (NOT real
+  // messages — never persisted). Each clears when the server echoes it at its real delivery point
+  // (fold / idle-drain), or on abort / a fresh snapshot. Purely client-side immediate feedback.
+  pendingSteers: { id: string; text: string }[]
   model?: string
   /** Active session's working directory (S3) — root for the dir picker / file browser. */
   cwd?: string

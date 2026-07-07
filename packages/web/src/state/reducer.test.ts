@@ -205,3 +205,50 @@ describe('reduce', () => {
     expect(notices.map((m) => m.parts[0])).toContainEqual({ kind: 'text', text: '已停止' })
   })
 })
+
+describe('pending steer previews (transient, client-only)', () => {
+  it('steer-queued adds a preview; a matching user-echo resolves it into a real message', () => {
+    const queued = reduce(initialState, { kind: 'steer-queued', id: 'ps1', text: 'change direction' })
+    expect(queued.pendingSteers).toEqual([{ id: 'ps1', text: 'change direction' }])
+    expect(queued.messages).toEqual([]) // NOT a real message yet
+
+    // Server echoes it at its real delivery point → the preview clears and a real bubble appears.
+    const shown = reduce(queued, { kind: 'server', msg: ev({ type: 'user-echo', text: 'change direction', steer: true }) })
+    expect(shown.pendingSteers).toEqual([])
+    expect(shown.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'change direction' }], steer: true }])
+  })
+
+  it('a combined echo (join of several queued steers) clears every matching preview', () => {
+    const s = run([
+      { kind: 'steer-queued', id: 'ps1', text: 'A' },
+      { kind: 'steer-queued', id: 'ps2', text: 'B' },
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'A\nB', steer: true }) },
+    ])
+    expect(s.pendingSteers).toEqual([])
+  })
+
+  it('a non-matching user-echo leaves an unrelated preview pinned', () => {
+    const s = run([
+      { kind: 'steer-queued', id: 'ps1', text: 'still queued' },
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'a different steer' }) },
+    ])
+    expect(s.pendingSteers).toEqual([{ id: 'ps1', text: 'still queued' }])
+  })
+
+  it('aborted clears all pending previews', () => {
+    const s = run([
+      { kind: 'steer-queued', id: 'ps1', text: 'X' },
+      { kind: 'server', msg: ev({ type: 'aborted' }) },
+    ])
+    expect(s.pendingSteers).toEqual([])
+  })
+
+  it('a fresh snapshot drops any transient previews', () => {
+    const withPreview = reduce(initialState, { kind: 'steer-queued', id: 'ps1', text: 'X' })
+    const snap = reduce(withPreview, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      messages: [], todos: [], pendingPermissions: [], isThinking: false,
+      model: 'm', cwd: '/w', contextTokens: 0, contextWindow: 1000, totalUsage: { input_tokens: 0, output_tokens: 0 },
+    } } as unknown as ServerMessage })
+    expect(snap.pendingSteers).toEqual([])
+  })
+})
