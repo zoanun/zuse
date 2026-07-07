@@ -861,6 +861,137 @@ describe('SessionManager auto-compaction', () => {
   })
 })
 
+describe('SessionManager Stop during auto-compaction', () => {
+  const seed = () => {
+    const s: Message[] = []
+    for (let n = 0; n < 4; n++) {
+      s.push({ role: 'user', content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
+      s.push({ role: 'assistant', content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
+    }
+    return Conversation.fromJSON({ version: 1, messages: s, totalUsage: { input_tokens: 0, output_tokens: 0 } })
+  }
+
+  it('Stop during POST-response compaction keeps the committed turn (todos not reverted, folded steer not re-delivered)', async () => {
+    // Turn 0 folds a steer into a tool_result AND commits a todo plan, then reports high usage so
+    // post-response auto-compaction fires. A Stop DURING that compaction must not roll back the
+    // already-committed todos, nor re-queue the already-answered folded steer — those side effects
+    // only revert when the turn ITSELF was aborted mid-stream (abortedMidTurn), not after commit.
+    let call = 0
+    let releaseSummary!: () => void
+    let signalGateReached!: () => void
+    const summaryGate = new Promise<void>((r) => { releaseSummary = r })
+    const gateReached = new Promise<void>((r) => { signalGateReached = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages(_m, _c, _t, signal) {
+        call++
+        if (call === 1) { // tool batch: Plan's tool_result is where the queued steer gets folded
+          yield { type: 'message-start', id: 'm1', model: 'fake' }
+          yield { type: 'tool-use', id: 't1', name: 'Plan', input: {} }
+          yield { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else if (call === 2) { // continuation: high usage → crosses the post-response threshold
+          yield { type: 'message-start', id: 'm2', model: 'fake' }
+          yield { type: 'text-delta', text: 'done' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 500_000, output_tokens: 1 } }
+        } else { // call 3 = the compaction summary; held at the gate so we can Stop during it
+          signalGateReached()
+          await summaryGate
+          if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+          yield { type: 'message-start', id: 'sum', model: 'fake' }
+          yield { type: 'text-delta', text: '## Summary' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } }
+        }
+      },
+    }
+    const registry = new ToolRegistry()
+    let mgrRef!: SessionManager
+    registry.register({
+      name: 'Plan', description: 'plan', inputSchema: { type: 'object', properties: {} }, readOnly: true,
+      run: async (): Promise<ToolResult> => {
+        mgrRef.setTodos([{ content: 'step 1', status: 'in_progress' }] as unknown as Parameters<typeof mgrRef.setTodos>[0])
+        return { output: 'planned' }
+      },
+    })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation: seed(),
+    })
+    mgrRef = mgr
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+
+    mgr.steer('interjection X')          // queued → folded into Plan's tool_result during the turn
+    const p = mgr.submit('go')
+    await gateReached                    // deterministic: calls 1-2 done, call 3 (summary) at the gate
+    expect(mgr.interrupt()).toBe(true)   // Stop DURING post-response compaction
+    releaseSummary()
+    await p
+
+    // Committed plan survives — NOT reverted to the pre-turn (empty) state.
+    expect(mgr.getState().todos).toHaveLength(1)
+    // The folded steer was answered once (in the committed turn) and is NOT re-delivered: no 4th
+    // client call (a follow-up turn) and only the single fold echo.
+    expect(call).toBe(3)
+    expect(echoes).toEqual([{ text: 'interjection X', steer: true }])
+  })
+
+  it('Stop during PRE-send compaction drains a queued steer as a follow-up (no bleed into a later turn)', async () => {
+    // contextTokens seeded high so the FIRST submit runs pre-send compaction. A steer sent while
+    // that compaction is in flight, then Stop, must be delivered as its own follow-up turn — not
+    // left in the queue to fold into a later, unrelated turn (the pre-send early-return used to skip
+    // the drain entirely).
+    let call = 0
+    let releaseSummary!: () => void
+    let signalGateReached!: () => void
+    const summaryGate = new Promise<void>((r) => { releaseSummary = r })
+    const gateReached = new Promise<void>((r) => { signalGateReached = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages(_m, _c, _t, signal) {
+        call++
+        if (call === 1) { // pre-send compaction summary — gated so we can Stop mid-compaction
+          signalGateReached()
+          await summaryGate
+          if (signal?.aborted) { yield { type: 'error', message: 'aborted', category: 'other' }; return }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } }
+        } else if (call === 2) { // the drained follow-up's OWN pre-send compaction (ungated)
+          yield { type: 'message-start', id: 'sum2', model: 'fake' }
+          yield { type: 'text-delta', text: '## Summary' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 5, output_tokens: 5 } }
+        } else { // the follow-up turn itself: low usage so it does not re-compact
+          yield { type: 'message-start', id: 'm', model: 'fake' }
+          yield { type: 'text-delta', text: 'addressed' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+      },
+    }
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation: seed(),
+    })
+    // @ts-expect-error test-only seam: force the pre-send compaction trigger
+    mgr._setContextTokensForTest(500_000)
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+
+    const p = mgr.submit('go')
+    await gateReached                    // deterministic: pre-send compaction is at the gate
+    mgr.steer('do Y instead')            // interject DURING the pre-send compaction
+    expect(mgr.interrupt()).toBe(true)   // Stop
+    releaseSummary()
+    await p
+
+    // The queued steer was drained as its OWN follow-up turn (echoed as a NORMAL user bubble, no
+    // steer flag) and actually ran — it did NOT linger in the queue.
+    expect(echoes).toEqual([{ text: 'do Y instead', steer: undefined }])
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('do Y instead'))).toBe(true)
+  })
+})
+
 describe('SessionManager compaction failover', () => {
   const seed = () => {
     const s: Message[] = []

@@ -725,6 +725,10 @@ export class SessionManager {
       this.abort = null
       this.emit({ type: 'aborted' })
       this.emit({ type: 'turn-end' })
+      // A steer queued DURING that pre-send compaction must not linger in the queue — it would
+      // otherwise fold into a later, unrelated turn (the exact bleed idle-drain prevents). Drain it
+      // as its own follow-up turn, same as the post-turn path. No fold happened here, so echo it.
+      if (!opts?.isResend) await this.drainSteerAsFollowUp(false)
       return
     }
 
@@ -772,6 +776,12 @@ export class SessionManager {
     // re-queue them and let idle-drain re-deliver as a fresh turn (this.steerFoldEchoedThisTurn
     // then stops idle-drain from double-echoing what the fold already showed).
     const consumedThisTurn: string[] = []
+    // True ONLY when this turn's staged messages were discarded — i.e. Stop landed mid-stream,
+    // before the commit block below. A Stop that lands LATER (during post-response auto-compaction)
+    // leaves this false, because by then runAgent already committed the turn to the ledger: its
+    // todos and folded steer are real history and must NOT be rolled back or re-delivered. Captured
+    // right after the runAgent loop, before signal.aborted can flip true during that compaction.
+    let abortedMidTurn = false
 
     try {
       for await (const event of runAgent({
@@ -845,6 +855,11 @@ export class SessionManager {
           }
         }
       }
+      // Snapshot the abort state BEFORE the commit/compaction below: aborted here means the loop
+      // ended on a mid-stream Stop and runAgent discarded the staged turn. A Stop that arrives
+      // during the post-response compaction further down won't flip this, so the committed turn's
+      // side effects survive (findings: todos rollback / duplicate steer re-delivery).
+      abortedMidTurn = controller.signal.aborted
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
       // Feature B: if we ran against a transient compacted view, fold the turn's new tail back into
@@ -936,27 +951,41 @@ export class SessionManager {
     // aborted (Stop). Re-queue those so the drain below re-delivers them as a fresh turn —
     // "stop what you're doing and run my message". They were already echoed as "↪ 插话" bubbles,
     // so suppress the follow-up's normal echo to avoid showing the same interjection twice.
-    if (controller.signal.aborted) {
+    if (abortedMidTurn) {
       // Revert this turn's todo changes — its conversation was discarded, so a stale "N/M done"
       // plan must not survive (and persist through a reload). Only if the turn actually changed them.
+      // Gated on abortedMidTurn (not signal.aborted): a Stop during post-response compaction aborts
+      // an ALREADY-COMMITTED turn, whose todos are real history and must be kept.
       if (this.todos !== this.todosBeforeTurn) {
         this.todos = this.todosBeforeTurn
         this.emit({ type: 'todos-update', todos: this.todos })
       }
       // Re-queue any steer folded into this (discarded) turn so idle-drain re-delivers it (用例6).
+      // Same gate: a steer folded into a committed turn was already answered — never re-deliver it.
       if (consumedThisTurn.length > 0) this.steerQueue.unshift(...consumedThisTurn)
     }
-    if (!opts?.isResend && this.steerQueue.length > 0) {
-      const drained = this.steerQueue.join('\n')
-      this.steerQueue.length = 0
-      // Echo it as a NORMAL user bubble opening the follow-up turn (between this reply and the next),
-      // per the chosen UX — an idle-drained steer reads as an ordinary follow-up, not a "↪ 插话"
-      // interjection. Skip when a fold echo already showed it this turn (the aborted-fold case,
-      // including when the fold happened in a failover resend). submit() also writes it to the
-      // ledger, so reload matches this live view.
-      if (!this.steerFoldEchoedThisTurn) this.emit({ type: 'user-echo', text: drained })
-      await this.submit(drained)
-    }
+    // Skip when a fold echo already showed this interjection this turn (the aborted-fold re-run,
+    // including when the fold happened in a failover resend) — passing that as suppressEcho.
+    if (!opts?.isResend) await this.drainSteerAsFollowUp(this.steerFoldEchoedThisTurn)
+  }
+
+  /**
+   * Deliver any steer still queued at turn end as its OWN fresh follow-up turn, so a queued steer
+   * never lingers to fold into a later, unrelated turn. Shared by the post-turn idle-drain and the
+   * pre-send-compaction abort path (submit()). Echoes a NORMAL user bubble opening the follow-up
+   * turn — unless `suppressEcho` (a fold echo already showed this interjection this turn, the
+   * aborted-fold re-run). No-op when the queue is empty.
+   *
+   * NOTE: on the suppressed (aborted-fold) path submit() writes the steer to the ledger as an
+   * ordinary user message, so a reload renders a plain bubble while the live view kept the earlier
+   * "↪ 插话" fold bubble — a known live-vs-reload styling divergence, not a correctness issue.
+   */
+  private async drainSteerAsFollowUp(suppressEcho: boolean): Promise<void> {
+    if (this.steerQueue.length === 0) return
+    const drained = this.steerQueue.join('\n')
+    this.steerQueue.length = 0
+    if (!suppressEcho) this.emit({ type: 'user-echo', text: drained })
+    await this.submit(drained)
   }
 
   /**
