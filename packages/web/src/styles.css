@@ -210,6 +210,10 @@ button.head:hover .caret { opacity: 1; }
 .note.summary > .summary-head::before { content: '▸ '; }
 .note.summary[open] > .summary-head::before { content: '▾ '; }
 .summary-body { padding: 2px 10px 8px; white-space: pre-wrap; word-break: break-word; font: italic 400 12.5px/1.6 var(--sans); color: var(--muted); max-height: 320px; overflow-y: auto; }
+/* Help (/help): a left-aligned command list card, not a centered one-liner. */
+.note.help { align-self: stretch; text-align: left; margin: 2px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.note.help > .help-head { padding: 6px 12px; font: 600 11px/1.4 var(--mono); letter-spacing: 0.06em; color: var(--faint); border-bottom: 1px solid var(--line); }
+.note.help > .help-body { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font: 500 12.5px/1.7 var(--mono); color: var(--text); }
 .think { margin: 6px 0; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
 .think > summary { cursor: pointer; list-style: none; padding: 5px 10px; font: 600 11px/1.4 var(--mono); letter-spacing: 0.04em; color: var(--faint); user-select: none; }
 .think > summary::-webkit-details-marker { display: none; }
@@ -256,7 +260,11 @@ button.head:hover .caret { opacity: 1; }
 /* Send button: accent-filled, dims + no-cursor when disabled (empty input). */
 .send-btn:disabled { opacity: 0.4; cursor: default; }
 .send-btn svg, .stop-btn svg { display: block; }
-.stop-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; display: flex; align-items: center; justify-content: center; flex: none; }
+/* Stop = a solid neutral circle with a square, ChatGPT-style: substantial, and distinct from the
+   accent send button so the two never get confused when both show mid-turn. */
+.stop-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; border: none; display: flex; align-items: center; justify-content: center; flex: none; background: var(--text); color: var(--surface); transition: transform .08s ease, opacity .15s ease; }
+.stop-btn:hover { opacity: 0.85; }
+.stop-btn:active { transform: scale(0.92); }
 .composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); }
 .composer:focus-within { border-color: var(--accent-border); box-shadow: 0 2px 14px var(--shadow), 0 0 0 3px var(--accent-soft); }
 .composer textarea { flex: 1; resize: none; border: none; background: transparent; padding: 9px 0; min-height: 24px; max-height: 168px; line-height: 1.5; font-size: 15px; }

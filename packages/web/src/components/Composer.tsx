@@ -125,8 +125,8 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
           }}
         />
         {thinking ? (
-          <button className="ghost stop-btn" aria-label="停止" onClick={onStop}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+          <button className="stop-btn" aria-label="停止" onClick={onStop}>
+            <svg viewBox="0 0 15 15" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="2.5" /></svg>
           </button>
         ) : null}
         <button className="send-btn" aria-label="发送消息" disabled={value.trim() === ''} onClick={submit}>
