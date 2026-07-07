@@ -128,7 +128,9 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // Compaction finished: drop the transient start notice, then show the summary (dimmed italic).
     case 'compaction-done': return withNotice({ ...state, messages: dropCompactionStart(state.messages) }, e.summaryText, 'summary')
     case 'memory-notice': return withNotice(state, e.text, 'info')
-    case 'cwd-change': return state
+    // A tool's `cd` moved the session cwd — reflect it live so the header/dir picker update without
+    // waiting for a reload. (Also covers the abort-time cwd revert, which re-emits this event.)
+    case 'cwd-change': return { ...state, cwd: e.cwd }
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
     // Stop also drops any transient queued-steer previews (per the chosen UX: they clear when shown

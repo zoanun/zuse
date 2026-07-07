@@ -189,6 +189,13 @@ describe('reduce', () => {
     expect(steerBubble.checkpointId).toBe('cp2')                // re-run's revert anchors on the steer bubble
   })
 
+  it('cwd-change updates state.cwd live (header + files panel follow without a reload)', () => {
+    const s = run([
+      { kind: 'server', msg: ev({ type: 'cwd-change', cwd: '/work/sub' }) },
+    ], { ...initialState, cwd: '/work' })
+    expect(s.cwd).toBe('/work/sub')
+  })
+
   it('reverted adds an info notice', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'reverted', checkpointId: 'cp1' }) })
     const notices = s.messages.filter((m) => m.role === 'system')
