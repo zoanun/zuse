@@ -166,15 +166,20 @@ describe('redecodeOemIfMojibake (Windows OEM output fallback)', () => {
   const FFFD = String.fromCharCode(0xfffd)
 
   it('re-decodes OEM bytes when UTF-8 decoding left U+FFFD', () => {
-    expect(redecodeOemIfMojibake(`${FFFD}${FFFD} mojibake`, gbk, false, 'gbk')).toBe('你好')
+    expect(redecodeOemIfMojibake(`${FFFD}${FFFD} mojibake`, [gbk], false, 'gbk')).toBe('你好')
   })
 
   it('leaves clean UTF-8 output untouched (no U+FFFD → null)', () => {
-    expect(redecodeOemIfMojibake('all good 你好', gbk, false, 'gbk')).toBeNull()
+    expect(redecodeOemIfMojibake('all good 你好', [gbk], false, 'gbk')).toBeNull()
+  })
+
+  it('does NOT flip a mostly-UTF-8 body that has only a stray U+FFFD (density gate)', () => {
+    const mostlyClean = 'a'.repeat(500) + FFFD // one replacement char in 501 → far below the ratio
+    expect(redecodeOemIfMojibake(mostlyClean, [gbk], false, 'gbk')).toBeNull()
   })
 
   it('skips when raw overflowed, or no OEM codepage is known', () => {
-    expect(redecodeOemIfMojibake(FFFD, gbk, true, 'gbk')).toBeNull()  // raw truncated → keep UTF-8
-    expect(redecodeOemIfMojibake(FFFD, gbk, false, null)).toBeNull()  // non-Windows / unknown CP
+    expect(redecodeOemIfMojibake(FFFD, [gbk], true, 'gbk')).toBeNull()  // raw truncated → keep UTF-8
+    expect(redecodeOemIfMojibake(FFFD, [gbk], false, null)).toBeNull()  // non-Windows / unknown CP
   })
 })

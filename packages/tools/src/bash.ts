@@ -130,23 +130,39 @@ function detectWindowsOemLabel(): string | null {
   if (!label) return null
   try { new TextDecoder(label); return label } catch { return null }
 }
-const WIN_OEM_LABEL: string | null = detectWindowsOemLabel()
+
+/** Lazily-detected OEM label, memoized. Resolved on the FIRST Bash command (not at import) so the
+ *  synchronous `reg query` never blocks server startup; cached for every command after. */
+let cachedOemLabel: string | null | undefined
+function winOemLabel(): string | null {
+  if (cachedOemLabel === undefined) cachedOemLabel = detectWindowsOemLabel()
+  return cachedOemLabel
+}
 
 /** Combined raw-byte cap for the OEM re-decode buffer; beyond it we keep the streamed UTF-8. */
 const OEM_RAW_CAP = 2_000_000
+/** Re-decode as OEM only when replacement chars are at least this fraction of the UTF-8 body — i.e.
+ *  the bytes are genuinely OEM, not clean UTF-8 with a few stray invalid bytes. */
+const OEM_MOJIBAKE_RATIO = 0.02
 
 /**
- * If UTF-8 decoding left replacement chars (U+FFFD → the bytes weren't valid UTF-8, almost always
- * OEM-encoded native output) and we captured the raw bytes un-truncated, return them re-decoded in
- * the Windows OEM codepage. Otherwise null → keep the UTF-8 text (real UTF-8 output has no U+FFFD,
- * so this never corrupts it). Exported for unit testing.
+ * Re-decode child output in the Windows OEM codepage when UTF-8 decoding failed DENSELY — i.e. the
+ * bytes are genuinely OEM-encoded native output (ping/dir/…), not clean UTF-8 with a few stray
+ * invalid bytes. Gating on U+FFFD *density* (not "any U+FFFD") stops one stray replacement char from
+ * flipping an otherwise-UTF-8 output (e.g. a build log) wholesale into OEM garbage. Returns the
+ * re-decoded text, or null → keep the UTF-8 text. Concats the raw chunks only on the re-decode path
+ * (after the early-returns), so a clean command pays no buffer copy. Exported for unit testing.
+ *
+ * Residual limitation: output that mixes real UTF-8 and OEM within ONE command is still decoded
+ * whole by whichever encoding dominates — genuinely ambiguous without per-segment detection.
  */
 export function redecodeOemIfMojibake(
-  utf8Body: string, raw: Buffer, overflow: boolean, oemLabel: string | null,
+  utf8Body: string, rawChunks: Buffer[], overflow: boolean, oemLabel: string | null,
 ): string | null {
-  const REPLACEMENT_CHAR = String.fromCharCode(0xfffd) // U+FFFD, emitted by UTF-8 decode of invalid bytes
-  if (!oemLabel || overflow || !utf8Body.includes(REPLACEMENT_CHAR)) return null
-  try { return new TextDecoder(oemLabel).decode(raw) } catch { return null }
+  if (!oemLabel || overflow || utf8Body.length === 0) return null
+  const replacements = utf8Body.split(String.fromCharCode(0xfffd)).length - 1 // count U+FFFD
+  if (replacements / utf8Body.length < OEM_MOJIBAKE_RATIO) return null
+  try { return new TextDecoder(oemLabel).decode(Buffer.concat(rawChunks)) } catch { return null }
 }
 
 /**
@@ -324,11 +340,13 @@ export const BashTool: Tool = {
       // On Windows, also retain the raw bytes (bounded, in arrival order) so output that UTF-8
       // decoding corrupts can be re-decoded in the OEM codepage at close — native console apps
       // (ping, dir, …) emit OEM bytes, not UTF-8. No-op on other platforms / unknown codepage.
+      // Resolved once here (lazy, memoized) so the detection cost stays off server startup.
+      const oemLabel = winOemLabel()
       const rawChunks: Buffer[] = []
       let rawLen = 0
       let rawOverflow = false
       const keepRaw = (chunk: Buffer): void => {
-        if (!WIN_OEM_LABEL || rawOverflow) return
+        if (!oemLabel || rawOverflow) return
         rawLen += chunk.length
         if (rawLen > OEM_RAW_CAP) { rawOverflow = true; rawChunks.length = 0; return }
         rawChunks.push(chunk)
@@ -365,11 +383,15 @@ export const BashTool: Tool = {
         // 回写命令执行后的工作目录（cd 持久化）。即便超时/中断也读一次：进程被杀前
         // 可能已写入,读到就用,读不到自然跳过。
         if (capture) applyCapturedCwd(capture.file, ctx.setCwd)
-        let body = shaper.finalize().body
-        // Windows OEM fallback: if UTF-8 decoding corrupted the output, re-decode the raw bytes in
-        // the OEM codepage and re-shape (same head/tail + spill contract). Never touches clean UTF-8.
-        const oem = redecodeOemIfMojibake(body, Buffer.concat(rawChunks), rawOverflow, WIN_OEM_LABEL)
+        const shaped = shaper.finalize()
+        let body = shaped.body
+        // Windows OEM fallback: if UTF-8 decoding densely corrupted the output, re-decode the raw
+        // bytes in the OEM codepage and re-shape (same head/tail + spill contract).
+        const oem = redecodeOemIfMojibake(body, rawChunks, rawOverflow, oemLabel)
         if (oem !== null) {
+          // The mojibake shaping may have already spilled a garbage file; drop it before the reshaper
+          // spills the correctly-decoded one, so we don't orphan it on disk.
+          if (shaped.spillPath) { try { unlinkSync(shaped.spillPath) } catch { /* best-effort cleanup */ } }
           const reshaper = new StreamShaper({ headChars: HEAD_CHARS, tailChars: TAIL_CHARS, spill: { dir: spillDir(ctx.cwd), prefix: 'bash' } })
           reshaper.append(oem)
           body = reshaper.finalize().body
