@@ -136,3 +136,43 @@ describe('Composer slash menu keyboard', () => {
     expect(screen.queryByText('/compact')).not.toBeInTheDocument() // menu closed
   })
 })
+
+describe('Composer input history', () => {
+  it('ArrowUp recalls the most recent history entry, then older', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={['first', 'second']} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(ta.value).toBe('second')
+    fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(ta.value).toBe('first')
+    fireEvent.keyDown(ta, { key: 'ArrowUp' }) // clamp at oldest
+    expect(ta.value).toBe('first')
+  })
+
+  it('ArrowDown walks back toward the draft and restores it', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={['first', 'second']} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'draft' } })
+    fireEvent.keyDown(ta, { key: 'ArrowUp' }) // → 'second'
+    fireEvent.keyDown(ta, { key: 'ArrowDown' }) // → back to 'draft'
+    expect(ta.value).toBe('draft')
+  })
+
+  it('does not recall history when input starts with "/" (command-input state)', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={['first']} commands={SLASH_COMMANDS} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/comp' } })
+    fireEvent.keyDown(ta, { key: 'Escape' }) // dismiss menu so it's not the menu handling arrows
+    fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(ta.value).toBe('/comp') // unchanged — no history recall
+  })
+
+  it('does not recall history on ArrowUp when caret is not on the first line (multiline)', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={['old']} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: 'line1\nline2' } })
+    ta.selectionStart = ta.selectionEnd = ta.value.length // caret on last line
+    fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(ta.value).toBe('line1\nline2') // caret moves within textarea; no recall
+  })
+})

@@ -52,6 +52,32 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     setMenuDismissed(false)
   }
 
+  // Caret-position helpers so multi-line editing keeps normal arrow behavior; history only kicks in
+  // at the text boundary (caret on the first line for ↑, last line for ↓), shell-style.
+  function caretOnFirstLine() {
+    const ta = taRef.current
+    if (!ta) return true
+    return ta.value.slice(0, ta.selectionStart).indexOf('\n') === -1
+  }
+  function caretOnLastLine() {
+    const ta = taRef.current
+    if (!ta) return true
+    return ta.value.slice(ta.selectionStart).indexOf('\n') === -1
+  }
+  const draftRef = useRef('')
+  function recallPrev() {
+    if (history.length === 0) return
+    const next = histIdx === null ? history.length - 1 : Math.max(0, histIdx - 1)
+    if (histIdx === null) draftRef.current = value // entering history: stash the draft
+    setHistIdx(next); setText(history[next]!)
+  }
+  function recallNext() {
+    if (histIdx === null) return
+    const next = histIdx + 1
+    if (next >= history.length) { setHistIdx(null); setText(draftRef.current); return } // back to draft
+    setHistIdx(next); setText(history[next]!)
+  }
+
   return (
     <div className="composer-wrap">
       {menuOpen ? (
@@ -89,6 +115,11 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
             }
             // 2) Menu closed: Enter sends.
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+            // 3) Menu closed, not in command-input state: arrows navigate input history.
+            if (!value.startsWith('/')) {
+              if (e.key === 'ArrowUp' && caretOnFirstLine()) { e.preventDefault(); recallPrev(); return }
+              if (e.key === 'ArrowDown' && caretOnLastLine()) { e.preventDefault(); recallNext(); return }
+            }
           }}
         />
         {thinking ? (
