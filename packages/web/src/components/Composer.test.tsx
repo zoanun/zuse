@@ -101,3 +101,38 @@ describe('Composer slash menu', () => {
     expect(ta.value).toBe('')
   })
 })
+
+describe('Composer slash menu keyboard', () => {
+  it('ArrowDown moves the highlight; Enter runs the highlighted command', () => {
+    const onRunCommand = vi.fn()
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/' } })
+    // first item is /compact; ArrowDown → /clear
+    fireEvent.keyDown(ta, { key: 'ArrowDown' })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onRunCommand).toHaveBeenCalledWith(SLASH_COMMANDS.find((c) => c.name === '/clear'))
+    expect(onSend).not.toHaveBeenCalled() // Enter picked a command, did NOT send
+  })
+
+  it('Tab runs the highlighted command', () => {
+    const onRunCommand = vi.fn()
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/comp' } })
+    fireEvent.keyDown(ta, { key: 'Tab' })
+    expect(onRunCommand).toHaveBeenCalledWith(SLASH_COMMANDS.find((c) => c.name === '/compact'))
+  })
+
+  it('Escape closes the menu without running or clearing input', () => {
+    const onRunCommand = vi.fn()
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/comp' } })
+    fireEvent.keyDown(ta, { key: 'Escape' })
+    expect(onRunCommand).not.toHaveBeenCalled()
+    expect(ta.value).toBe('/comp')
+    expect(screen.queryByText('/compact')).not.toBeInTheDocument() // menu closed
+  })
+})

@@ -14,9 +14,11 @@ interface ComposerProps {
 export function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }: ComposerProps) {
   const [value, setValue] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
+  // Esc dismisses the menu even though input still starts with '/'. Cleared whenever the input changes.
+  const [menuDismissed, setMenuDismissed] = useState(false)
   // Command menu: candidate list derived from current input + a highlighted index.
   const menu = filterCommands(value, commands)
-  const menuOpen = menu.length > 0
+  const menuOpen = menu.length > 0 && !menuDismissed
   const [menuIdx, setMenuIdx] = useState(0)
   // History cursor: null = editing a fresh draft; otherwise an index into `history` (0 = oldest).
   const [histIdx, setHistIdx] = useState<number | null>(null)
@@ -47,6 +49,7 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     onRunCommand?.(cmd)
     setValue(''); setHistIdx(null)
     if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.focus() }
+    setMenuDismissed(false)
   }
 
   return (
@@ -74,10 +77,17 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
           rows={1}
           placeholder={thinking ? '插入消息到当前回合…' : '给 zuse 发消息…'}
           value={value}
-          onChange={(e) => { setText(e.target.value); setHistIdx(null) }}
+          onChange={(e) => { setText(e.target.value); setHistIdx(null); setMenuDismissed(false) }}
           onKeyDown={(e) => {
-            // !isComposing: don't treat the Enter that confirms an IME candidate as a send.
             if (e.nativeEvent.isComposing) return
+            // 1) Command menu open: arrows/enter/tab/esc drive the menu.
+            if (menuOpen) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIdx((i) => (i + 1) % menu.length); return }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setMenuIdx((i) => (i - 1 + menu.length) % menu.length); return }
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); runCommand(menu[menuIdx]!); return }
+              if (e.key === 'Escape') { e.preventDefault(); setMenuDismissed(true); return }
+            }
+            // 2) Menu closed: Enter sends.
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
           }}
         />
