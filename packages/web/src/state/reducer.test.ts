@@ -249,6 +249,15 @@ describe('pending steer previews (transient, client-only)', () => {
     expect(s.pendingSteers).toEqual([])
   })
 
+  it('a MULTI-LINE steer preview clears from its combined echo (#5 — no split-on-newline miss)', () => {
+    const s = run([
+      { kind: 'steer-queued', id: 'ps1', text: 'first' },
+      { kind: 'steer-queued', id: 'ps2', text: 'line one\nline two' }, // steer with its own newline
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'first\nline one\nline two', steer: true }) },
+    ])
+    expect(s.pendingSteers).toEqual([]) // both clear (segment-boundary match, not split-on-'\n')
+  })
+
   it('a non-matching user-echo leaves an unrelated preview pinned', () => {
     const s = run([
       { kind: 'steer-queued', id: 'ps1', text: 'still queued' },

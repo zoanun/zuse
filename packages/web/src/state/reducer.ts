@@ -163,13 +163,15 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // this turn's checkpoint to it at turn end.
     case 'user-echo': {
       // The steer just got its real, positioned bubble (folded "↪ 插话" or a follow-up opener) — so
-      // resolve its transient bottom preview. The server may combine several queued steers into one
-      // echo (join '\n'), so clear every preview whose text is a line of (or equals) the echo.
-      const echoLines = new Set(e.text.split('\n'))
+      // resolve its transient bottom preview. The server joins several queued steers into one echo
+      // with '\n', so a preview matches when its text is a whole '\n'-delimited segment of the echo.
+      // (Segment-boundary match, not split-on-'\n', so a multi-line steer's own newlines don't break
+      // matching and a short text can't partial-match inside an unrelated line.)
+      const wrapped = '\n' + e.text + '\n'
       return {
         ...state,
         messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer }],
-        pendingSteers: state.pendingSteers.filter((p) => !(echoLines.has(p.text) || p.text === e.text)),
+        pendingSteers: state.pendingSteers.filter((p) => !wrapped.includes('\n' + p.text + '\n')),
       }
     }
     default: return state
