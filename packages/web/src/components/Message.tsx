@@ -57,6 +57,15 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
         </details>
       )
     }
+    // Help: a left-aligned card listing the slash commands (from /help), not a centered one-liner.
+    if (kind === 'help') {
+      return (
+        <div className="note help">
+          <div className="help-head">可用命令</div>
+          <div className="help-body">{partsText(msg.parts)}</div>
+        </div>
+      )
+    }
     const cls = kind === 'error' ? 'bad' : kind === 'warn' ? 'warn' : 'live'
     return <div className={'note ' + cls}>{partsText(msg.parts)}</div>
   }

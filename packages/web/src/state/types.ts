@@ -11,7 +11,7 @@ export interface Message {
   parts: Part[]
   // only set for role:'system'. 'summary' = dimmed italic compaction summary; 'compacting' = the
   // transient "正在压缩…" start notice (dropped when compaction ends — matched by kind, not by text).
-  noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting'
+  noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'
   checkpointId?: string                     // only set for role:'user' — the turn's shadow-git checkpoint
   // only set for role:'user' — true if this was a mid-turn steer (sent while the reply was still
   // streaming). Rendered with a "↪ 插话" marker; also stops the preceding assistant message from

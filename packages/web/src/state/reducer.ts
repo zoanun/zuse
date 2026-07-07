@@ -11,9 +11,10 @@ export type Action =
   | { kind: 'user-send'; id: string; text: string; steer?: boolean }
   | { kind: 'steer-queued'; id: string; text: string }
   | { kind: 'connection'; status: Connection }
+  | { kind: 'notice'; text: string; noticeKind?: 'info' | 'warn' | 'error' | 'help' }
   | { kind: 'reset' }
 
-function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error' | 'summary' | 'compacting'): AppState {
+function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'): AppState {
   return { ...state, messages: [...state.messages, { id: 'sys-' + state.messages.length, role: 'system', parts: [{ kind: 'text', text }], noticeKind: kind }] }
 }
 
@@ -186,6 +187,8 @@ export function reduce(state: AppState, action: Action): AppState {
       return { ...state, pendingSteers: [...state.pendingSteers, { id: action.id, text: action.text }] }
     case 'connection':
       return { ...state, connection: action.status }
+    case 'notice':
+      return withNotice(state, action.text, action.noticeKind ?? 'info')
     case 'reset':
       return { ...initialState, connection: state.connection }
     case 'server': {

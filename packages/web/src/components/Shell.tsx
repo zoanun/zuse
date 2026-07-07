@@ -58,9 +58,9 @@ export function Shell() {
     newSession: () => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) },
     openPanel: (panel) => { setActivePanel(panel); setDrawerOpen(true) },
     focusHistorySearch,
-    showHelp: () => { setActivePanel('memory'); setDrawerOpen(false); alert(SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n')) },
+    showHelp: () => dispatch({ kind: 'notice', text: SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n'), noticeKind: 'help' }),
     openDirPicker: () => dirPickerRef.current?.open(),
-  }), [send, newSession, state.cwd, focusHistorySearch])
+  }), [send, dispatch, newSession, state.cwd, focusHistorySearch])
   const onRunCommand = useCallback((cmd: SlashCommand) => cmd.run(commandCtx), [commandCtx])
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
