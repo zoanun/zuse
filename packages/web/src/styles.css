@@ -248,7 +248,7 @@ button.head:hover .caret { opacity: 1; }
 
 .composer-wrap { width: 100%; padding: 0 7% 18px; }
 /* Slash-command autocomplete menu, pinned above the composer (same 7% inset as chat content). */
-.slash-menu { list-style: none; margin: 0 7% 8px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 18px var(--shadow); max-height: 260px; overflow-y: auto; }
+.slash-menu { list-style: none; margin: 0 0 8px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 18px var(--shadow); max-height: 260px; overflow-y: auto; }
 .slash-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; }
 .slash-item.active, .slash-item:hover { background: var(--surface-2); }
 .slash-name { font-weight: 600; font-size: 14px; }
