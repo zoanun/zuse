@@ -504,6 +504,60 @@ describe('SessionManager turn loop', () => {
     await mgr.submit('go')
     expect(echoes).toEqual([{ text: 'change direction', steer: true }])
   })
+
+  it('two steers in one turn (one folded, one queued during the pure-text tail) each get their own echo', async () => {
+    // Steer A folds into the tool batch (echoed steer:true); steer B arrives during the final pure-
+    // text reply (never folded, just queued). B must still get its own user-echo at idle-drain —
+    // the old turn-global flag suppressed it, leaving B answered but with no bubble until reload.
+    let call = 0
+    let releaseCont!: () => void
+    let signalContReached!: () => void
+    const contGate = new Promise<void>((r) => { releaseCont = r })
+    const contReached = new Promise<void>((r) => { signalContReached = r })
+    const client: ModelClient = {
+      getModel: () => 'fake',
+      async *sendMessages() {
+        call++
+        if (call === 1) { // tool batch: steer A folds into t1's result
+          yield { type: 'message-start', id: 'm1', model: 'fake' }
+          yield { type: 'tool-use', id: 't1', name: 'Bash', input: {} }
+          yield { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else if (call === 2) { // pure-text continuation, gated so B can be queued mid-reply
+          signalContReached()
+          await contGate
+          yield { type: 'message-start', id: 'm2', model: 'fake' }
+          yield { type: 'text-delta', text: 'done' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        } else { // B's idle-drained follow-up turn
+          yield { type: 'message-start', id: 'm3', model: 'fake' }
+          yield { type: 'text-delta', text: 'addressing B' }
+          yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+        }
+      },
+    }
+    const registry = new ToolRegistry()
+    registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+    })
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+
+    mgr.steer('steer A')                 // queued before the turn → folded into the tool batch
+    const p = mgr.submit('go')
+    await contReached                    // A folded+echoed; now at the pure-text continuation gate
+    mgr.steer('steer B')                 // interject during the pure-text reply → only queued
+    releaseCont()
+    await p
+
+    // A echoed as a fold bubble (steer:true), B echoed as a normal follow-up bubble (steer:undefined).
+    expect(echoes).toEqual([
+      { text: 'steer A', steer: true },
+      { text: 'steer B', steer: undefined },
+    ])
+  })
 })
 
 describe('SessionManager re-entrancy guard', () => {

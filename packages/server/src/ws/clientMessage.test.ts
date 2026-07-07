@@ -11,6 +11,7 @@ function fakeMgr(): SessionManagerLike & {
   revert: ReturnType<typeof vi.fn>
   retry: ReturnType<typeof vi.fn>
   compactNow: ReturnType<typeof vi.fn>
+  getState: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -22,6 +23,8 @@ function fakeMgr(): SessionManagerLike & {
     revert: vi.fn(async () => {}),
     retry: vi.fn(async () => {}),
     compactNow: vi.fn(async () => {}),
+    // Default to idle; the steer dispatch routes on this (idle → submit, thinking → steer).
+    getState: vi.fn(() => ({ isThinking: false }) as never),
   }
 }
 
@@ -36,6 +39,7 @@ describe('applyClientMessage', () => {
 
   it('dispatches interrupt / steer / permission-reply / switch-model', () => {
     const mgr = fakeMgr()
+    mgr.getState.mockReturnValue({ isThinking: true } as never) // a turn is running → steer folds in
     const err = vi.fn()
     applyClientMessage(mgr, JSON.stringify({ type: 'interrupt' }), err)
     applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: 'go' }), err)
@@ -45,6 +49,18 @@ describe('applyClientMessage', () => {
     expect(mgr.steer).toHaveBeenCalledWith('go')
     expect(mgr.resolvePermission).toHaveBeenCalledWith('p1', 'allow')
     expect(mgr.switchModel).toHaveBeenCalledWith('anthropic', 'x')
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('a steer received while the server is IDLE is delivered as a normal (echoed) send, not queued', () => {
+    // The client only sends 'steer' when IT thinks a turn is running; if it raced past turn-end the
+    // server is already idle. Queuing it would bleed into a later, unrelated turn — so route it to
+    // submit (echoed so the client's queued-preview resolves) instead of mgr.steer.
+    const mgr = fakeMgr() // getState defaults to isThinking:false (idle)
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: 'go' }), err)
+    expect(mgr.steer).not.toHaveBeenCalled()
+    expect(mgr.submit).toHaveBeenCalledWith('go', undefined, { echo: true })
     expect(err).not.toHaveBeenCalled()
   })
 
