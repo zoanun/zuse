@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { BashTool, getShellLabel, primeShellSnapshot } from './bash.js'
+import { BashTool, getShellLabel, primeShellSnapshot, redecodeOemIfMojibake } from './bash.js'
 import { createFileTracker, type ToolContext } from '@zuse/core'
 
 function makeCtx(signal?: AbortSignal): ToolContext {
@@ -156,5 +156,25 @@ describe('BashTool', () => {
     )
     expect(result.isError).toBeFalsy()
     expect(result.output).toContain('after-snapshot')
+  })
+})
+
+describe('redecodeOemIfMojibake (Windows OEM output fallback)', () => {
+  // "你好" encoded in GBK/CP936 (what a zh-CN Windows `ping` emits) — invalid as UTF-8, so the
+  // real pipeline's UTF-8 decode of these bytes yields a body containing U+FFFD.
+  const gbk = Buffer.from([0xc4, 0xe3, 0xba, 0xc3])
+  const FFFD = String.fromCharCode(0xfffd)
+
+  it('re-decodes OEM bytes when UTF-8 decoding left U+FFFD', () => {
+    expect(redecodeOemIfMojibake(`${FFFD}${FFFD} mojibake`, gbk, false, 'gbk')).toBe('你好')
+  })
+
+  it('leaves clean UTF-8 output untouched (no U+FFFD → null)', () => {
+    expect(redecodeOemIfMojibake('all good 你好', gbk, false, 'gbk')).toBeNull()
+  })
+
+  it('skips when raw overflowed, or no OEM codepage is known', () => {
+    expect(redecodeOemIfMojibake(FFFD, gbk, true, 'gbk')).toBeNull()  // raw truncated → keep UTF-8
+    expect(redecodeOemIfMojibake(FFFD, gbk, false, null)).toBeNull()  // non-Windows / unknown CP
   })
 })
