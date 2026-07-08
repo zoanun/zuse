@@ -31,6 +31,7 @@ function setup(over: {
   writeFile?: typeof defaultWrite
   deleteFile?: typeof defaultDelete
   rawUrl?: typeof defaultRawUrl
+  downloadUrl?: typeof defaultDownloadUrl
   searchFiles?: typeof defaultSearch
 } = {}) {
   const props = {
@@ -40,6 +41,7 @@ function setup(over: {
     writeFile: over.writeFile ?? defaultWrite,
     deleteFile: over.deleteFile ?? defaultDelete,
     rawUrl: over.rawUrl ?? defaultRawUrl,
+    downloadUrl: over.downloadUrl ?? defaultDownloadUrl,
     searchFiles: over.searchFiles ?? defaultSearch,
   }
   render(<FilesPanel {...props} />)
@@ -51,6 +53,7 @@ const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ p
 const defaultWrite = vi.fn(async (path: string) => ({ path, size: 1, mtimeMs: 2 }))
 const defaultDelete = vi.fn(async () => {})
 const defaultRawUrl = (path: string) => '/raw/' + path
+const defaultDownloadUrl = (path: string) => '/raw/' + path + '?download=1'
 
 describe('FilesPanel', () => {
   it('loads and shows the root tree when active', async () => {
@@ -148,7 +151,7 @@ describe('FilesPanel', () => {
     setup({ loadFile })
     fireEvent.click(await screen.findByText('sheet.xlsx'))
     expect(await screen.findByText(/无法展示/)).toBeInTheDocument()
-    expect(screen.getByText('下载').getAttribute('href')).toBe('/raw/sheet.xlsx')
+    expect(screen.getByText('下载').getAttribute('href')).toBe('/raw/sheet.xlsx?download=1') // download bypasses the inline cap
   })
 
   it('creates a new file via writeFile and opens it', async () => {
@@ -159,7 +162,50 @@ describe('FilesPanel', () => {
     fireEvent.click(screen.getByText('＋ 新建文件'))
     fireEvent.change(screen.getByPlaceholderText('相对路径，如 src/new.ts'), { target: { value: 'src/new.ts' } })
     fireEvent.click(screen.getByText('创建'))
-    await waitFor(() => expect(writeFile).toHaveBeenCalledWith('src/new.ts', ''))
+    await waitFor(() => expect(writeFile).toHaveBeenCalledWith('src/new.ts', '', { mustCreate: true }))
+  })
+
+  it('a create that hits an existing file surfaces the error (no silent truncation)', async () => {
+    const writeFile = vi.fn(async () => { throw new Error('文件已存在，未覆盖') })
+    setup({ writeFile })
+    await screen.findByText('src')
+    fireEvent.click(screen.getByText('＋ 新建文件'))
+    fireEvent.change(screen.getByPlaceholderText('相对路径，如 src/new.ts'), { target: { value: 'readme.md' } })
+    fireEvent.click(screen.getByText('创建'))
+    await waitFor(() => expect(writeFile).toHaveBeenCalledWith('readme.md', '', { mustCreate: true }))
+    expect(await screen.findByText(/文件已存在/)).toBeInTheDocument()
+  })
+
+  it('deleting a file removes it from search results too (no stale 404 hit)', async () => {
+    const searchFiles = vi.fn(async () => [
+      { name: 'a.ts', path: 'src/a.ts', type: 'file' as const },
+      { name: 'b.ts', path: 'src/b.ts', type: 'file' as const },
+    ])
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
+    setup({ searchFiles, loadFile, deleteFile: vi.fn(async () => {}) })
+    fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'ts' } })
+    fireEvent.click(await screen.findByText('a.ts'))
+    fireEvent.click(await screen.findByTitle('删除文件'))
+    fireEvent.click(await screen.findByTitle('确认删除'))
+    await waitFor(() => expect(screen.queryByText('a.ts')).not.toBeInTheDocument()) // gone from the filtered tree
+    expect(screen.getByText('b.ts')).toBeInTheDocument() // sibling stays
+  })
+
+  it('a stale (slow) open cannot overwrite the buffer of a later-clicked file', async () => {
+    // Click A (slow) then B (fast). A must not land in the editor after B is showing.
+    let resolveA: (v: FilePreview) => void = () => {}
+    const loadFile = vi.fn((path: string): Promise<FilePreview> => {
+      if (path === 'src/a.ts') return new Promise<FilePreview>((r) => { resolveA = r })
+      return Promise.resolve({ path, content: 'B-content', truncated: false, binary: false, size: 9, mtimeMs: 2 })
+    })
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('src'))
+    fireEvent.click(await screen.findByText('a.ts'))   // slow — pending
+    fireEvent.click(screen.getByText('readme.md'))     // fast — resolves with B-content
+    expect((await screen.findByLabelText('editor') as HTMLTextAreaElement).value).toBe('B-content')
+    resolveA({ path: 'src/a.ts', content: 'A-content', truncated: false, binary: false, size: 9, mtimeMs: 1 }) // late
+    await waitFor(() => expect(loadFile).toHaveBeenCalledTimes(2))
+    expect((screen.getByLabelText('editor') as HTMLTextAreaElement).value).toBe('B-content') // stale A dropped
   })
 
   it('deletes a file after inline confirm', async () => {
@@ -201,7 +247,7 @@ describe('FilesPanel', () => {
     const dirtyRef = { current: false }
     const props = {
       active: true, loadDir: defaultLoadDir, loadFile, writeFile: defaultWrite,
-      deleteFile: defaultDelete, rawUrl: defaultRawUrl, searchFiles: defaultSearch, dirtyRef,
+      deleteFile: defaultDelete, rawUrl: defaultRawUrl, downloadUrl: defaultDownloadUrl, searchFiles: defaultSearch, dirtyRef,
     }
     render(<FilesPanel {...props} />)
     fireEvent.click(await screen.findByText('readme.md'))

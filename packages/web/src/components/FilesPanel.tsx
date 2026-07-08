@@ -14,9 +14,10 @@ interface Props {
   active: boolean
   loadDir: (dir: string) => Promise<DirListing>
   loadFile: (path: string) => Promise<FilePreview>
-  writeFile: (path: string, content: string, opts?: { expectMtimeMs?: number; force?: boolean }) => Promise<{ path: string; size: number; mtimeMs: number }>
+  writeFile: (path: string, content: string, opts?: { expectMtimeMs?: number; force?: boolean; mustCreate?: boolean }) => Promise<{ path: string; size: number; mtimeMs: number }>
   deleteFile: (path: string) => Promise<void>
   rawUrl: (path: string) => string
+  downloadUrl: (path: string) => string
   searchFiles: (q: string) => Promise<FileEntry[]>
   /** Kept in sync with the editor's dirty state so the drawer can guard tab-switch/close. */
   dirtyRef?: React.RefObject<boolean>
@@ -28,7 +29,7 @@ interface Props {
  * image/pdf render straight from the raw-bytes endpoint, everything else gets a download link.
  * All fetching is injected (loadDir/loadFile/…) so the panel is testable without the network.
  */
-export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl, searchFiles, dirtyRef }: Props) {
+export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl, downloadUrl, searchFiles, dirtyRef }: Props) {
   const [children, setChildren] = useState<Map<string, FileEntry[]>>(new Map())
   const [root, setRoot] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -103,7 +104,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     if (dirty) { setDiscardThen(() => () => { void reallyOpen(path) }); return }
     await reallyOpen(path)
   }
+  // Bumped on every open so a slow response for a since-superseded file can't land in the editor
+  // (clicking A then B must not fill the buffer with A's bytes under B's header — a save would
+  // then write the wrong file). Same guard shape as runSearch's searchSeq.
+  const openSeq = useRef(0)
   const reallyOpen = async (path: string) => {
+    const seq = ++openSeq.current
     setDelConfirm(false)
     setSelected(path)
     setPreview(null)
@@ -112,11 +118,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     setPreviewLoading(true)
     try {
       const p = await loadFile(path)
+      if (seq !== openSeq.current) return // a newer open superseded this one — drop the stale bytes
       setPreview(p); setBuffer(p.content); setConflict(false)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (seq === openSeq.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setPreviewLoading(false)
+      if (seq === openSeq.current) setPreviewLoading(false)
     }
   }
 
@@ -138,7 +145,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     if (!p) return
     setError(null)
     try {
-      await writeFile(p, '')
+      await writeFile(p, '', { mustCreate: true }) // exclusive: never truncate an existing file
       setNewPath(null)
       const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
       await fetchDir(dir)                 // refresh the containing directory
@@ -151,6 +158,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     try {
       await deleteFile(selected)
       setChildren((m) => { const n = new Map(m); for (const [d, es] of n) n.set(d, es.filter((e) => e.path !== selected)); return n })
+      setHits((h) => (h ? h.filter((e) => e.path !== selected) : h)) // drop it from search results too
       setSelected(null); setPreview(null); setDelConfirm(false)
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
   }
@@ -269,12 +277,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
           ) : view === 'pdf' ? (
             <iframe className="file-frame" src={rawUrl(selected)} title={selected} />
           ) : view === 'other' ? (
-            <div className="file-cannot">无法展示此类型文件。<a href={rawUrl(selected)} download>下载</a></div>
+            <div className="file-cannot">无法展示此类型文件。<a href={downloadUrl(selected)} download>下载</a></div>
           ) : previewLoading ? (
             <div className="mem-empty">加载中…</div>
           ) : preview ? (
             preview.binary || preview.truncated ? (
-              <div className="file-cannot">{preview.binary ? '二进制文件，无法展示。' : '文件过大，无法编辑。'} <a href={rawUrl(selected)} download>下载</a></div>
+              <div className="file-cannot">{preview.binary ? '二进制文件，无法展示。' : '文件过大，无法编辑。'} <a href={downloadUrl(selected)} download>下载</a></div>
             ) : (
               <div className="file-editor">
                 <div className="file-editbar">

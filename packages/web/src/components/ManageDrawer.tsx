@@ -4,7 +4,7 @@ import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } fr
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
 import { listSkills, updateSkill } from '../state/manageApi.js'
 import { getUsage } from '../state/manageApi.js'
-import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, searchFiles } from '../state/manageApi.js'
+import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, rawDownloadUrl, searchFiles } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
@@ -159,19 +159,27 @@ function UsageContainer({ active }: { active: boolean }) {
   return <UsagePanel stats={data} loading={loading} error={error} />
 }
 
-function FilesContainer({ active, cwd, dirtyRef }: { active: boolean; cwd?: string; dirtyRef: React.RefObject<boolean> }) {
-  // Bind the active session's cwd into the loaders; key by cwd so switching sessions remounts
-  // the tree (fresh fetch of the new root) instead of showing the old project's files.
+function FilesContainer({ active, cwd, dirtyRef, guardLeave }: { active: boolean; cwd?: string; dirtyRef: React.RefObject<boolean>; guardLeave: (action: () => void) => void }) {
+  // Bind the active session's cwd into the loaders; key by cwd so switching sessions remounts the
+  // tree (fresh fetch of the new root). A remount would silently drop unsaved editor edits, so we
+  // render against `renderCwd` and only advance it through guardLeave — a cwd change under a dirty
+  // editor (agent `cd`, session switch) then prompts to discard instead of losing the edits.
+  const [renderCwd, setRenderCwd] = useState(cwd)
+  useEffect(() => {
+    if (cwd === renderCwd) return
+    guardLeave(() => setRenderCwd(cwd))
+  }, [cwd, renderCwd, guardLeave])
   return (
     <FilesPanel
-      key={cwd ?? ''}
+      key={renderCwd ?? ''}
       active={active}
-      loadDir={(dir) => listDir(dir, cwd)}
-      loadFile={(path) => readFilePreview(path, cwd)}
-      writeFile={(path, content, opts) => writeFile(path, content, cwd, opts)}
-      deleteFile={(path) => deleteFile(path, cwd)}
-      rawUrl={(path) => rawFileUrl(path, cwd)}
-      searchFiles={(q) => searchFiles(q, cwd)}
+      loadDir={(dir) => listDir(dir, renderCwd)}
+      loadFile={(path) => readFilePreview(path, renderCwd)}
+      writeFile={(path, content, opts) => writeFile(path, content, renderCwd, opts)}
+      deleteFile={(path) => deleteFile(path, renderCwd)}
+      rawUrl={(path) => rawFileUrl(path, renderCwd)}
+      downloadUrl={(path) => rawDownloadUrl(path, renderCwd)}
+      searchFiles={(q) => searchFiles(q, renderCwd)}
       dirtyRef={dirtyRef}
     />
   )
@@ -209,17 +217,15 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
     else action()
   }, [])
 
-  // Close on Escape while open (an open discard dialog consumes the Esc instead).
+  // Close on Escape while open. Any open ConfirmDialog (this drawer's own pendingLeave, or the
+  // FilesPanel discard dialog) consumes Escape first via a capture-phase handler + stopPropagation,
+  // so this bubble-phase handler only fires when no dialog is up — no stacked-dialog trap.
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      if (pendingLeave) { setPendingLeave(null); return }
-      guardLeave(onClose)
-    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') guardLeave(onClose) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose, pendingLeave, guardLeave])
+  }, [open, onClose, guardLeave])
 
   // Drag the left edge to resize; the chosen width persists across sessions.
   const [width, setWidth] = useState<number>(() => {
@@ -274,7 +280,7 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
               : activePanel === 'usage'
               ? <UsageContainer active={open && activePanel === 'usage'} />
               : activePanel === 'files'
-              ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} dirtyRef={filesDirtyRef} />
+              ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} dirtyRef={filesDirtyRef} guardLeave={guardLeave} />
               : <div className="mem-empty">敬请期待</div>}
           </div>
         </div>

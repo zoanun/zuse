@@ -140,16 +140,20 @@ export class FileConflictError extends Error {
   constructor() { super('file changed on disk'); this.name = 'FileConflictError' }
 }
 
-/** PUT /api/files/content — write (edit or create). 409 → FileConflictError. Throws on other non-ok. */
-export async function writeFile(path: string, content: string, cwd?: string, opts: { expectMtimeMs?: number; force?: boolean } = {}): Promise<WriteFileResult> {
+/**
+ * PUT /api/files/content — write a file. `mustCreate` is exclusive-create (won't overwrite; makes
+ * parent dirs). A 409 means "already changed on disk" for an edit (→ FileConflictError, offer
+ * overwrite) but "already exists" for a create (→ a plain error, no overwrite affordance).
+ */
+export async function writeFile(path: string, content: string, cwd?: string, opts: { expectMtimeMs?: number; force?: boolean; mustCreate?: boolean } = {}): Promise<WriteFileResult> {
   const qs = new URLSearchParams()
   if (cwd) qs.set('cwd', cwd)
-  const body = JSON.stringify({ path, content, expectMtimeMs: opts.expectMtimeMs, force: opts.force })
+  const body = JSON.stringify({ path, content, expectMtimeMs: opts.expectMtimeMs, force: opts.force, mustCreate: opts.mustCreate })
   try {
     const r = await request('/api/files/content' + (qs.toString() ? '?' + qs.toString() : ''), { method: 'PUT', headers: JSON_HEADERS, body }, 'write file')
     return (await r.json()) as WriteFileResult
   } catch (e) {
-    if (e instanceof RequestError && e.status === 409) throw new FileConflictError()
+    if (e instanceof RequestError && e.status === 409) throw opts.mustCreate ? new Error('文件已存在，未覆盖') : new FileConflictError()
     throw e
   }
 }
@@ -161,9 +165,16 @@ export async function deleteFile(path: string, cwd?: string): Promise<void> {
   await request('/api/files/content?' + qs.toString(), { method: 'DELETE' }, 'delete file')
 }
 
-/** URL for the raw byte endpoint — used as <img>/<iframe> src and download href (same-origin, cookie sent). */
+/** URL for the raw byte endpoint — inline <img>/<iframe> src (size-capped, same-origin cookie sent). */
 export function rawFileUrl(path: string, cwd?: string): string {
   const qs = new URLSearchParams({ path })
+  if (cwd) qs.set('cwd', cwd)
+  return '/api/files/raw?' + qs.toString()
+}
+
+/** Download href for the raw endpoint — download=1 bypasses the inline cap and forces attachment. */
+export function rawDownloadUrl(path: string, cwd?: string): string {
+  const qs = new URLSearchParams({ path, download: '1' })
   if (cwd) qs.set('cwd', cwd)
   return '/api/files/raw?' + qs.toString()
 }
