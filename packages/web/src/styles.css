@@ -339,15 +339,20 @@ button.head:hover .caret { opacity: 1; }
    a transparent click-catcher — no dim, so the header isn't darkened; the opaque popover sits on
    top so chat no longer bleeds through. Position is set inline from the button's rect. */
 .dirpick-backdrop { position: fixed; inset: 0; z-index: 50; }
-.dirpick-pop { position: fixed; z-index: 51; width: 320px; max-width: 90vw; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.28); padding: 8px; }
-.dirpick-cur { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
-.dirpick-drives { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; }
-.dirpick-drive { font: 11px/1.4 var(--mono); min-width: 34px; text-align: center; color: var(--text); padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: pointer; }
-.dirpick-list { list-style: none; margin: 4px 0; padding: 0; max-height: 40vh; overflow: auto; }
-.dirpick-dir { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font-size: 13px; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
-.dirpick-dir:hover { background: var(--surface); }
+.dirpick-pop { position: fixed; z-index: 51; width: 360px; max-width: 92vw; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 32px var(--shadow); padding: 12px; }
+.dirpick-cur { font: 11px/1.5 var(--mono); color: var(--muted); padding: 2px 4px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.dirpick-drives { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 2px; }
+.dirpick-drive { font: 11px/1.4 var(--mono); min-width: 36px; text-align: center; color: var(--text); padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); cursor: pointer; }
+.dirpick-drive:hover { background: var(--accent-soft); border-color: var(--accent-border); color: var(--accent); }
+.dirpick-list { list-style: none; margin: 6px 0 8px; padding: 0; max-height: 46vh; overflow: auto; }
+.dirpick-dir { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font-size: 13.5px; line-height: 1.4; padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.dirpick-dir:hover { background: var(--surface-2); }
+.dirpick-ico { flex: none; }
+.dirpick-ico-folder { color: #E3B341; }
+.dirpick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dirpick-up { color: var(--muted); }
-.dirpick-actions { display: flex; gap: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+.dirpick-up .dirpick-ico { color: var(--muted); }
+.dirpick-actions { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .dirpick-ok { flex: 1; }
 /* Usage (M5) */
 .usage-total { text-align: center; padding: 14px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
