@@ -2,20 +2,12 @@ import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DirNav } from '@zuse/protocol'
 import { navigateDirs } from '../state/manageApi.js'
+import { FolderIcon } from './icons.js'
 
 /** Last path segment for a compact button label (handles both / and \ separators). */
 function basename(p: string): string {
   const parts = p.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? p
-}
-
-/** Explorer-style manila folder glyph shown against each directory row. */
-function FolderIcon() {
-  return (
-    <svg className="dirpick-ico dirpick-ico-folder" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-      <path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z" />
-    </svg>
-  )
 }
 
 /** Up-a-level glyph for the parent-directory row. */
@@ -93,7 +85,7 @@ export const DirPicker = forwardRef<DirPickerHandle, { cwd: string; onChange: (c
               ) : null}
               {!nav && !error ? <li className="mem-empty">加载中…</li> : null}
               {nav?.dirs.map((d) => (
-                <li key={d.path}><button className="dirpick-dir" onClick={() => void go(d.path)}><FolderIcon /><span className="dirpick-name">{d.name}</span></button></li>
+                <li key={d.path}><button className="dirpick-dir" onClick={() => void go(d.path)}><FolderIcon className="dirpick-ico dirpick-ico-folder" /><span className="dirpick-name">{d.name}</span></button></li>
               ))}
               {nav && nav.dirs.length === 0 ? <li className="mem-empty">(无子目录)</li> : null}
             </ul>

@@ -365,20 +365,23 @@ button.head:hover .caret { opacity: 1; }
 .usage-sub { flex: none; font: 11px/1.4 var(--mono); color: var(--faint); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-tokens { flex: none; font: 12px/1.4 var(--mono); color: var(--muted); }
 /* Files (M7) */
-.file-root { font: 11px/1.4 var(--mono); color: var(--muted); padding: 2px 8px 8px; border-bottom: 1px solid var(--line); margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-root { font: 11px/1.5 var(--mono); color: var(--muted); padding: 2px 4px 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-tree { list-style: none; margin: 0; padding: 0; max-height: 45vh; overflow: auto; }
 .file-node { margin: 0; }
-.file-row { display: flex; align-items: center; gap: 4px; width: 100%; padding: 3px 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; border-radius: 6px; }
-.file-row:hover { background: var(--surface); }
+.file-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px; border: 0; background: transparent; color: var(--text); font-size: 13.5px; line-height: 1.4; text-align: left; cursor: pointer; border-radius: 8px; }
+.file-row:hover { background: var(--surface-2); }
 .file-row.sel { background: var(--accent-soft); color: var(--accent); }
 .file-twirl { flex: none; width: 12px; color: var(--faint); font-size: 10px; }
+.file-ico { flex: none; color: var(--faint); }
+.file-ico-folder { color: #E3B341; }
+.file-row.sel .file-ico { color: var(--accent); }
+.file-row.sel .file-ico-folder { color: #E3B341; }
 .file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-preview { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .file-preview-head { font: 11px/1.4 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 6px; }
 .file-preview-body { margin: 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
-.file-actions { padding: 4px 6px 8px; }
-.file-new-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; padding: 5px 10px; border-radius: 8px; cursor: pointer; }
-.file-new-btn:hover { background: var(--surface-2); color: var(--text); }
+.file-actions { padding: 0 0 10px; }
+.file-new-btn { flex: none; padding: 8px 12px; font-size: 13px; } /* default accent button, sized like .mem-new */
 .file-newrow { display: flex; gap: 6px; align-items: center; }
 .file-new-ok, .file-new-cancel { font-size: 12px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); cursor: pointer; }
 .file-new-ok { background: var(--accent); color: var(--on-accent); border-color: transparent; }

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 import { classify } from './fileView.js'
+import { FolderIcon, FileIcon } from './icons.js'
 import { FileConflictError } from '../state/manageApi.js'
 
 // Lazy: CodeMirror + its language packs are ~1MB minified — splitting them out keeps the main
@@ -139,6 +140,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
             onClick={() => (isDir ? toggleDir(e.path) : openFile(e.path))}
           >
             <span className="file-twirl">{isDir ? (isOpen ? '▾' : '▸') : ''}</span>
+            {isDir ? <FolderIcon className="file-ico file-ico-folder" /> : <FileIcon className="file-ico" />}
             <span className="file-name">{e.name}</span>
           </button>
         </li>
