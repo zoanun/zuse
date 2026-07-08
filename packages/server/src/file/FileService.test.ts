@@ -277,3 +277,14 @@ describe('FileService.search — directories', () => {
     expect((await svc.search('a.ts')).map((h) => h.path)).toContain('src/components/a.ts')
   })
 })
+
+describe('FileService.search — regex uses the raw query (not lowercased)', () => {
+  it('uppercase escape classes like \\D survive (lowercasing would invert them to \\d)', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('abc.txt', 'x')
+    await svc.write('123.txt', 'x')
+    const hits = await svc.search('^\\D+\\.txt$')
+    expect(hits.map((h) => h.path)).toEqual(['abc.txt'])
+  })
+})

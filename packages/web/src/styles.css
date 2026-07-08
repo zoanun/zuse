@@ -407,9 +407,8 @@ button.head:hover .caret { opacity: 1; }
 .file-new-ok, .file-new-cancel { flex: none; padding: 8px 12px; font-size: 13px; border-radius: 10px; }
 .file-preview-head { display: flex; align-items: center; gap: 8px; }
 .file-preview-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-del, .file-del-confirm button { background: transparent; border: 0; cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 6px; color: var(--muted); }
+.file-del { background: transparent; border: 0; cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 6px; color: var(--muted); }
 .file-del:hover { color: var(--bad); background: var(--surface-2); }
-.file-del-confirm { display: inline-flex; gap: 2px; }
 .file-editor { display: flex; flex-direction: column; gap: 6px; }
 .file-editbar { display: flex; align-items: center; gap: 10px; }
 .file-save { font-size: 12.5px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }

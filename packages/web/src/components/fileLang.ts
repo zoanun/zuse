@@ -1,4 +1,5 @@
 import type { Extension } from '@codemirror/state'
+import { fileNameParts } from './fileView.js'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
 import { css } from '@codemirror/lang-css'
@@ -51,14 +52,8 @@ const BY_NAME: Record<string, () => Extension[]> = {
   dockerfile: () => [legacy(dockerFile)],
 }
 
-function parts(path: string): { name: string; ext: string } {
-  const name = (path.split(/[\\/]/).pop() ?? path)
-  const dot = name.lastIndexOf('.')
-  return { name: name.toLowerCase(), ext: dot > 0 ? name.slice(dot + 1).toLowerCase() : '' }
-}
-
 export function langExtensions(path: string): Extension[] {
-  const { name, ext } = parts(path)
+  const { name, ext } = fileNameParts(path)
   if (BY_NAME[name]) return BY_NAME[name]!()
   if (BY_EXT[ext]) return BY_EXT[ext]!()
   return []

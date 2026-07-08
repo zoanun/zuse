@@ -1,4 +1,5 @@
 import { readdir, stat, open, writeFile, unlink } from 'node:fs/promises'
+import type { Stats } from 'node:fs'
 import { resolve, relative, join, sep, isAbsolute, extname } from 'node:path'
 import type { DirListing, FileEntry, FilePreview, WriteFileResult } from '@zuse/protocol'
 
@@ -90,11 +91,17 @@ export class FileService {
     return { path: this.toRel(absDir), root: this.root, entries }
   }
 
-  /** Read a file for preview: size-capped, binary-sniffed. Throws if it's a directory. */
-  async read(relPath: string): Promise<FilePreview> {
+  /** Resolve + stat a path that must be an existing FILE — shared guard for read/remove/statFile. */
+  private async statNonDir(relPath: string): Promise<{ abs: string; st: Stats }> {
     const abs = this.resolveInRoot(relPath)
     const st = await stat(abs)
     if (st.isDirectory()) throw new Error('path is a directory')
+    return { abs, st }
+  }
+
+  /** Read a file for preview: size-capped, binary-sniffed. Throws if it's a directory. */
+  async read(relPath: string): Promise<FilePreview> {
+    const { abs, st } = await this.statNonDir(relPath)
     const path = this.toRel(abs)
 
     const fh = await open(abs, 'r')
@@ -130,17 +137,13 @@ export class FileService {
 
   /** Delete a file (not a directory). */
   async remove(relPath: string): Promise<void> {
-    const abs = this.resolveInRoot(relPath)
-    const st = await stat(abs)
-    if (st.isDirectory()) throw new Error('path is a directory')
+    const { abs } = await this.statNonDir(relPath)
     await unlink(abs)
   }
 
   /** Absolute path + size + MIME for the raw byte endpoint. Rejects directories / escaping paths. */
   async statFile(relPath: string): Promise<{ abs: string; size: number; mime: string }> {
-    const abs = this.resolveInRoot(relPath)
-    const st = await stat(abs)
-    if (st.isDirectory()) throw new Error('path is a directory')
+    const { abs, st } = await this.statNonDir(relPath)
     return { abs, size: st.size, mime: mimeForExt(abs) }
   }
 
@@ -152,13 +155,17 @@ export class FileService {
    * Skips node_modules/.git at any depth. Results capped at `limit`.
    */
   async search(query: string, limit = 50): Promise<FileEntry[]> {
-    const q = query.trim().toLowerCase()
-    if (q === '') return []
+    const raw = query.trim()
+    if (raw === '') return []
+    // Regex branch works on the RAW query and name — lowercasing is the fuzzy path's
+    // normalization only (it would invert uppercase escape classes like \D → \d); case
+    // insensitivity comes from the 'i' flag instead.
     let re: RegExp | null = null
-    if (/[\^$\\*+?()[\]{}|]/.test(q)) {
-      try { re = new RegExp(q, 'i') } catch { re = null } // invalid regex → fuzzy fallback
+    if (/[\^$\\*+?()[\]{}|]/.test(raw)) {
+      try { re = new RegExp(raw, 'i') } catch { re = null } // invalid regex → fuzzy fallback
     }
-    const match = (name: string): number => (re ? (re.test(name) ? 1 : -1) : fuzzyScore(name, q))
+    const q = raw.toLowerCase()
+    const match = (name: string): number => (re ? (re.test(name) ? 1 : -1) : fuzzyScore(name.toLowerCase(), q))
     const scored: { entry: FileEntry; score: number }[] = []
     const walk = async (absDir: string): Promise<void> => {
       let dirents
@@ -166,14 +173,14 @@ export class FileService {
       for (const d of dirents) {
         if (d.isDirectory()) {
           if (d.name === 'node_modules' || d.name === '.git') continue
-          const score = match(d.name.toLowerCase()) // directories are searchable too
+          const score = match(d.name) // directories are searchable too
           if (score >= 0) {
             const abs = join(absDir, d.name)
             scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'dir' }, score })
           }
           await walk(join(absDir, d.name))
         } else if (d.isFile()) {
-          const score = match(d.name.toLowerCase())
+          const score = match(d.name)
           if (score >= 0) {
             const abs = join(absDir, d.name)
             scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'file' }, score })

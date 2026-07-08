@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { keymap } from '@codemirror/view'
 import { Prec, EditorState } from '@codemirror/state'
@@ -28,16 +28,21 @@ export function CodeEditor({ path, value, onChange, onSave }: {
   onSave: () => void
 }) {
   const theme = useTheme() // reactive: the toggle lives in Header, which doesn't re-render us
+  // The keymap reads onSave through a ref: parents pass inline closures whose identity changes
+  // every keystroke, and putting that in the memo deps would rebuild the extensions (and make
+  // CodeMirror fully reconfigure + re-parse) on every keypress.
+  const onSaveRef = useRef(onSave)
+  onSaveRef.current = onSave
   const extensions = useMemo(() => [
     // High precedence so Mod-s beats any default binding; preventDefault stops the browser Save dialog.
-    Prec.highest(keymap.of([{ key: 'Mod-s', run: () => { onSave(); return true }, preventDefault: true }])),
+    Prec.highest(keymap.of([{ key: 'Mod-s', run: () => { onSaveRef.current(); return true }, preventDefault: true }])),
     // In-editor find/replace: Mod-f opens the panel (pinned above the content), F3/Shift-F3 step.
     search({ top: true }),
     keymap.of(searchKeymap),
     highlightSelectionMatches(),
     EditorState.phrases.of(SEARCH_PHRASES),
     ...langExtensions(path),
-  ], [path, onSave])
+  ], [path])
   return (
     <CodeMirror
       className="code-editor"

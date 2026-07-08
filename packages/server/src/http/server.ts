@@ -464,18 +464,28 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     }
 
     // -----------------------------------------------------------------------
-    // /api/files — read-only project file browser (M7), auth-gated.
+    // /api/files — project file browser (M7 read, I3 write/delete/search/raw), auth-gated.
+    // S3: each request may carry ?cwd= to browse under the active session's cwd instead of the
+    // daemon default; every FileService is root-locked to its cwd (traversal guard intact).
+    // Shared error mapping: traversal → 403, missing → 404, stale-mtime conflict → 409, rest 400.
+    // -----------------------------------------------------------------------
+    const fileSvcFor = (): FileService => {
+      const cwd = url.searchParams.get('cwd')
+      return cwd ? new FileService(cwd) : deps.file
+    }
+    const sendFileError = (e: unknown): void => {
+      if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
+      if (e instanceof FileChangedError) return sendJson(res, 409, { error: { code: 'conflict', message: e.message } })
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+      return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+    }
+
     //   GET /api/files?dir=<rel>          → immediate children (lazy, one level)
     //   GET /api/files/content?path=<rel> → file preview (size-capped, binary-skipped)
-    // Path traversal outside the project root → 403; missing → 404.
-    // -----------------------------------------------------------------------
     if (method === 'GET' && (path === '/api/files' || path === '/api/files/content')) {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       try {
-        // S3: browse under the active session's cwd when given; else the daemon default. Each
-        // FileService is root-locked to that cwd (traversal guard intact).
-        const cwd = url.searchParams.get('cwd')
-        const fileSvc = cwd ? new FileService(cwd) : deps.file
+        const fileSvc = fileSvcFor()
         if (path === '/api/files') {
           return sendJson(res, 200, await fileSvc.list(url.searchParams.get('dir') ?? ''))
         }
@@ -483,9 +493,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
         return sendJson(res, 200, await fileSvc.read(p))
       } catch (e) {
-        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
-        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+        return sendFileError(e)
       }
     }
 
@@ -493,11 +501,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && path === '/api/files/search') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       try {
-        const cwd = url.searchParams.get('cwd')
-        const fileSvc = cwd ? new FileService(cwd) : deps.file
-        return sendJson(res, 200, await fileSvc.search(url.searchParams.get('q') ?? ''))
+        return sendJson(res, 200, await fileSvcFor().search(url.searchParams.get('q') ?? ''))
       } catch (e) {
-        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+        return sendFileError(e)
       }
     }
 
@@ -505,8 +511,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if ((method === 'PUT' || method === 'DELETE') && path === '/api/files/content') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       try {
-        const cwd = url.searchParams.get('cwd')
-        const fileSvc = cwd ? new FileService(cwd) : deps.file
+        const fileSvc = fileSvcFor()
         if (method === 'DELETE') {
           const p = url.searchParams.get('path')
           if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
@@ -518,10 +523,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         const result = await fileSvc.write(body.path, body.content, { expectMtimeMs: body.expectMtimeMs, force: body.force })
         return sendJson(res, 200, result)
       } catch (e) {
-        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
-        if (e instanceof FileChangedError) return sendJson(res, 409, { error: { code: 'conflict', message: e.message } })
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
-        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+        return sendFileError(e)
       }
     }
 
@@ -529,19 +531,15 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && path === '/api/files/raw') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       try {
-        const cwd = url.searchParams.get('cwd')
-        const fileSvc = cwd ? new FileService(cwd) : deps.file
         const p = url.searchParams.get('path')
         if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
-        const info = await fileSvc.statFile(p)
+        const info = await fileSvcFor().statFile(p)
         if (info.size > RAW_CAP) return sendJson(res, 413, { error: { code: 'too_large', message: 'File too large to serve' } })
         res.writeHead(200, { 'content-type': info.mime, 'content-length': String(info.size) })
         createReadStream(info.abs).pipe(res)
         return
       } catch (e) {
-        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
-        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+        return sendFileError(e)
       }
     }
 

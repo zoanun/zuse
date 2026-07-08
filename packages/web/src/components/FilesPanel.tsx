@@ -36,14 +36,15 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   const [selected, setSelected] = useState<string | null>(null)
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [view, setView] = useState<'text' | 'image' | 'pdf' | 'other'>('text')
   const [buffer, setBuffer] = useState('')        // editor content
-  const [baseMtime, setBaseMtime] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false) // a 409 awaiting overwrite confirm
-  const [creating, setCreating] = useState(false)
-  const [newPath, setNewPath] = useState('')
+  const [newPath, setNewPath] = useState<string | null>(null) // non-null = create-file row open
   const [delConfirm, setDelConfirm] = useState(false)
+  // Derived, not state: how to render the selected file, and the loaded version's mtime
+  // (the save conflict guard) — preview.mtimeMs already tracks it.
+  const view = selected ? classify(selected) : 'text'
+  const baseMtime = preview?.mtimeMs ?? null
   // Quick-open filename search: a non-empty (debounced) query swaps the tree for a flat hit list.
   const [query, setQuery] = useState('')
   const dq = useDebounced(query.trim(), 200)
@@ -107,13 +108,11 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     setSelected(path)
     setPreview(null)
     setError(null)
-    const v = classify(path)
-    setView(v)
-    if (v !== 'text') { setPreviewLoading(false); return } // image/pdf/other render from rawUrl, no content fetch
+    if (classify(path) !== 'text') { setPreviewLoading(false); return } // image/pdf/other render from rawUrl, no content fetch
     setPreviewLoading(true)
     try {
       const p = await loadFile(path)
-      setPreview(p); setBuffer(p.content); setBaseMtime(p.mtimeMs); setConflict(false)
+      setPreview(p); setBuffer(p.content); setConflict(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -126,8 +125,8 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     setSaving(true); setError(null)
     try {
       const r = await writeFile(selected, buffer, force ? { force: true } : { expectMtimeMs: baseMtime ?? undefined })
-      setBaseMtime(r.mtimeMs); setConflict(false)
-      setPreview((prev) => (prev ? { ...prev, content: buffer, mtimeMs: r.mtimeMs } : prev)) // clear dirty
+      setConflict(false)
+      setPreview((prev) => (prev ? { ...prev, content: buffer, mtimeMs: r.mtimeMs } : prev)) // clear dirty; mtimeMs is the new base
     } catch (e) {
       if (e instanceof FileConflictError) setConflict(true)
       else setError(e instanceof Error ? e.message : String(e))
@@ -135,12 +134,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   }
 
   const doCreate = async () => {
-    const p = newPath.trim()
+    const p = newPath?.trim()
     if (!p) return
     setError(null)
     try {
       await writeFile(p, '')
-      setCreating(false); setNewPath('')
+      setNewPath(null)
       const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
       await fetchDir(dir)                 // refresh the containing directory
       await openFile(p)                   // open the new file
@@ -211,15 +210,15 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     <div className="mem-panel">
       <div className="file-root-row">
         <div className="file-root" title={root}>{root}</div>
-        {!creating ? <button className="file-new-btn" onClick={() => setCreating(true)}>＋ 新建文件</button> : null}
+        {newPath === null ? <button className="file-new-btn" onClick={() => setNewPath('')}>＋ 新建文件</button> : null}
       </div>
-      {creating ? (
+      {newPath !== null ? (
         <div className="file-newrow">
           <input className="file-new-input" placeholder="相对路径，如 src/new.ts" value={newPath}
             autoFocus onChange={(e) => setNewPath(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); if (e.key === 'Escape') { setCreating(false); setNewPath('') } }} />
+            onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); if (e.key === 'Escape') setNewPath(null) }} />
           <button className="file-new-ok" onClick={() => void doCreate()}>创建</button>
-          <button className="ghost file-new-cancel" onClick={() => { setCreating(false); setNewPath('') }}>取消</button>
+          <button className="ghost file-new-cancel" onClick={() => setNewPath(null)}>取消</button>
         </div>
       ) : null}
       <div className="file-actions">
@@ -257,12 +256,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
           <div className="file-preview-head">
             <span className="file-preview-path">{selected}</span>
             {delConfirm ? (
-              <span className="file-del-confirm">
-                <button title="确认删除" onClick={() => void doDelete()}>✓</button>
-                <button title="取消删除" onClick={() => setDelConfirm(false)}>✕</button>
+              <span className="mem-confirm">
+                <button className="mem-confirm-yes" title="确认删除" aria-label="确认删除" onClick={() => void doDelete()}>✓</button>
+                <button className="mem-confirm-no" title="取消删除" aria-label="取消删除" onClick={() => setDelConfirm(false)}>✕</button>
               </span>
             ) : (
-              <button className="file-del" title="删除文件" onClick={() => setDelConfirm(true)}>🗑</button>
+              <button className="file-del" title="删除文件" aria-label="删除文件" onClick={() => setDelConfirm(true)}>🗑</button>
             )}
           </div>
           {view === 'image' ? (

@@ -47,10 +47,15 @@ const OTHER_EXT = new Set([
   'woff', 'woff2', 'ttf', 'otf', 'eot',
 ])
 
-function ext(path: string): string {
+/** Lowercased basename + extension ('' when none; a leading dot is not an extension). */
+export function fileNameParts(path: string): { name: string; ext: string } {
   const base = path.split(/[\\/]/).pop() ?? path
   const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
+  return { name: base.toLowerCase(), ext: dot > 0 ? base.slice(dot + 1).toLowerCase() : '' }
+}
+
+function ext(path: string): string {
+  return fileNameParts(path).ext
 }
 
 /** Decide how to show a file, by extension. Unknown/no-extension → 'text' (let the content

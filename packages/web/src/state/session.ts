@@ -20,10 +20,19 @@ export function wsUrl(sessionId: string): string {
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
-/** Same-origin fetch that throws `<label> failed: <status>` on a non-ok response. */
+/** Error thrown by request() on a non-ok response; carries the HTTP status for callers that
+ * branch on specific codes (e.g. 409 stale-file conflict). */
+export class RequestError extends Error {
+  constructor(label: string, readonly status: number) {
+    super(`${label} failed: ${status}`)
+    this.name = 'RequestError'
+  }
+}
+
+/** Same-origin fetch that throws a RequestError on a non-ok response. */
 export async function request(path: string, init: RequestInit, label: string): Promise<Response> {
   const r = await fetch(path, { credentials: 'same-origin', ...init })
-  if (!r.ok) throw new Error(`${label} failed: ${r.status}`)
+  if (!r.ok) throw new RequestError(label, r.status)
   return r
 }
 

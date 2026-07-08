@@ -1,5 +1,5 @@
 import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo } from '@zuse/protocol'
-import { request } from './session.js'
+import { request, RequestError } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
@@ -145,12 +145,13 @@ export async function writeFile(path: string, content: string, cwd?: string, opt
   const qs = new URLSearchParams()
   if (cwd) qs.set('cwd', cwd)
   const body = JSON.stringify({ path, content, expectMtimeMs: opts.expectMtimeMs, force: opts.force })
-  const r = await fetch('/api/files/content' + (qs.toString() ? '?' + qs.toString() : ''), {
-    method: 'PUT', credentials: 'same-origin', headers: JSON_HEADERS, body,
-  })
-  if (r.status === 409) throw new FileConflictError()
-  if (!r.ok) throw new Error('write file failed: ' + r.status)
-  return (await r.json()) as WriteFileResult
+  try {
+    const r = await request('/api/files/content' + (qs.toString() ? '?' + qs.toString() : ''), { method: 'PUT', headers: JSON_HEADERS, body }, 'write file')
+    return (await r.json()) as WriteFileResult
+  } catch (e) {
+    if (e instanceof RequestError && e.status === 409) throw new FileConflictError()
+    throw e
+  }
 }
 
 /** DELETE /api/files/content?path=…&cwd=… — delete a file. */
