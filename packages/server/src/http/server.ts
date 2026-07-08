@@ -12,7 +12,7 @@ import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
-import { FileService, PathOutsideRootError } from '../file/FileService.js'
+import { FileService, PathOutsideRootError, FileChangedError } from '../file/FileService.js'
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
@@ -480,6 +480,30 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 200, await fileSvc.read(p))
       } catch (e) {
         if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
+    // PUT /api/files/content — write (edit or create) a file. DELETE — remove a file. (I3)
+    if ((method === 'PUT' || method === 'DELETE') && path === '/api/files/content') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        const cwd = url.searchParams.get('cwd')
+        const fileSvc = cwd ? new FileService(cwd) : deps.file
+        if (method === 'DELETE') {
+          const p = url.searchParams.get('path')
+          if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
+          await fileSvc.remove(p)
+          return sendJson(res, 200, { ok: true })
+        }
+        const body = (await readJsonBody(req)) as { path?: string; content?: string; expectMtimeMs?: number; force?: boolean }
+        if (!body?.path || typeof body.content !== 'string') return sendJson(res, 400, { error: { code: 'bad_request', message: 'path and content required' } })
+        const result = await fileSvc.write(body.path, body.content, { expectMtimeMs: body.expectMtimeMs, force: body.force })
+        return sendJson(res, 200, result)
+      } catch (e) {
+        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
+        if (e instanceof FileChangedError) return sendJson(res, 409, { error: { code: 'conflict', message: e.message } })
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
       }
