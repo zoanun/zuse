@@ -170,12 +170,14 @@ export interface WriteFileResult {
   mtimeMs: number
 }
 
-/** Body for PUT /api/files/content. expectMtimeMs absent = create / no conflict check; force skips it. */
+/** Body for PUT /api/files/content. expectMtimeMs absent = no conflict check; force skips it. */
 export interface WriteFileBody {
   path: string
   content: string
   expectMtimeMs?: number
   force?: boolean
+  /** Exclusive create: refuse to overwrite an existing file, and make missing parent dirs. */
+  mustCreate?: boolean
 }
 
 /** An MCP server's config + live connection status + its tools (M4 management panel). */
