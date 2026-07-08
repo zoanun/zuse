@@ -54,12 +54,15 @@ export function Shell() {
     // Focus the search box once the (now-open) Sidebar has it on-screen (parity with /work's ref).
     requestAnimationFrame(() => sidebarRef.current?.focusSearch())
   }, [])
+  // One place new-chat behavior lives, shared by the /clear command, the sidebar button, and the dir
+  // picker (which passes an explicit cwd) — so all three entry points stay in lockstep.
+  const startNewChat = (cwd?: string) => { setShareSel(null); void newSession(cwd ?? (state.cwd || undefined)); setMenuOpen(false) }
   // Plain object, not memoized: newSession's identity churns every render (unmemoized store fn), so
   // a useMemo here never held — and Composer isn't memoized, so a stable ctx buys nothing. Rebuilding
   // this tiny object per render is free.
   const commandCtx: CommandContext = {
     send,
-    newSession: () => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) },
+    newSession: () => startNewChat(),
     openPanel: (panel) => { setActivePanel(panel); setDrawerOpen(true) },
     focusHistorySearch,
     showHelp: () => dispatch({ kind: 'notice', text: SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n'), noticeKind: 'help' }),
@@ -69,11 +72,17 @@ export function Shell() {
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
   const onSend = (text: string) => {
-    // Record into this session's in-memory history (slash commands never reach here — the menu runs
-    // them via onRunCommand — so history stays clean).
+    // A slash command can still reach onSend even though the menu normally runs it via onRunCommand:
+    // an Esc-dismissed menu then Enter, a trailing space that stops the prefix matching, or the send
+    // button. Intercept and run it here too, so the command fires instead of being posted as a
+    // literal chat message to the model.
+    const cmd = SLASH_COMMANDS.find((c) => c.name === text.trim())
+    if (cmd) { onRunCommand(cmd); return }
+    // Record into this session's in-memory history (commands returned above, so history stays clean).
+    // Cap to the most recent 100 so a long-lived session doesn't grow the array unbounded.
     const key = currentSessionId ?? ''
     const arr = historyRef.current.get(key) ?? []
-    historyRef.current.set(key, [...arr, text])
+    historyRef.current.set(key, [...arr, text].slice(-100))
     if (state.thinking) {
       dispatch({ kind: 'steer-queued', id: nextId('ps'), text })
       send({ type: 'steer', text })
@@ -152,14 +161,14 @@ export function Shell() {
           ref={sidebarRef}
           sessions={sessions}
           currentSessionId={currentSessionId}
-          onNewChat={() => { setShareSel(null); void newSession(state.cwd || undefined); setMenuOpen(false) }}
+          onNewChat={() => startNewChat()}
           onSwitch={(id) => { setShareSel(null); void switchSession(id); setMenuOpen(false) }}
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
           onJump={(id, idx) => { searchJump(id, idx); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={(cwd) => { setShareSel(null); void newSession(cwd) }} dirPickerRef={dirPickerRef} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} dirPickerRef={dirPickerRef} />
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">

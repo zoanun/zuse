@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 
@@ -29,12 +29,15 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
   useEffect(() => { setHistIdx(null) }, [history])
   // Keep the highlight in range as the candidate list shrinks/grows.
   useEffect(() => { setMenuIdx(0) }, [value])
-
-  function setText(v: string) {
-    setValue(v)
+  // Auto-size the textarea AFTER the value commits to the DOM — measuring scrollHeight in the change
+  // handler would read the pre-update value for a programmatic setValue (history recall / command
+  // clear), sizing the box to the previous content. useLayoutEffect runs post-commit, pre-paint.
+  useLayoutEffect(() => {
     const ta = taRef.current
-    if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 168) + 'px' }
-  }
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = Math.min(ta.scrollHeight, 168) + 'px'
+  }, [value])
 
   function submit() {
     const v = value.trim()
@@ -42,39 +45,27 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     // Sending is allowed even while `thinking`: Shell routes it to a mid-turn steer.
     onSend(v)
     setValue(''); setHistIdx(null)
-    if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.focus() }
+    taRef.current?.focus()
   }
 
   function runCommand(cmd: SlashCommand) {
     onRunCommand?.(cmd)
     setValue(''); setHistIdx(null)
-    if (taRef.current) { taRef.current.style.height = 'auto'; taRef.current.focus() }
+    taRef.current?.focus()
   }
 
-  // Caret-position helpers so multi-line editing keeps normal arrow behavior; history only kicks in
-  // at the text boundary (caret on the first line for ↑, last line for ↓), shell-style.
-  function caretOnFirstLine() {
-    const ta = taRef.current
-    if (!ta) return true
-    return ta.value.slice(0, ta.selectionStart).indexOf('\n') === -1
-  }
-  function caretOnLastLine() {
-    const ta = taRef.current
-    if (!ta) return true
-    return ta.value.slice(ta.selectionStart).indexOf('\n') === -1
-  }
   const draftRef = useRef('')
   function recallPrev() {
     if (history.length === 0) return
     const next = histIdx === null ? history.length - 1 : Math.max(0, histIdx - 1)
     if (histIdx === null) draftRef.current = value // entering history: stash the draft
-    setHistIdx(next); setText(history[next]!)
+    setHistIdx(next); setValue(history[next]!)
   }
   function recallNext() {
     if (histIdx === null) return
     const next = histIdx + 1
-    if (next >= history.length) { setHistIdx(null); setText(draftRef.current); return } // back to draft
-    setHistIdx(next); setText(history[next]!)
+    if (next >= history.length) { setHistIdx(null); setValue(draftRef.current); return } // back to draft
+    setHistIdx(next); setValue(history[next]!)
   }
 
   return (
@@ -102,22 +93,27 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
           rows={1}
           placeholder={thinking ? '插入消息到当前回合…' : '给 zuse 发消息…'}
           value={value}
-          onChange={(e) => { setText(e.target.value); setHistIdx(null); setMenuDismissed(false) }}
+          onChange={(e) => { setValue(e.target.value); setHistIdx(null); setMenuDismissed(false) }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return
-            // 1) Command menu open: arrows/enter/tab/esc drive the menu.
+            // 1) Command menu open: arrows/enter/tab/esc drive the menu. Shift+Enter still inserts a
+            //    newline; only plain Enter (or Tab) runs the highlighted command. menuIdx can lag one
+            //    render behind a list that just shrank, so fall back to the first item, never undefined.
             if (menuOpen) {
               if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIdx((i) => (i + 1) % menu.length); return }
               if (e.key === 'ArrowUp') { e.preventDefault(); setMenuIdx((i) => (i - 1 + menu.length) % menu.length); return }
-              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); runCommand(menu[menuIdx]!); return }
+              if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); runCommand(menu[menuIdx] ?? menu[0]!); return }
               if (e.key === 'Escape') { e.preventDefault(); setMenuDismissed(true); return }
             }
             // 2) Menu closed: Enter sends.
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
-            // 3) Menu closed, not in command-input state: arrows navigate input history.
-            if (!value.startsWith('/')) {
-              if (e.key === 'ArrowUp' && caretOnFirstLine()) { e.preventDefault(); recallPrev(); return }
-              if (e.key === 'ArrowDown' && caretOnLastLine()) { e.preventDefault(); recallNext(); return }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return }
+            // 3) Menu closed: ArrowUp/Down recall input history — but only for SINGLE-LINE input (a
+            //    multi-line draft keeps normal caret movement, so an in-progress draft is never
+            //    hijacked), and only when there's somewhere to go (else the arrow stays a live caret
+            //    key instead of becoming dead).
+            if (!value.startsWith('/') && !value.includes('\n')) {
+              if (e.key === 'ArrowUp' && history.length > 0) { e.preventDefault(); recallPrev(); return }
+              if (e.key === 'ArrowDown' && histIdx !== null) { e.preventDefault(); recallNext(); return }
             }
             // 4) Menu closed: Escape stops the turn if one is running.
             if (e.key === 'Escape' && thinking) { e.preventDefault(); onStop(); return }

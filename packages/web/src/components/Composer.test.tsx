@@ -125,6 +125,15 @@ describe('Composer slash menu keyboard', () => {
     expect(onRunCommand).toHaveBeenCalledWith(SLASH_COMMANDS.find((c) => c.name === '/compact'))
   })
 
+  it('Shift+Enter with the menu open does NOT run a command (leaves room for a newline)', () => {
+    const onRunCommand = vi.fn()
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '/help' } })
+    fireEvent.keyDown(ta, { key: 'Enter', shiftKey: true })
+    expect(onRunCommand).not.toHaveBeenCalled()
+  })
+
   it('Escape closes the menu without running or clearing input', () => {
     const onRunCommand = vi.fn()
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} commands={SLASH_COMMANDS} onRunCommand={onRunCommand} />)
@@ -167,13 +176,20 @@ describe('Composer input history', () => {
     expect(ta.value).toBe('/comp') // unchanged — no history recall
   })
 
-  it('does not recall history on ArrowUp when caret is not on the first line (multiline)', () => {
+  it('does not recall history when the input is multi-line (arrows keep normal caret movement)', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={['old']} />)
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'line1\nline2' } })
-    ta.selectionStart = ta.selectionEnd = ta.value.length // caret on last line
-    fireEvent.keyDown(ta, { key: 'ArrowUp' })
-    expect(ta.value).toBe('line1\nline2') // caret moves within textarea; no recall
+    const notPrevented = fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(ta.value).toBe('line1\nline2') // no recall — a multi-line draft is never hijacked
+    expect(notPrevented).toBe(true) // default not prevented → the caret can still move
+  })
+
+  it('ArrowUp with empty history does not preventDefault (stays a live caret key)', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} history={[]} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    const notPrevented = fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    expect(notPrevented).toBe(true) // no history → arrow is not swallowed
   })
 })
 
