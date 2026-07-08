@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
+import { classify } from './fileView.js'
 
 // Terminal-captured files (e.g. .zuse/tool-output/*) embed ANSI escape codes; strip them so the
 // preview reads as plain text instead of `␛[1m␛[36m…` noise. Matches CSI sequences (SGR colors,
@@ -14,14 +15,18 @@ interface Props {
   active: boolean
   loadDir: (dir: string) => Promise<DirListing>
   loadFile: (path: string) => Promise<FilePreview>
+  writeFile: (path: string, content: string, opts?: { expectMtimeMs?: number; force?: boolean }) => Promise<{ path: string; size: number; mtimeMs: number }>
+  deleteFile: (path: string) => Promise<void>
+  rawUrl: (path: string) => string
 }
 
 /**
- * Read-only project file browser (M7). Lazy tree: a directory's children are fetched the first
- * time it's expanded; clicking a file fetches a size-capped preview into the pane below. All
- * fetching is injected (loadDir/loadFile) so the panel is testable without the network.
+ * Project file browser (M7, I3). Lazy tree: a directory's children are fetched the first time
+ * it's expanded. Clicking a file routes by extension — text fetches a size-capped preview,
+ * image/pdf render straight from the raw-bytes endpoint, everything else gets a download link.
+ * All fetching is injected (loadDir/loadFile/…) so the panel is testable without the network.
  */
-export function FilesPanel({ active, loadDir, loadFile }: Props) {
+export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl }: Props) {
   const [children, setChildren] = useState<Map<string, FileEntry[]>>(new Map())
   const [root, setRoot] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -29,6 +34,7 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [view, setView] = useState<'text' | 'image' | 'pdf' | 'other'>('text')
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
@@ -63,8 +69,11 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
   const openFile = async (path: string) => {
     setSelected(path)
     setPreview(null)
-    setPreviewLoading(true)
     setError(null)
+    const v = classify(path)
+    setView(v)
+    if (v !== 'text') { setPreviewLoading(false); return } // image/pdf/other render from rawUrl, no content fetch
+    setPreviewLoading(true)
     try {
       setPreview(await loadFile(path))
     } catch (e) {
@@ -106,14 +115,21 @@ export function FilesPanel({ active, loadDir, loadFile }: Props) {
 
       {selected ? (
         <div className="file-preview">
-          <div className="file-preview-head" title={selected}>{selected}</div>
-          {previewLoading ? (
+          {/* No title tooltip here: it would collide with the iframe's title in findByTitle and a11y. */}
+          <div className="file-preview-head">{selected}</div>
+          {view === 'image' ? (
+            <img className="file-img" src={rawUrl(selected)} alt={selected} />
+          ) : view === 'pdf' ? (
+            <iframe className="file-frame" src={rawUrl(selected)} title={selected} />
+          ) : view === 'other' ? (
+            <div className="file-cannot">无法展示此类型文件。<a href={rawUrl(selected)} download>下载</a></div>
+          ) : previewLoading ? (
             <div className="mem-empty">加载中…</div>
           ) : preview ? (
-            preview.binary ? (
-              <div className="mem-empty">二进制文件（{preview.size} 字节）— 无法预览。</div>
+            preview.binary || preview.truncated ? (
+              <div className="file-cannot">{preview.binary ? '二进制文件，无法展示。' : '文件过大，无法编辑。'} <a href={rawUrl(selected)} download>下载</a></div>
             ) : (
-              <pre className="file-preview-body">{stripAnsi(preview.content)}{preview.truncated ? '\n\n[… 已截断]' : ''}</pre>
+              <pre className="file-preview-body">{stripAnsi(preview.content)}</pre>
             )
           ) : null}
         </div>

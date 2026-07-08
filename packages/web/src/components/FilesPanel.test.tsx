@@ -9,17 +9,36 @@ const root: DirListing = {
   entries: [
     { name: 'src', path: 'src', type: 'dir' },
     { name: 'readme.md', path: 'readme.md', type: 'file' },
+    { name: 'pic.png', path: 'pic.png', type: 'file' },
+    { name: 'doc.pdf', path: 'doc.pdf', type: 'file' },
+    { name: 'sheet.xlsx', path: 'sheet.xlsx', type: 'file' },
   ],
 }
 const srcDir: DirListing = { path: 'src', root: '/projects/demo', entries: [{ name: 'a.ts', path: 'src/a.ts', type: 'file' }] }
 
-function setup(over: { loadDir?: typeof defaultLoadDir; loadFile?: typeof defaultLoadFile } = {}) {
-  const props = { active: true, loadDir: over.loadDir ?? defaultLoadDir, loadFile: over.loadFile ?? defaultLoadFile }
+function setup(over: {
+  loadDir?: typeof defaultLoadDir
+  loadFile?: typeof defaultLoadFile
+  writeFile?: typeof defaultWrite
+  deleteFile?: typeof defaultDelete
+  rawUrl?: typeof defaultRawUrl
+} = {}) {
+  const props = {
+    active: true,
+    loadDir: over.loadDir ?? defaultLoadDir,
+    loadFile: over.loadFile ?? defaultLoadFile,
+    writeFile: over.writeFile ?? defaultWrite,
+    deleteFile: over.deleteFile ?? defaultDelete,
+    rawUrl: over.rawUrl ?? defaultRawUrl,
+  }
   render(<FilesPanel {...props} />)
   return props
 }
 const defaultLoadDir = vi.fn(async (dir: string): Promise<DirListing> => (dir === 'src' ? srcDir : root))
 const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ path, content: '# hi', truncated: false, binary: false, size: 4, mtimeMs: 1 }))
+const defaultWrite = vi.fn(async (path: string) => ({ path, size: 1, mtimeMs: 2 }))
+const defaultDelete = vi.fn(async () => {})
+const defaultRawUrl = (path: string) => '/raw/' + path
 
 describe('stripAnsi', () => {
   it('removes ANSI color/CSI escape codes, keeps the text', () => {
@@ -71,5 +90,38 @@ describe('FilesPanel', () => {
     setup({ loadFile })
     fireEvent.click(await screen.findByText('readme.md'))
     expect(await screen.findByText(/二进制文件/)).toBeInTheDocument()
+  })
+
+  it('renders an <img> for an image file (no content fetch)', async () => {
+    const loadFile = vi.fn()
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('pic.png'))
+    const img = await screen.findByRole('img')
+    expect(img.getAttribute('src')).toBe('/raw/pic.png')
+    expect(loadFile).not.toHaveBeenCalled()
+  })
+
+  it('renders an <iframe> for a pdf (no content fetch)', async () => {
+    const loadFile = vi.fn()
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('doc.pdf'))
+    const frame = await screen.findByTitle('doc.pdf')
+    expect(frame.getAttribute('src')).toBe('/raw/doc.pdf')
+    expect(loadFile).not.toHaveBeenCalled()
+  })
+
+  it('shows "cannot display" + download for an unsupported type', async () => {
+    const loadFile = vi.fn()
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('sheet.xlsx'))
+    expect(await screen.findByText(/无法展示/)).toBeInTheDocument()
+    expect(screen.getByText('下载').getAttribute('href')).toBe('/raw/sheet.xlsx')
+  })
+
+  it('shows "cannot display" + download for a truncated/binary text file', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: '', truncated: false, binary: true, size: 9, mtimeMs: 1 }))
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    expect(await screen.findByText(/无法展示/)).toBeInTheDocument()
   })
 })
