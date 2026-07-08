@@ -169,6 +169,18 @@ describe('FilesPanel', () => {
     await waitFor(() => expect(deleteFile).toHaveBeenCalledWith('readme.md'))
   })
 
+  it('warns before leaving a dirty editor for another file', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    fireEvent.change(await screen.findByLabelText('editor'), { target: { value: 'dirty!' } })
+    fireEvent.click(screen.getByText('src'))          // try to navigate away (expand dir)
+    fireEvent.click(await screen.findByText('a.ts'))  // click another file
+    expect(confirmSpy).toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
   it('shows "cannot display" + download for a truncated/binary text file', async () => {
     const loadFile = vi.fn(async (path: string) => ({ path, content: '', truncated: false, binary: true, size: 9, mtimeMs: 1 }))
     setup({ loadFile })

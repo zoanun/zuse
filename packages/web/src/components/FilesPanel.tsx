@@ -68,6 +68,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   }
 
   const openFile = async (path: string) => {
+    if (dirty && !window.confirm('有未保存的修改，放弃并切换？')) return
     setDelConfirm(false)
     setSelected(path)
     setPreview(null)

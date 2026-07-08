@@ -4,7 +4,7 @@ import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } fr
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
 import { listSkills, updateSkill } from '../state/manageApi.js'
 import { getUsage } from '../state/manageApi.js'
-import { listDir, readFilePreview } from '../state/manageApi.js'
+import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
@@ -167,6 +167,9 @@ function FilesContainer({ active, cwd }: { active: boolean; cwd?: string }) {
       active={active}
       loadDir={(dir) => listDir(dir, cwd)}
       loadFile={(path) => readFilePreview(path, cwd)}
+      writeFile={(path, content, opts) => writeFile(path, content, cwd, opts)}
+      deleteFile={(path) => deleteFile(path, cwd)}
+      rawUrl={(path) => rawFileUrl(path, cwd)}
     />
   )
 }

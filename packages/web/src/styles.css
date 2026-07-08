@@ -376,6 +376,31 @@ button.head:hover .caret { opacity: 1; }
 .file-preview { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .file-preview-head { font: 11px/1.4 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 6px; }
 .file-preview-body { margin: 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
+.file-actions { padding: 4px 6px 8px; }
+.file-new-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px; padding: 5px 10px; border-radius: 8px; cursor: pointer; }
+.file-new-btn:hover { background: var(--surface-2); color: var(--text); }
+.file-newrow { display: flex; gap: 6px; align-items: center; }
+.file-new-ok, .file-new-cancel { font-size: 12px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); cursor: pointer; }
+.file-new-ok { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.file-new-cancel { background: transparent; color: var(--muted); }
+.file-preview-head { display: flex; align-items: center; gap: 8px; }
+.file-preview-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-del, .file-del-confirm button { background: transparent; border: 0; cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 6px; color: var(--muted); }
+.file-del:hover { color: var(--bad); background: var(--surface-2); }
+.file-del-confirm { display: inline-flex; gap: 2px; }
+.file-editor { display: flex; flex-direction: column; gap: 6px; }
+.file-editbar { display: flex; align-items: center; gap: 10px; }
+.file-save { font-size: 12.5px; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; }
+.file-save.dirty { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.file-save:disabled { opacity: .5; cursor: default; }
+.file-conflict { font-size: 12px; color: var(--warn); display: inline-flex; gap: 6px; align-items: center; }
+.file-conflict button { font-size: 12px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--warn); background: transparent; color: var(--warn); cursor: pointer; }
+.file-cannot { color: var(--muted); font-size: 13px; padding: 8px 4px; }
+.file-cannot a, .file-conflict a { color: var(--accent); }
+.file-img { max-width: 100%; max-height: 60vh; object-fit: contain; display: block; border-radius: 8px; }
+.file-frame { width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.code-editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-height: 60vh; }
+.code-editor .cm-editor { max-height: 60vh; }
 .mem-error { background: var(--surface-2); border: 1px solid var(--bad); color: var(--bad); font-size: 12.5px; padding: 8px 11px; border-radius: 10px; margin-bottom: 10px; }
 .mem-empty { color: var(--faint); font-size: 13.5px; padding: 12px 2px; }
 .mem-group { margin-bottom: 16px; }
