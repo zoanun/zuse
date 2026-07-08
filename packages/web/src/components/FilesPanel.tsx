@@ -199,6 +199,15 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   return (
     <div className="mem-panel">
       {root ? <div className="file-root" title={root}>{root}</div> : null}
+      {creating ? (
+        <div className="file-newrow">
+          <input className="file-new-input" placeholder="相对路径，如 src/new.ts" value={newPath}
+            autoFocus onChange={(e) => setNewPath(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); if (e.key === 'Escape') { setCreating(false); setNewPath('') } }} />
+          <button className="file-new-ok" onClick={() => void doCreate()}>创建</button>
+          <button className="ghost file-new-cancel" onClick={() => { setCreating(false); setNewPath('') }}>取消</button>
+        </div>
+      ) : null}
       <div className="file-actions">
         <span className="file-search-wrap">
           <svg className="file-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
@@ -213,17 +222,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
             onKeyDown={(e) => { if (e.key === 'Enter') runSearch(query.trim()) }}
           />
         </span>
-        {creating ? (
-          <span className="file-newrow">
-            <input className="session-rename-input" placeholder="相对路径，如 src/new.ts" value={newPath}
-              autoFocus onChange={(e) => setNewPath(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); if (e.key === 'Escape') { setCreating(false); setNewPath('') } }} />
-            <button className="file-new-ok" onClick={() => void doCreate()}>创建</button>
-            <button className="file-new-cancel" onClick={() => { setCreating(false); setNewPath('') }}>取消</button>
-          </span>
-        ) : (
-          <button className="file-new-btn" onClick={() => setCreating(true)}>＋ 新建文件</button>
-        )}
+        <button className="file-new-btn" onClick={() => setCreating((c) => !c)}>＋ 新建文件</button>
       </div>
       {error ? <div className="mem-error">{error}</div> : null}
       {hits !== null ? (

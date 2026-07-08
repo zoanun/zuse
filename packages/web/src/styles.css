@@ -392,10 +392,10 @@ button.head:hover .caret { opacity: 1; }
 .file-row.dim { opacity: 0.55; }
 .file-search-hint { font: 400 11px/1.5 var(--mono); color: var(--faint); padding: 4px 4px 8px; }
 .file-new-btn { flex: none; padding: 8px 12px; font-size: 13px; } /* default accent button, sized like .mem-new */
-.file-newrow { display: flex; gap: 6px; align-items: center; }
-.file-new-ok, .file-new-cancel { font-size: 12px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); cursor: pointer; }
-.file-new-ok { background: var(--accent); color: var(--on-accent); border-color: transparent; }
-.file-new-cancel { background: transparent; color: var(--muted); }
+/* Create-file row: sits above the search row, styled to match it (same input height/radius). */
+.file-newrow { display: flex; gap: 8px; align-items: center; padding: 0 0 10px; }
+.file-new-input { flex: 1; min-width: 120px; font-size: 13.5px; padding: 8px 12px; border-radius: 10px; }
+.file-new-ok, .file-new-cancel { flex: none; padding: 8px 12px; font-size: 13px; border-radius: 10px; }
 .file-preview-head { display: flex; align-items: center; gap: 8px; }
 .file-preview-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-del, .file-del-confirm button { background: transparent; border: 0; cursor: pointer; font-size: 13px; padding: 2px 5px; border-radius: 6px; color: var(--muted); }
