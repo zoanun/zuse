@@ -148,6 +148,27 @@ describe('FilesPanel', () => {
     expect(screen.getByText('下载').getAttribute('href')).toBe('/raw/sheet.xlsx')
   })
 
+  it('creates a new file via writeFile and opens it', async () => {
+    const writeFile = vi.fn(async (path: string) => ({ path, size: 0, mtimeMs: 1 }))
+    const loadFile = vi.fn(async (path: string) => ({ path, content: '', truncated: false, binary: false, size: 0, mtimeMs: 1 }))
+    setup({ writeFile, loadFile })
+    await screen.findByText('src')
+    fireEvent.click(screen.getByText('＋ 新建文件'))
+    fireEvent.change(screen.getByPlaceholderText('相对路径，如 src/new.ts'), { target: { value: 'src/new.ts' } })
+    fireEvent.click(screen.getByText('创建'))
+    await waitFor(() => expect(writeFile).toHaveBeenCalledWith('src/new.ts', ''))
+  })
+
+  it('deletes a file after inline confirm', async () => {
+    const deleteFile = vi.fn(async () => {})
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
+    setup({ deleteFile, loadFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    fireEvent.click(await screen.findByTitle('删除文件'))   // trash affordance in the preview head
+    fireEvent.click(await screen.findByTitle('确认删除'))   // ✓
+    await waitFor(() => expect(deleteFile).toHaveBeenCalledWith('readme.md'))
+  })
+
   it('shows "cannot display" + download for a truncated/binary text file', async () => {
     const loadFile = vi.fn(async (path: string) => ({ path, content: '', truncated: false, binary: true, size: 9, mtimeMs: 1 }))
     setup({ loadFile })

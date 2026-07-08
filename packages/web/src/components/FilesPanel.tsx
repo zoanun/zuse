@@ -32,6 +32,9 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   const [baseMtime, setBaseMtime] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [conflict, setConflict] = useState(false) // a 409 awaiting overwrite confirm
+  const [creating, setCreating] = useState(false)
+  const [newPath, setNewPath] = useState('')
+  const [delConfirm, setDelConfirm] = useState(false)
   const dirty = preview != null && !preview.binary && !preview.truncated && buffer !== preview.content
 
   const fetchDir = useCallback(async (dir: string) => {
@@ -65,6 +68,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   }
 
   const openFile = async (path: string) => {
+    setDelConfirm(false)
     setSelected(path)
     setPreview(null)
     setError(null)
@@ -95,6 +99,28 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     } finally { setSaving(false) }
   }
 
+  const doCreate = async () => {
+    const p = newPath.trim()
+    if (!p) return
+    setError(null)
+    try {
+      await writeFile(p, '')
+      setCreating(false); setNewPath('')
+      const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''
+      await fetchDir(dir)                 // refresh the containing directory
+      await openFile(p)                   // open the new file
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+  }
+
+  const doDelete = async () => {
+    if (!selected) return
+    try {
+      await deleteFile(selected)
+      setChildren((m) => { const n = new Map(m); for (const [d, es] of n) n.set(d, es.filter((e) => e.path !== selected)); return n })
+      setSelected(null); setPreview(null); setDelConfirm(false)
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+  }
+
   // Flatten the visible tree to indented rows (depth-first, only expanded dirs descend).
   const renderLevel = (dir: string, depth: number): React.ReactNode[] => {
     const entries = children.get(dir) ?? []
@@ -120,6 +146,19 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   return (
     <div className="mem-panel">
       {root ? <div className="file-root" title={root}>{root}</div> : null}
+      <div className="file-actions">
+        {creating ? (
+          <span className="file-newrow">
+            <input className="session-rename-input" placeholder="相对路径，如 src/new.ts" value={newPath}
+              autoFocus onChange={(e) => setNewPath(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); if (e.key === 'Escape') { setCreating(false); setNewPath('') } }} />
+            <button className="file-new-ok" onClick={() => void doCreate()}>创建</button>
+            <button className="file-new-cancel" onClick={() => { setCreating(false); setNewPath('') }}>取消</button>
+          </span>
+        ) : (
+          <button className="file-new-btn" onClick={() => setCreating(true)}>＋ 新建文件</button>
+        )}
+      </div>
       {error ? <div className="mem-error">{error}</div> : null}
       <ul className="file-tree">
         {children.has('') ? renderLevel('', 0) : <li className="mem-empty">加载中…</li>}
@@ -127,8 +166,18 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
 
       {selected ? (
         <div className="file-preview">
-          {/* No title tooltip here: it would collide with the iframe's title in findByTitle and a11y. */}
-          <div className="file-preview-head">{selected}</div>
+          {/* No title tooltip on the head/path: it would collide with the iframe's title (a11y name). */}
+          <div className="file-preview-head">
+            <span className="file-preview-path">{selected}</span>
+            {delConfirm ? (
+              <span className="file-del-confirm">
+                <button title="确认删除" onClick={() => void doDelete()}>✓</button>
+                <button title="取消删除" onClick={() => setDelConfirm(false)}>✕</button>
+              </span>
+            ) : (
+              <button className="file-del" title="删除文件" onClick={() => setDelConfirm(true)}>🗑</button>
+            )}
+          </div>
           {view === 'image' ? (
             <img className="file-img" src={rawUrl(selected)} alt={selected} />
           ) : view === 'pdf' ? (
