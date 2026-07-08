@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtemp, writeFile, readFile, stat, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FileService, PathOutsideRootError } from './FileService.js'
+import { FileService, PathOutsideRootError, FileChangedError } from './FileService.js'
+
+async function tmpRoot(): Promise<string> { return mkdtemp(join(tmpdir(), 'i3-')) }
 
 describe('FileService (M7)', () => {
   let root: string, svc: FileService
@@ -59,5 +62,55 @@ describe('FileService (M7)', () => {
 
   it('throws when asked to read a directory', async () => {
     await expect(svc.read('src')).rejects.toThrow(/directory/)
+  })
+})
+
+describe('FileService.write', () => {
+  it('writes new content and returns size + mtimeMs', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    const r = await svc.write('note.txt', 'hello')
+    expect(await readFile(join(root, 'note.txt'), 'utf8')).toBe('hello')
+    expect(r.path).toBe('note.txt')
+    expect(r.size).toBe(5)
+    expect(typeof r.mtimeMs).toBe('number')
+  })
+
+  it('creates a file at a non-existent path (parent exists)', async () => {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'sub'))
+    const svc = new FileService(root)
+    await svc.write('sub/new.md', '# x')
+    expect(await readFile(join(root, 'sub/new.md'), 'utf8')).toBe('# x')
+  })
+
+  it('rejects a path escaping the root', async () => {
+    const svc = new FileService(await tmpRoot())
+    await expect(svc.write('../evil.txt', 'x')).rejects.toBeInstanceOf(PathOutsideRootError)
+  })
+
+  it('throws FileChangedError when expectMtimeMs does not match', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('a.txt', 'one')
+    await expect(svc.write('a.txt', 'two', { expectMtimeMs: 1 })).rejects.toBeInstanceOf(FileChangedError)
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('one') // unchanged
+  })
+
+  it('overwrites despite mismatch when force is set', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('a.txt', 'one')
+    await svc.write('a.txt', 'two', { expectMtimeMs: 1, force: true })
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('two')
+  })
+
+  it('write with matching expectMtimeMs succeeds', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('a.txt', 'one')
+    const cur = (await stat(join(root, 'a.txt'))).mtimeMs
+    await svc.write('a.txt', 'two', { expectMtimeMs: cur })
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('two')
   })
 })

@@ -1,6 +1,6 @@
-import { readdir, stat, open } from 'node:fs/promises'
-import { resolve, relative, join, sep, isAbsolute } from 'node:path'
-import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
+import { readdir, stat, open, writeFile, unlink } from 'node:fs/promises'
+import { resolve, relative, join, sep, isAbsolute, extname } from 'node:path'
+import type { DirListing, FileEntry, FilePreview, WriteFileResult } from '@zuse/protocol'
 
 /** Files larger than this are truncated for preview (256 KiB). */
 const PREVIEW_CAP = 256 * 1024
@@ -11,6 +11,13 @@ export class PathOutsideRootError extends Error {
   constructor() {
     super('path is outside the project root')
     this.name = 'PathOutsideRootError'
+  }
+}
+
+export class FileChangedError extends Error {
+  constructor() {
+    super('file changed on disk since it was loaded')
+    this.name = 'FileChangedError'
   }
 }
 
@@ -85,14 +92,29 @@ export class FileService {
       // Sniff the head for a NUL byte → treat as binary, don't ship the bytes.
       const head = Buffer.alloc(Math.min(SNIFF, st.size))
       if (head.length > 0) await fh.read(head, 0, head.length, 0)
-      if (head.includes(0)) return { path, content: '', truncated: false, binary: true, size: st.size }
+      if (head.includes(0)) return { path, content: '', truncated: false, binary: true, size: st.size, mtimeMs: st.mtimeMs }
 
       const toRead = Math.min(st.size, PREVIEW_CAP)
       const buf = Buffer.alloc(toRead)
       if (toRead > 0) await fh.read(buf, 0, toRead, 0)
-      return { path, content: buf.toString('utf8'), truncated: st.size > PREVIEW_CAP, binary: false, size: st.size }
+      return { path, content: buf.toString('utf8'), truncated: st.size > PREVIEW_CAP, binary: false, size: st.size, mtimeMs: st.mtimeMs }
     } finally {
       await fh.close()
     }
+  }
+
+  /** Write a file (edit or create). Optional mtime guard rejects a stale overwrite unless forced. */
+  async write(relPath: string, content: string, opts: { expectMtimeMs?: number; force?: boolean } = {}): Promise<WriteFileResult> {
+    const abs = this.resolveInRoot(relPath)
+    // Refuse to clobber a directory. stat may throw ENOENT for a new file — that's fine (create).
+    let existing: Awaited<ReturnType<typeof stat>> | null = null
+    try { existing = await stat(abs) } catch { existing = null }
+    if (existing?.isDirectory()) throw new Error('path is a directory')
+    if (opts.expectMtimeMs != null && !opts.force && existing && existing.mtimeMs !== opts.expectMtimeMs) {
+      throw new FileChangedError()
+    }
+    await writeFile(abs, content, 'utf8')
+    const st = await stat(abs)
+    return { path: this.toRel(abs), size: st.size, mtimeMs: st.mtimeMs }
   }
 }
