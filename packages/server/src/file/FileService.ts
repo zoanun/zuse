@@ -7,6 +7,16 @@ const PREVIEW_CAP = 256 * 1024
 /** Bytes sniffed for a NUL to call a file binary. */
 const SNIFF = 4096
 
+/** Extension → MIME for the raw byte endpoint (image/pdf inline preview + download). */
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp', '.avif': 'image/avif', '.ico': 'image/x-icon',
+  '.svg': 'image/svg+xml', '.pdf': 'application/pdf',
+}
+export function mimeForExt(name: string): string {
+  return MIME_BY_EXT[extname(name).toLowerCase()] ?? 'application/octet-stream'
+}
+
 export class PathOutsideRootError extends Error {
   constructor() {
     super('path is outside the project root')
@@ -124,5 +134,13 @@ export class FileService {
     const st = await stat(abs)
     if (st.isDirectory()) throw new Error('path is a directory')
     await unlink(abs)
+  }
+
+  /** Absolute path + size + MIME for the raw byte endpoint. Rejects directories / escaping paths. */
+  async statFile(relPath: string): Promise<{ abs: string; size: number; mime: string }> {
+    const abs = this.resolveInRoot(relPath)
+    const st = await stat(abs)
+    if (st.isDirectory()) throw new Error('path is a directory')
+    return { abs, size: st.size, mime: mimeForExt(abs) }
   }
 }

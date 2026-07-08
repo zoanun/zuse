@@ -136,3 +136,21 @@ describe('FileService.remove', () => {
     await expect(svc.remove('../x')).rejects.toBeInstanceOf(PathOutsideRootError)
   })
 })
+
+describe('FileService.statFile', () => {
+  it('returns mime by extension', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('pic.png', 'x'); await svc.write('doc.pdf', 'x'); await svc.write('blob.bin', 'x')
+    expect((await svc.statFile('pic.png')).mime).toBe('image/png')
+    expect((await svc.statFile('doc.pdf')).mime).toBe('application/pdf')
+    expect((await svc.statFile('blob.bin')).mime).toBe('application/octet-stream')
+  })
+  it('rejects a directory and an escaping path', async () => {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'd'))
+    const svc = new FileService(root)
+    await expect(svc.statFile('d')).rejects.toThrow('directory')
+    await expect(svc.statFile('../x')).rejects.toBeInstanceOf(PathOutsideRootError)
+  })
+})
