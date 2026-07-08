@@ -368,7 +368,9 @@ button.head:hover .caret { opacity: 1; }
 .usage-sub { flex: none; font: 11px/1.4 var(--mono); color: var(--faint); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .usage-tokens { flex: none; font: 12px/1.4 var(--mono); color: var(--muted); }
 /* Files (M7) */
-.file-root { font: 11px/1.5 var(--mono); color: var(--muted); padding: 2px 4px 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Header row: root path on the left, the create-file button pinned to its far right. */
+.file-root-row { display: flex; align-items: center; gap: 8px; padding: 0 0 8px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.file-root { flex: 1; min-width: 0; font: 11px/1.5 var(--mono); color: var(--muted); padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-tree { list-style: none; margin: 0; padding: 0; max-height: 45vh; overflow: auto; }
 .file-node { margin: 0; }
 .file-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 9px; border: 0; background: transparent; color: var(--text); font-size: 13.5px; line-height: 1.4; text-align: left; cursor: pointer; border-radius: 8px; }
@@ -391,7 +393,7 @@ button.head:hover .caret { opacity: 1; }
 .file-row-static:hover { background: transparent; }
 .file-row.dim { opacity: 0.55; }
 .file-search-hint { font: 400 11px/1.5 var(--mono); color: var(--faint); padding: 4px 4px 8px; }
-.file-new-btn { flex: none; padding: 8px 12px; font-size: 13px; } /* default accent button, sized like .mem-new */
+.file-new-btn { flex: none; padding: 5px 11px; font-size: 12.5px; border-radius: 9px; } /* compact accent button in the header row */
 /* Create-file row: sits above the search row, styled to match it (same input height/radius). */
 .file-newrow { display: flex; gap: 8px; align-items: center; padding: 0 0 10px; }
 .file-new-input { flex: 1; min-width: 120px; font-size: 13.5px; padding: 8px 12px; border-radius: 10px; }

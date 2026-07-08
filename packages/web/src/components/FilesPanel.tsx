@@ -198,7 +198,10 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
 
   return (
     <div className="mem-panel">
-      {root ? <div className="file-root" title={root}>{root}</div> : null}
+      <div className="file-root-row">
+        <div className="file-root" title={root}>{root}</div>
+        {!creating ? <button className="file-new-btn" onClick={() => setCreating(true)}>＋ 新建文件</button> : null}
+      </div>
       {creating ? (
         <div className="file-newrow">
           <input className="file-new-input" placeholder="相对路径，如 src/new.ts" value={newPath}
@@ -222,7 +225,6 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
             onKeyDown={(e) => { if (e.key === 'Enter') runSearch(query.trim()) }}
           />
         </span>
-        <button className="file-new-btn" onClick={() => setCreating((c) => !c)}>＋ 新建文件</button>
       </div>
       {error ? <div className="mem-error">{error}</div> : null}
       {hits !== null ? (
