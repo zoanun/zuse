@@ -146,12 +146,19 @@ export class FileService {
 
   /**
    * Fuzzy filename search over the whole tree (quick-open style). Case-insensitive; ranks
-   * prefix > substring > subsequence, then shorter paths first. Skips node_modules/.git at any
-   * depth (noise, and node_modules alone would dwarf the project). Results capped at `limit`.
+   * prefix > substring > compact subsequence, then shorter paths first. A query containing regex
+   * metacharacters (^ $ \ * + ? () [] {} |, deliberately NOT . or - which are everyday filename
+   * chars) is matched as a case-insensitive regex instead; if it doesn't compile, fuzzy fallback.
+   * Skips node_modules/.git at any depth. Results capped at `limit`.
    */
   async search(query: string, limit = 50): Promise<FileEntry[]> {
     const q = query.trim().toLowerCase()
     if (q === '') return []
+    let re: RegExp | null = null
+    if (/[\^$\\*+?()[\]{}|]/.test(q)) {
+      try { re = new RegExp(q, 'i') } catch { re = null } // invalid regex → fuzzy fallback
+    }
+    const match = (name: string): number => (re ? (re.test(name) ? 1 : -1) : fuzzyScore(name, q))
     const scored: { entry: FileEntry; score: number }[] = []
     const walk = async (absDir: string): Promise<void> => {
       let dirents
@@ -161,7 +168,7 @@ export class FileService {
           if (d.name === 'node_modules' || d.name === '.git') continue
           await walk(join(absDir, d.name))
         } else if (d.isFile()) {
-          const score = fuzzyScore(d.name.toLowerCase(), q)
+          const score = match(d.name.toLowerCase())
           if (score >= 0) {
             const abs = join(absDir, d.name)
             scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'file' }, score })
@@ -175,11 +182,25 @@ export class FileService {
   }
 }
 
-/** Match rank: 0 = name starts with q, 1 = contains q, 2 = subsequence (chars in order); -1 = no match. */
+/**
+ * Match rank: 0 = name starts with q, 1 = contains q, 2 = compact subsequence; -1 = no match.
+ * The subsequence tier only counts when its matched chars sit close together (span ≤ 2·|q|+2):
+ * without that bound a short query matches almost any long name ("svg" ⊂ zu*s*e-pro*v*ider-desi*g*n),
+ * burying real hits in garbage. We take the tightest window by scanning from each possible start.
+ */
 function fuzzyScore(name: string, q: string): number {
   if (name.startsWith(q)) return 0
   if (name.includes(q)) return 1
-  let i = 0
-  for (const ch of name) { if (ch === q[i]) i++; if (i === q.length) return 2 }
+  const maxSpan = q.length * 2 + 2
+  // For each occurrence of q[0], greedily match the rest and measure the window.
+  for (let start = name.indexOf(q[0]!); start !== -1; start = name.indexOf(q[0]!, start + 1)) {
+    let i = 1
+    let end = start
+    for (let j = start + 1; j < name.length && i < q.length; j++) {
+      if (name[j] === q[i]) { i++; end = j }
+      if (end - start + 1 > maxSpan) break // window already too wide — try the next start
+    }
+    if (i === q.length && end - start + 1 <= maxSpan) return 2
+  }
   return -1
 }

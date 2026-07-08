@@ -172,7 +172,7 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
       <div className="file-actions">
         <input
           className="file-search"
-          placeholder="搜索文件名…"
+          placeholder="搜索文件名（支持正则）…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

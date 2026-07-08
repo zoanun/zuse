@@ -198,7 +198,7 @@ describe('FilesPanel filename search', () => {
       { name: 'FilesPanel.tsx', path: 'src/components/FilesPanel.tsx', type: 'file' as const },
     ])
     setup({ searchFiles })
-    fireEvent.change(await screen.findByPlaceholderText('搜索文件名…'), { target: { value: 'fsp' } })
+    fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'fsp' } })
     await waitFor(() => expect(searchFiles).toHaveBeenCalledWith('fsp'))
     expect(await screen.findByText('FilesPanel.tsx')).toBeInTheDocument()
     expect(screen.getByText('src/components/FilesPanel.tsx')).toBeInTheDocument() // dim path
@@ -211,7 +211,7 @@ describe('FilesPanel filename search', () => {
     ])
     const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
     setup({ searchFiles, loadFile })
-    fireEvent.change(await screen.findByPlaceholderText('搜索文件名…'), { target: { value: 'a' } })
+    fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'a' } })
     fireEvent.click(await screen.findByText('a.ts'))
     await waitFor(() => expect(loadFile).toHaveBeenCalledWith('src/a.ts'))
   })
@@ -219,7 +219,7 @@ describe('FilesPanel filename search', () => {
   it('clearing the query restores the tree', async () => {
     const searchFiles = vi.fn(async () => [{ name: 'a.ts', path: 'src/a.ts', type: 'file' as const }])
     setup({ searchFiles })
-    const input = await screen.findByPlaceholderText('搜索文件名…')
+    const input = await screen.findByPlaceholderText('搜索文件名（支持正则）…')
     fireEvent.change(input, { target: { value: 'a' } })
     await screen.findByText('a.ts')
     fireEvent.change(input, { target: { value: '' } })
@@ -229,7 +229,7 @@ describe('FilesPanel filename search', () => {
   it('shows an empty notice when nothing matches', async () => {
     const searchFiles = vi.fn(async () => [])
     setup({ searchFiles })
-    fireEvent.change(await screen.findByPlaceholderText('搜索文件名…'), { target: { value: 'zzz' } })
+    fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'zzz' } })
     expect(await screen.findByText('无匹配文件')).toBeInTheDocument()
   })
 })

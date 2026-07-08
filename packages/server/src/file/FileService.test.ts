@@ -214,3 +214,52 @@ describe('FileService.search', () => {
     expect(await svc.search('   ')).toEqual([])
   })
 })
+
+describe('FileService.search — subsequence compactness', () => {
+  it('rejects a sparse subsequence spread across a long name ("svg" vs a design doc)', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('2026-06-05-zuse-multi-provider-design.md', 'x') // contains s…v…g far apart
+    await svc.write('logo.svg', 'x')
+    const hits = await svc.search('svg')
+    expect(hits.map((h) => h.path)).toEqual(['logo.svg']) // substring hit only, no sparse garbage
+  })
+
+  it('still accepts a compact subsequence ("fsp" → FilesPanel.tsx)', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('FilesPanel.tsx', 'x')
+    const hits = await svc.search('fsp')
+    expect(hits.map((h) => h.path)).toEqual(['FilesPanel.tsx'])
+  })
+})
+
+describe('FileService.search — regex queries', () => {
+  async function regexRoot(): Promise<FileService> {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('readme.md', 'x')
+    await svc.write('format.md', 'x')
+    await svc.write('a.tsx', 'x')
+    await svc.write('b.ts', 'x')
+    return svc
+  }
+
+  it('a query with regex metacharacters is matched as a case-insensitive regex', async () => {
+    const svc = await regexRoot()
+    expect((await svc.search('\.tsx$')).map((h) => h.path)).toEqual(['a.tsx'])
+    expect((await svc.search('^read')).map((h) => h.path)).toEqual(['readme.md'])
+  })
+
+  it('an invalid regex falls back to fuzzy matching instead of throwing', async () => {
+    const svc = await regexRoot()
+    await svc.write('a([b.txt', 'x')
+    expect((await svc.search('([')).map((h) => h.path)).toEqual(['a([b.txt'])
+  })
+
+  it('a plain query with dots stays literal (no regex surprise)', async () => {
+    const svc = await regexRoot()
+    // "." must not act as regex any-char: "b.ts" matches literally, "bxts" would not exist anyway
+    expect((await svc.search('b.ts')).map((h) => h.path)).toEqual(['b.ts'])
+  })
+})
