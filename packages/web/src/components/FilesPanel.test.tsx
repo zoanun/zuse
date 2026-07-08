@@ -19,7 +19,7 @@ function setup(over: { loadDir?: typeof defaultLoadDir; loadFile?: typeof defaul
   return props
 }
 const defaultLoadDir = vi.fn(async (dir: string): Promise<DirListing> => (dir === 'src' ? srcDir : root))
-const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ path, content: '# hi', truncated: false, binary: false, size: 4 }))
+const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ path, content: '# hi', truncated: false, binary: false, size: 4, mtimeMs: 1 }))
 
 describe('stripAnsi', () => {
   it('removes ANSI color/CSI escape codes, keeps the text', () => {
