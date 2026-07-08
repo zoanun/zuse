@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { getTheme, toggleTheme } from './theme.js'
+import { renderHook, act, waitFor } from '@testing-library/react'
+import { getTheme, toggleTheme, useTheme } from './theme.js'
 
 beforeEach(() => { localStorage.clear(); document.documentElement.removeAttribute('data-theme') })
 
@@ -15,5 +16,11 @@ describe('theme', () => {
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark')
     expect(localStorage.getItem('zuse-theme')).toBe('dark')
     expect(toggleTheme()).toBe('light')
+  })
+  it('useTheme reacts to a data-theme change from anywhere (MutationObserver)', async () => {
+    const { result } = renderHook(() => useTheme())
+    expect(result.current).toBe('light')
+    act(() => { toggleTheme() }) // Header's toggle only re-renders Header — the hook must self-update
+    await waitFor(() => expect(result.current).toBe('dark'))
   })
 })

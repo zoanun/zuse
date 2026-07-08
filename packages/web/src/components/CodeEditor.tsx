@@ -3,7 +3,7 @@ import CodeMirror from '@uiw/react-codemirror'
 import { keymap } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 import { langExtensions } from './fileLang.js'
-import { getTheme } from '../theme.js'
+import { useTheme } from '../theme.js'
 
 /**
  * Thin CodeMirror wrapper: controlled value, language picked from the path, Ctrl/Cmd+S → onSave.
@@ -15,6 +15,7 @@ export function CodeEditor({ path, value, onChange, onSave }: {
   onChange: (v: string) => void
   onSave: () => void
 }) {
+  const theme = useTheme() // reactive: the toggle lives in Header, which doesn't re-render us
   const extensions = useMemo(() => [
     // High precedence so Mod-s beats any default binding; preventDefault stops the browser Save dialog.
     Prec.highest(keymap.of([{ key: 'Mod-s', run: () => { onSave(); return true }, preventDefault: true }])),
@@ -24,7 +25,7 @@ export function CodeEditor({ path, value, onChange, onSave }: {
     <CodeMirror
       className="code-editor"
       value={value}
-      theme={getTheme()}
+      theme={theme}
       extensions={extensions}
       onChange={onChange}
       basicSetup={{ lineNumbers: true, highlightActiveLine: true, foldGutter: false }}
