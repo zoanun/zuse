@@ -1,4 +1,5 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
+import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname } from 'node:path'
 import { VERSION } from '@zuse/core'
@@ -34,6 +35,9 @@ export interface RequestHandlerDeps {
 }
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** Max bytes the raw endpoint will stream inline (50 MiB); larger → 413, client offers download. */
+const RAW_CAP = 50 * 1024 * 1024
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -504,6 +508,26 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       } catch (e) {
         if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
         if (e instanceof FileChangedError) return sendJson(res, 409, { error: { code: 'conflict', message: e.message } })
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
+    // GET /api/files/raw — raw bytes with a real Content-Type, for <img>/<iframe>/download. (I3)
+    if (method === 'GET' && path === '/api/files/raw') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        const cwd = url.searchParams.get('cwd')
+        const fileSvc = cwd ? new FileService(cwd) : deps.file
+        const p = url.searchParams.get('path')
+        if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
+        const info = await fileSvc.statFile(p)
+        if (info.size > RAW_CAP) return sendJson(res, 413, { error: { code: 'too_large', message: 'File too large to serve' } })
+        res.writeHead(200, { 'content-type': info.mime, 'content-length': String(info.size) })
+        createReadStream(info.abs).pipe(res)
+        return
+      } catch (e) {
+        if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
       }
