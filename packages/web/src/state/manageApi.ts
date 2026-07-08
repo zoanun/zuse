@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, DirNav, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, WriteFileResult, DirNav, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -125,6 +125,38 @@ export async function readFilePreview(path: string, cwd?: string): Promise<FileP
   if (cwd) qs.set('cwd', cwd)
   const r = await request('/api/files/content?' + qs.toString(), {}, 'read file')
   return (await r.json()) as FilePreview
+}
+
+/** Thrown by writeFile on a 409 (file changed on disk since load) so the UI can offer force-overwrite. */
+export class FileConflictError extends Error {
+  constructor() { super('file changed on disk'); this.name = 'FileConflictError' }
+}
+
+/** PUT /api/files/content — write (edit or create). 409 → FileConflictError. Throws on other non-ok. */
+export async function writeFile(path: string, content: string, cwd?: string, opts: { expectMtimeMs?: number; force?: boolean } = {}): Promise<WriteFileResult> {
+  const qs = new URLSearchParams()
+  if (cwd) qs.set('cwd', cwd)
+  const body = JSON.stringify({ path, content, expectMtimeMs: opts.expectMtimeMs, force: opts.force })
+  const r = await fetch('/api/files/content' + (qs.toString() ? '?' + qs.toString() : ''), {
+    method: 'PUT', credentials: 'same-origin', headers: JSON_HEADERS, body,
+  })
+  if (r.status === 409) throw new FileConflictError()
+  if (!r.ok) throw new Error('write file failed: ' + r.status)
+  return (await r.json()) as WriteFileResult
+}
+
+/** DELETE /api/files/content?path=…&cwd=… — delete a file. */
+export async function deleteFile(path: string, cwd?: string): Promise<void> {
+  const qs = new URLSearchParams({ path })
+  if (cwd) qs.set('cwd', cwd)
+  await request('/api/files/content?' + qs.toString(), { method: 'DELETE' }, 'delete file')
+}
+
+/** URL for the raw byte endpoint — used as <img>/<iframe> src and download href (same-origin, cookie sent). */
+export function rawFileUrl(path: string, cwd?: string): string {
+  const qs = new URLSearchParams({ path })
+  if (cwd) qs.set('cwd', cwd)
+  return '/api/files/raw?' + qs.toString()
 }
 
 /** GET /api/dirs?path=<abs> → subdir navigation for the cwd picker (S3). Throws on non-ok. */
