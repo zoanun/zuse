@@ -1,7 +1,7 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import { join, normalize, extname } from 'node:path'
+import { join, normalize, extname, basename } from 'node:path'
 import { VERSION } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
@@ -13,7 +13,7 @@ import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
-import { FileService, PathOutsideRootError, FileChangedError } from '../file/FileService.js'
+import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } from '../file/FileService.js'
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
@@ -476,6 +476,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     const sendFileError = (e: unknown): void => {
       if (e instanceof PathOutsideRootError) return sendJson(res, 403, { error: { code: 'forbidden', message: e.message } })
       if (e instanceof FileChangedError) return sendJson(res, 409, { error: { code: 'conflict', message: e.message } })
+      if (e instanceof FileExistsError) return sendJson(res, 409, { error: { code: 'exists', message: e.message } })
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
       return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
     }
@@ -518,9 +519,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
           await fileSvc.remove(p)
           return sendJson(res, 200, { ok: true })
         }
-        const body = (await readJsonBody(req)) as { path?: string; content?: string; expectMtimeMs?: number; force?: boolean }
+        const body = (await readJsonBody(req)) as { path?: string; content?: string; expectMtimeMs?: number; force?: boolean; mustCreate?: boolean }
         if (!body?.path || typeof body.content !== 'string') return sendJson(res, 400, { error: { code: 'bad_request', message: 'path and content required' } })
-        const result = await fileSvc.write(body.path, body.content, { expectMtimeMs: body.expectMtimeMs, force: body.force })
+        const result = await fileSvc.write(body.path, body.content, { expectMtimeMs: body.expectMtimeMs, force: body.force, mustCreate: body.mustCreate })
         return sendJson(res, 200, result)
       } catch (e) {
         return sendFileError(e)
@@ -533,10 +534,19 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       try {
         const p = url.searchParams.get('path')
         if (!p) return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing path' } })
+        // download=1 → attachment (any size): the client's "download" affordance must work even
+        // for files past the inline cap. Inline preview (img/iframe) still honours the cap.
+        const download = url.searchParams.get('download') === '1'
         const info = await fileSvcFor().statFile(p)
-        if (info.size > RAW_CAP) return sendJson(res, 413, { error: { code: 'too_large', message: 'File too large to serve' } })
-        res.writeHead(200, { 'content-type': info.mime, 'content-length': String(info.size) })
-        createReadStream(info.abs).pipe(res)
+        if (!download && info.size > RAW_CAP) return sendJson(res, 413, { error: { code: 'too_large', message: 'File too large to serve' } })
+        const headers: Record<string, string> = { 'content-type': info.mime, 'content-length': String(info.size) }
+        if (download) headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(info.abs))}`
+        res.writeHead(200, headers)
+        const stream = createReadStream(info.abs)
+        // pipe() does NOT forward source errors; without this listener a mid-stream failure (file
+        // deleted/locked after statFile) emits an unhandled 'error' and crashes the whole daemon.
+        stream.on('error', () => { res.destroy() }) // headers already sent — just tear the response down
+        stream.pipe(res)
         return
       } catch (e) {
         return sendFileError(e)

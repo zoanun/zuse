@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { mkdtemp, writeFile, readFile, stat, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { FileService, PathOutsideRootError, FileChangedError } from './FileService.js'
+import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } from './FileService.js'
 
 async function tmpRoot(): Promise<string> { return mkdtemp(join(tmpdir(), 'i3-')) }
 
@@ -112,6 +112,21 @@ describe('FileService.write', () => {
     const cur = (await stat(join(root, 'a.txt'))).mtimeMs
     await svc.write('a.txt', 'two', { expectMtimeMs: cur })
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('two')
+  })
+
+  it('mustCreate refuses to overwrite an existing file (no truncation)', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('keep.txt', 'precious')
+    await expect(svc.write('keep.txt', '', { mustCreate: true })).rejects.toBeInstanceOf(FileExistsError)
+    expect(await readFile(join(root, 'keep.txt'), 'utf8')).toBe('precious') // untouched
+  })
+
+  it('mustCreate makes missing parent directories', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('docs/notes/todo.md', '# todo', { mustCreate: true })
+    expect(await readFile(join(root, 'docs/notes/todo.md'), 'utf8')).toBe('# todo')
   })
 })
 

@@ -1,6 +1,6 @@
-import { readdir, stat, open, writeFile, unlink } from 'node:fs/promises'
+import { readdir, stat, open, writeFile, unlink, mkdir } from 'node:fs/promises'
 import type { Stats } from 'node:fs'
-import { resolve, relative, join, sep, isAbsolute, extname } from 'node:path'
+import { resolve, relative, join, sep, isAbsolute, extname, dirname } from 'node:path'
 import type { DirListing, FileEntry, FilePreview, WriteFileResult } from '@zuse/protocol'
 
 /** Files larger than this are truncated for preview (256 KiB). */
@@ -29,6 +29,13 @@ export class FileChangedError extends Error {
   constructor() {
     super('file changed on disk since it was loaded')
     this.name = 'FileChangedError'
+  }
+}
+
+export class FileExistsError extends Error {
+  constructor() {
+    super('file already exists')
+    this.name = 'FileExistsError'
   }
 }
 
@@ -120,14 +127,22 @@ export class FileService {
     }
   }
 
-  /** Write a file (edit or create). Optional mtime guard rejects a stale overwrite unless forced. */
-  async write(relPath: string, content: string, opts: { expectMtimeMs?: number; force?: boolean } = {}): Promise<WriteFileResult> {
+  /**
+   * Write a file. `mustCreate` is exclusive-create: it refuses to overwrite an existing file
+   * (throws FileExistsError) and makes any missing parent directories first — this is the create
+   * path, so a typo naming an existing file can't silently truncate it. Otherwise it's an edit:
+   * the optional mtime guard rejects a stale overwrite unless `force`.
+   */
+  async write(relPath: string, content: string, opts: { expectMtimeMs?: number; force?: boolean; mustCreate?: boolean } = {}): Promise<WriteFileResult> {
     const abs = this.resolveInRoot(relPath)
     // Refuse to clobber a directory. stat may throw ENOENT for a new file — that's fine (create).
-    let existing: Awaited<ReturnType<typeof stat>> | null = null
+    let existing: Stats | null = null
     try { existing = await stat(abs) } catch { existing = null }
     if (existing?.isDirectory()) throw new Error('path is a directory')
-    if (opts.expectMtimeMs != null && !opts.force && existing && existing.mtimeMs !== opts.expectMtimeMs) {
+    if (opts.mustCreate) {
+      if (existing) throw new FileExistsError()
+      await mkdir(dirname(abs), { recursive: true }) // create-under-new-dir shouldn't 404
+    } else if (opts.expectMtimeMs != null && !opts.force && existing && existing.mtimeMs !== opts.expectMtimeMs) {
       throw new FileChangedError()
     }
     await writeFile(abs, content, 'utf8')
@@ -170,23 +185,22 @@ export class FileService {
     const walk = async (absDir: string): Promise<void> => {
       let dirents
       try { dirents = await readdir(absDir, { withFileTypes: true }) } catch { return } // unreadable → skip
+      const subdirs: string[] = []
       for (const d of dirents) {
+        const abs = join(absDir, d.name)
         if (d.isDirectory()) {
           if (d.name === 'node_modules' || d.name === '.git') continue
           const score = match(d.name) // directories are searchable too
-          if (score >= 0) {
-            const abs = join(absDir, d.name)
-            scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'dir' }, score })
-          }
-          await walk(join(absDir, d.name))
+          if (score >= 0) scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'dir' }, score })
+          subdirs.push(abs)
         } else if (d.isFile()) {
           const score = match(d.name)
-          if (score >= 0) {
-            const abs = join(absDir, d.name)
-            scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'file' }, score })
-          }
+          if (score >= 0) scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'file' }, score })
         }
       }
+      // Recurse into sibling subdirs concurrently — the old serial await made every keystroke an
+      // N-round-trip walk of the whole tree.
+      await Promise.all(subdirs.map((sub) => walk(sub)))
     }
     await walk(this.root)
     scored.sort((a, b) => a.score - b.score || a.entry.path.length - b.entry.path.length || a.entry.path.localeCompare(b.entry.path))
