@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 import { classify } from './fileView.js'
-
-// Terminal-captured files (e.g. .zuse/tool-output/*) embed ANSI escape codes; strip them so the
-// preview reads as plain text instead of `␛[1m␛[36m…` noise. Matches CSI sequences (SGR colors,
-// cursor moves). The server still returns raw bytes — this is a display-only clean-up.
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g
-export function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '')
-}
+import { CodeEditor } from './CodeEditor.js'
+import { FileConflictError } from '../state/manageApi.js'
 
 interface Props {
   active: boolean
@@ -35,6 +28,11 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [view, setView] = useState<'text' | 'image' | 'pdf' | 'other'>('text')
+  const [buffer, setBuffer] = useState('')        // editor content
+  const [baseMtime, setBaseMtime] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [conflict, setConflict] = useState(false) // a 409 awaiting overwrite confirm
+  const dirty = preview != null && !preview.binary && !preview.truncated && buffer !== preview.content
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
@@ -75,12 +73,26 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     if (v !== 'text') { setPreviewLoading(false); return } // image/pdf/other render from rawUrl, no content fetch
     setPreviewLoading(true)
     try {
-      setPreview(await loadFile(path))
+      const p = await loadFile(path)
+      setPreview(p); setBuffer(p.content); setBaseMtime(p.mtimeMs); setConflict(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setPreviewLoading(false)
     }
+  }
+
+  const doSave = async (force = false) => {
+    if (!selected) return
+    setSaving(true); setError(null)
+    try {
+      const r = await writeFile(selected, buffer, force ? { force: true } : { expectMtimeMs: baseMtime ?? undefined })
+      setBaseMtime(r.mtimeMs); setConflict(false)
+      setPreview((prev) => (prev ? { ...prev, content: buffer, mtimeMs: r.mtimeMs } : prev)) // clear dirty
+    } catch (e) {
+      if (e instanceof FileConflictError) setConflict(true)
+      else setError(e instanceof Error ? e.message : String(e))
+    } finally { setSaving(false) }
   }
 
   // Flatten the visible tree to indented rows (depth-first, only expanded dirs descend).
@@ -129,7 +141,16 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
             preview.binary || preview.truncated ? (
               <div className="file-cannot">{preview.binary ? '二进制文件，无法展示。' : '文件过大，无法编辑。'} <a href={rawUrl(selected)} download>下载</a></div>
             ) : (
-              <pre className="file-preview-body">{stripAnsi(preview.content)}</pre>
+              <div className="file-editor">
+                <div className="file-editbar">
+                  <button className={'file-save' + (dirty ? ' dirty' : '')} disabled={!dirty || saving} onClick={() => void doSave()}>保存</button>
+                  {conflict ? (
+                    <span className="file-conflict">文件已在磁盘变更。<button onClick={() => void doSave(true)}>覆盖</button></span>
+                  ) : null}
+                  {error ? <span className="file-cannot">{error}</span> : null}
+                </div>
+                <CodeEditor path={selected} value={buffer} onChange={setBuffer} onSave={() => void doSave()} />
+              </div>
             )
           ) : null}
         </div>

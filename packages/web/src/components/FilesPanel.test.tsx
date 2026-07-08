@@ -1,7 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { DirListing, FilePreview } from '@zuse/protocol'
-import { FilesPanel, stripAnsi } from './FilesPanel.js'
+import { FilesPanel } from './FilesPanel.js'
+import { FileConflictError } from '../state/manageApi.js'
+
+// CodeMirror can't render in jsdom — mock the editor to a plain textarea that drives onChange/onSave.
+vi.mock('./CodeEditor.js', () => ({
+  CodeEditor: ({ value, onChange, onSave }: { value: string; onChange: (v: string) => void; onSave: () => void }) => (
+    <textarea aria-label="editor" value={value} onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); onSave() } }} />
+  ),
+}))
 
 const root: DirListing = {
   path: '',
@@ -40,21 +49,7 @@ const defaultWrite = vi.fn(async (path: string) => ({ path, size: 1, mtimeMs: 2 
 const defaultDelete = vi.fn(async () => {})
 const defaultRawUrl = (path: string) => '/raw/' + path
 
-describe('stripAnsi', () => {
-  it('removes ANSI color/CSI escape codes, keeps the text', () => {
-    expect(stripAnsi('\x1b[1m\x1b[36m RUN \x1b[39m\x1b[22mv2.1.9')).toBe(' RUN v2.1.9')
-    expect(stripAnsi('plain text')).toBe('plain text')
-  })
-})
-
 describe('FilesPanel', () => {
-  it('strips ANSI codes from the preview body', async () => {
-    const loadFile = vi.fn(async (path: string) => ({ path, content: '\x1b[32m✓\x1b[39m passed', truncated: false, binary: false, size: 9 }))
-    setup({ loadFile })
-    fireEvent.click(await screen.findByText('readme.md'))
-    expect(await screen.findByText('✓ passed')).toBeInTheDocument()
-  })
-
   it('loads and shows the root tree when active', async () => {
     const loadDir = vi.fn(async () => root)
     setup({ loadDir })
@@ -77,12 +72,47 @@ describe('FilesPanel', () => {
     expect(await screen.findByText('a.ts')).toBeInTheDocument()
   })
 
-  it('clicking a file fetches and shows its preview', async () => {
-    const loadFile = vi.fn(async (path: string) => ({ path, content: 'export const a = 1', truncated: false, binary: false, size: 18 }))
+  it('clicking a text file loads it into the editor', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'export const a = 1', truncated: false, binary: false, size: 18, mtimeMs: 1 }))
     setup({ loadFile })
     fireEvent.click(await screen.findByText('readme.md'))
     await waitFor(() => expect(loadFile).toHaveBeenCalledWith('readme.md'))
-    expect(await screen.findByText('export const a = 1')).toBeInTheDocument()
+    expect((await screen.findByLabelText('editor') as HTMLTextAreaElement).value).toBe('export const a = 1')
+  })
+
+  it('edits text in the editor and saves via writeFile (clears dirty)', async () => {
+    const writeFile = vi.fn(async (path: string) => ({ path, size: 3, mtimeMs: 99 }))
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'old', truncated: false, binary: false, size: 3, mtimeMs: 5 }))
+    setup({ loadFile, writeFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    const ta = await screen.findByLabelText('editor')
+    fireEvent.change(ta, { target: { value: 'new' } })
+    fireEvent.click(screen.getByText('保存'))
+    await waitFor(() => expect(writeFile).toHaveBeenCalledWith('readme.md', 'new', { expectMtimeMs: 5 }))
+  })
+
+  it('Ctrl+S saves', async () => {
+    const writeFile = vi.fn(async (path: string) => ({ path, size: 1, mtimeMs: 7 }))
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 5 }))
+    setup({ loadFile, writeFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    const ta = await screen.findByLabelText('editor')
+    fireEvent.change(ta, { target: { value: 'y' } })
+    fireEvent.keyDown(ta, { key: 's', ctrlKey: true })
+    await waitFor(() => expect(writeFile).toHaveBeenCalled())
+  })
+
+  it('on a 409 conflict, confirming overwrite re-saves with force', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 5 }))
+    const writeFile = vi.fn()
+      .mockRejectedValueOnce(new FileConflictError())
+      .mockResolvedValueOnce({ path: 'readme.md', size: 1, mtimeMs: 9 })
+    setup({ loadFile, writeFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    fireEvent.change(await screen.findByLabelText('editor'), { target: { value: 'y' } })
+    fireEvent.click(screen.getByText('保存'))
+    fireEvent.click(await screen.findByText('覆盖'))
+    await waitFor(() => expect(writeFile).toHaveBeenLastCalledWith('readme.md', 'y', { force: true }))
   })
 
   it('shows a binary-file notice instead of content', async () => {
