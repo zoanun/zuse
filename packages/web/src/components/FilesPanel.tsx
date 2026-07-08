@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 import { classify } from './fileView.js'
-import { CodeEditor } from './CodeEditor.js'
 import { FileConflictError } from '../state/manageApi.js'
+
+// Lazy: CodeMirror + its language packs are ~1MB minified — splitting them out keeps the main
+// bundle lean; the chunk loads the first time a text file is opened in the Files panel.
+const CodeEditor = lazy(() => import('./CodeEditor.js').then((m) => ({ default: m.CodeEditor })))
 
 interface Props {
   active: boolean
@@ -199,7 +202,9 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
                   ) : null}
                   {error ? <span className="file-cannot">{error}</span> : null}
                 </div>
-                <CodeEditor path={selected} value={buffer} onChange={setBuffer} onSave={() => void doSave()} />
+                <Suspense fallback={<div className="mem-empty">加载编辑器…</div>}>
+                  <CodeEditor path={selected} value={buffer} onChange={setBuffer} onSave={() => void doSave()} />
+                </Suspense>
               </div>
             )
           ) : null}
