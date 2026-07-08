@@ -384,8 +384,13 @@ button.head:hover .caret { opacity: 1; }
 .file-preview-head { font: 11px/1.4 var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 6px; }
 .file-preview-body { margin: 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
 .file-actions { display: flex; gap: 8px; align-items: center; padding: 0 0 10px; }
-.file-search { flex: 1; min-width: 120px; font-size: 13.5px; padding: 8px 12px; border-radius: 10px; }
-.file-hit-path { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; font: 400 11px/1.4 var(--mono); color: var(--faint); }
+.file-search-wrap { position: relative; flex: 1; min-width: 120px; display: flex; align-items: center; }
+.file-search-icon { position: absolute; left: 11px; width: 14px; height: 14px; color: var(--faint); pointer-events: none; }
+.file-search { width: 100%; font-size: 13.5px; padding: 8px 12px 8px 32px; border-radius: 10px; }
+.file-row-static { cursor: default; }
+.file-row-static:hover { background: transparent; }
+.file-row.dim { opacity: 0.55; }
+.file-search-hint { font: 400 11px/1.5 var(--mono); color: var(--faint); padding: 4px 4px 8px; }
 .file-new-btn { flex: none; padding: 8px 12px; font-size: 13px; } /* default accent button, sized like .mem-new */
 .file-newrow { display: flex; gap: 6px; align-items: center; }
 .file-new-ok, .file-new-cancel { font-size: 12px; padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); cursor: pointer; }
@@ -409,6 +414,15 @@ button.head:hover .caret { opacity: 1; }
 .file-frame { width: 100%; height: 60vh; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
 .code-editor { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-height: 60vh; }
 .code-editor .cm-editor { max-height: 60vh; }
+/* CodeMirror find/replace panel: keep its native layout; only center the option checkboxes with
+   their label text (they sit on the text baseline by default) and keep the buttons neutral —
+   the app-wide accent `button` rule must not bleed into the panel. */
+.code-editor .cm-search label { display: inline-flex; align-items: center; gap: 4px; }
+.code-editor .cm-search input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+.code-editor .cm-search button.cm-button { background-color: transparent; color: var(--text); font-weight: 500; }
+/* One shared middle line for every control in the row — labels otherwise ride the line top,
+   visibly higher than the buttons beside them. */
+.code-editor .cm-search input, .code-editor .cm-search button, .code-editor .cm-search label { vertical-align: middle; }
 .mem-error { background: var(--surface-2); border: 1px solid var(--bad); color: var(--bad); font-size: 12.5px; padding: 8px 11px; border-radius: 10px; margin-bottom: 10px; }
 .mem-empty { color: var(--faint); font-size: 13.5px; padding: 12px 2px; }
 .mem-group { margin-bottom: 16px; }

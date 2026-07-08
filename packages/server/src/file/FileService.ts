@@ -166,6 +166,11 @@ export class FileService {
       for (const d of dirents) {
         if (d.isDirectory()) {
           if (d.name === 'node_modules' || d.name === '.git') continue
+          const score = match(d.name.toLowerCase()) // directories are searchable too
+          if (score >= 0) {
+            const abs = join(absDir, d.name)
+            scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'dir' }, score })
+          }
           await walk(join(absDir, d.name))
         } else if (d.isFile()) {
           const score = match(d.name.toLowerCase())

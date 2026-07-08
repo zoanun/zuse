@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
-import { classify } from './fileView.js'
+import { classify, buildFilterTree, type FilterNode } from './fileView.js'
 import { FolderIcon, FileIcon } from './icons.js'
 import { FileConflictError } from '../state/manageApi.js'
 import { useDebounced } from './MemoryPanel.js'
@@ -67,16 +67,18 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     }
   }, [active, fetchDir])
 
-  // Run the (debounced) filename search; bump on every run so a stale in-flight response can't
-  // land after the box was cleared or retyped (same seq guard as the sidebar's history search).
+  // Run the filename search; bump the seq on every run so a stale in-flight response can't land
+  // after the box was cleared or retyped (same guard as the sidebar's history search). Called by
+  // the debounced effect below, and directly on Enter (which skips the debounce delay).
   const searchSeq = useRef(0)
-  useEffect(() => {
+  const runSearch = useCallback((q: string) => {
     const seq = ++searchSeq.current
-    if (dq === '') { setHits(null); return }
-    searchFiles(dq)
+    if (q === '') { setHits(null); return }
+    searchFiles(q)
       .then((r) => { if (seq === searchSeq.current) setHits(r) })
       .catch((e) => { if (seq === searchSeq.current) setError(e instanceof Error ? e.message : String(e)) })
-  }, [dq, searchFiles])
+  }, [searchFiles])
+  useEffect(() => { runSearch(dq) }, [dq, runSearch])
 
   const toggleDir = (path: string) => {
     setExpanded((s) => {
@@ -166,16 +168,51 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     })
   }
 
+  // Search mode: render the pruned tree (hits + their ancestor dirs), always expanded. Ancestor
+  // dirs that didn't match themselves are dimmed structure; files stay clickable as usual.
+  const renderFilter = (nodes: FilterNode[], depth: number): React.ReactNode[] =>
+    nodes.flatMap((n) => {
+      const row = (
+        <li key={n.path} className="file-node">
+          {n.type === 'dir' ? (
+            <div className={'file-row file-row-static' + (n.hit ? '' : ' dim')} style={{ paddingLeft: depth * 14 + 8 + 'px' }}>
+              <span className="file-twirl">▾</span>
+              <FolderIcon className="file-ico file-ico-folder" />
+              <span className="file-name">{n.name}</span>
+            </div>
+          ) : (
+            <button
+              className={'file-row' + (selected === n.path ? ' sel' : '')}
+              style={{ paddingLeft: depth * 14 + 8 + 'px' }}
+              onClick={() => void openFile(n.path)}
+            >
+              <span className="file-twirl" />
+              <FileIcon className="file-ico" />
+              <span className="file-name">{n.name}</span>
+            </button>
+          )}
+        </li>
+      )
+      return [row, ...renderFilter(n.children, depth + 1)]
+    })
+
   return (
     <div className="mem-panel">
       {root ? <div className="file-root" title={root}>{root}</div> : null}
       <div className="file-actions">
-        <input
-          className="file-search"
-          placeholder="搜索文件名（支持正则）…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+        <span className="file-search-wrap">
+          <svg className="file-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            className="file-search"
+            placeholder="搜索文件名（支持正则）…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') runSearch(query.trim()) }}
+          />
+        </span>
         {creating ? (
           <span className="file-newrow">
             <input className="session-rename-input" placeholder="相对路径，如 src/new.ts" value={newPath}
@@ -190,17 +227,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
       </div>
       {error ? <div className="mem-error">{error}</div> : null}
       {hits !== null ? (
-        <ul className="file-tree">
-          {hits.length === 0 ? <li className="mem-empty">无匹配文件</li> : hits.map((h) => (
-            <li key={h.path} className="file-node">
-              <button className={'file-row' + (selected === h.path ? ' sel' : '')} onClick={() => void openFile(h.path)}>
-                <FileIcon className="file-ico" />
-                <span className="file-name">{h.name}</span>
-                <span className="file-hit-path">{h.path}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul className="file-tree">
+            {hits.length === 0 ? <li className="mem-empty">无匹配文件</li> : renderFilter(buildFilterTree(hits), 0)}
+          </ul>
+          <div className="file-search-hint">搜索已跳过 node_modules 与 .git</div>
+        </>
       ) : (
         <ul className="file-tree">
           {children.has('') ? renderLevel('', 0) : <li className="mem-empty">加载中…</li>}

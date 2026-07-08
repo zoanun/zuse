@@ -263,3 +263,17 @@ describe('FileService.search — regex queries', () => {
     expect((await svc.search('b.ts')).map((h) => h.path)).toEqual(['b.ts'])
   })
 })
+
+describe('FileService.search — directories', () => {
+  it('matches directory names too, still recursing into them', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await mkdir(join(root, 'src'))
+    await mkdir(join(root, 'src/components'))
+    await svc.write('src/components/a.ts', 'x')
+    const hits = await svc.search('comp')
+    expect(hits).toContainEqual({ name: 'components', path: 'src/components', type: 'dir' })
+    // children of a matched dir are still walked (file match unaffected)
+    expect((await svc.search('a.ts')).map((h) => h.path)).toContain('src/components/a.ts')
+  })
+})

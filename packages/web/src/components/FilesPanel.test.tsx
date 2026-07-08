@@ -45,7 +45,7 @@ function setup(over: {
   render(<FilesPanel {...props} />)
   return props
 }
-const defaultSearch = vi.fn(async (): Promise<{ name: string; path: string; type: 'file' }[]> => [])
+const defaultSearch = vi.fn(async (): Promise<{ name: string; path: string; type: 'file' | 'dir' }[]> => [])
 const defaultLoadDir = vi.fn(async (dir: string): Promise<DirListing> => (dir === 'src' ? srcDir : root))
 const defaultLoadFile = vi.fn(async (path: string): Promise<FilePreview> => ({ path, content: '# hi', truncated: false, binary: false, size: 4, mtimeMs: 1 }))
 const defaultWrite = vi.fn(async (path: string) => ({ path, size: 1, mtimeMs: 2 }))
@@ -193,7 +193,7 @@ describe('FilesPanel', () => {
 })
 
 describe('FilesPanel filename search', () => {
-  it('typing a query shows fuzzy search results instead of the tree', async () => {
+  it('typing a query shows a filtered TREE (hit under its ancestor dirs), not the full tree', async () => {
     const searchFiles = vi.fn(async () => [
       { name: 'FilesPanel.tsx', path: 'src/components/FilesPanel.tsx', type: 'file' as const },
     ])
@@ -201,8 +201,19 @@ describe('FilesPanel filename search', () => {
     fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'fsp' } })
     await waitFor(() => expect(searchFiles).toHaveBeenCalledWith('fsp'))
     expect(await screen.findByText('FilesPanel.tsx')).toBeInTheDocument()
-    expect(screen.getByText('src/components/FilesPanel.tsx')).toBeInTheDocument() // dim path
-    expect(screen.queryByText('readme.md')).not.toBeInTheDocument() // tree hidden
+    expect(screen.getByText('components')).toBeInTheDocument() // ancestor dir shown as structure
+    expect(screen.queryByText('readme.md')).not.toBeInTheDocument() // non-matching pruned
+    expect(screen.getByText(/已跳过 node_modules/)).toBeInTheDocument() // skip hint
+  })
+
+  it('a matched directory renders as a folder row in the filtered tree', async () => {
+    const searchFiles = vi.fn(async () => [
+      { name: 'components', path: 'src/components', type: 'dir' as const },
+    ])
+    setup({ searchFiles })
+    fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'comp' } })
+    expect(await screen.findByText('components')).toBeInTheDocument()
+    expect(screen.getByText('src')).toBeInTheDocument() // its ancestor
   })
 
   it('clicking a search hit opens the file', async () => {
@@ -226,10 +237,11 @@ describe('FilesPanel filename search', () => {
     expect(await screen.findByText('readme.md')).toBeInTheDocument() // tree back
   })
 
-  it('shows an empty notice when nothing matches', async () => {
+  it('shows an empty notice (with the skip hint) when nothing matches', async () => {
     const searchFiles = vi.fn(async () => [])
     setup({ searchFiles })
     fireEvent.change(await screen.findByPlaceholderText('搜索文件名（支持正则）…'), { target: { value: 'zzz' } })
-    expect(await screen.findByText('无匹配文件')).toBeInTheDocument()
+    expect(await screen.findByText(/无匹配文件/)).toBeInTheDocument()
+    expect(screen.getByText(/已跳过 node_modules/)).toBeInTheDocument()
   })
 })
