@@ -4,7 +4,7 @@ import { listMemory, createMemory, updateMemory, deleteMemory, listProjects } fr
 import { listPersonas, createPersona, updatePersona, deletePersona, activatePersona } from '../state/manageApi.js'
 import { listSkills, updateSkill } from '../state/manageApi.js'
 import { getUsage } from '../state/manageApi.js'
-import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl } from '../state/manageApi.js'
+import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, searchFiles } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
@@ -170,6 +170,7 @@ function FilesContainer({ active, cwd }: { active: boolean; cwd?: string }) {
       writeFile={(path, content, opts) => writeFile(path, content, cwd, opts)}
       deleteFile={(path) => deleteFile(path, cwd)}
       rawUrl={(path) => rawFileUrl(path, cwd)}
+      searchFiles={(q) => searchFiles(q, cwd)}
     />
   )
 }
@@ -191,6 +192,10 @@ function McpContainer({ active }: { active: boolean }) {
   return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} onReconnect={m.onReconnect} onReconnectServer={m.onReconnectServer} />
 }
 
+/** Drawer width bounds: never narrower than a usable panel, never the whole screen. */
+const DRAWER_MIN_W = 480
+const DRAWER_DEFAULT_W = 760
+
 export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }: Props) {
   // Close on Escape while open.
   useEffect(() => {
@@ -200,10 +205,30 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
+  // Drag the left edge to resize; the chosen width persists across sessions.
+  const [width, setWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('zuse-drawer-w'))
+    return Number.isFinite(saved) && saved >= DRAWER_MIN_W ? saved : DRAWER_DEFAULT_W
+  })
+  const onResizeStart = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const onMove = (ev: PointerEvent) => {
+      setWidth(Math.min(Math.max(window.innerWidth - ev.clientX, DRAWER_MIN_W), Math.round(window.innerWidth * 0.95)))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      setWidth((w) => { try { localStorage.setItem('zuse-drawer-w', String(Math.round(w))) } catch { /* ignore */ } return w })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   return (
     <div className={'manage-root' + (open ? ' open' : '')} aria-hidden={!open}>
       <div className="manage-backdrop" onClick={onClose} />
-      <aside className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true">
+      <aside className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true" style={{ width }}>
+        <div className="manage-resizer" aria-label="拖拽调整宽度" onPointerDown={onResizeStart} />
         <div className="manage-head">
           <span className="manage-title">管理</span>
           <button className="icon-btn" aria-label="关闭" onClick={onClose}>×</button>

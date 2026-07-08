@@ -154,3 +154,63 @@ describe('FileService.statFile', () => {
     await expect(svc.statFile('../x')).rejects.toBeInstanceOf(PathOutsideRootError)
   })
 })
+
+describe('FileService.search', () => {
+  async function searchRoot(): Promise<FileService> {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'src'))
+    await mkdir(join(root, 'src/components'))
+    await mkdir(join(root, 'node_modules'))
+    await mkdir(join(root, '.git'))
+    const svc = new FileService(root)
+    await svc.write('src/components/FilesPanel.tsx', 'x')
+    await svc.write('src/components/Header.tsx', 'x')
+    await svc.write('src/main.ts', 'x')
+    await svc.write('format.md', 'x')
+    await svc.write('readme.md', 'x')
+    await svc.write('node_modules/filespanel-fake.ts', 'x')
+    await svc.write('.git/filespanel-config', 'x')
+    return svc
+  }
+
+  it('matches by case-insensitive substring and returns files only', async () => {
+    const svc = await searchRoot()
+    const hits = await svc.search('filespanel')
+    expect(hits.map((h) => h.path)).toEqual(['src/components/FilesPanel.tsx'])
+    expect(hits[0]!.type).toBe('file')
+  })
+
+  it('fuzzy subsequence match: "fsp" finds FilesPanel.tsx', async () => {
+    const svc = await searchRoot()
+    const hits = await svc.search('fsp')
+    expect(hits.map((h) => h.path)).toContain('src/components/FilesPanel.tsx')
+  })
+
+  it('ranks prefix matches before substring/subsequence', async () => {
+    const svc = await searchRoot()
+    const hits = await svc.search('ma')
+    // main.ts starts with "ma" (rank 0); format.md merely contains it (rank 1)
+    expect(hits[0]!.path).toBe('src/main.ts')
+    expect(hits.map((h) => h.path)).toContain('format.md')
+  })
+
+  it('skips node_modules and .git at any depth', async () => {
+    const svc = await searchRoot()
+    const hits = await svc.search('filespanel')
+    expect(hits.some((h) => h.path.includes('node_modules') || h.path.includes('.git'))).toBe(false)
+  })
+
+  it('caps results at the limit', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    for (let i = 0; i < 60; i++) await svc.write(`hit-${String(i).padStart(2, '0')}.txt`, 'x')
+    const hits = await svc.search('hit', 50)
+    expect(hits.length).toBe(50)
+  })
+
+  it('returns [] for an empty query', async () => {
+    const svc = await searchRoot()
+    expect(await svc.search('')).toEqual([])
+    expect(await svc.search('   ')).toEqual([])
+  })
+})

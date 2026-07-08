@@ -3,6 +3,7 @@ import type { DirListing, FileEntry, FilePreview } from '@zuse/protocol'
 import { classify } from './fileView.js'
 import { FolderIcon, FileIcon } from './icons.js'
 import { FileConflictError } from '../state/manageApi.js'
+import { useDebounced } from './MemoryPanel.js'
 
 // Lazy: CodeMirror + its language packs are ~1MB minified — splitting them out keeps the main
 // bundle lean; the chunk loads the first time a text file is opened in the Files panel.
@@ -15,6 +16,7 @@ interface Props {
   writeFile: (path: string, content: string, opts?: { expectMtimeMs?: number; force?: boolean }) => Promise<{ path: string; size: number; mtimeMs: number }>
   deleteFile: (path: string) => Promise<void>
   rawUrl: (path: string) => string
+  searchFiles: (q: string) => Promise<FileEntry[]>
 }
 
 /**
@@ -23,7 +25,7 @@ interface Props {
  * image/pdf render straight from the raw-bytes endpoint, everything else gets a download link.
  * All fetching is injected (loadDir/loadFile/…) so the panel is testable without the network.
  */
-export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl }: Props) {
+export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl, searchFiles }: Props) {
   const [children, setChildren] = useState<Map<string, FileEntry[]>>(new Map())
   const [root, setRoot] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -39,6 +41,10 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   const [creating, setCreating] = useState(false)
   const [newPath, setNewPath] = useState('')
   const [delConfirm, setDelConfirm] = useState(false)
+  // Quick-open filename search: a non-empty (debounced) query swaps the tree for a flat hit list.
+  const [query, setQuery] = useState('')
+  const dq = useDebounced(query.trim(), 200)
+  const [hits, setHits] = useState<FileEntry[] | null>(null) // null = not searching
   const dirty = preview != null && !preview.binary && !preview.truncated && buffer !== preview.content
 
   const fetchDir = useCallback(async (dir: string) => {
@@ -60,6 +66,17 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
       void fetchDir('')
     }
   }, [active, fetchDir])
+
+  // Run the (debounced) filename search; bump on every run so a stale in-flight response can't
+  // land after the box was cleared or retyped (same seq guard as the sidebar's history search).
+  const searchSeq = useRef(0)
+  useEffect(() => {
+    const seq = ++searchSeq.current
+    if (dq === '') { setHits(null); return }
+    searchFiles(dq)
+      .then((r) => { if (seq === searchSeq.current) setHits(r) })
+      .catch((e) => { if (seq === searchSeq.current) setError(e instanceof Error ? e.message : String(e)) })
+  }, [dq, searchFiles])
 
   const toggleDir = (path: string) => {
     setExpanded((s) => {
@@ -153,6 +170,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
     <div className="mem-panel">
       {root ? <div className="file-root" title={root}>{root}</div> : null}
       <div className="file-actions">
+        <input
+          className="file-search"
+          placeholder="搜索文件名…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         {creating ? (
           <span className="file-newrow">
             <input className="session-rename-input" placeholder="相对路径，如 src/new.ts" value={newPath}
@@ -166,9 +189,23 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
         )}
       </div>
       {error ? <div className="mem-error">{error}</div> : null}
-      <ul className="file-tree">
-        {children.has('') ? renderLevel('', 0) : <li className="mem-empty">加载中…</li>}
-      </ul>
+      {hits !== null ? (
+        <ul className="file-tree">
+          {hits.length === 0 ? <li className="mem-empty">无匹配文件</li> : hits.map((h) => (
+            <li key={h.path} className="file-node">
+              <button className={'file-row' + (selected === h.path ? ' sel' : '')} onClick={() => void openFile(h.path)}>
+                <FileIcon className="file-ico" />
+                <span className="file-name">{h.name}</span>
+                <span className="file-hit-path">{h.path}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ul className="file-tree">
+          {children.has('') ? renderLevel('', 0) : <li className="mem-empty">加载中…</li>}
+        </ul>
+      )}
 
       {selected ? (
         <div className="file-preview">

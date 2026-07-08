@@ -143,4 +143,43 @@ export class FileService {
     if (st.isDirectory()) throw new Error('path is a directory')
     return { abs, size: st.size, mime: mimeForExt(abs) }
   }
+
+  /**
+   * Fuzzy filename search over the whole tree (quick-open style). Case-insensitive; ranks
+   * prefix > substring > subsequence, then shorter paths first. Skips node_modules/.git at any
+   * depth (noise, and node_modules alone would dwarf the project). Results capped at `limit`.
+   */
+  async search(query: string, limit = 50): Promise<FileEntry[]> {
+    const q = query.trim().toLowerCase()
+    if (q === '') return []
+    const scored: { entry: FileEntry; score: number }[] = []
+    const walk = async (absDir: string): Promise<void> => {
+      let dirents
+      try { dirents = await readdir(absDir, { withFileTypes: true }) } catch { return } // unreadable → skip
+      for (const d of dirents) {
+        if (d.isDirectory()) {
+          if (d.name === 'node_modules' || d.name === '.git') continue
+          await walk(join(absDir, d.name))
+        } else if (d.isFile()) {
+          const score = fuzzyScore(d.name.toLowerCase(), q)
+          if (score >= 0) {
+            const abs = join(absDir, d.name)
+            scored.push({ entry: { name: d.name, path: this.toRel(abs), type: 'file' }, score })
+          }
+        }
+      }
+    }
+    await walk(this.root)
+    scored.sort((a, b) => a.score - b.score || a.entry.path.length - b.entry.path.length || a.entry.path.localeCompare(b.entry.path))
+    return scored.slice(0, limit).map((s) => s.entry)
+  }
+}
+
+/** Match rank: 0 = name starts with q, 1 = contains q, 2 = subsequence (chars in order); -1 = no match. */
+function fuzzyScore(name: string, q: string): number {
+  if (name.startsWith(q)) return 0
+  if (name.includes(q)) return 1
+  let i = 0
+  for (const ch of name) { if (ch === q[i]) i++; if (i === q.length) return 2 }
+  return -1
 }

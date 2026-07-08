@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FilePreview, WriteFileResult, DirNav, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo } from '@zuse/protocol'
 import { request } from './session.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -117,6 +117,14 @@ export async function listDir(dir: string, cwd?: string): Promise<DirListing> {
   if (cwd) qs.set('cwd', cwd)
   const r = await request('/api/files?' + qs.toString(), {}, 'list directory')
   return (await r.json()) as DirListing
+}
+
+/** GET /api/files/search?q=<query>[&cwd=<abs>] → fuzzy filename hits (files only, capped). */
+export async function searchFiles(q: string, cwd?: string): Promise<FileEntry[]> {
+  const qs = new URLSearchParams({ q })
+  if (cwd) qs.set('cwd', cwd)
+  const r = await request('/api/files/search?' + qs.toString(), {}, 'search files')
+  return (await r.json()) as FileEntry[]
 }
 
 /** GET /api/files/content?path=<rel>[&cwd=<abs>] → a file preview. Throws on non-ok. */

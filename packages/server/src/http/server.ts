@@ -489,6 +489,18 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       }
     }
 
+    // GET /api/files/search — fuzzy filename search (quick-open), capped server-side. (I3)
+    if (method === 'GET' && path === '/api/files/search') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      try {
+        const cwd = url.searchParams.get('cwd')
+        const fileSvc = cwd ? new FileService(cwd) : deps.file
+        return sendJson(res, 200, await fileSvc.search(url.searchParams.get('q') ?? ''))
+      } catch (e) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
     // PUT /api/files/content — write (edit or create) a file. DELETE — remove a file. (I3)
     if ((method === 'PUT' || method === 'DELETE') && path === '/api/files/content') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
