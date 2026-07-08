@@ -4,6 +4,7 @@ import { classify, buildFilterTree, type FilterNode } from './fileView.js'
 import { FolderIcon, FileIcon } from './icons.js'
 import { FileConflictError } from '../state/manageApi.js'
 import { useDebounced } from './MemoryPanel.js'
+import { ConfirmDialog } from './ConfirmDialog.js'
 
 // Lazy: CodeMirror + its language packs are ~1MB minified — splitting them out keeps the main
 // bundle lean; the chunk loads the first time a text file is opened in the Files panel.
@@ -17,6 +18,8 @@ interface Props {
   deleteFile: (path: string) => Promise<void>
   rawUrl: (path: string) => string
   searchFiles: (q: string) => Promise<FileEntry[]>
+  /** Kept in sync with the editor's dirty state so the drawer can guard tab-switch/close. */
+  dirtyRef?: React.RefObject<boolean>
 }
 
 /**
@@ -25,7 +28,7 @@ interface Props {
  * image/pdf render straight from the raw-bytes endpoint, everything else gets a download link.
  * All fetching is injected (loadDir/loadFile/…) so the panel is testable without the network.
  */
-export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl, searchFiles }: Props) {
+export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, rawUrl, searchFiles, dirtyRef }: Props) {
   const [children, setChildren] = useState<Map<string, FileEntry[]>>(new Map())
   const [root, setRoot] = useState<string>('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -46,6 +49,10 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   const dq = useDebounced(query.trim(), 200)
   const [hits, setHits] = useState<FileEntry[] | null>(null) // null = not searching
   const dirty = preview != null && !preview.binary && !preview.truncated && buffer !== preview.content
+  // Discard-confirm dialog: holds the action to run if the user confirms leaving a dirty editor.
+  const [discardThen, setDiscardThen] = useState<(() => void) | null>(null)
+  // Mirror dirty into the caller's ref so the drawer can guard tab-switch/close too.
+  useEffect(() => { if (dirtyRef) dirtyRef.current = dirty }, [dirty, dirtyRef])
 
   const fetchDir = useCallback(async (dir: string) => {
     try {
@@ -91,7 +98,11 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
   }
 
   const openFile = async (path: string) => {
-    if (dirty && !window.confirm('有未保存的修改，放弃并切换？')) return
+    // Leaving a dirty editor needs an explicit discard — route through the styled dialog.
+    if (dirty) { setDiscardThen(() => () => { void reallyOpen(path) }); return }
+    await reallyOpen(path)
+  }
+  const reallyOpen = async (path: string) => {
     setDelConfirm(false)
     setSelected(path)
     setPreview(null)
@@ -282,6 +293,12 @@ export function FilesPanel({ active, loadDir, loadFile, writeFile, deleteFile, r
           ) : null}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={discardThen !== null}
+        message="有未保存的修改，放弃并切换？"
+        onConfirm={() => { discardThen?.(); setDiscardThen(null) }}
+        onCancel={() => setDiscardThen(null)}
+      />
     </div>
   )
 }

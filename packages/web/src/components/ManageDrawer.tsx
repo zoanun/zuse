@@ -6,6 +6,7 @@ import { listSkills, updateSkill } from '../state/manageApi.js'
 import { getUsage } from '../state/manageApi.js'
 import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, searchFiles } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
+import { ConfirmDialog } from './ConfirmDialog.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
@@ -158,7 +159,7 @@ function UsageContainer({ active }: { active: boolean }) {
   return <UsagePanel stats={data} loading={loading} error={error} />
 }
 
-function FilesContainer({ active, cwd }: { active: boolean; cwd?: string }) {
+function FilesContainer({ active, cwd, dirtyRef }: { active: boolean; cwd?: string; dirtyRef: React.RefObject<boolean> }) {
   // Bind the active session's cwd into the loaders; key by cwd so switching sessions remounts
   // the tree (fresh fetch of the new root) instead of showing the old project's files.
   return (
@@ -171,6 +172,7 @@ function FilesContainer({ active, cwd }: { active: boolean; cwd?: string }) {
       deleteFile={(path) => deleteFile(path, cwd)}
       rawUrl={(path) => rawFileUrl(path, cwd)}
       searchFiles={(q) => searchFiles(q, cwd)}
+      dirtyRef={dirtyRef}
     />
   )
 }
@@ -197,13 +199,27 @@ const DRAWER_MIN_W = 480
 const DRAWER_DEFAULT_W = 760
 
 export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }: Props) {
-  // Close on Escape while open.
+  // The Files editor's unsaved state, mirrored up so tab-switch/close can be guarded — leaving
+  // would silently unmount the editor and drop the edits. When dirty, the action is parked in
+  // `pendingLeave` and a styled confirm decides whether to run it.
+  const filesDirtyRef = useRef(false)
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
+  const guardLeave = useCallback((action: () => void) => {
+    if (filesDirtyRef.current) setPendingLeave(() => action)
+    else action()
+  }, [])
+
+  // Close on Escape while open (an open discard dialog consumes the Esc instead).
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (pendingLeave) { setPendingLeave(null); return }
+      guardLeave(onClose)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, pendingLeave, guardLeave])
 
   // Drag the left edge to resize; the chosen width persists across sessions.
   const [width, setWidth] = useState<number>(() => {
@@ -226,12 +242,12 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
 
   return (
     <div className={'manage-root' + (open ? ' open' : '')} aria-hidden={!open}>
-      <div className="manage-backdrop" onClick={onClose} />
+      <div className="manage-backdrop" onClick={() => guardLeave(onClose)} />
       <aside className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true" style={{ width }}>
         <div className="manage-resizer" aria-label="拖拽调整宽度" onPointerDown={onResizeStart} />
         <div className="manage-head">
           <span className="manage-title">管理</span>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>×</button>
+          <button className="icon-btn" aria-label="关闭" onClick={() => guardLeave(onClose)}>×</button>
         </div>
         <div className="manage-body">
           <nav className="manage-nav">
@@ -240,7 +256,7 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
                 key={n.id}
                 className={'manage-nav-item' + (n.id === activePanel ? ' active' : '')}
                 disabled={!n.enabled}
-                onClick={() => n.enabled && onSelectPanel(n.id)}
+                onClick={() => n.enabled && n.id !== activePanel && guardLeave(() => onSelectPanel(n.id))}
               >
                 {n.label}{!n.enabled ? <span className="manage-soon">即将</span> : null}
               </button>
@@ -258,11 +274,17 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
               : activePanel === 'usage'
               ? <UsageContainer active={open && activePanel === 'usage'} />
               : activePanel === 'files'
-              ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} />
+              ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} dirtyRef={filesDirtyRef} />
               : <div className="mem-empty">敬请期待</div>}
           </div>
         </div>
       </aside>
+      <ConfirmDialog
+        open={pendingLeave !== null}
+        message="有未保存的修改，放弃并离开？"
+        onConfirm={() => { filesDirtyRef.current = false; pendingLeave?.(); setPendingLeave(null) }}
+        onCancel={() => setPendingLeave(null)}
+      />
     </div>
   )
 }

@@ -172,16 +172,41 @@ describe('FilesPanel', () => {
     await waitFor(() => expect(deleteFile).toHaveBeenCalledWith('readme.md'))
   })
 
-  it('warns before leaving a dirty editor for another file', async () => {
+  it('shows the styled discard dialog before leaving a dirty editor; 取消 stays put', async () => {
     const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     setup({ loadFile })
     fireEvent.click(await screen.findByText('readme.md'))
     fireEvent.change(await screen.findByLabelText('editor'), { target: { value: 'dirty!' } })
     fireEvent.click(screen.getByText('src'))          // try to navigate away (expand dir)
     fireEvent.click(await screen.findByText('a.ts'))  // click another file
-    expect(confirmSpy).toHaveBeenCalled()
-    confirmSpy.mockRestore()
+    expect(await screen.findByText(/有未保存的修改/)).toBeInTheDocument() // styled dialog, not window.confirm
+    fireEvent.click(screen.getByText('取消'))
+    expect(loadFile).toHaveBeenCalledTimes(1) // stayed on readme.md — a.ts never loaded
+    expect((screen.getByLabelText('editor') as HTMLTextAreaElement).value).toBe('dirty!')
+  })
+
+  it('confirming the discard dialog switches to the other file', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
+    setup({ loadFile })
+    fireEvent.click(await screen.findByText('readme.md'))
+    fireEvent.change(await screen.findByLabelText('editor'), { target: { value: 'dirty!' } })
+    fireEvent.click(screen.getByText('src'))
+    fireEvent.click(await screen.findByText('a.ts'))
+    fireEvent.click(await screen.findByText('放弃修改'))
+    await waitFor(() => expect(loadFile).toHaveBeenCalledWith('src/a.ts'))
+  })
+
+  it('mirrors dirty state into the provided dirtyRef', async () => {
+    const loadFile = vi.fn(async (path: string) => ({ path, content: 'x', truncated: false, binary: false, size: 1, mtimeMs: 1 }))
+    const dirtyRef = { current: false }
+    const props = {
+      active: true, loadDir: defaultLoadDir, loadFile, writeFile: defaultWrite,
+      deleteFile: defaultDelete, rawUrl: defaultRawUrl, searchFiles: defaultSearch, dirtyRef,
+    }
+    render(<FilesPanel {...props} />)
+    fireEvent.click(await screen.findByText('readme.md'))
+    fireEvent.change(await screen.findByLabelText('editor'), { target: { value: 'dirty!' } })
+    await waitFor(() => expect(dirtyRef.current).toBe(true))
   })
 
   it('shows "cannot display" + download for a truncated/binary text file', async () => {

@@ -393,6 +393,13 @@ button.head:hover .caret { opacity: 1; }
 .file-row-static:hover { background: transparent; }
 .file-row.dim { opacity: 0.55; }
 .file-search-hint { font: 400 11px/1.5 var(--mono); color: var(--faint); padding: 4px 4px 8px; }
+/* App-styled modal confirm (ConfirmDialog) — floats above the drawer. */
+.confirm-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.32); display: flex; align-items: center; justify-content: center; }
+.confirm-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 40px var(--shadow); padding: 20px; width: 340px; max-width: 90vw; }
+.confirm-msg { font-size: 14px; line-height: 1.6; color: var(--text); margin-bottom: 16px; }
+.confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.confirm-actions button { padding: 8px 14px; font-size: 13px; }
+.confirm-danger { background: var(--bad); color: #fff; }
 .file-new-btn { flex: none; padding: 5px 11px; font-size: 12.5px; border-radius: 9px; } /* compact accent button in the header row */
 /* Create-file row: sits above the search row, styled to match it (same input height/radius). */
 .file-newrow { display: flex; gap: 8px; align-items: center; padding: 0 0 10px; }
