@@ -114,3 +114,25 @@ describe('FileService.write', () => {
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('two')
   })
 })
+
+describe('FileService.remove', () => {
+  it('deletes a file', async () => {
+    const root = await tmpRoot()
+    const svc = new FileService(root)
+    await svc.write('gone.txt', 'x')
+    await svc.remove('gone.txt')
+    await expect(stat(join(root, 'gone.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses to delete a directory', async () => {
+    const root = await tmpRoot()
+    await mkdir(join(root, 'dir'))
+    const svc = new FileService(root)
+    await expect(svc.remove('dir')).rejects.toThrow('directory')
+  })
+
+  it('rejects a path escaping the root', async () => {
+    const svc = new FileService(await tmpRoot())
+    await expect(svc.remove('../x')).rejects.toBeInstanceOf(PathOutsideRootError)
+  })
+})

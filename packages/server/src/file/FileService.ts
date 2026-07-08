@@ -117,4 +117,12 @@ export class FileService {
     const st = await stat(abs)
     return { path: this.toRel(abs), size: st.size, mtimeMs: st.mtimeMs }
   }
+
+  /** Delete a file (not a directory). */
+  async remove(relPath: string): Promise<void> {
+    const abs = this.resolveInRoot(relPath)
+    const st = await stat(abs)
+    if (st.isDirectory()) throw new Error('path is a directory')
+    await unlink(abs)
+  }
 }
