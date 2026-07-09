@@ -1189,8 +1189,17 @@ export class SessionManager {
    * client.getModel(), so no extra bookkeeping is needed. No persist — session-scoped.
    */
   switchModel(providerId: string, model: string): void {
-    this.client = this.createClient(getProviderConfig(this.settings, providerId), model)
-    this.currentProviderId = providerId
+    // Rebuild the client, but never let a bad provider/model desync the client's optimistic Header:
+    // on failure keep the old client/provider and surface the error, then ALWAYS emit the
+    // authoritative model-changed (new model on success, unchanged old on failure) so the client's
+    // optimistic value is corrected either way.
+    try {
+      this.client = this.createClient(getProviderConfig(this.settings, providerId), model)
+      this.currentProviderId = providerId
+    } catch (err) {
+      this.emit({ type: 'error', message: `切换模型失败：${err instanceof Error ? err.message : String(err)}` })
+    }
+    this.emit({ type: 'model-changed', model: this.client.getModel(), providerId: this.currentProviderId })
   }
 
   /**

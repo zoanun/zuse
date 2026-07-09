@@ -1422,8 +1422,43 @@ describe('SessionManager switchModel', () => {
       createClient: () => newClient,
     })
     expect(mgr.getState().model).toBe('a')
+    const events: SessionEvent[] = []
+    mgr.subscribe((e) => events.push(e))
     mgr.switchModel('p', 'b')
     expect(mgr.getState().model).toBe('b')
+    // Emits the authoritative model-changed with the NEW model so the client's optimistic value is confirmed.
+    expect(events).toContainEqual({ type: 'model-changed', model: 'b', providerId: 'p' })
+  })
+
+  it('on a failed client rebuild: keeps the old model, does not throw, emits error + old-model correction', () => {
+    const settings = {
+      providers: { p: { protocol: 'anthropic', apiKey: 'k', models: ['a', 'b'] } },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+    const { client } = fakeClient([], 'a')
+    const mgr = new SessionManager({
+      sessionId: 's1',
+      cwd: '/work',
+      client,
+      registry: new ToolRegistry(),
+      settings,
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      providerId: 'p',
+      createClient: () => { throw new Error('provider "bad" is not configured') },
+    })
+    const events: SessionEvent[] = []
+    mgr.subscribe((e) => events.push(e))
+    expect(() => mgr.switchModel('bad', 'x')).not.toThrow()
+    // Old model/provider retained (rebuild failed).
+    expect(mgr.getState().model).toBe('a')
+    expect(mgr.getState().modelProviderId).toBe('p')
+    // An error notice surfaces the failure...
+    expect(events.some((e) => e.type === 'error' && /切换模型失败/.test(e.message))).toBe(true)
+    // ...and the authoritative model-changed carries the UNCHANGED old model so the client's optimistic switch is corrected back.
+    expect(events).toContainEqual({ type: 'model-changed', model: 'a', providerId: 'p' })
   })
 })
 
