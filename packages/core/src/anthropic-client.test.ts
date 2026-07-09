@@ -41,6 +41,24 @@ describe('buildAnthropicRequest cache_control', () => {
     const req = buildAnthropicRequest(messages, { model: 'm', max_tokens: 10 }, tools)
     expect('system' in req).toBe(false)
   })
+
+  it('maps image block → SDK image block (mediaType → media_type)', () => {
+    const withImage: Message[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: 'describe this' },
+        ],
+      },
+    ]
+    const req = buildAnthropicRequest(withImage, { model: 'm', max_tokens: 10 })
+    const msgs = req.messages as unknown as Array<{ content: Array<Record<string, unknown>> }>
+    expect(msgs[0]!.content[0]).toMatchObject({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+    })
+  })
 })
 
 // ——— 瞬时错误自动重试(Phase 11 故障注入,镜像 OpenAIClient 的同名测试组)———

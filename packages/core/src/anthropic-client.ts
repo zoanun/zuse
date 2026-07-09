@@ -27,6 +27,12 @@ export function buildAnthropicRequest(
       if (block.type === 'text') return { type: 'text', text: block.text }
       if (block.type === 'tool_use')
         return { type: 'tool_use', id: block.id, name: block.name, input: block.input }
+      if (block.type === 'image')
+        // 内部 mediaType → SDK 的 media_type（下划线）。
+        return {
+          type: 'image',
+          source: { type: 'base64', media_type: block.source.mediaType as Anthropic.Base64ImageSource['media_type'], data: block.source.data },
+        }
       // tool_result 块
       return {
         type: 'tool_result',

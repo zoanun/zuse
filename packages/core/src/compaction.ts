@@ -152,6 +152,8 @@ function renderBlock(b: Message['content'][number]): string {
     const input = JSON.stringify(b.input ?? {})
     return `[Tool call: ${b.name}(${input.length > TOOL_EXCERPT_CHARS ? input.slice(0, TOOL_EXCERPT_CHARS) + '…' : input})]`
   }
+  // image 块只存在于「发送前临时展开的请求副本」，持久化消息不含它；这里仅为类型穷尽给出占位。
+  if (b.type === 'image') return '[Image]'
   const excerpt =
     b.content.length > TOOL_EXCERPT_CHARS ? b.content.slice(0, TOOL_EXCERPT_CHARS) + '…' : b.content
   return `[Tool result${b.is_error ? ' (error)' : ''}: ${excerpt}]`

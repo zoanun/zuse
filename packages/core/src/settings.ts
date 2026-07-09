@@ -87,6 +87,7 @@ export function findProjectRoot(): string {
 interface RawSettings {
   model?: string
   smallModel?: string
+  imageModel?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string
@@ -156,6 +157,7 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   for (const layer of layers) {
     if (layer.model !== undefined) out.model = layer.model
     if (layer.smallModel !== undefined) out.smallModel = layer.smallModel
+    if (layer.imageModel !== undefined) out.imageModel = layer.imageModel
     if (layer.maxTokens !== undefined) out.maxTokens = layer.maxTokens
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey

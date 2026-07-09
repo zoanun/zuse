@@ -29,6 +29,31 @@ describe('toOpenAIMessages', () => {
     const out = toOpenAIMessages([{ role: 'user', content: [{ type: 'text', text: 'x' }] }], undefined)
     expect(out[0]).toEqual({ role: 'user', content: 'x' })
   })
+
+  it('user message with image → content array (image_url + text)', () => {
+    const messages: Message[] = [
+      {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'AAAA' } },
+          { type: 'text', text: 'what is this' },
+        ],
+      },
+    ]
+    const out = toOpenAIMessages(messages, undefined)
+    expect(out[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'text', text: 'what is this' },
+      ],
+    })
+  })
+
+  it('plain text message still maps to a string (回归)', () => {
+    const out = toOpenAIMessages([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], undefined)
+    expect(out[0]).toEqual({ role: 'user', content: 'hi' })
+  })
 })
 
 describe('toOpenAITools', () => {

@@ -5,6 +5,8 @@ export type ContentBlock =
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   // 把工具的输出作为一个 user 角色的块回喂给模型，用调用 id 关联。
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
+  // 图片块（base64 内联）。仅用于「发送前临时展开的请求副本」，账本/持久化的 Message 绝不含它。
+  | { type: 'image'; source: { type: 'base64'; mediaType: string; data: string } }
 
 // 会话中的一条消息。
 // v1 只产生 'user' / 'assistant'。全局系统提示词通过 API 顶层的 `system`
@@ -23,6 +25,17 @@ export interface Message {
    * at the API boundary but persists in the ledger JSON and travels through compaction/revert.
    */
   steer?: string[]
+  /** 仅账本/持久化引用载体（图片元数据，不含 base64）；回合循环与 client 忽略它。 */
+  attachments?: MessageAttachment[]
+}
+
+/** 附着在一条消息上的图片（与 protocol 的 MessageAttachment 结构对齐；不含 base64）。 */
+export interface MessageAttachment {
+  id: string
+  name: string
+  mediaType: string
+  route?: 'direct' | 'parsed'
+  description?: string
 }
 
 /** 模型调用错误的归类:供编排层决定是否降级。 */
@@ -100,6 +113,8 @@ export interface ModelEntryObject {
   name: string
   /** 该模型的上下文窗口(token),压过 provider 级 contextWindow。 */
   contextWindow?: number
+  /** 该模型是否支持视觉输入。 */
+  vision?: boolean
 }
 
 /** providers.models 的条目:纯字符串(常态),或带模型级覆盖的对象。 */
@@ -116,6 +131,8 @@ export interface RawProviderConfig {
    * DEFAULT_CONTEXT_WINDOW。供自动压缩判定占用比例。
    */
   contextWindow?: number
+  /** 该 provider 下模型是否支持视觉输入（provider 级回退，被模型级 vision 覆盖）。 */
+  vision?: boolean
 }
 
 /** 解析后、可直接交给 client 工厂的完整 provider 配置。 */
@@ -163,6 +180,8 @@ export interface ResolvedSettings {
   model?: string
   /** 小模型(廉价辅助任务,如会话标题生成):`<providerId>/<model>`,缺省则不启用。 */
   smallModel?: string
+  /** 图片解析模型:`<providerId>/<model>`,仅图片解析回退路径用,缺省不启用。 */
+  imageModel?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string

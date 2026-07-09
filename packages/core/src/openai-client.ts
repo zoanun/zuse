@@ -46,6 +46,18 @@ export function toOpenAIMessages(
           function: { name: b.name, arguments: JSON.stringify(b.input) },
         })),
       })
+    } else if (m.role === 'user' && m.content.some((b) => b.type === 'image')) {
+      // 含图片的 user 消息：content 走数组形态，按内容块顺序保留 image_url 与 text 分片。
+      // image 块内部用 mediaType，这里拼成 OpenAI 期望的 data: URL。
+      const parts: OpenAI.Chat.ChatCompletionContentPart[] = []
+      for (const b of m.content) {
+        if (b.type === 'image') {
+          parts.push({ type: 'image_url', image_url: { url: `data:${b.source.mediaType};base64,${b.source.data}` } })
+        } else if (b.type === 'text') {
+          parts.push({ type: 'text', text: b.text })
+        }
+      }
+      out.push({ role: 'user', content: parts })
     } else if (text) {
       // 纯文本消息（user 或 assistant）。只含 tool_result 的 user 消息已在上面处理，跳过空壳。
       out.push({ role: m.role, content: text })
