@@ -36,6 +36,22 @@ function makeFakeWs(opened: string[]) {
   }
 }
 
+// Like makeFakeWs but also captures each instance so a test can drive its onmessage.
+type FakeSocket = { url: string; onmessage: ((e: { data: string }) => void) | null; onclose: (() => void) | null }
+function makeFakeWsCapturing(opened: string[], instances: FakeSocket[]) {
+  return class FakeWS {
+    static OPEN = 1
+    readyState = 1
+    onopen: (() => void) | null = null
+    onclose: (() => void) | null = null
+    onmessage: ((e: { data: string }) => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(public url: string) { opened.push(url); instances.push(this as unknown as FakeSocket) }
+    send() {}
+    close() { this.readyState = 3; this.onclose?.() }
+  }
+}
+
 function mockLocalStorage(initial: Record<string, string> = {}) {
   const store: Record<string, string> = { ...initial }
   const ls = {
@@ -112,6 +128,33 @@ describe('StoreProvider session bootstrap', () => {
     expect(store['zuse.sessionId']).toBe('sess-fresh')
     expect(opened.some((u) => u.includes('session=sess-fresh'))).toBe(true)
     expect(captured!.state.messages).toHaveLength(0) // reset cleared local state
+  })
+
+  it('auto-recovers from session_not_found exactly ONCE, then surfaces the error (no create-loop)', async () => {
+    const opened: string[] = []
+    const instances: FakeSocket[] = []
+    vi.stubGlobal('WebSocket', makeFakeWsCapturing(opened, instances))
+    mockLocalStorage({ 'zuse.sessionId': 'sess-a' })
+    let posts = 0
+    mockFetch(async (url, init) => {
+      if (url === '/api/sessions' && init?.method === 'POST') { posts++; return okJson({ id: 'sess-recovered' }) }
+      if (url === '/api/sessions') return okJson([])
+      return okJson({ id: 'x' })
+    })
+
+    render(<StoreProvider><Consumer /></StoreProvider>)
+    await waitFor(() => expect(opened.some((u) => u.includes('session=sess-a'))).toBe(true))
+
+    const errFrame = JSON.stringify({ type: 'error', code: 'session_not_found', message: 'no session' })
+    // First error → one-shot recovery spins up a fresh session and reconnects to it.
+    await act(async () => { instances[instances.length - 1]!.onmessage?.({ data: errFrame }) })
+    await waitFor(() => expect(posts).toBe(1))
+    await waitFor(() => expect(opened.some((u) => u.includes('session=sess-recovered'))).toBe(true))
+
+    // Second error → NO further create; the red error notice surfaces instead of looping.
+    await act(async () => { instances[instances.length - 1]!.onmessage?.({ data: errFrame }) })
+    await waitFor(() => expect(captured!.state.messages.some((m) => m.role === 'system' && m.noticeKind === 'error')).toBe(true))
+    expect(posts).toBe(1) // still one — the loop is broken
   })
 })
 

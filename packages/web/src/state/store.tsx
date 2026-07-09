@@ -50,7 +50,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const currentIdRef = useRef<string>(currentSessionId)
   currentIdRef.current = currentSessionId
   // Guards the auto-recovery below so a persistent server error can't spin a create/attach loop.
+  // recoveringRef blocks CONCURRENT recovery; recoveredOnceRef makes it ONE-SHOT — after a single
+  // auto-recovery, further session_not_found errors fall through to the normal dispatch (red error),
+  // so a freshly-created session that is ALSO not found can't drive an unbounded create-new loop.
   const recoveringRef = useRef(false)
+  const recoveredOnceRef = useRef(false)
   // Holds the latest newSession so the once-bound onMessage closure (below) can call it. newSession
   // is declared after this effect, so referencing it directly would be a stale/forward binding.
   const newSessionRef = useRef<(cwd?: string) => Promise<void>>(async () => {})
@@ -71,8 +75,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // session the daemon no longer has (an empty session was never persisted, then a restart;
         // or it was deleted). Instead of dead-ending on the red "session unavailable" error, forget
         // it and spin up a fresh session. Guard against a create/attach loop.
-        if (m.type === 'error' && (m.code === 'session_not_found' || /no session|session unavailable/i.test(m.message)) && !recoveringRef.current) {
+        if (m.type === 'error' && (m.code === 'session_not_found' || /no session|session unavailable/i.test(m.message)) && !recoveringRef.current && !recoveredOnceRef.current) {
           recoveringRef.current = true
+          recoveredOnceRef.current = true // one-shot: never auto-recover again (avoids create-loop)
           void (async () => {
             // Reuse newSession (create + attach: setSessionId, reconnect, reset, setCurrentSessionId,
             // refreshSessions) — the full attach semantics, not a partial inline reimplementation.
