@@ -298,7 +298,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'snapshot'; snapshot: SessionSnapshot }
   | { type: 'event'; event: SessionEvent }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; code?: string }
 
 /** 一条命中的高亮片段：命中处前后各截一段，match 为命中原文（保留大小写）。 */
 export interface SearchSnippet {
