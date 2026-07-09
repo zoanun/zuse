@@ -7,13 +7,12 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
   return async (messages) => Promise.all(messages.map(async (m) => {
     const direct = (m.attachments ?? []).filter((a) => a.route === 'direct')
     if (direct.length === 0) return m
-    const blocks: Message['content'] = []
-    for (const a of direct) {
-      try {
-        const { data, mediaType } = await upload.readBase64(a.id)
-        blocks.push({ type: 'image', source: { type: 'base64', mediaType, data } })
-      } catch { /* 读不出就跳过这张，纯文本照发 */ }
-    }
+    // 单消息内多图并行读盘；某张读不出返回 null 被过滤掉（纯文本照发），不影响其它。
+    const blocks = (await Promise.all(direct.map((a) =>
+      upload.readBase64(a.id)
+        .then(({ data, mediaType }): Message['content'][number] => ({ type: 'image', source: { type: 'base64', mediaType, data } }))
+        .catch(() => null),
+    ))).filter((b): b is Message['content'][number] => b !== null)
     return blocks.length ? { ...m, content: [...blocks, ...m.content] } : m
   }))
 }

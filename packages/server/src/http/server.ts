@@ -65,6 +65,19 @@ function sendJson(res: ServerResponse, status: number, obj: unknown): void {
 }
 
 /**
+ * Stream a file to the response with its content-type/length. pipe() does NOT
+ * forward source errors; without this listener a mid-stream failure (file
+ * deleted/locked after stat) emits an unhandled 'error' and crashes the whole
+ * daemon — so on error we just tear the (already-headed) response down.
+ */
+function streamFileTo(res: ServerResponse, abs: string, contentType: string, size: number, extraHeaders?: Record<string, string>): void {
+  res.writeHead(200, { 'content-type': contentType, 'content-length': String(size), ...extraHeaders })
+  const stream = createReadStream(abs)
+  stream.on('error', () => { res.destroy() }) // headers already sent — just tear the response down
+  stream.pipe(res)
+}
+
+/**
  * Run a session-id-scoped mutation: success → 200 {ok:true}; any throw → 400.
  * The handler runs as `void handle()`, so a safeId rejection (malformed id) must
  * be caught here or it becomes an unhandled rejection that hangs the client.
@@ -542,14 +555,10 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         const download = url.searchParams.get('download') === '1'
         const info = await fileSvcFor().statFile(p)
         if (!download && info.size > RAW_CAP) return sendJson(res, 413, { error: { code: 'too_large', message: 'File too large to serve' } })
-        const headers: Record<string, string> = { 'content-type': info.mime, 'content-length': String(info.size) }
-        if (download) headers['content-disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(basename(info.abs))}`
-        res.writeHead(200, headers)
-        const stream = createReadStream(info.abs)
-        // pipe() does NOT forward source errors; without this listener a mid-stream failure (file
-        // deleted/locked after statFile) emits an unhandled 'error' and crashes the whole daemon.
-        stream.on('error', () => { res.destroy() }) // headers already sent — just tear the response down
-        stream.pipe(res)
+        const extra = download
+          ? { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(basename(info.abs))}` }
+          : undefined
+        streamFileTo(res, info.abs, info.mime, info.size, extra)
         return
       } catch (e) {
         return sendFileError(e)
@@ -592,12 +601,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       const id = decodeURIComponent(path.slice('/api/uploads/'.length))
       try {
         const { abs, size, mediaType } = await deps.upload.load(id)
-        res.writeHead(200, { 'content-type': mediaType, 'content-length': String(size) })
-        const stream = createReadStream(abs)
-        // pipe() does NOT forward source errors; without this listener a mid-stream failure would
-        // emit an unhandled 'error' and crash the whole daemon.
-        stream.on('error', () => { res.destroy() }) // headers already sent — just tear the response down
-        stream.pipe(res)
+        streamFileTo(res, abs, mediaType, size)
         return
       } catch (e) {
         if (e instanceof UploadNotFoundError) return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })

@@ -117,10 +117,11 @@ export async function startServer(
   // small/title model — any failure (missing config, bad key) disables the fallback, never crashes.
   let imageClient: ModelClient | undefined
   let imageModel: string | undefined
-  const imageSel = resolveImageModelSelection(loadSettings())
+  const settings = loadSettings()
+  const imageSel = resolveImageModelSelection(settings)
   if (imageSel) {
     try {
-      imageClient = createModelClient(getProviderConfig(loadSettings(), imageSel.providerId), imageSel.model)
+      imageClient = createModelClient(getProviderConfig(settings, imageSel.providerId), imageSel.model)
       imageModel = imageSel.model
     } catch (err) {
       console.warn(`[zuse-server] imageModel 不可用，图片解析兜底将禁用：${err instanceof Error ? err.message : String(err)}`)

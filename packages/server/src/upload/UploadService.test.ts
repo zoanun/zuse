@@ -104,4 +104,14 @@ describe('UploadService (I2)', () => {
   it('load() of a well-formed but absent id rejects (file not found)', async () => {
     await expect(svc.load('00000000-0000-0000-0000-000000000000')).rejects.toThrow()
   })
+
+  it('readBase64() caches by id — a second read does not touch disk again', async () => {
+    const { id } = await svc.save(PNG, 'image/png')
+    const first = await svc.readBase64(id)
+    // Delete the underlying file: a cached hit must still return the same bytes.
+    rmSync(join(dir, `${id}.png`), { force: true })
+    const second = await svc.readBase64(id)
+    expect(second).toEqual(first)
+    expect(second.data).toBe(PNG.toString('base64'))
+  })
 })

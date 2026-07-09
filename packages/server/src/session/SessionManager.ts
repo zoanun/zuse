@@ -298,6 +298,21 @@ export class SessionManager {
     this.emit(e)
   }
 
+  /**
+   * Tear a turn down before runAgent runs (pre-send bail paths in submit()): clear the
+   * thinking/abort state, optionally emit a leading event (e.g. 'aborted'), emit turn-end, then —
+   * unless this is a resend — drain any queued steer as its own follow-up turn. Mirrors the
+   * post-turn finally + idle-drain tail. Callers that must emit BEFORE the state reset (e.g. the
+   * non-vision 'error' bail) emit it themselves and pass preEmit=undefined.
+   */
+  private async endTurnEarly(preEmit: SessionEvent | undefined, isResend: boolean): Promise<void> {
+    this.isThinking = false
+    this.abort = null
+    if (preEmit) this.emit(preEmit)
+    this.emit({ type: 'turn-end' })
+    if (!isResend) await this.drainSteerAsFollowUp()
+  }
+
   /** Test-only seam: seed contextTokens high to exercise the pre-turn auto-compaction trigger. */
   private _setContextTokensForTest(n: number): void {
     this.contextTokens = n
@@ -837,14 +852,10 @@ export class SessionManager {
     // falling into runAgent with an already-aborted signal (which would emit a 'warning', not
     // 'aborted', leaving the web's "正在压缩…" notice stuck). 'aborted' clears that notice.
     if (controller.signal.aborted) {
-      this.isThinking = false
-      this.abort = null
-      this.emit({ type: 'aborted' })
-      this.emit({ type: 'turn-end' })
       // A steer queued DURING that pre-send compaction must not linger in the queue — it would
-      // otherwise fold into a later, unrelated turn (the exact bleed idle-drain prevents). Drain it
-      // as its own follow-up turn, same as the post-turn path.
-      if (!opts?.isResend) await this.drainSteerAsFollowUp()
+      // otherwise fold into a later, unrelated turn (the exact bleed idle-drain prevents).
+      // endTurnEarly drains it as its own follow-up turn, same as the post-turn path.
+      await this.endTurnEarly({ type: 'aborted' }, !!opts?.isResend)
       return
     }
 
@@ -866,24 +877,25 @@ export class SessionManager {
         expandFn = this.expandAttachments
       } else if (!this.imageClient || !this.readImageBase64) {
         // Non-vision main model and no parse fallback wired → cannot handle the image. Refuse to send.
+        // Emit the error BEFORE the state reset (preserves prior ordering), then endTurnEarly tears down.
         this.emit({ type: 'error', message: '当前模型不支持图片，且未配置图片解析模型', category: 'other' })
-        this.isThinking = false
-        this.abort = null
-        this.emit({ type: 'turn-end' })
-        if (!opts?.isResend) await this.drainSteerAsFollowUp()
+        await this.endTurnEarly(undefined, !!opts?.isResend)
         return
       } else {
-        // Describe each image via the auxiliary model. A single image's failure records an error
-        // string as its description (not aborting the others); Stop cancels via the shared signal.
-        const descriptions: string[] = []
-        for (const im of images) {
-          try {
-            const { data, mediaType } = await this.readImageBase64(im.id)
-            descriptions.push(await this.describeImage(data, mediaType, text, controller.signal))
-          } catch {
-            descriptions.push('(图片解析失败)')
-          }
-        }
+        // Describe each image via the auxiliary model, all in parallel (results aligned by index).
+        // A single image's failure records an error string as its description (not aborting the
+        // others); all share the one controller.signal so Stop cancels the whole batch.
+        const descriptions = await Promise.all(images.map((im) =>
+          this.readImageBase64!(im.id)
+            .then(({ data, mediaType }) => this.describeImage(data, mediaType, text, controller.signal))
+            .catch(() => '(图片解析失败)'),
+        ))
+        // DESIGN DEBT: this parsed path bakes descriptions into the user TEXT (and projectMessages
+        // later strips the <uploaded-images> block back out with a regex), which is asymmetric with
+        // the direct path's structured `attachments` mechanism. A future cleanup could let the parsed
+        // path reuse expandAttachments — expanding route:'parsed' into a text block at send time —
+        // so both routes share one attachment pipeline and the bake + strip regex both disappear.
+        // Not changing it this iteration.
         effectiveText =
           `${text}\n\n<uploaded-images>\n` +
           images.map((im, i) => `${i + 1}. ${im.name}：${descriptions[i]}`).join('\n') +

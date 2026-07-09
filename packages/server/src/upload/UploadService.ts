@@ -50,13 +50,11 @@ const CANONICAL: Record<string, { ext: string; mediaType: string }> = {
   'image/webp': { ext: '.webp', mediaType: 'image/webp' },
 }
 
-/** ext (as stored) → canonical mediaType, for reading a file back. */
-const MEDIA_BY_EXT: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-}
+/** ext (as stored) → canonical mediaType, for reading a file back. Derived from CANONICAL so the
+ *  two never drift (dedupe collapses image/jpg + image/jpeg onto the single .jpg → image/jpeg). */
+const MEDIA_BY_EXT: Record<string, string> = Object.fromEntries(
+  Object.values(CANONICAL).map((c) => [c.ext, c.mediaType]),
+)
 
 /**
  * randomUUID's exact shape (8-4-4-4-12 lowercase hex). Anchored so nothing before/after slips in
@@ -75,6 +73,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export class UploadService {
   constructor(private readonly uploadsDir: string) {}
+
+  /**
+   * Bounded base64 cache keyed by (immutable) upload id — the direct-attach hot path re-reads the
+   * same images every turn, and a UUID's bytes never change, so this is safe. Capped at 32 entries;
+   * when full we evict the oldest (Map preserves insertion order → first key is the eldest).
+   */
+  private readonly cache = new Map<string, { data: string; mediaType: string }>()
+  private static readonly CACHE_MAX = 32
 
   /** Absolute path for a validated id + its stored extension. */
   private pathFor(id: string, ext: string): string {
@@ -119,10 +125,19 @@ export class UploadService {
     throw new UploadNotFoundError(id)
   }
 
-  /** Read a stored image back as base64 plus its canonical mediaType. */
+  /** Read a stored image back as base64 plus its canonical mediaType. Cached by id (see {@link cache});
+   *  the id is still validated via load() before any disk touch on a miss. */
   async readBase64(id: string): Promise<{ data: string; mediaType: string }> {
+    const hit = this.cache.get(id)
+    if (hit) return hit
     const { abs, mediaType } = await this.load(id)
     const buf = await readFile(abs)
-    return { data: buf.toString('base64'), mediaType }
+    const entry = { data: buf.toString('base64'), mediaType }
+    if (this.cache.size >= UploadService.CACHE_MAX) {
+      const oldest = this.cache.keys().next().value
+      if (oldest !== undefined) this.cache.delete(oldest)
+    }
+    this.cache.set(id, entry)
+    return entry
   }
 }
