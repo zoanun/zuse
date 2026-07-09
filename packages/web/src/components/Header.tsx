@@ -47,7 +47,8 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
               <ModelPicker
                 current={state.model ?? ''}
                 currentProviderId={state.modelProviderId}
-                onPick={onSwitchModel}
+                onPick={(p, m) => onSwitchModel(p, m, false)}
+                onPersist={(p, m) => onSwitchModel(p, m, true)}
                 onClose={() => setModelOpen(false)}
               />
             </div>

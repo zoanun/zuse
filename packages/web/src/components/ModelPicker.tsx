@@ -18,25 +18,40 @@ function VisionIcon() {
   )
 }
 
-export function ModelPicker({ current, currentProviderId, onPick, onClose }: {
+export function ModelPicker({ current, currentProviderId, onPick, onPersist, onClose }: {
   current: string
   currentProviderId?: string
-  onPick: (providerId: string, model: string, persist: boolean) => void
+  onPick: (providerId: string, model: string) => void
+  onPersist: (providerId: string, model: string) => void
   onClose: () => void
 }) {
   const [options, setOptions] = useState<ModelOption[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [persist, setPersist] = useState(false)
+  const [defaultModel, setDefaultModel] = useState<string | null>(null)
+  // Optimistic: set true the moment the user ticks the box (persist fires immediately).
+  const [savedNow, setSavedNow] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     listModels()
-      .then((r) => { if (!cancelled) setOptions(r.options) })
+      .then((r) => { if (!cancelled) { setOptions(r.options); setDefaultModel(r.defaultModel) } })
       .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)) })
     return () => { cancelled = true }
   }, [])
 
-  const pick = (o: ModelOption) => { onPick(o.providerId, o.model, persist); onClose() }
+  // Picking a row is a TEMPORARY switch (this session only) and closes the popover.
+  const pick = (o: ModelOption) => { onPick(o.providerId, o.model); onClose() }
+
+  // Is the current model already the persisted default? defaultModel is `providerId/model` (or a
+  // bare model name for the flat default provider). Reopen the picker after a temp switch and this
+  // reflects the now-current model — ticking the box then persists exactly that.
+  const currentSpec = currentProviderId ? `${currentProviderId}/${current}` : current
+  const isDefault = savedNow || defaultModel === currentSpec || defaultModel === current
+  const persistCurrent = () => {
+    if (isDefault || !currentProviderId) return
+    onPersist(currentProviderId, current)
+    setSavedNow(true)
+  }
 
   // Group consecutive options by providerId (the endpoint expands them provider-by-provider).
   let lastProvider: string | undefined
@@ -73,9 +88,9 @@ export function ModelPicker({ current, currentProviderId, onPick, onClose }: {
           })}
         </ul>
       ) : null}
-      <label className="model-persist">
-        <input type="checkbox" checked={persist} onChange={(e) => setPersist(e.target.checked)} />
-        永久保存到配置
+      <label className="model-persist" title={currentProviderId ? undefined : '未知当前模型的 provider，无法保存'}>
+        <input type="checkbox" checked={isDefault} disabled={isDefault || !currentProviderId} onChange={persistCurrent} />
+        {isDefault ? `当前模型已是默认（${current}）` : `永久保存当前模型为默认（${current}）`}
       </label>
     </div>
   )
