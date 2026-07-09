@@ -71,11 +71,36 @@ export function resolveVision(
 
 /** Model `type`s that are NOT conversational — zuse has no call path for them, so the model
  *  selector must never offer them as a main model (selecting one would just fail on send). */
-export const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video', 'ocr'])
+const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video', 'ocr'])
 
 /** True if a model entry's `type` marks it non-conversational (image/tts/embedding/…). */
 export function isNonChatModelType(type: string | undefined): boolean {
   return type !== undefined && NON_CHAT_MODEL_TYPES.has(type)
+}
+
+/**
+ * 展开所有 provider 的“可作为主模型”的模型（排除 image/tts/embedding/ocr 等非对话类型），
+ * 每个带 vision 能力。就地读取 entry 的 vision/type + provider 级回退，避免重复遍历
+ * （不再对每个模型另调 resolveVision 而在其内部再遍历该 provider 的 models）。
+ */
+export function listSelectableModels(
+  settings: ResolvedSettings,
+): { providerId: string; model: string; vision: boolean }[] {
+  const out: { providerId: string; model: string; vision: boolean }[] = []
+  for (const [providerId, p] of Object.entries(settings.providers ?? {})) {
+    for (const entry of p.models ?? []) {
+      if (typeof entry === 'string') {
+        out.push({ providerId, model: entry, vision: p.vision ?? false })
+        continue
+      }
+      if (isNonChatModelType(entry.type)) continue
+      // Same semantics as resolveVision, computed in place: explicit flag wins, then the
+      // `type: 'vision'` annotation, then the provider-level fallback.
+      const vision = entry.vision !== undefined ? entry.vision : (entry.type === 'vision' ? true : (p.vision ?? false))
+      out.push({ providerId, model: entry.name, vision })
+    }
+  }
+  return out
 }
 
 /** 占用超过窗口的此比例即触发自动压缩。 */

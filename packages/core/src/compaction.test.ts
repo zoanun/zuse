@@ -15,6 +15,7 @@ import {
   resolveContextWindow,
   resolveVision,
   isNonChatModelType,
+  listSelectableModels,
   DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
 
@@ -265,6 +266,40 @@ describe('isNonChatModelType', () => {
   it('flags image/tts/embedding/… as non-conversational, chat/vision/undefined as conversational', () => {
     for (const t of ['image', 'tts', 'embedding', 'audio', 'rerank', 'video', 'ocr']) expect(isNonChatModelType(t)).toBe(true)
     for (const t of ['chat', 'vision', undefined]) expect(isNonChatModelType(t)).toBe(false)
+  })
+})
+
+describe('listSelectableModels', () => {
+  const settings = (providers: Record<string, unknown>): import('./types.js').ResolvedSettings =>
+    ({
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+      providers,
+    }) as import('./types.js').ResolvedSettings
+
+  it('excludes non-chat types (ocr/image/tts), keeps chat/vision/no-type', () => {
+    const s = settings({
+      p: { models: ['bare', { name: 'c', type: 'chat' }, { name: 'v', type: 'vision' }, { name: 'i', type: 'image' }, { name: 'o', type: 'ocr' }, { name: 't', type: 'tts' }] },
+    })
+    expect(listSelectableModels(s).map((o) => o.model)).toEqual(['bare', 'c', 'v'])
+  })
+
+  it('computes vision: type:vision, explicit vision:true, and provider-level fallback', () => {
+    const s = settings({
+      p: { vision: true, models: ['bare', { name: 'novis', vision: false }, { name: 'typ', type: 'vision' }, { name: 'exp', vision: true }] },
+      q: { models: [{ name: 'chatq', type: 'chat' }] },
+    })
+    expect(listSelectableModels(s)).toEqual([
+      { providerId: 'p', model: 'bare', vision: true },   // string entry → provider-level fallback
+      { providerId: 'p', model: 'novis', vision: false }, // explicit vision:false wins over provider true
+      { providerId: 'p', model: 'typ', vision: true },    // type:'vision'
+      { providerId: 'p', model: 'exp', vision: true },    // explicit vision:true
+      { providerId: 'q', model: 'chatq', vision: false }, // no provider vision → false
+    ])
+  })
+
+  it('returns [] when no providers are configured', () => {
+    expect(listSelectableModels(settings({}))).toEqual([])
   })
 })
 
