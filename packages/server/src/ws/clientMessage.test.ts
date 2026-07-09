@@ -33,7 +33,16 @@ describe('applyClientMessage', () => {
     const mgr = fakeMgr()
     const err = vi.fn()
     applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi' }), err)
-    expect(mgr.submit).toHaveBeenCalledWith('hi')
+    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined)
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('passes image refs from a send frame through to submit', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    const images = [{ id: 'a', name: 'x.png', mediaType: 'image/png' }]
+    applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi', images }), err)
+    expect(mgr.submit).toHaveBeenCalledWith('hi', images)
     expect(err).not.toHaveBeenCalled()
   })
 

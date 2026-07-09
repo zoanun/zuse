@@ -34,7 +34,7 @@ export function applyClientMessage(
     switch (msg.type) {
       case 'send':
         if (typeof msg.text !== 'string') { sendError('send: "text" must be a string'); return }
-        mgr.submit(msg.text).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        mgr.submit(msg.text, msg.images).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'interrupt':
         mgr.interrupt()
