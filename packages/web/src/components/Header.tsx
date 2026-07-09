@@ -18,9 +18,14 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
   const modelBtnRef = useRef<HTMLButtonElement>(null)
   const [modelPos, setModelPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
   const openModelPicker = () => {
-    const r = modelBtnRef.current?.getBoundingClientRect()
-    if (r) setModelPos({ top: r.bottom + 4, left: r.left })
-    setModelOpen((o) => !o)
+    setModelOpen((o) => {
+      // Only measure the anchor on the closed→open transition; the closing click needn't recompute.
+      if (!o) {
+        const r = modelBtnRef.current?.getBoundingClientRect()
+        if (r) setModelPos({ top: r.bottom + 4, left: r.left })
+      }
+      return !o
+    })
   }
   const ctx = state.contextTokens
   const win = state.contextWindow

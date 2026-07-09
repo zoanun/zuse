@@ -51,6 +51,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   currentIdRef.current = currentSessionId
   // Guards the auto-recovery below so a persistent server error can't spin a create/attach loop.
   const recoveringRef = useRef(false)
+  // Holds the latest newSession so the once-bound onMessage closure (below) can call it. newSession
+  // is declared after this effect, so referencing it directly would be a stale/forward binding.
+  const newSessionRef = useRef<(cwd?: string) => Promise<void>>(async () => {})
 
   const refreshSessions = async (): Promise<void> => {
     // Ignore a malformed (non-array) response rather than corrupting `sessions` into a
@@ -68,16 +71,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // session the daemon no longer has (an empty session was never persisted, then a restart;
         // or it was deleted). Instead of dead-ending on the red "session unavailable" error, forget
         // it and spin up a fresh session. Guard against a create/attach loop.
-        if (m.type === 'error' && /no session|session unavailable/i.test(m.message) && !recoveringRef.current) {
+        if (m.type === 'error' && (m.code === 'session_not_found' || /no session|session unavailable/i.test(m.message)) && !recoveringRef.current) {
           recoveringRef.current = true
           void (async () => {
-            try {
-              const nid = await createSession()
-              setSessionId(nid)
-              setCurrentSessionId(nid)
-              clientRef.current?.reconnect(wsUrl(nid))
-              void refreshSessions()
-            } catch { /* leave the error visible if even creating a session fails */ }
+            // Reuse newSession (create + attach: setSessionId, reconnect, reset, setCurrentSessionId,
+            // refreshSessions) — the full attach semantics, not a partial inline reimplementation.
+            try { await newSessionRef.current() } catch { /* leave the error visible if even creating a session fails */ }
             finally { recoveringRef.current = false }
           })()
           return
@@ -135,6 +134,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const newSession = async (cwd?: string): Promise<void> => {
     attachTo(await createSession(cwd))
   }
+  // Keep the recovery closure (bound once in the mount effect) pointed at the current newSession.
+  newSessionRef.current = newSession
 
   /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgIndex ↔ 快照消息 id 'h'+i。
    *  同会话不 attachTo:重连会 reset+重拉快照,把一次性 flash 冲掉(且当前会话消息已在)。

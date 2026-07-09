@@ -54,7 +54,6 @@ export function ModelPicker({ current, currentProviderId, onPick, onPersist, onC
   }
 
   // Group consecutive options by providerId (the endpoint expands them provider-by-provider).
-  let lastProvider: string | undefined
   return (
     <div className="model-pop" role="dialog" aria-label="切换模型">
       <div className="model-pop-head">切换模型</div>
@@ -64,7 +63,7 @@ export function ModelPicker({ current, currentProviderId, onPick, onPersist, onC
       {options && options.length > 0 ? (
         <ul className="model-list">
           {options.map((o, i) => {
-            const header = o.providerId !== lastProvider ? (lastProvider = o.providerId, o.providerId) : null
+            const header = o.providerId !== options[i - 1]?.providerId ? o.providerId : null
             // Match by provider+model when the active provider is known, so two same-named models
             // under different providers don't both light up; fall back to name-only if it's absent.
             const isCurrent = o.model === current && (currentProviderId == null || o.providerId === currentProviderId)
