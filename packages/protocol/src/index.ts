@@ -252,6 +252,10 @@ export type SessionEvent =
   | { type: 'compaction-start'; keep: number }
   | { type: 'compaction-done'; summaryText: string }
   | { type: 'failover'; fromModel: string; toModel: string; reason: string }
+  // Authoritative model truth after a switch-model: the server emits this with the model actually
+  // in effect (new on success, unchanged old on a failed rebuild) so the client's optimistic Header
+  // value is corrected. Distinct from the reducer's local `kind:'model-changed'` optimistic action.
+  | { type: 'model-changed'; model: string; providerId: string }
   | { type: 'checkpoint-recorded'; id: string; messageIndex: number; label: string }
   | { type: 'memory-notice'; text: string }
   | { type: 'todos-update'; todos: TodoItemLite[] }
