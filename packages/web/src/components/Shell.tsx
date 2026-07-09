@@ -134,7 +134,7 @@ export function Shell() {
   const onSwitchModel = (providerId: string, model: string, persist: boolean) => {
     send({ type: 'switch-model', providerId, model })
     dispatch({ kind: 'model-changed', model, providerId })
-    if (persist) void persistModel(providerId, model)
+    if (persist) persistModel(providerId, model).catch(() => dispatch({ kind: 'notice', text: '永久保存默认模型失败', noticeKind: 'error' }))
   }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
