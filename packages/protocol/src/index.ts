@@ -26,6 +26,26 @@ export interface SnapshotMessage {
   /** 该快照消息对应的账本索引。投影可能插入额外的 steer 气泡，使快照数组下标 != 账本下标；
    *  历史搜索跳转按此字段而非数组位置定位，避免 steer 之后的命中错位。 */
   ledgerIndex?: number
+  /** 附着在本条消息上的图片（快照投影用；不含 base64）。 */
+  attachments?: MessageAttachment[]
+}
+
+/** 一次上传后的图片引用（客户端持有、随 send 上行）。 */
+export interface UploadedImageRef {
+  id: string
+  name: string
+  mediaType: string
+}
+
+/** 附着在一条消息上的图片（快照投影用；不含 base64）。 */
+export interface MessageAttachment {
+  id: string
+  name: string
+  mediaType: string
+  /** 该图走了哪条路：直传主模型 / 经解析模型转述。 */
+  route?: 'direct' | 'parsed'
+  /** 解析路径下模型看到的文字描述（供气泡折叠展示）；直传路径无。 */
+  description?: string
 }
 
 /** 检查点轻量摘要。 */
@@ -262,7 +282,7 @@ export interface SessionSnapshot {
 
 /** 上行 client → server。 */
 export type ClientMessage =
-  | { type: 'send'; text: string }
+  | { type: 'send'; text: string; images?: UploadedImageRef[] }
   | { type: 'interrupt' }
   | { type: 'steer'; text: string }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
