@@ -133,7 +133,7 @@ export function Shell() {
   // reflect it in the Header). `persist` also writes the choice to project settings for new sessions.
   const onSwitchModel = (providerId: string, model: string, persist: boolean) => {
     send({ type: 'switch-model', providerId, model })
-    dispatch({ kind: 'model-changed', model })
+    dispatch({ kind: 'model-changed', model, providerId })
     if (persist) void persistModel(providerId, model)
   }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })

@@ -69,11 +69,12 @@ describe('reduce', () => {
   it('snapshot initialises stats and replaces messages from snapshot', () => {
     const withMsg = reduce(initialState, { kind: 'user-send', id: 'u1', text: 'hi' })
     const s = reduce(withMsg, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'anthropic', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 0,
       messages: [], checkpoints: [],
     } } })
     expect(s.model).toBe('claude')
+    expect(s.modelProviderId).toBe('anthropic')
     expect(s.contextWindow).toBe(1000)
     expect(s.messages).toHaveLength(0)
   })
@@ -92,7 +93,7 @@ describe('reduce', () => {
 
   it('applySnapshot rebuilds messages (checkpoints list ignored on client)', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 2,
       messages: [
         { role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
@@ -120,7 +121,7 @@ describe('reduce', () => {
 
   it('applySnapshot carries attachments onto messages (route/description round-tripped)', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
       messages: [
         { role: 'user', parts: [{ kind: 'text', text: 'what is this' }], attachments: [
@@ -136,7 +137,7 @@ describe('reduce', () => {
 
   it('applySnapshot carries checkpointId onto user messages', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
       messages: [
         { role: 'user', parts: [{ kind: 'text', text: 'hello' }], checkpointId: 'cpA' },
@@ -148,7 +149,7 @@ describe('reduce', () => {
 
   it('applySnapshot folds tool-result-only user turns into the preceding assistant message', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
       messages: [
         { role: 'user', parts: [{ kind: 'text', text: 'do it' }] },
@@ -170,7 +171,7 @@ describe('reduce', () => {
 
   it('applySnapshot drops an empty user turn (only unmappable blocks) — no blank bubble', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
-      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
       messages: [{ role: 'user', parts: [] }],
       checkpoints: [],

@@ -43,6 +43,8 @@ export interface AppState {
   // (fold / idle-drain), or on abort / a fresh snapshot. Purely client-side immediate feedback.
   pendingSteers: { id: string; text: string }[]
   model?: string
+  /** Provider id of the active model — lets ModelPicker disambiguate same-named models across providers. */
+  modelProviderId?: string
   /** Active session's working directory (S3) — root for the dir picker / file browser. */
   cwd?: string
   contextTokens?: number

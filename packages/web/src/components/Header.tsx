@@ -46,6 +46,7 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
             <div className="model-pop-anchor" style={{ top: modelPos.top, left: modelPos.left }}>
               <ModelPicker
                 current={state.model ?? ''}
+                currentProviderId={state.modelProviderId}
                 onPick={onSwitchModel}
                 onClose={() => setModelOpen(false)}
               />

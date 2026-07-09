@@ -12,7 +12,7 @@ export type Action =
   | { kind: 'steer-queued'; id: string; text: string }
   | { kind: 'connection'; status: Connection }
   | { kind: 'notice'; text: string; noticeKind?: 'info' | 'warn' | 'error' | 'help' }
-  | { kind: 'model-changed'; model: string }
+  | { kind: 'model-changed'; model: string; providerId?: string }
   | { kind: 'reset' }
 
 function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'): AppState {
@@ -70,6 +70,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   return {
     ...state,
     model: s.model,
+    modelProviderId: s.modelProviderId,
     cwd: s.cwd,
     contextTokens: s.contextTokens,
     contextWindow: s.contextWindow,
@@ -194,7 +195,7 @@ export function reduce(state: AppState, action: Action): AppState {
     // Optimistic Header update after a temporary model switch — the server acks 'switch-model'
     // over WS with no event, so the reducer reflects the choice locally.
     case 'model-changed':
-      return { ...state, model: action.model }
+      return { ...state, model: action.model, modelProviderId: action.providerId ?? state.modelProviderId }
     case 'reset':
       return { ...initialState, connection: state.connection }
     case 'server': {

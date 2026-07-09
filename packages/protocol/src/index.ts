@@ -269,6 +269,8 @@ export interface SessionSnapshot {
   sessionId: string
   isThinking: boolean
   model: string
+  /** Provider id of the active model — lets the UI disambiguate same-named models across providers. */
+  modelProviderId: string
   cwd: string
   totalUsage: Usage | undefined
   contextTokens: number | undefined

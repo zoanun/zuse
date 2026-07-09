@@ -7,8 +7,20 @@ import { listModels, type ModelOption } from '../state/manageApi.js'
  * Picking a row switches this session immediately; the "永久保存到配置" checkbox also persists the
  * choice to project settings (mirrors TUI --save). `current` is the active model string for the highlight.
  */
-export function ModelPicker({ current, onPick, onClose }: {
+/** Eye glyph marking a vision-capable model (only machine-readable capability today). */
+function VisionIcon() {
+  return (
+    <svg className="model-cap" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label="支持视觉/图片">
+      <title>支持视觉/图片</title>
+      <path d="M1.5 12s4-7 10.5-7 10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  )
+}
+
+export function ModelPicker({ current, currentProviderId, onPick, onClose }: {
   current: string
+  currentProviderId?: string
   onPick: (providerId: string, model: string, persist: boolean) => void
   onClose: () => void
 }) {
@@ -38,7 +50,9 @@ export function ModelPicker({ current, onPick, onClose }: {
         <ul className="model-list">
           {options.map((o, i) => {
             const header = o.providerId !== lastProvider ? (lastProvider = o.providerId, o.providerId) : null
-            const isCurrent = o.model === current
+            // Match by provider+model when the active provider is known, so two same-named models
+            // under different providers don't both light up; fall back to name-only if it's absent.
+            const isCurrent = o.model === current && (currentProviderId == null || o.providerId === currentProviderId)
             return (
               <li key={o.providerId + '/' + o.model + '#' + i}>
                 {header ? <div className="model-group">{header}</div> : null}
@@ -49,7 +63,10 @@ export function ModelPicker({ current, onPick, onClose }: {
                   aria-current={isCurrent ? 'true' : undefined}
                 >
                   <span className="model-name">{o.model}</span>
-                  {isCurrent ? <span className="model-badge">当前</span> : null}
+                  <span className="model-meta">
+                    {isCurrent ? <span className="model-badge">当前</span> : null}
+                    {o.vision ? <VisionIcon /> : null}
+                  </span>
                 </button>
               </li>
             )

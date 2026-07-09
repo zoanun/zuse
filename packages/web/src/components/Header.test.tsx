@@ -21,7 +21,7 @@ describe('Header', () => {
   })
 
   it('clicking the model chip opens the ModelPicker', async () => {
-    vi.spyOn(manageApi, 'listModels').mockResolvedValue({ options: [{ providerId: 'qwen', model: 'kimi-k2.6' }], defaultModel: 'qwen/kimi-k2.6' })
+    vi.spyOn(manageApi, 'listModels').mockResolvedValue({ options: [{ providerId: 'qwen', model: 'kimi-k2.6', vision: false }], defaultModel: 'qwen/kimi-k2.6' })
     render(<Header state={{ ...initialState, model: 'kimi-k2.6' }} onMenu={() => {}} onOpenManage={() => {}} onChangeCwd={() => {}} onSwitchModel={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: /模型 kimi-k2.6/ }))
     expect(await screen.findByRole('dialog', { name: '切换模型' })).toBeInTheDocument()

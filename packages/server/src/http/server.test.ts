@@ -603,6 +603,7 @@ describe('/api/models + /api/model (model switcher)', () => {
     for (const o of body.options) {
       expect(typeof o.providerId).toBe('string')
       expect(typeof o.model).toBe('string')
+      expect(typeof o.vision).toBe('boolean')
     }
   })
 

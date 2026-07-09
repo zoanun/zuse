@@ -411,6 +411,10 @@ button.head:hover .caret { opacity: 1; }
 .model-row.current { color: var(--accent); background: var(--accent-soft); }
 .model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-badge { flex: none; font: 500 10px/1 var(--mono); color: var(--accent); border: 1px solid var(--accent-border); border-radius: 999px; padding: 3px 7px; }
+/* Right-aligned meta cluster: "当前" badge + capability icons, pushed to the row's end. */
+.model-meta { flex: none; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.model-cap { flex: none; color: var(--faint); }
+.model-row:hover .model-cap, .model-row.current .model-cap { color: var(--muted); }
 .model-persist { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 9px 5px 3px; border-top: 1px solid var(--line); cursor: pointer; }
 .model-persist input { cursor: pointer; }
 /* Usage (M5) */

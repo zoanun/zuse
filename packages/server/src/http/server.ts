@@ -2,7 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename } from 'node:path'
-import { VERSION, loadSettings, modelNames, DEFAULT_PROVIDER_ID } from '@zuse/core'
+import { VERSION, loadSettings, modelNames, DEFAULT_PROVIDER_ID, resolveVision } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -748,9 +748,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && path === '/api/models') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       const settings = loadSettings()
-      const options: { providerId: string; model: string }[] = []
+      const options: { providerId: string; model: string; vision: boolean }[] = []
       for (const [providerId, p] of Object.entries(settings.providers ?? {})) {
-        for (const model of modelNames(p)) options.push({ providerId, model })
+        for (const model of modelNames(p)) options.push({ providerId, model, vision: resolveVision(settings, providerId, model) })
       }
       return sendJson(res, 200, { options, defaultModel: settings.model ?? null })
     }

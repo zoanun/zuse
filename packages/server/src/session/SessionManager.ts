@@ -398,6 +398,7 @@ export class SessionManager {
       sessionId: this.sessionId,
       isThinking: this.isThinking,
       model: this.client.getModel(),
+      modelProviderId: this.currentProviderId,
       cwd: this.cwd,
       totalUsage: this.totalUsage,
       contextTokens: this.contextTokens,

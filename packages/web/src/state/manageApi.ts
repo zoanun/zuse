@@ -219,7 +219,7 @@ export function uploadedImageUrl(id: string): string {
 
 // --- Models (Header switcher) ---
 
-export interface ModelOption { providerId: string; model: string }
+export interface ModelOption { providerId: string; model: string; vision: boolean }
 export interface ModelsResponse { options: ModelOption[]; defaultModel: string | null }
 
 /** GET /api/models → configured {providerId, model} options + the persisted default. Throws on non-ok. */
