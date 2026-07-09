@@ -214,7 +214,18 @@ interface TextSeg { think: boolean; text: string }
  * everything after it as reasoning so a runaway loop can't flood the chat.
  */
 export function splitThink(text: string): TextSeg[] {
-  if (!/<think(?:ing)?>/i.test(text)) return [{ think: false, text }]
+  const hasOpen = /<think(?:ing)?>/i.test(text)
+  // Some models (e.g. reasoning models via certain endpoints) stream the reasoning as plain
+  // content and emit ONLY a bare closing </think> before the answer — no opening tag. Fold
+  // everything up to that first lone </think> as reasoning so the tag never leaks into the answer.
+  if (!hasOpen) {
+    const close = text.match(/<\/think(?:ing)?>/i)
+    if (!close || close.index === undefined) return [{ think: false, text }]
+    const segs: TextSeg[] = [{ think: true, text: text.slice(0, close.index) }]
+    const rest = text.slice(close.index + close[0].length)
+    if (rest) segs.push(...splitThink(rest)) // remainder may contain further tags
+    return segs
+  }
   // Each match consumes at least the opening tag, so it always advances — no zero-width guard.
   const re = /<think(?:ing)?>([\s\S]*?)(?:<\/think(?:ing)?>|$)/gi
   const segs: TextSeg[] = []

@@ -167,6 +167,11 @@ describe('Message', () => {
       { think: false, text: 'a' }, { think: true, text: 'r' }, { think: false, text: 'b' },
     ])
     expect(splitThink('<think>unclosed tail')).toEqual([{ think: true, text: 'unclosed tail' }])
+    // Lone closing tag, no opener (some models stream reasoning as plain content + a bare </think>):
+    // everything up to </think> folds as reasoning, the rest is the answer.
+    expect(splitThink('reasoning here</think>the answer')).toEqual([
+      { think: true, text: 'reasoning here' }, { think: false, text: 'the answer' },
+    ])
   })
 
   it('marks an error tool-result with the err class', () => {
