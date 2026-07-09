@@ -20,6 +20,8 @@ interface PendingImage {
   status: 'uploading' | 'done' | 'error'
   ref?: UploadedImageRef
   previewUrl?: string
+  /** The original File, retained so retry re-uploads the exact bytes (no blob refetch). */
+  file: File
 }
 
 const MAX_IMAGES = 10
@@ -101,12 +103,18 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     for (const file of batch) {
       const key = 'img-' + ++keySeq.current
       const previewUrl = URL.createObjectURL(file)
-      setPending((p) => [...p, { key, name: file.name, status: 'uploading', previewUrl }])
-      uploadImage(file).then(
-        (ref) => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
-        () => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
-      )
+      setPending((p) => [...p, { key, name: file.name, status: 'uploading', previewUrl, file }])
+      uploadInto(key, file)
     }
+  }
+
+  /** Upload `file`, mapping the result onto the pending row `key` (done+ref / error). Shared by
+   *  the initial stage (addFiles) and retry, so both take the same success/failure path. */
+  function uploadInto(key: string, file: File) {
+    uploadImage(file).then(
+      (ref) => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
+      () => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
+    )
   }
 
   function removePending(key: string) {
@@ -118,33 +126,27 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
   }
 
   function retry(key: string) {
-    setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'uploading' as const } : it)))
-    // Re-upload from the preview blob (the original File isn't retained; refetch the blob URL).
     const item = pendingRef.current.find((it) => it.key === key)
-    if (!item?.previewUrl) return
-    fetch(item.previewUrl)
-      .then((r) => r.blob())
-      .then((blob) => uploadImage(new File([blob], item.name, { type: blob.type || 'image/png' })))
-      .then(
-        (ref) => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
-        () => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
-      )
+    if (!item) return
+    setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'uploading' as const } : it)))
+    uploadInto(key, item.file) // re-upload the retained File — no blob refetch
   }
 
-  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const files = imageFilesFrom(e.clipboardData)
-    if (files.length === 0) return
-    e.preventDefault() // don't also paste the image as text/markup
-    if (thinking) { setAttachError('回复生成中不能加图'); return }
-    addFiles(files)
-  }
-
-  function onDrop(e: React.DragEvent) {
-    const files = imageFilesFrom(e.dataTransfer)
+  // paste and drop are identical bar the payload source: grab image Files, bail if none, block the
+  // default (don't also paste image-as-text), refuse mid-turn, else stage them.
+  function stage(files: File[], e: { preventDefault(): void }) {
     if (files.length === 0) return
     e.preventDefault()
     if (thinking) { setAttachError('回复生成中不能加图'); return }
     addFiles(files)
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    stage(imageFilesFrom(e.clipboardData), e)
+  }
+
+  function onDrop(e: React.DragEvent) {
+    stage(imageFilesFrom(e.dataTransfer), e)
   }
 
   const uploading = pending.some((p) => p.status === 'uploading')

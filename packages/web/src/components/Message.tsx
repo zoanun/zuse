@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react'
+import type { MessageAttachment } from '@zuse/protocol'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
@@ -79,25 +80,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
         <div className="bubble">
           {msg.attachments?.length ? (
             <div className="msg-imgs">
-              {msg.attachments.map((a) => {
-                const url = uploadedImageUrl(a.id)
-                return (
-                  <div className="msg-img-item" key={a.id}>
-                    <a href={url} target="_blank" rel="noreferrer">
-                      <img className="msg-img" src={url} alt={a.name} title={a.name} />
-                    </a>
-                    {a.route ? (
-                      <span className="msg-img-badge">{a.route === 'direct' ? '图·直传' : '图·解析'}</span>
-                    ) : null}
-                    {a.route === 'parsed' && a.description ? (
-                      <details className="msg-img-desc">
-                        <summary>查看解析</summary>
-                        <div className="msg-img-desc-body">{a.description}</div>
-                      </details>
-                    ) : null}
-                  </div>
-                )
-              })}
+              {msg.attachments.map((a) => <MessageImage key={a.id} a={a} />)}
             </div>
           ) : null}
           {text}
@@ -140,6 +123,28 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     </div>
   )
 })
+
+/** One user-message attachment: thumbnail (links to full image) + route badge + (parsed) the
+ *  collapsible description. Extracted from the user branch's attachment map; DOM/classes unchanged. */
+function MessageImage({ a }: { a: MessageAttachment }) {
+  const url = uploadedImageUrl(a.id)
+  return (
+    <div className="msg-img-item">
+      <a href={url} target="_blank" rel="noreferrer">
+        <img className="msg-img" src={url} alt={a.name} title={a.name} />
+      </a>
+      {a.route ? (
+        <span className="msg-img-badge">{a.route === 'direct' ? '图·直传' : '图·解析'}</span>
+      ) : null}
+      {a.route === 'parsed' && a.description ? (
+        <details className="msg-img-desc">
+          <summary>查看解析</summary>
+          <div className="msg-img-desc-body">{a.description}</div>
+        </details>
+      ) : null}
+    </div>
+  )
+}
 
 /** A reply-footer action: icon only; the description lives in the native hover tooltip (title). */
 function MsgAction({ className, title, label, onClick, children }: {
