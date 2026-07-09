@@ -13,6 +13,50 @@ describe('Message', () => {
     expect(screen.getByText('hello there')).toBeInTheDocument()
   })
 
+  it('renders an attachment thumbnail (img with the upload URL) and a direct-route badge', () => {
+    render(<Message msg={{
+      id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'look' }],
+      attachments: [{ id: 'x', name: 'a.png', mediaType: 'image/png', route: 'direct' }],
+    }} />)
+    const img = screen.getByRole('img', { name: 'a.png' })
+    expect(img.getAttribute('src')).toContain('/api/uploads/x')
+    expect(screen.getByText('图·直传')).toBeInTheDocument()
+  })
+
+  it('shows a parsed-route badge and the (expandable) description text for a parsed attachment', () => {
+    render(<Message msg={{
+      id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'look' }],
+      attachments: [{ id: 'y', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: '一只猫' }],
+    }} />)
+    expect(screen.getByText('图·解析')).toBeInTheDocument()
+    expect(screen.getByText('查看解析')).toBeInTheDocument()
+    expect(screen.getByText('一只猫')).toBeInTheDocument()
+  })
+
+  it('shows no route badge for an attachment still awaiting its snapshot (route undefined)', () => {
+    render(<Message msg={{
+      id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'look' }],
+      attachments: [{ id: 'z', name: 'p.png', mediaType: 'image/png' }],
+    }} />)
+    expect(screen.getByRole('img', { name: 'p.png' })).toBeInTheDocument()
+    expect(screen.queryByText('图·直传')).toBeNull()
+    expect(screen.queryByText('图·解析')).toBeNull()
+  })
+
+  it('renders no thumbnails on a user message without attachments', () => {
+    const { container } = render(<Message msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }} />)
+    expect(container.querySelector('.msg-imgs')).toBeNull()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('renders thumbnails for an image-only message (empty text)', () => {
+    render(<Message msg={{
+      id: 'u1', role: 'user', parts: [],
+      attachments: [{ id: 'x', name: 'a.png', mediaType: 'image/png', route: 'direct' }],
+    }} />)
+    expect(screen.getByRole('img', { name: 'a.png' })).toBeInTheDocument()
+  })
+
   it('renders a revert button on a user message with a checkpointId and calls onRevert with that id', () => {
     const onRevert = vi.fn()
     render(<Message

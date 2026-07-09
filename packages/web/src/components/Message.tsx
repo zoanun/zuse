@@ -3,6 +3,7 @@ import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
+import { uploadedImageUrl } from '../state/manageApi.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
 export function partsText(parts: Part[]): string {
@@ -75,7 +76,32 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     return (
       <div className="msg you">
         {msg.steer ? <div className="steer-tag" title="回合进行中插入的消息">↪ 插话</div> : null}
-        <div className="bubble">{text}</div>
+        <div className="bubble">
+          {msg.attachments?.length ? (
+            <div className="msg-imgs">
+              {msg.attachments.map((a) => {
+                const url = uploadedImageUrl(a.id)
+                return (
+                  <div className="msg-img-item" key={a.id}>
+                    <a href={url} target="_blank" rel="noreferrer">
+                      <img className="msg-img" src={url} alt={a.name} title={a.name} />
+                    </a>
+                    {a.route ? (
+                      <span className="msg-img-badge">{a.route === 'direct' ? '图·直传' : '图·解析'}</span>
+                    ) : null}
+                    {a.route === 'parsed' && a.description ? (
+                      <details className="msg-img-desc">
+                        <summary>查看解析</summary>
+                        <div className="msg-img-desc-body">{a.description}</div>
+                      </details>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          ) : null}
+          {text}
+        </div>
         {cp && onRevert ? (
           <button
             type="button"

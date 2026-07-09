@@ -118,6 +118,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .share-go:disabled { opacity: 0.5; cursor: default; }
 .share-cancel { background: transparent; color: var(--text); }
 .msg.you .bubble { background: var(--user-bubble); border-radius: 16px; padding: 7px 14px; font-size: 15px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+/* Image attachments on a user bubble: a wrap grid of thumbnails, each with a route badge and
+   (for parsed images) a collapsible "what the model saw" description. Sits above the text. */
+.msg-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.msg-imgs:last-child { margin-bottom: 0; }
+.msg-img-item { display: flex; flex-direction: column; gap: 4px; max-width: 160px; }
+.msg-img { display: block; width: 160px; max-width: 100%; height: 120px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+.msg-img-badge { align-self: flex-start; font-size: 10.5px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 7px; white-space: nowrap; }
+.msg-img-desc { font-size: 11.5px; color: var(--faint); }
+.msg-img-desc > summary { cursor: pointer; color: var(--faint); }
+.msg-img-desc > summary:hover { color: var(--text); }
+.msg-img-desc-body { margin-top: 4px; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 /* Mid-turn steer marker: a small pill to the left of the bubble, so an inserted message reads as
    "interjected into the running turn" rather than a normal new question. */
 .msg.you .steer-tag { flex: none; font-size: 11px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
