@@ -19,6 +19,15 @@ describe('reduce', () => {
     expect(s.model).toBe('new-model')
   })
 
+  it('server model-changed event updates both model and modelProviderId (authoritative correction)', () => {
+    // SessionEvent branch (not the optimistic kind:'model-changed' action) — corrects the Header
+    // when the server's client rebuild failed and kept the old model/provider.
+    const start = { ...initialState, model: 'wrong', modelProviderId: 'azure' }
+    const s = reduce(start, { kind: 'server', msg: ev({ type: 'model-changed', model: 'gpt-4o', providerId: 'openai' }) })
+    expect(s.model).toBe('gpt-4o')
+    expect(s.modelProviderId).toBe('openai')
+  })
+
   it('user-echo appends the re-submitted question as a user message (retry)', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: 'do it again' }) })
     expect(s.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'do it again' }] }])

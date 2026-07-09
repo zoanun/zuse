@@ -127,6 +127,10 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'permission-request': return { ...state, pendingPermissions: [...state.pendingPermissions, { id: e.id, req: e.req }] }
     case 'permission-resolved': return { ...state, pendingPermissions: state.pendingPermissions.filter((p) => p.id !== e.id) }
     case 'failover': return withNotice({ ...state, model: e.toModel }, '故障切换：' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
+    // Authoritative model truth from the server after a switch-model (SessionEvent, NOT the local
+    // optimistic `kind:'model-changed'` action above): corrects the optimistic Header value — e.g.
+    // when the server's client rebuild failed and it kept the old model.
+    case 'model-changed': return { ...state, model: e.model, modelProviderId: e.providerId }
     case 'model-select-needed': return withNotice(state, '需要选择模型：' + e.reason, 'warn')
     case 'compaction-start': return withNotice(state, `正在压缩上下文…(保留最近 ${e.keep} 条)`, 'compacting')
     // Compaction finished: drop the transient start notice, then show the summary (dimmed italic).
