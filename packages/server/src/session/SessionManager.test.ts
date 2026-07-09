@@ -1828,7 +1828,7 @@ describe('SessionManager image routing (I2)', () => {
     expect(expandArg!.some((m) => (m.attachments?.length ?? 0) > 0)).toBe(true)
   })
 
-  it('non-vision main model + images: imageClient called with image block + question; main text baked; route:parsed + description', async () => {
+  it("non-vision main model + images: imageClient called; text NOT baked; route:'parsed'+description; expandFn forwarded", async () => {
     const imageClientCalls: Message[][] = []
     const imageClient: ModelClient = {
       getModel: () => 'vision-helper',
@@ -1838,8 +1838,10 @@ describe('SessionManager image routing (I2)', () => {
       },
     }
     const readImageBase64 = async (_id: string) => ({ data: 'BASE64DATA', mediaType: 'image/png' })
+    let expandArg: Message[] | undefined
+    const expandAttachments = async (messages: Message[]) => { expandArg = messages; return messages }
     const { mgr, calls } = makeImageMgr({
-      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64, expandAttachments,
     })
     await mgr.submit('what is this', [img({ name: 'cat.png' })])
 
@@ -1850,13 +1852,16 @@ describe('SessionManager image routing (I2)', () => {
     expect(q.text).toContain('what is this')
 
     expect(calls).toHaveLength(1)   // main model still ran
+    // Convergence: the description is NOT baked into the ledger's user text — it rides the attachment
+    // (route:'parsed') and expandAttachments materializes it as a text block at send time.
     const t = userTextOf(mgr)
-    expect(t).toContain('<uploaded-images>')
-    expect(t).toContain('a red cat')
-    expect(t).toContain('cat.png')
+    expect(t).not.toContain('<uploaded-images>')
+    expect(t).toContain('what is this')   // the user's original question (stamped), verbatim
     expect(userMsgOf(mgr).attachments).toEqual([
       { id: 'img1', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' },
     ])
+    // expandFn is forwarded to runAgent so the parsed description is materialized on send.
+    expect(expandArg).toBeDefined()
   })
 
   it('single-image parse failure records an error description but does not block others', async () => {
@@ -1891,7 +1896,7 @@ describe('SessionManager image routing (I2)', () => {
     expect(mgr.getState().isThinking).toBe(false)
   })
 
-  it('projectMessages: strips <uploaded-images> from displayed text and carries attachments', async () => {
+  it('projectMessages: displays the original user text (no baking to strip) and carries attachments', async () => {
     const imageClient: ModelClient = {
       getModel: () => 'vision-helper',
       async *sendMessages() { yield { type: 'text-delta', text: 'a red cat' } },
@@ -1904,11 +1909,29 @@ describe('SessionManager image routing (I2)', () => {
     const snap = mgr.getState().messages
     const userSnap = snap.find((m) => m.role === 'user')!
     const t = userSnap.parts.filter((p) => p.kind === 'text').map((p) => (p as { text: string }).text).join('')
-    expect(t).not.toContain('<uploaded-images>')
-    expect(t).toBe('what is this')
+    expect(t).toBe('what is this')   // only the stamp is stripped; nothing was baked in
     expect(userSnap.attachments).toEqual([
       { id: 'img1', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' },
     ])
+  })
+
+  it('#4 regression: a user message whose OWN text ends with an <uploaded-images> block is NOT truncated', async () => {
+    // The old stripUploadedImages regex ran on every user message and would eat a trailing
+    // <uploaded-images>…</uploaded-images> block even when the user typed it themselves. With baking
+    // and the regex removed, projectMessages must surface such text verbatim (only the stamp strips).
+    const trailing = 'see attached\n\n<uploaded-images>\n1. x.png：foo\n</uploaded-images>'
+    const conv = new Conversation()
+    conv.append({ role: 'user', content: [{ type: 'text', text: trailing }] })
+    const { client } = fakeClient([])
+    const mgr = new SessionManager({
+      sessionId: 's2', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation: conv,
+    })
+    const userSnap = mgr.getState().messages.find((m) => m.role === 'user')!
+    const t = userSnap.parts.filter((p) => p.kind === 'text').map((p) => (p as { text: string }).text).join('')
+    expect(t).toBe(trailing) // NOT truncated
   })
 
   it('no images: old path unchanged (no attachments, no imageClient call, text verbatim)', async () => {
@@ -1927,5 +1950,133 @@ describe('SessionManager image routing (I2)', () => {
     // empty array also takes the old path
     await mgr.submit('another', [])
     expect(imageClientCalls).toHaveLength(0)
+  })
+
+  it('#1 text-only turn (no images) still forwards expandFn to runAgent so history images re-expand', async () => {
+    // The bug: expandAttachments was only wired when THIS turn carried new images, so from the 2nd
+    // turn on the images in history stopped being re-materialized. It must be forwarded whenever the
+    // hook exists, regardless of whether this turn has images.
+    let expandArg: Message[] | undefined
+    const expandAttachments = async (messages: Message[]) => { expandArg = messages; return messages }
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn], vision: true, expandAttachments })
+    await mgr.submit('just text, no image')
+    expect(calls).toHaveLength(1)
+    expect(expandArg).toBeDefined()                 // hook forwarded even with no images this turn
+    expect(mgr.getConversation().length).toBeGreaterThan(0)
+  })
+
+  it('#5 Stop DURING image description → aborts cleanly, does NOT enter runAgent', async () => {
+    // A Stop landing while the parsed-fallback describeImage round-trips are in flight must bail with
+    // 'aborted' (not fall through into the main turn against an already-aborted signal).
+    let reached!: () => void
+    const reachedP = new Promise<void>((r) => { reached = r })
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages() {
+        reached()          // describe is now in flight
+        await gate         // hold until the test has hit Stop
+        yield { type: 'text-delta', text: 'desc' }
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr, calls } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+
+    const p = mgr.submit('describe', [img()])
+    await reachedP
+    expect(mgr.interrupt()).toBe(true)   // Stop while describing
+    release()
+    await p
+
+    expect(types).toContain('aborted')
+    expect(calls).toHaveLength(0)                  // main model never ran
+    expect(mgr.getConversation().length).toBe(0)   // nothing committed
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('#8 vision main model + images but expandAttachments NOT wired → error, does NOT enter runAgent', async () => {
+    // Without the expand hook the direct route can't turn attachments into image blocks; sending would
+    // silently drop the image, so submit must refuse and surface an error.
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn], vision: true }) // no expandAttachments
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+    await mgr.submit('describe', [img()])
+    expect(types).toContain('error')
+    expect(calls).toHaveLength(0)                  // main model never ran
+    expect(mgr.getConversation().length).toBe(0)   // nothing committed
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('#3 retry re-attaches the reverted turn\'s images (parsed path re-describes)', async () => {
+    const imageClientCalls: Message[][] = []
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages(messages) { imageClientCalls.push(messages); yield { type: 'text-delta', text: 'a red cat' } },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    // Two main-model turns: the original send, then retry's fresh send.
+    const { mgr, calls } = makeImageMgr({
+      scripts: [textTurn, textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    await mgr.submit('what is this', [img({ name: 'cat.png' })])
+    expect(imageClientCalls).toHaveLength(1)
+
+    await mgr.retry()
+
+    // The image was carried into the retry: the parsed path re-described it (2nd imageClient call),
+    // and the re-committed user message still carries the parsed attachment.
+    expect(imageClientCalls).toHaveLength(2)
+    expect(calls).toHaveLength(2)
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'img1', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' },
+    ])
+  })
+
+  it('#2 failover resend carries the images to the new model', async () => {
+    // PRIMARY yields a preStream quota error → auto failover to BACKUP, which must receive this
+    // turn's images (both vision here → route:'direct').
+    const settings = {
+      failoverMode: 'auto',
+      providers: { p: { protocol: 'anthropic', apiKey: 'k', models: ['primary', 'backup'], vision: true } },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+    const primary: ModelClient = {
+      getModel: () => 'primary',
+      async *sendMessages() { yield { type: 'error', message: 'quota', category: 'quota' } },
+    }
+    const backup: ModelClient = {
+      getModel: () => 'backup',
+      async *sendMessages() {
+        yield { type: 'message-start', id: 'm1', model: 'backup' }
+        yield { type: 'text-delta', text: 'recovered' }
+        yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+      },
+    }
+    let expandCount = 0
+    const expandAttachments = async (messages: Message[]) => { expandCount++; return messages }
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(), settings,
+      systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup, expandAttachments,
+    })
+    let recovered = ''
+    mgr.subscribe((e) => { if (e.type === 'text-delta') recovered += e.text })
+
+    await mgr.submit('describe this', [img()])
+
+    // The backup turn actually ran and committed the user message WITH the direct attachment — proof
+    // the images survived the model swap.
+    expect(recovered).toBe('recovered')
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'img1', name: 'shot.png', mediaType: 'image/png', route: 'direct' },
+    ])
+    expect(expandCount).toBeGreaterThan(0) // expandAttachments materialized on the resend
   })
 })

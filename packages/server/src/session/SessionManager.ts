@@ -67,18 +67,6 @@ const IMAGE_DESCRIPTION_MAX_TOKENS = 1024
 const IMAGE_PROMPT =
   '请客观、完整地描述这张图片的内容（包括文字、图表、界面、代码、人物特征等一切可见细节），以便另一个模型据此回答用户的问题。'
 
-/**
- * Remove the parsed-fallback `<uploaded-images>…</uploaded-images>` block (baked into the model's
- * user text by submit()) for DISPLAY only — the ledger keeps the baked text so the model's history
- * stays faithful; this strips it back out (with its leading `\n\n`) so a late-joining client renders
- * the user's original question, not the machine-baked descriptions. The image metadata is surfaced
- * separately via SnapshotMessage.attachments.
- */
-const UPLOADED_IMAGES_RE = /\n\n<uploaded-images>\n[\s\S]*?\n<\/uploaded-images>\s*$/
-function stripUploadedImages(text: string): string {
-  return text.replace(UPLOADED_IMAGES_RE, '')
-}
-
 export interface PermissionPolicy {
   interactive: boolean
   config: PermissionsConfig
@@ -121,8 +109,10 @@ export interface SessionManagerOptions {
   /**
    * Auxiliary vision-capable client + model for the PARSED fallback (I2): when the main model is
    * NOT vision-capable, each uploaded image is sent to this client to obtain a text description,
-   * which is baked into the main model's user text. Absent → images cannot be handled for a
-   * non-vision main model (submit emits an error and refuses to send).
+   * stored on the user message's attachment (route:'parsed'). expandAttachments then materializes
+   * that description as a text block at send time — it is NOT baked into the ledger's user text.
+   * Absent → images cannot be handled for a non-vision main model (submit emits an error and
+   * refuses to send).
    */
   imageClient?: ModelClient
   imageModel?: string
@@ -132,9 +122,10 @@ export interface SessionManagerOptions {
    */
   readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
   /**
-   * Send-time image-expansion hook forwarded to runAgent for the DIRECT route (vision main model):
-   * reads each message's `attachments` → base64 → prepends image blocks to a request-only copy.
-   * Provided by startServer; the ledger stays base64-free. Absent → direct route sends text only.
+   * Send-time image-expansion hook forwarded to runAgent for BOTH image routes: for each message's
+   * `attachments` it prepends route:'direct' → base64 image block, route:'parsed' → text block (the
+   * stored description), onto a request-only copy. Provided by startServer; the ledger stays
+   * base64-free. Absent → images cannot be materialized, so submit refuses to send an image turn.
    */
   expandAttachments?: (messages: Message[]) => Promise<Message[]>
 }
@@ -435,10 +426,10 @@ export class SessionManager {
           // Fix A: submit() prefixes the model's userText with `[YYYY-MM-DD HH:MM] `; that
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
-          // pattern, and only from user text — never touch assistant text.
-          // Strip submit()'s stamp prefix, then the parsed-fallback <uploaded-images> block (both
-          // live in the ledger but must not surface in the displayed user text). User-only.
-          const text = role === 'user' ? stripUploadedImages(stripUserStamp(block.text)) : block.text
+          // pattern, and only from user text — never touch assistant text. (Image descriptions are
+          // no longer baked into user text — both routes materialize via expandAttachments at send
+          // time — so there is no <uploaded-images> block to strip here anymore.)
+          const text = role === 'user' ? stripUserStamp(block.text) : block.text
           parts.push({ kind: 'text', text })
         } else if (block.type === 'tool_use') {
           parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
@@ -859,22 +850,34 @@ export class SessionManager {
       return
     }
 
-    // Image routing (I2): split by whether the MAIN model is vision-capable.
-    //  - vision → DIRECT: images ride the staged user message as attachments (route:'direct') and are
-    //    expanded to native image blocks at send time by the injected expandAttachments hook; text is
-    //    NOT baked.
+    // Image routing (I2): both routes are now materialized by ONE mechanism — expandAttachments at
+    // send time — so the ledger's user text stays the user's original question (base64-free, no baked
+    // descriptions). The split only decides the route tag stored on each attachment:
+    //  - vision → DIRECT: attachments route:'direct'; expandAttachments reads each to a native image
+    //    block on the request-only copy.
     //  - non-vision → PARSED fallback: each image is described by the auxiliary imageClient and the
-    //    descriptions are baked into the main model's user text; attachments record route:'parsed'.
-    //    With no imageClient/readImageBase64 configured we cannot handle the image at all → error + bail.
-    // No images → both stay undefined and the turn runs exactly as before (regression-safe).
-    let effectiveText = text
+    //    description is stored on the attachment (route:'parsed'); expandAttachments materializes it
+    //    as a text block at send time. With no imageClient/readImageBase64 → cannot handle → error.
+    // Either route needs expandAttachments wired; without it the image would be silently dropped, so
+    // we refuse to send. No images → userAttachments stays undefined and the turn runs as before.
     let userAttachments: MessageAttachment[] | undefined
-    let expandFn: ((messages: Message[]) => Promise<Message[]>) | undefined
+    // expandAttachments is forwarded UNCONDITIONALLY (not gated on this turn carrying new images):
+    // history messages carry attachments too and must be re-materialized EVERY turn, or a follow-up
+    // turn would silently drop the images from earlier turns. It is a no-op on messages without
+    // attachments, so always forwarding is safe.
+    const expandFn = this.expandAttachments
     if (images && images.length > 0) {
       const vision = resolveVision(this.settings, this.currentProviderId, this.client.getModel())
       if (vision) {
+        // #8: without the expand hook wired, the direct route can't turn attachments into image
+        // blocks — the image would be silently dropped. Refuse to send and surface an error instead
+        // (mirrors the non-vision missing-dependency bail below).
+        if (!this.expandAttachments) {
+          this.emit({ type: 'error', message: '图片直传未就绪：服务未接线附件展开(expandAttachments)', category: 'other' })
+          await this.endTurnEarly(undefined, !!opts?.isResend)
+          return
+        }
         userAttachments = images.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType, route: 'direct' as const }))
-        expandFn = this.expandAttachments
       } else if (!this.imageClient || !this.readImageBase64) {
         // Non-vision main model and no parse fallback wired → cannot handle the image. Refuse to send.
         // Emit the error BEFORE the state reset (preserves prior ordering), then endTurnEarly tears down.
@@ -890,20 +893,19 @@ export class SessionManager {
             .then(({ data, mediaType }) => this.describeImage(data, mediaType, text, controller.signal))
             .catch(() => '(图片解析失败)'),
         ))
-        // DESIGN DEBT: this parsed path bakes descriptions into the user TEXT (and projectMessages
-        // later strips the <uploaded-images> block back out with a regex), which is asymmetric with
-        // the direct path's structured `attachments` mechanism. A future cleanup could let the parsed
-        // path reuse expandAttachments — expanding route:'parsed' into a text block at send time —
-        // so both routes share one attachment pipeline and the bake + strip regex both disappear.
-        // Not changing it this iteration.
-        effectiveText =
-          `${text}\n\n<uploaded-images>\n` +
-          images.map((im, i) => `${i + 1}. ${im.name}：${descriptions[i]}`).join('\n') +
-          '\n</uploaded-images>'
+        // #5: the parallel describe round-trips just awaited above may have straddled a Stop. Re-check
+        // the abort signal BEFORE building the context view / entering runAgent — otherwise a Stop
+        // during description would fall through into a turn against an already-aborted signal (which
+        // emits a bare 'warning', not 'aborted'). Mirror the pre-send compaction abort guard.
+        if (controller.signal.aborted) {
+          await this.endTurnEarly({ type: 'aborted' }, !!opts?.isResend)
+          return
+        }
+        // Descriptions are NOT baked into user text; they ride the attachment (route:'parsed') and
+        // expandAttachments materializes them as a text block at send time — same pipeline as direct.
         userAttachments = images.map((i, idx) => ({
           id: i.id, name: i.name, mediaType: i.mediaType, route: 'parsed' as const, description: descriptions[idx],
         }))
-        // No expandFn: route:'parsed' carries no base64 expansion — the description is already baked.
       }
     }
 
@@ -963,7 +965,7 @@ export class SessionManager {
         conversation,
         client: this.client,
         registry: this.registry,
-        userText: applyUserStamp(effectiveText),
+        userText: applyUserStamp(text),
         userAttachments,
         expandAttachments: expandFn,
         config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: systemWithRuntime },
@@ -1077,10 +1079,13 @@ export class SessionManager {
           if (this.contextTokens && this.contextTokens > newWindow * COMPACTION_THRESHOLD) {
             await this.maybeAutoCompact()   // shares the emit/error contract with the pre-send & post-response triggers
           }
-          // The resend's runAgent reads this.client.getModel() (the new model). Resend.
+          // The resend's runAgent reads this.client.getModel() (the new model). Resend — carrying
+          // this turn's images (#2): the failed turn committed nothing, so the new model must receive
+          // the same attachments or the image is silently lost across the swap. submit re-runs
+          // resolveVision on the NEW model, so a vision↔non-vision swap re-routes correctly.
           this.abort = null
           resent = true
-          await this.submit(text, undefined, { isResend: true })
+          await this.submit(text, images, { isResend: true })
         } else {
           // dialog mode / auth / no available next model: hand off to client model picker.
           const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
@@ -1250,12 +1255,20 @@ export class SessionManager {
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
     const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))
     if (text.trim() === '') return
+    // #3: recover the turn's image attachments so the retry re-attaches them — otherwise a retried
+    // image turn silently loses its images. Map the ledger's MessageAttachment refs back to
+    // UploadedImageRef (id/name/mediaType); submit re-routes them via resolveVision (the parsed path
+    // re-describes, which is acceptable — a retry is a fresh attempt from the clean checkpoint).
+    const images: UploadedImageRef[] | undefined =
+      userMsg.attachments && userMsg.attachments.length > 0
+        ? userMsg.attachments.map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
+        : undefined
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
     // "user message" event, so clients wouldn't show it until a reconnect. Echo it now so the
     // re-submitted question reappears immediately (mirrors send()'s live optimistic add).
     this.emit({ type: 'user-echo', text })
-    await this.submit(text)      // fresh attempt from the clean checkpoint
+    await this.submit(text, images)      // fresh attempt from the clean checkpoint
   }
 
   /**

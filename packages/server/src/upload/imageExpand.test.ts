@@ -49,18 +49,59 @@ describe('makeExpandAttachments (I2)', () => {
     expect(msg.content).toEqual([{ type: 'text', text: 'hi' }]) // still just text
   })
 
-  it("skips route:'parsed' attachments (no expansion)", async () => {
-    const upload = fakeUpload({ a1: { data: 'D', mediaType: 'image/png' } })
+  it("expands a route:'parsed' attachment into a text block (the description) prepended to content", async () => {
+    const upload = fakeUpload({})
     const expand = makeExpandAttachments(upload)
     const msg: Message = {
       ...textMsg('parsed one'),
-      attachments: [{ id: 'a1', name: 'p.png', mediaType: 'image/png', route: 'parsed' }],
+      attachments: [{ id: 'a1', name: 'p.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' }],
     }
 
     const out = await expand([msg])
 
-    expect(out[0]).toBe(msg) // untouched original returned
-    expect(out[0]!.content).toEqual([{ type: 'text', text: 'parsed one' }])
+    expect(out[0]!.content).toEqual([
+      { type: 'text', text: 'a red cat' },
+      { type: 'text', text: 'parsed one' },
+    ])
+  })
+
+  it("skips a route:'parsed' attachment with an empty/whitespace description", async () => {
+    const expand = makeExpandAttachments(fakeUpload({}))
+    const empty: Message = {
+      ...textMsg('q1'),
+      attachments: [{ id: 'a1', name: 'p.png', mediaType: 'image/png', route: 'parsed', description: '' }],
+    }
+    const ws: Message = {
+      ...textMsg('q2'),
+      attachments: [{ id: 'a2', name: 'q.png', mediaType: 'image/png', route: 'parsed', description: '   ' }],
+    }
+
+    const out = await expand([empty, ws])
+
+    expect(out[0]).toBe(empty) // nothing to prepend → untouched original returned
+    expect(out[0]!.content).toEqual([{ type: 'text', text: 'q1' }])
+    expect(out[1]).toBe(ws)
+    expect(out[1]!.content).toEqual([{ type: 'text', text: 'q2' }])
+  })
+
+  it('mixed direct + parsed attachments on one message expand in order (image then description)', async () => {
+    const upload = fakeUpload({ d1: { data: 'IMGDATA', mediaType: 'image/png' } })
+    const expand = makeExpandAttachments(upload)
+    const msg: Message = {
+      ...textMsg('both'),
+      attachments: [
+        { id: 'd1', name: 'pic.png', mediaType: 'image/png', route: 'direct' },
+        { id: 'p1', name: 'doc.png', mediaType: 'image/png', route: 'parsed', description: 'a chart' },
+      ],
+    }
+
+    const out = await expand([msg])
+
+    expect(out[0]!.content).toEqual([
+      { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'IMGDATA' } },
+      { type: 'text', text: 'a chart' },
+      { type: 'text', text: 'both' },
+    ])
   })
 
   it('returns the message as-is when there are no attachments', async () => {
