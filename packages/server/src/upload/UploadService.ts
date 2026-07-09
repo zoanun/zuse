@@ -21,6 +21,22 @@ export class TooLargeError extends Error {
   }
 }
 
+/** Thrown when an id doesn't match the uuid shape (never touches disk). → 400. */
+export class InvalidUploadIdError extends Error {
+  constructor(id: string) {
+    super(`invalid upload id: ${JSON.stringify(id)}`)
+    this.name = 'InvalidUploadIdError'
+  }
+}
+
+/** Thrown when a well-formed id has no stored file. → 404. */
+export class UploadNotFoundError extends Error {
+  constructor(id: string) {
+    super(`upload not found: ${id}`)
+    this.name = 'UploadNotFoundError'
+  }
+}
+
 /**
  * Supported image types. `image/jpg` is a common (technically-wrong) alias for
  * `image/jpeg`; we accept it on input and normalize both to a single canonical
@@ -90,7 +106,7 @@ export class UploadService {
    * malformed id (no disk access) or if no matching file exists.
    */
   async load(id: string): Promise<{ abs: string; size: number; mediaType: string }> {
-    if (!UUID_RE.test(id)) throw new Error(`invalid upload id: ${JSON.stringify(id)}`)
+    if (!UUID_RE.test(id)) throw new InvalidUploadIdError(id)
     for (const [ext, mediaType] of Object.entries(MEDIA_BY_EXT)) {
       const abs = this.pathFor(id, ext)
       try {
@@ -100,7 +116,7 @@ export class UploadService {
         // not this extension — try the next
       }
     }
-    throw new Error(`upload not found: ${id}`)
+    throw new UploadNotFoundError(id)
   }
 
   /** Read a stored image back as base64 plus its canonical mediaType. */

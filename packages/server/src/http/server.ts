@@ -17,7 +17,7 @@ import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } 
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
-import { UnsupportedMediaError, TooLargeError } from '../upload/UploadService.js'
+import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -600,14 +600,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         stream.pipe(res)
         return
       } catch (e) {
-        // load() swallows per-extension stat errors and throws a plain Error for a valid-but-missing
-        // id ("upload not found: …") vs. a malformed id ("invalid upload id: …") — so map by message
-        // (plus an ENOENT fallback) rather than an errno the service never surfaces.
-        const msg = (e as Error).message ?? ''
-        if ((e as NodeJS.ErrnoException).code === 'ENOENT' || msg.startsWith('upload not found')) {
-          return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
-        }
-        return sendJson(res, 400, { error: { code: 'bad_request', message: msg } })
+        if (e instanceof UploadNotFoundError) return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        if (e instanceof InvalidUploadIdError) return sendJson(res, 400, { error: { code: 'bad_request', message: e.message } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
       }
     }
 
