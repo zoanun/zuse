@@ -46,7 +46,11 @@ export function ModelPicker({ current, currentProviderId, onPick, onPersist, onC
   // bare model name for the flat default provider). Reopen the picker after a temp switch and this
   // reflects the now-current model — ticking the box then persists exactly that.
   const currentSpec = currentProviderId ? `${currentProviderId}/${current}` : current
-  const isDefault = savedNow || defaultModel === currentSpec || defaultModel === current
+  // Bare-name fallback ONLY when the active provider is unknown: with a known provider, matching a
+  // bare defaultModel by name alone would cross-provider false-positive (switch to another provider's
+  // same-named model and it would wrongly read as "already default"). Then only the qualified
+  // `providerId/model` spec counts.
+  const isDefault = savedNow || defaultModel === currentSpec || (currentProviderId == null && defaultModel === current)
   const persistCurrent = () => {
     if (isDefault || !currentProviderId) return
     onPersist(currentProviderId, current)

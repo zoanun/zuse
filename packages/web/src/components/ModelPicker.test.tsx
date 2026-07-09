@@ -71,6 +71,33 @@ describe('ModelPicker', () => {
     expect(current).toHaveLength(1)
   })
 
+  it('does NOT treat a bare defaultModel as default when it names another provider\'s same-named model', async () => {
+    // defaultModel is a bare 'gpt-4o' (flat default), current is azure/gpt-4o — a DIFFERENT provider's
+    // same-named model. The checkbox must be tickable (not pre-checked/disabled) so the user can
+    // persist azure/gpt-4o as the new default.
+    vi.spyOn(manageApi, 'listModels').mockResolvedValue({
+      options: [{ providerId: 'azure', model: 'gpt-4o', vision: false }],
+      defaultModel: 'gpt-4o',
+    })
+    render(<ModelPicker current="gpt-4o" currentProviderId="azure" onPick={noop} onPersist={noop} onClose={noop} />)
+    await waitFor(() => expect(screen.getByText('gpt-4o')).toBeInTheDocument())
+    const box = screen.getByRole('checkbox')
+    expect(box).not.toBeChecked()
+    expect(box).not.toBeDisabled()
+  })
+
+  it('treats the qualified providerId/model spec as default (azure/gpt-4o)', async () => {
+    vi.spyOn(manageApi, 'listModels').mockResolvedValue({
+      options: [{ providerId: 'azure', model: 'gpt-4o', vision: false }],
+      defaultModel: 'azure/gpt-4o',
+    })
+    render(<ModelPicker current="gpt-4o" currentProviderId="azure" onPick={noop} onPersist={noop} onClose={noop} />)
+    await waitFor(() => expect(screen.getByText('gpt-4o')).toBeInTheDocument())
+    const box = screen.getByRole('checkbox')
+    expect(box).toBeChecked()
+    expect(box).toBeDisabled()
+  })
+
   it('renders the vision (eye) icon only on vision-capable rows', async () => {
     vi.spyOn(manageApi, 'listModels').mockResolvedValue({ options: OPTIONS, defaultModel: null })
     render(<ModelPicker current="kimi-k2.6" currentProviderId="qwen" onPick={noop} onPersist={noop} onClose={noop} />)
