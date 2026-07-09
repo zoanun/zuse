@@ -17,7 +17,7 @@ import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } 
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
-import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError } from '../upload/UploadService.js'
+import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -91,11 +91,44 @@ async function runIdScoped(res: ServerResponse, op: () => Promise<unknown>): Pro
   }
 }
 
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+/** Thrown by readJsonBody when the accumulated request body exceeds a supplied cap. → 413. */
+export class PayloadTooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`request body exceeds ${maxBytes} bytes`)
+    this.name = 'PayloadTooLargeError'
+  }
+}
+
+/**
+ * Read + JSON.parse a request body. With `maxBytes` given, the body is rejected the moment the
+ * running total exceeds the cap — the request is destroyed and a PayloadTooLargeError is thrown
+ * BEFORE the whole thing is buffered/parsed, so a hostile multi-hundred-MB body can't OOM us.
+ * Without `maxBytes` (default), behaviour is unchanged: read all, then parse.
+ */
+export async function readJsonBody(req: IncomingMessage, maxBytes?: number): Promise<unknown> {
   const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(chunk as Buffer)
+  let total = 0
+  for await (const chunk of req) {
+    const buf = chunk as Buffer
+    total += buf.length
+    if (maxBytes !== undefined && total > maxBytes) {
+      // Stop reading immediately (don't buffer the rest) and let the caller map this to 413.
+      // We deliberately do NOT req.destroy() here: destroying the socket races the 413 write and
+      // the client sees ECONNRESET instead of the status. Throwing unwinds the for-await so we
+      // stop accumulating (no OOM); the caller's res.end() then closes the still-uploading conn.
+      throw new PayloadTooLargeError(maxBytes)
+    }
+    chunks.push(buf)
+  }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
+
+/**
+ * Early byte cap for POST /api/uploads bodies: the base64 payload inflates ~4/3 over the raw image,
+ * plus ~1 MiB of slack for the JSON field names/quotes. Keyed off MAX_UPLOAD_BYTES so it tracks the
+ * 25 MiB image ceiling. Bodies past this are rejected mid-stream (413) rather than fully buffered.
+ */
+const UPLOAD_BODY_CAP = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 1024 * 1024
 
 export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
   // Per-handler closure so each handler instance starts with a clean backoff
@@ -575,7 +608,8 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'POST' && path === '/api/uploads') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       let body: { mediaType?: unknown; dataBase64?: unknown; name?: unknown } | undefined
-      try { body = (await readJsonBody(req)) as typeof body } catch {
+      try { body = (await readJsonBody(req, UPLOAD_BODY_CAP)) as typeof body } catch (e) {
+        if (e instanceof PayloadTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
       }
       const mediaType = body?.mediaType

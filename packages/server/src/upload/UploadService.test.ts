@@ -114,4 +114,35 @@ describe('UploadService (I2)', () => {
     expect(second).toEqual(first)
     expect(second.data).toBe(PNG.toString('base64'))
   })
+
+  it('readBase64() evicts the oldest entry when the byte budget is exceeded', async () => {
+    // Budget large enough for exactly two entries, not three → inserting the 3rd evicts the 1st.
+    const oneLen = PNG.toString('base64').length
+    const s = new UploadService(dir, oneLen * 2 + 1)
+    const a = await s.save(PNG, 'image/png')
+    const b = await s.save(PNG, 'image/png')
+    const c = await s.save(PNG, 'image/png')
+    await s.readBase64(a.id)
+    await s.readBase64(b.id)
+    await s.readBase64(c.id) // inserting c pushes cacheBytes over budget → evict a (oldest)
+
+    // Remove the underlying files so cache membership is observable:
+    // retained → cached hit still returns; evicted → falls through to disk (now gone) → throws.
+    rmSync(join(dir, `${a.id}.png`), { force: true })
+    rmSync(join(dir, `${b.id}.png`), { force: true })
+    rmSync(join(dir, `${c.id}.png`), { force: true })
+
+    await expect(s.readBase64(a.id)).rejects.toThrow() // a was evicted
+    expect((await s.readBase64(b.id)).data).toBe(PNG.toString('base64')) // b retained
+    expect((await s.readBase64(c.id)).data).toBe(PNG.toString('base64')) // c retained
+  })
+
+  it('readBase64() does not cache a single entry larger than the whole budget', async () => {
+    const oneLen = PNG.toString('base64').length
+    const s = new UploadService(dir, oneLen - 1) // budget smaller than one entry
+    const { id } = await s.save(PNG, 'image/png')
+    await s.readBase64(id) // read succeeds but must NOT be cached (would blow the budget)
+    rmSync(join(dir, `${id}.png`), { force: true })
+    await expect(s.readBase64(id)).rejects.toThrow() // not cached → disk read fails
+  })
 })

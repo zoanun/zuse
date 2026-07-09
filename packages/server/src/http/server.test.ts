@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
+import { Readable } from 'node:stream'
+import type { IncomingMessage } from 'node:http'
 import { ToolRegistry } from '@zuse/core'
 import type { ResolvedSettings } from '@zuse/core'
 import { PasswordStore } from '../auth/passwordStore.js'
@@ -19,7 +21,7 @@ import { UploadService } from '../upload/UploadService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
-import { makeRequestHandler } from './server.js'
+import { makeRequestHandler, readJsonBody, PayloadTooLargeError } from './server.js'
 
 // A fake createSession that builds a real SessionManager around a fake client —
 // no real settings/model/network. Mirrors SessionService.test.ts.
@@ -565,5 +567,40 @@ describe('/api/uploads REST', () => {
     expect(bad.status).toBe(400)
     const missing = await fetch(`${base}/api/uploads/00000000-0000-0000-0000-000000000000`, { headers: { cookie } })
     expect(missing.status).toBe(404)
+  })
+
+  it('POST /api/uploads with a body over the size cap → 413 (early reject, no OOM)', async () => {
+    const cookie = await authCookie()
+    // > UPLOAD_BODY_CAP (~34MB): the body is rejected mid-stream, before the whole thing is
+    // buffered/parsed/decoded — proving the cap fires without needing to hold it all in memory.
+    const huge = 'A'.repeat(37 * 1024 * 1024)
+    const res = await fetch(`${base}/api/uploads`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ mediaType: 'image/png', dataBase64: huge }),
+    })
+    expect(res.status).toBe(413)
+    expect((await res.json()).error.code).toBe('too_large')
+  })
+})
+
+describe('readJsonBody body cap (I2)', () => {
+  it('rejects with PayloadTooLargeError once accumulated bytes exceed maxBytes', async () => {
+    // Feeds 5 + 5 bytes with maxBytes=8: the SECOND chunk trips the cap, so a third chunk
+    // (would-be 'never-read') is never consumed — the early-reject stops accumulation.
+    let pulledThird = false
+    const stream = Readable.from((function* () {
+      yield Buffer.from('12345')
+      yield Buffer.from('67890')
+      pulledThird = true
+      yield Buffer.from('never-read')
+    })())
+    await expect(readJsonBody(stream as unknown as IncomingMessage, 8)).rejects.toBeInstanceOf(PayloadTooLargeError)
+    expect(pulledThird).toBe(false)
+  })
+
+  it('with no cap parses a normal JSON body', async () => {
+    const stream = Readable.from([Buffer.from('{"a":1}')])
+    expect(await readJsonBody(stream as unknown as IncomingMessage)).toEqual({ a: 1 })
   })
 })

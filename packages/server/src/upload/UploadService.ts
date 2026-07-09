@@ -5,6 +5,9 @@ import { join } from 'node:path'
 /** Hard ceiling on a single upload: 25 MiB. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
+/** Default byte budget for the base64 read cache (64 MiB). Eviction is by total bytes, not count. */
+export const MAX_CACHE_BYTES = 64 * 1024 * 1024
+
 /** Thrown when the declared mediaType is not a supported image type. */
 export class UnsupportedMediaError extends Error {
   constructor(mediaType: string) {
@@ -72,15 +75,17 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * other side.
  */
 export class UploadService {
-  constructor(private readonly uploadsDir: string) {}
+  constructor(private readonly uploadsDir: string, private readonly maxCacheBytes: number = MAX_CACHE_BYTES) {}
 
   /**
    * Bounded base64 cache keyed by (immutable) upload id — the direct-attach hot path re-reads the
-   * same images every turn, and a UUID's bytes never change, so this is safe. Capped at 32 entries;
-   * when full we evict the oldest (Map preserves insertion order → first key is the eldest).
+   * same images every turn, and a UUID's bytes never change, so this is safe. Bounded by TOTAL
+   * base64 bytes (maxCacheBytes), not entry count: one huge image is worth many small ones, so a
+   * count cap could still let ~1 GB sit resident. Map preserves insertion order → first key is the
+   * eldest, evicted first. `cacheBytes` tracks the running sum of cached `data.length`.
    */
   private readonly cache = new Map<string, { data: string; mediaType: string }>()
-  private static readonly CACHE_MAX = 32
+  private cacheBytes = 0
 
   /** Absolute path for a validated id + its stored extension. */
   private pathFor(id: string, ext: string): string {
@@ -133,11 +138,20 @@ export class UploadService {
     const { abs, mediaType } = await this.load(id)
     const buf = await readFile(abs)
     const entry = { data: buf.toString('base64'), mediaType }
-    if (this.cache.size >= UploadService.CACHE_MAX) {
+    const newLen = entry.data.length
+    // A single entry that alone blows the budget is never cached (it would only be evicted again
+    // on the next miss) — return it uncached rather than churn the whole cache out.
+    if (newLen > this.maxCacheBytes) return entry
+    // Evict oldest entries until the newcomer fits within the byte budget.
+    while (this.cacheBytes + newLen > this.maxCacheBytes && this.cache.size > 0) {
       const oldest = this.cache.keys().next().value
-      if (oldest !== undefined) this.cache.delete(oldest)
+      if (oldest === undefined) break
+      const evicted = this.cache.get(oldest)
+      this.cache.delete(oldest)
+      if (evicted) this.cacheBytes -= evicted.data.length
     }
     this.cache.set(id, entry)
+    this.cacheBytes += newLen
     return entry
   }
 }
