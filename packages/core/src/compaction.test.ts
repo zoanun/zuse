@@ -260,12 +260,23 @@ describe('resolveVision', () => {
     const s = settings({ p: { models: [{ name: 'm', type: 'vision', vision: false }] } })
     expect(resolveVision(s, 'p', 'm')).toBe(false)
   })
+
+  it('honours a case-/whitespace-variant `type` annotation ("Vision", " vision ")', () => {
+    const s = settings({ p: { models: [{ name: 'm', type: 'Vision' }, { name: 'n', type: ' vision ' }] } })
+    expect(resolveVision(s, 'p', 'm')).toBe(true)
+    expect(resolveVision(s, 'p', 'n')).toBe(true)
+  })
 })
 
 describe('isNonChatModelType', () => {
   it('flags image/tts/embedding/… as non-conversational, chat/vision/undefined as conversational', () => {
     for (const t of ['image', 'tts', 'embedding', 'audio', 'rerank', 'video', 'ocr']) expect(isNonChatModelType(t)).toBe(true)
     for (const t of ['chat', 'vision', undefined]) expect(isNonChatModelType(t)).toBe(false)
+  })
+
+  it('normalizes case + surrounding whitespace ("Image", " TTS ", "  image  ")', () => {
+    for (const t of ['Image', ' TTS ', '  image  ', 'OCR', 'Embedding']) expect(isNonChatModelType(t)).toBe(true)
+    for (const t of [' Chat ', 'Vision']) expect(isNonChatModelType(t)).toBe(false)
   })
 })
 

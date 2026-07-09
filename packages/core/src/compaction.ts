@@ -63,7 +63,7 @@ export function resolveVision(
     if (typeof entry !== 'string' && entry.name === model) {
       // Explicit `vision` flag wins; otherwise the human `type: 'vision'` annotation counts too.
       if (entry.vision !== undefined) return entry.vision
-      if (entry.type === 'vision') return true
+      if ((entry.type ?? '').trim().toLowerCase() === 'vision') return true
     }
   }
   return p?.vision ?? false
@@ -73,9 +73,11 @@ export function resolveVision(
  *  selector must never offer them as a main model (selecting one would just fail on send). */
 const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video', 'ocr'])
 
-/** True if a model entry's `type` marks it non-conversational (image/tts/embedding/…). */
+/** True if a model entry's `type` marks it non-conversational (image/tts/embedding/…). Normalized
+ *  (trim + lowercase) so hand-written config like `type:'Image'` / `' TTS '` is still recognized. */
 export function isNonChatModelType(type: string | undefined): boolean {
-  return type !== undefined && NON_CHAT_MODEL_TYPES.has(type)
+  const t = type?.trim().toLowerCase()
+  return t !== undefined && NON_CHAT_MODEL_TYPES.has(t)
 }
 
 /**
@@ -96,7 +98,7 @@ export function listSelectableModels(
       if (isNonChatModelType(entry.type)) continue
       // Same semantics as resolveVision, computed in place: explicit flag wins, then the
       // `type: 'vision'` annotation, then the provider-level fallback.
-      const vision = entry.vision !== undefined ? entry.vision : (entry.type === 'vision' ? true : (p.vision ?? false))
+      const vision = entry.vision !== undefined ? entry.vision : ((entry.type ?? '').trim().toLowerCase() === 'vision' ? true : (p.vision ?? false))
       out.push({ providerId, model: entry.name, vision })
     }
   }
