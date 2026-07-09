@@ -306,12 +306,11 @@ export function resolveModelSelection(settings: ResolvedSettings): ModelSelectio
 }
 
 /**
- * 解析 settings.smallModel（小模型,用于标题生成等廉价任务）。未配置则返回 null
- * （调用方据此回退,不启用小模型）。只在第一个 `/` 处切分 → 模型名里的 `/`
- * （如 siliconflow/Qwen/Qwen2.5-7B-Instruct）合法。裸字符串走默认 provider。
+ * 把 `provider/model` 形式的原始字符串切成 {providerId, model}。只在第一个 `/`
+ * 处切分 → 模型名里的 `/`（如 siliconflow/Qwen/Qwen2.5-7B-Instruct）合法。裸字符串
+ * 走默认 provider。空/未配置返回 null（调用方据此判断是否启用）。
  */
-export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSelection | null {
-  const raw = settings.smallModel
+function splitProviderModel(raw: string | undefined): ModelSelection | null {
   if (!raw) return null
   const slash = raw.indexOf('/')
   if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
@@ -319,16 +318,19 @@ export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSel
 }
 
 /**
+ * 解析 settings.smallModel（小模型,用于标题生成等廉价任务）。未配置则返回 null
+ * （调用方据此回退,不启用小模型）。
+ */
+export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSelection | null {
+  return splitProviderModel(settings.smallModel)
+}
+
+/**
  * 解析 settings.imageModel（图片解析模型,仅图片解析回退路径用）。未配置则返回
- * null（调用方据此不启用图片解析兜底）。切分规则同 resolveSmallModelSelection:
- * 只在第一个 `/` 处切分,裸字符串走默认 provider。
+ * null（调用方据此不启用图片解析兜底）。
  */
 export function resolveImageModelSelection(settings: ResolvedSettings): ModelSelection | null {
-  const raw = settings.imageModel
-  if (!raw) return null
-  const slash = raw.indexOf('/')
-  if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
-  return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }
+  return splitProviderModel(settings.imageModel)
 }
 
 /** key 来源：ZUSE_API_KEY_<ID>（id 大写）优先，其次字面量。 */
