@@ -9,7 +9,7 @@ import { isTurnOpener, type Message as Msg } from '../state/types.js'
 import { TodosPanel } from './TodosPanel.js'
 import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
-import { Composer } from './Composer.js'
+import { Composer, type ComposerHandle, imageFilesFrom } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
@@ -49,6 +49,37 @@ export function Shell() {
   const historyRef = useRef<Map<string, string[]>>(new Map())
   const dirPickerRef = useRef<DirPickerHandle>(null)
   const sidebarRef = useRef<SidebarHandle>(null)
+  const composerRef = useRef<ComposerHandle>(null)
+  // Whole-page image drop: dragging a file anywhere over the app shows an overlay and, on drop,
+  // hands the image files to the composer. dragDepth counts enter/leave across nested children
+  // (dragleave fires when crossing into a child), so the overlay only clears when the cursor truly
+  // leaves the window. Only file drags (not text/selection) trigger it.
+  const [dragging, setDragging] = useState(false)
+  const dragDepth = useRef(0)
+  const isFileDrag = (e: React.DragEvent): boolean => Array.from(e.dataTransfer?.types ?? []).includes('Files')
+  const onDragEnter = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+  const onDragOver = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault() // required for the drop event to fire
+    e.dataTransfer.dropEffect = 'copy'
+  }
+  const onDragLeave = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragging(false)
+  }
+  const onDrop = (e: React.DragEvent): void => {
+    if (!isFileDrag(e)) return
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragging(false)
+    composerRef.current?.addImages(imageFilesFrom(e.dataTransfer))
+  }
   const focusHistorySearch = useCallback(() => {
     setMenuOpen(true)
     // Focus the search box once the (now-open) Sidebar has it on-screen (parity with /work's ref).
@@ -160,7 +191,25 @@ export function Shell() {
   }, [shareSel])
 
   return (
-    <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
+    <div
+      className={'shell' + (menuOpen ? ' menu-open' : '')}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div className="dropzone-overlay" aria-hidden="true">
+          <div className="dropzone-card">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+            <div className="dropzone-text">松开以上传图片</div>
+          </div>
+        </div>
+      ) : null}
       <div className="backdrop" onClick={() => setMenuOpen(false)} />
       <Sidebar
           ref={sidebarRef}
@@ -215,6 +264,7 @@ export function Shell() {
             </div>
           ) : null}
           <Composer
+            ref={composerRef}
             thinking={state.thinking}
             onSend={onSend}
             onStop={() => send({ type: 'interrupt' })}

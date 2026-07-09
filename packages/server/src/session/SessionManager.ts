@@ -927,7 +927,13 @@ export class SessionManager {
       `Model: ${this.client.getModel()}\n` +
       `Context window: ~${windowK}k tokens.\n` +
       `Trust these over any model name or context-window size mentioned earlier in this conversation — ` +
-      `earlier values can be stale (e.g. after an automatic model failover).`
+      `earlier values can be stale (e.g. after an automatic model failover).\n\n` +
+      // Environment self-awareness (B): tell the model HOW images reach it, so it never has to guess
+      // its own vision capability (unreliable) or claim it "can't see images". Static → cache-friendly.
+      `## 图片输入\n` +
+      `用户可以上传图片。zuse 会按当前模型的能力处理：若模型支持视觉，图片会作为原生图像内容直接发给你，你能直接看到并分析；` +
+      `若不支持，zuse 会用单独配置的图像解析模型把图片转成文字描述后随消息提供给你（标注为「由图像解析模型转述，非用户原话」，多图会编号为「图片1／图片2…」）。` +
+      `两种情况下用户界面都显示他们上传的原图缩略图。因此当消息附带图片或图片描述时，直接据此作答，不要声称自己无法接收图片。`
 
     // Checkpoint (Phase 12): snapshot the workspace BEFORE the turn. fire-and-forget;
     // failure degrades to no checkpoint for this turn (D5). The hash is awaited at

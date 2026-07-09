@@ -49,7 +49,7 @@ describe('makeExpandAttachments (I2)', () => {
     expect(msg.content).toEqual([{ type: 'text', text: 'hi' }]) // still just text
   })
 
-  it("expands a route:'parsed' attachment into a text block (the description) prepended to content", async () => {
+  it("expands a single route:'parsed' attachment into a labeled text block prepended to content", async () => {
     const upload = fakeUpload({})
     const expand = makeExpandAttachments(upload)
     const msg: Message = {
@@ -59,10 +59,41 @@ describe('makeExpandAttachments (I2)', () => {
 
     const out = await expand([msg])
 
-    expect(out[0]!.content).toEqual([
-      { type: 'text', text: 'a red cat' },
-      { type: 'text', text: 'parsed one' },
-    ])
+    const content = out[0]!.content
+    expect(content).toHaveLength(2)
+    // Single image: a provenance header (no per-image numbering) + the description, as one text block.
+    expect(content[0]!.type).toBe('text')
+    const desc = (content[0] as { type: 'text'; text: string }).text
+    expect(desc).toContain('本条消息附带 1 张图片')
+    expect(desc).toContain('由图像解析模型转述')
+    expect(desc).toContain('a red cat')
+    expect(desc).not.toContain('图片 1') // single → not numbered
+    expect(content[1]).toEqual({ type: 'text', text: 'parsed one' })
+  })
+
+  it('merges MULTIPLE parsed descriptions into ONE numbered text block (so the model can tell images apart)', async () => {
+    const expand = makeExpandAttachments(fakeUpload({}))
+    const msg: Message = {
+      ...textMsg('这人穿什么颜色，第二张讲啥'),
+      attachments: [
+        { id: 'a1', name: 'person.jpg', mediaType: 'image/jpeg', route: 'parsed', description: '一位穿白色衬衫的男士' },
+        { id: 'a2', name: 'text.png', mediaType: 'image/png', route: 'parsed', description: '一个粉色文本框' },
+      ],
+    }
+
+    const out = await expand([msg])
+
+    const content = out[0]!.content
+    expect(content).toHaveLength(2) // ONE combined description block + the user text
+    const desc = (content[0] as { type: 'text'; text: string }).text
+    expect(desc).toContain('本条消息附带 2 张图片')
+    expect(desc).toContain('▍图片 1（person.jpg）')
+    expect(desc).toContain('一位穿白色衬衫的男士')
+    expect(desc).toContain('▍图片 2（text.png）')
+    expect(desc).toContain('一个粉色文本框')
+    // ordering: image 1's label precedes image 2's
+    expect(desc.indexOf('图片 1')).toBeLessThan(desc.indexOf('图片 2'))
+    expect(content[1]).toEqual({ type: 'text', text: '这人穿什么颜色，第二张讲啥' })
   })
 
   it("skips a route:'parsed' attachment with an empty/whitespace description", async () => {
@@ -97,11 +128,11 @@ describe('makeExpandAttachments (I2)', () => {
 
     const out = await expand([msg])
 
-    expect(out[0]!.content).toEqual([
-      { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'IMGDATA' } },
-      { type: 'text', text: 'a chart' },
-      { type: 'text', text: 'both' },
-    ])
+    const content = out[0]!.content
+    expect(content).toHaveLength(3) // image block, then the (single) parsed description block, then text
+    expect(content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'IMGDATA' } })
+    expect((content[1] as { type: 'text'; text: string }).text).toContain('a chart')
+    expect(content[2]).toEqual({ type: 'text', text: 'both' })
   })
 
   it('returns the message as-is when there are no attachments', async () => {

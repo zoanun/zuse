@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
+import { createRef } from 'react'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
-import { Composer } from './Composer.js'
+import { Composer, type ComposerHandle } from './Composer.js'
 import { SLASH_COMMANDS } from './commands.js'
 import { uploadImage } from '../state/manageApi.js'
 
@@ -267,16 +268,25 @@ describe('Composer image upload', () => {
     expect(container.querySelectorAll('.attach-thumb').length).toBe(1)
   })
 
-  it('drops an image → uploads it → shows a thumbnail', async () => {
+  it('addImages (the whole-page drop entry point) uploads and shows a thumbnail', async () => {
+    // Drop is now handled by Shell's whole-page drop zone, which forwards files here via the
+    // imperative handle — so exercise addImages directly.
     mockedUpload.mockClear()
-    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
-    const wrap = container.querySelector('.composer-wrap') as HTMLElement
+    const ref = createRef<ComposerHandle>()
+    render(<Composer ref={ref} thinking={false} onSend={() => {}} onStop={() => {}} />)
     const file = pngFile('dropped.png')
-    await act(async () => {
-      fireEvent.drop(wrap, { dataTransfer: { files: [file], items: [] } })
-    })
+    await act(async () => { ref.current!.addImages([file]) })
     expect(mockedUpload).toHaveBeenCalledWith(file)
     expect(await screen.findByAltText('dropped.png')).toBeInTheDocument()
+  })
+
+  it('addImages refuses while thinking (mid-turn) and surfaces a hint', async () => {
+    mockedUpload.mockClear()
+    const ref = createRef<ComposerHandle>()
+    render(<Composer ref={ref} thinking onSend={() => {}} onStop={() => {}} />)
+    await act(async () => { ref.current!.addImages([pngFile('x.png')]) })
+    expect(mockedUpload).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent(/回复生成中/)
   })
 
   it('picks an image via the paperclip file input → uploads it', async () => {
@@ -294,10 +304,9 @@ describe('Composer image upload', () => {
   it('caps at 10 images and shows an error when more are added', async () => {
     mockedUpload.mockClear()
     const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
-    const wrap = container.querySelector('.composer-wrap') as HTMLElement
     const files = Array.from({ length: 11 }, (_, i) => pngFile(`f${i}.png`))
     await act(async () => {
-      fireEvent.drop(wrap, { dataTransfer: { files, items: [] } })
+      fireEvent.change(fileInput(container), { target: { files } })
     })
     await waitFor(() => expect(container.querySelectorAll('.attach-thumb').length).toBe(10))
     expect(screen.getByRole('alert')).toHaveTextContent(/10/)
@@ -307,13 +316,25 @@ describe('Composer image upload', () => {
   it('skips a file larger than 25 MiB and shows an error', async () => {
     mockedUpload.mockClear()
     const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
-    const wrap = container.querySelector('.composer-wrap') as HTMLElement
     await act(async () => {
-      fireEvent.drop(wrap, { dataTransfer: { files: [bigFile('huge.png')], items: [] } })
+      fireEvent.change(fileInput(container), { target: { files: [bigFile('huge.png')] } })
     })
     expect(mockedUpload).not.toHaveBeenCalled()
     expect(container.querySelectorAll('.attach-thumb').length).toBe(0)
     expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  it('auto-dismisses a transient attach error after a few seconds', async () => {
+    vi.useFakeTimers()
+    try {
+      const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+      act(() => { fireEvent.change(fileInput(container), { target: { files: [bigFile('huge.png')] } }) })
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      act(() => { vi.advanceTimersByTime(4100) })
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sends the uploaded image refs then clears the tray', async () => {

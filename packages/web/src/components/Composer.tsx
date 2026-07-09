@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { UploadedImageRef } from '@zuse/protocol'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
@@ -27,8 +27,11 @@ interface PendingImage {
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
 
+/** Imperative surface so a whole-page drop zone (Shell) can hand dropped image files to the composer. */
+export interface ComposerHandle { addImages: (files: File[]) => void }
+
 /** Pull image Files out of a paste/drop payload — files first, then items (kind==='file', image/*). */
-function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
   if (!dt) return []
   const out: File[] = []
   for (const f of Array.from(dt.files ?? [])) if (f && f.type.startsWith('image/')) out.push(f)
@@ -43,7 +46,7 @@ function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
   return out
 }
 
-export function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }: ComposerProps) {
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }, ref) {
   const [value, setValue] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -62,6 +65,13 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
 
   useEffect(() => { taRef.current?.focus() }, [])
   useEffect(() => { if (!thinking) taRef.current?.focus() }, [thinking])
+  // Attach errors (over-size / over-count / upload feedback) are transient notices — auto-dismiss
+  // after a few seconds so they don't linger. Re-arms whenever the message changes.
+  useEffect(() => {
+    if (!attachError) return
+    const t = setTimeout(() => setAttachError(''), 4000)
+    return () => clearTimeout(t)
+  }, [attachError])
   // New session → fresh history array → reset the cursor.
   useEffect(() => { setHistIdx(null) }, [history])
   // Keep the highlight in range as the candidate list shrinks/grows.
@@ -132,22 +142,24 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     uploadInto(key, item.file) // re-upload the retained File — no blob refetch
   }
 
-  // paste and drop are identical bar the payload source: grab image Files, bail if none, block the
-  // default (don't also paste image-as-text), refuse mid-turn, else stage them.
-  function stage(files: File[], e: { preventDefault(): void }) {
+  // Stage image files (from paste, or from the whole-page drop zone via the imperative handle):
+  // bail if none, refuse mid-turn, else upload. Callers that own a DOM event preventDefault first.
+  function stage(files: File[]) {
     if (files.length === 0) return
-    e.preventDefault()
     if (thinking) { setAttachError('回复生成中不能加图'); return }
     addFiles(files)
   }
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
-    stage(imageFilesFrom(e.clipboardData), e)
+    const files = imageFilesFrom(e.clipboardData)
+    if (files.length === 0) return // let normal text paste through
+    e.preventDefault() // don't also paste the image as a data-URL string
+    stage(files)
   }
 
-  function onDrop(e: React.DragEvent) {
-    stage(imageFilesFrom(e.dataTransfer), e)
-  }
+  // Shell hosts a whole-page drop zone and forwards dropped image files here (recreated each render
+  // so `stage` closes over the current `thinking`/`pending`).
+  useImperativeHandle(ref, () => ({ addImages: stage }))
 
   const uploading = pending.some((p) => p.status === 'uploading')
   const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)
@@ -191,7 +203,7 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
   }
 
   return (
-    <div className="composer-wrap" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+    <div className="composer-wrap">
       {menuOpen ? (
         <ul className="slash-menu" role="listbox" aria-label="命令">
           {menu.map((c, i) => (
@@ -289,4 +301,4 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
       </div>
     </div>
   )
-}
+})
