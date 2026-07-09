@@ -318,6 +318,19 @@ export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSel
   return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }
 }
 
+/**
+ * 解析 settings.imageModel（图片解析模型,仅图片解析回退路径用）。未配置则返回
+ * null（调用方据此不启用图片解析兜底）。切分规则同 resolveSmallModelSelection:
+ * 只在第一个 `/` 处切分,裸字符串走默认 provider。
+ */
+export function resolveImageModelSelection(settings: ResolvedSettings): ModelSelection | null {
+  const raw = settings.imageModel
+  if (!raw) return null
+  const slash = raw.indexOf('/')
+  if (slash === -1) return { providerId: DEFAULT_PROVIDER_ID, model: raw }
+  return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) }
+}
+
 /** key 来源：ZUSE_API_KEY_<ID>（id 大写）优先，其次字面量。 */
 function resolveApiKey(providerId: string, literal: string | undefined): string {
   const envKey = process.env[`ZUSE_API_KEY_${providerId.toUpperCase()}`]

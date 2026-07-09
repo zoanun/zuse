@@ -48,6 +48,25 @@ export function resolveContextWindow(
   return p?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
 }
 
+/**
+ * 判定某 provider/model 是否支持视觉输入:模型级条目 vision → provider 级
+ * vision → 默认 false。用 `!== undefined` 而非真值判断,因为 vision:false 是
+ * 有效值,应能覆盖 provider 级 vision:true(不可被回退吞掉)。
+ */
+export function resolveVision(
+  settings: ResolvedSettings,
+  providerId: string,
+  model: string,
+): boolean {
+  const p = settings.providers[providerId]
+  for (const entry of p?.models ?? []) {
+    if (typeof entry !== 'string' && entry.name === model && entry.vision !== undefined) {
+      return entry.vision
+    }
+  }
+  return p?.vision ?? false
+}
+
 /** 占用超过窗口的此比例即触发自动压缩。 */
 export const COMPACTION_THRESHOLD = 0.8
 

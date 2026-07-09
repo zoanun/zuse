@@ -13,6 +13,7 @@ import {
   summarizeForCompaction,
   splitMemoryCandidates,
   resolveContextWindow,
+  resolveVision,
   DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
 
@@ -211,6 +212,40 @@ describe('resolveContextWindow', () => {
 
   it('default is 512K (mainstream flagships are 1M-class in 2026)', () => {
     expect(DEFAULT_CONTEXT_WINDOW).toBe(512_000)
+  })
+})
+
+describe('resolveVision', () => {
+  const settings = (providers: Record<string, unknown>): import('./types.js').ResolvedSettings =>
+    ({
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+      providers,
+    }) as import('./types.js').ResolvedSettings
+
+  it('model-level vision wins over provider-level vision', () => {
+    const s = settings({ p: { vision: false, models: [{ name: 'm', vision: true }, 'n'] } })
+    expect(resolveVision(s, 'p', 'm')).toBe(true)
+  })
+
+  it('string entries fall back to the provider-level vision', () => {
+    const s = settings({ p: { vision: false, models: [{ name: 'm', vision: true }, 'n'] } })
+    expect(resolveVision(s, 'p', 'n')).toBe(false)
+  })
+
+  it('falls back to the provider-level vision when true', () => {
+    const s = settings({ p: { vision: true, models: ['n'] } })
+    expect(resolveVision(s, 'p', 'n')).toBe(true)
+  })
+
+  it('defaults to false when nothing is configured', () => {
+    const s = settings({})
+    expect(resolveVision(s, 'unknown', 'x')).toBe(false)
+  })
+
+  it('model-level vision:false overrides provider-level vision:true (!== undefined, not truthy)', () => {
+    const s = settings({ p: { vision: true, models: [{ name: 'm', vision: false }] } })
+    expect(resolveVision(s, 'p', 'm')).toBe(false)
   })
 })
 

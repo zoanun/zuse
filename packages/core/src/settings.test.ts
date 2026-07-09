@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -183,6 +183,30 @@ describe('resolveModelSelection', () => {
     const sel = resolveModelSelection(base({}))
     expect(sel.providerId).toBe('default')
     expect(sel.model).toBeTruthy()
+  })
+})
+
+describe('resolveImageModelSelection', () => {
+  it('parses "<providerId>/<model>"', () => {
+    expect(resolveImageModelSelection(base({ imageModel: 'anthropic/claude-opus-4-8' }))).toEqual({
+      providerId: 'anthropic',
+      model: 'claude-opus-4-8',
+    })
+  })
+  it('returns null when imageModel unset', () => {
+    expect(resolveImageModelSelection(base({}))).toBeNull()
+  })
+  it('treats bare string as default provider', () => {
+    expect(resolveImageModelSelection(base({ imageModel: 'bare-model' }))).toEqual({
+      providerId: DEFAULT_PROVIDER_ID,
+      model: 'bare-model',
+    })
+  })
+  it('only splits on the first slash', () => {
+    expect(resolveImageModelSelection(base({ imageModel: 'openai/gpt-4o/vision' }))).toEqual({
+      providerId: 'openai',
+      model: 'gpt-4o/vision',
+    })
   })
 })
 
