@@ -13,6 +13,7 @@ import { SkillService } from './skill/SkillService.js'
 import { UsageService } from './usage/UsageService.js'
 import { FileService } from './file/FileService.js'
 import { McpService } from './mcp/McpService.js'
+import { UploadService } from './upload/UploadService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -143,6 +144,8 @@ export async function startServer(
   const search = new SearchService({ dir: sessionsDir })
   // Read-only project file browser (M7), rooted at the daemon's cwd.
   const file = new FileService(cfg.cwd)
+  // User image uploads (I2): stored under the auth dir (alongside web-sessions), not the project.
+  const upload = new UploadService(join(cfg.authDir, 'uploads'))
   // Skill management (M3): scans ~/.zuse/skills + project .zuse/skills under the daemon's cwd.
   const skill = new SkillService({ cwd: cfg.cwd })
   // MCP management view (M4): merges configured servers with live status/tools; reconnect lets the
@@ -154,7 +157,7 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, upload, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

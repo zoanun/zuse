@@ -15,6 +15,7 @@ import { SkillService } from '../skill/SkillService.js'
 import { UsageService } from '../usage/UsageService.js'
 import { FileService } from '../file/FileService.js'
 import { McpService } from '../mcp/McpService.js'
+import { UploadService } from '../upload/UploadService.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
@@ -46,7 +47,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
@@ -68,7 +69,9 @@ beforeEach(async () => {
   mcp = new McpService({ settingsBasePath: settingsPath, loadConfigured: () => {
     try { return JSON.parse(readFileSync(settingsPath, 'utf8')).mcpServers ?? {} } catch { return {} }
   } })
-  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, devPage: false, tokenTtlSec: 3600 }))
+  // Real UploadService over a temp uploads dir so /api/uploads is exercised end-to-end.
+  upload = new UploadService(join(dir, 'uploads'))
+  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, upload, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -512,5 +515,55 @@ describe('/api/mcp REST', () => {
     await fetch(`${base}/api/mcp/gone`, { method: 'DELETE', headers: { cookie } })
     const list = await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json() as unknown[]
     expect(list).toHaveLength(0) // driven by configured servers → delete drops the row at once
+  })
+})
+
+describe('/api/uploads REST', () => {
+  // A 1x1 PNG (UploadService validates mediaType + size, not the byte content).
+  const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
+  it('unauthenticated POST/GET → 401', async () => {
+    expect((await fetch(`${base}/api/uploads`, json({ mediaType: 'image/png', dataBase64: PNG_B64 }))).status).toBe(401)
+    expect((await fetch(`${base}/api/uploads/whatever`)).status).toBe(401)
+  })
+
+  it('POST stores an image → GET streams the exact bytes back', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+
+    const created = await fetch(`${base}/api/uploads`, { method: 'POST', headers: h, body: JSON.stringify({ mediaType: 'image/png', dataBase64: PNG_B64, name: 'a.png' }) })
+    expect(created.status).toBe(200)
+    const out = await created.json() as { id: string; name: string; mediaType: string }
+    expect(out.id).toBeTruthy()
+    expect(out.name).toBe('a.png') // name echoed back verbatim
+    expect(out.mediaType).toBe('image/png')
+
+    const got = await fetch(`${base}/api/uploads/${out.id}`, { headers: { cookie } })
+    expect(got.status).toBe(200)
+    expect(got.headers.get('content-type')).toBe('image/png')
+    const bytes = Buffer.from(await got.arrayBuffer())
+    expect(bytes.equals(Buffer.from(PNG_B64, 'base64'))).toBe(true) // round-trips exactly
+  })
+
+  it('POST with a non-image mediaType → 415', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/uploads`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ mediaType: 'text/plain', dataBase64: PNG_B64 }) })
+    expect(res.status).toBe(415)
+    expect((await res.json()).error.code).toBe('unsupported_media')
+  })
+
+  it('POST with missing fields → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/uploads`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ mediaType: 'image/png' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
+
+  it('GET malformed id → 400; GET legal-but-missing uuid → 404', async () => {
+    const cookie = await authCookie()
+    const bad = await fetch(`${base}/api/uploads/not-a-uuid`, { headers: { cookie } })
+    expect(bad.status).toBe(400)
+    const missing = await fetch(`${base}/api/uploads/00000000-0000-0000-0000-000000000000`, { headers: { cookie } })
+    expect(missing.status).toBe(404)
   })
 })

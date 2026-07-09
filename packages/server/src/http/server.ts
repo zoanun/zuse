@@ -16,6 +16,8 @@ import type { UsageService } from '../usage/UsageService.js'
 import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } from '../file/FileService.js'
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
+import type { UploadService } from '../upload/UploadService.js'
+import { UnsupportedMediaError, TooLargeError } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -29,6 +31,7 @@ export interface RequestHandlerDeps {
   usage: UsageService
   file: FileService
   mcp: McpService
+  upload: UploadService
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -550,6 +553,61 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return
       } catch (e) {
         return sendFileError(e)
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/uploads — user image uploads (I2), auth-gated. base64-in-JSON (localhost single-user;
+    // no multipart). POST stores; GET /<id> streams the stored image back with its content-type.
+    // -----------------------------------------------------------------------
+
+    // POST /api/uploads — body {mediaType, dataBase64, name?} → 200 {id, name, mediaType}.
+    // Must precede the GET /<id> pattern (different method, but keep them grouped).
+    if (method === 'POST' && path === '/api/uploads') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { mediaType?: unknown; dataBase64?: unknown; name?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const mediaType = body?.mediaType
+      const dataBase64 = body?.dataBase64
+      if (typeof mediaType !== 'string' || typeof dataBase64 !== 'string') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'mediaType and dataBase64 required' } })
+      }
+      const name = typeof body?.name === 'string' ? body.name : undefined
+      try {
+        const bytes = Buffer.from(dataBase64, 'base64')
+        const { id } = await deps.upload.save(bytes, mediaType)
+        return sendJson(res, 200, { id, name, mediaType }) // name echoed back verbatim
+      } catch (e) {
+        if (e instanceof UnsupportedMediaError) return sendJson(res, 415, { error: { code: 'unsupported_media', message: e.message } })
+        if (e instanceof TooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
+    // GET /api/uploads/<id> — stream the stored image. Malformed id → 400; missing → 404.
+    if (method === 'GET' && path.startsWith('/api/uploads/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/uploads/'.length))
+      try {
+        const { abs, size, mediaType } = await deps.upload.load(id)
+        res.writeHead(200, { 'content-type': mediaType, 'content-length': String(size) })
+        const stream = createReadStream(abs)
+        // pipe() does NOT forward source errors; without this listener a mid-stream failure would
+        // emit an unhandled 'error' and crash the whole daemon.
+        stream.on('error', () => { res.destroy() }) // headers already sent — just tear the response down
+        stream.pipe(res)
+        return
+      } catch (e) {
+        // load() swallows per-extension stat errors and throws a plain Error for a valid-but-missing
+        // id ("upload not found: …") vs. a malformed id ("invalid upload id: …") — so map by message
+        // (plus an ENOENT fallback) rather than an errno the service never surfaces.
+        const msg = (e as Error).message ?? ''
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT' || msg.startsWith('upload not found')) {
+          return sendJson(res, 404, { error: { code: 'not_found', message: 'Not found' } })
+        }
+        return sendJson(res, 400, { error: { code: 'bad_request', message: msg } })
       }
     }
 

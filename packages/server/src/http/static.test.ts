@@ -13,6 +13,7 @@ import type { SkillService } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
 import type { FileService } from '../file/FileService.js'
 import type { McpService } from '../mcp/McpService.js'
+import type { UploadService } from '../upload/UploadService.js'
 
 const fakeAuth = { verifyToken: () => true, isConfigured: async () => true } as unknown as AuthProvider
 // Minimal fake — these tests never hit the /api/sessions routes.
@@ -31,10 +32,12 @@ const fakeUsage = { stats: async () => ({ total: { input_tokens: 0, output_token
 const fakeFile = { list: async () => ({ path: '', root: '/', entries: [] }), read: async () => ({ path: '', content: '', truncated: false, binary: false, size: 0 }) } as unknown as FileService
 // Minimal fake — these tests never hit the /api/mcp routes.
 const fakeMcp = { list: () => [] } as unknown as McpService
+// Minimal fake — these tests never hit the /api/uploads routes.
+const fakeUpload = { save: async () => ({ id: 'x' }), load: async () => ({ abs: '', size: 0, mediaType: 'image/png' }) } as unknown as UploadService
 let dir: string, server: Server, base: string
 
 async function start(webDir?: string): Promise<void> {
-  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, devPage: true, tokenTtlSec: 3600, webDir }))
+  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, upload: fakeUpload, devPage: true, tokenTtlSec: 3600, webDir }))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const a = server.address()
   base = 'http://127.0.0.1:' + (typeof a === 'object' && a ? a.port : 0)
