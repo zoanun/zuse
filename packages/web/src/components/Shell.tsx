@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict } from '@zuse/protocol'
+import type { PermissionVerdict, UploadedImageRef } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar, type SidebarHandle } from './Sidebar.js'
@@ -71,7 +71,7 @@ export function Shell() {
   const onRunCommand = (cmd: SlashCommand) => cmd.run(commandCtx)
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
-  const onSend = (text: string) => {
+  const onSend = (text: string, images?: UploadedImageRef[]) => {
     // A slash command can still reach onSend even though the menu normally runs it via onRunCommand:
     // an Esc-dismissed menu then Enter, a trailing space that stops the prefix matching, or the send
     // button. Intercept and run it here too, so the command fires instead of being posted as a
@@ -84,12 +84,17 @@ export function Shell() {
     const arr = historyRef.current.get(key) ?? []
     historyRef.current.set(key, [...arr, text].slice(-100))
     if (state.thinking) {
+      // Mid-turn steer stays text-only this iteration (no images on steer); if any were passed we
+      // simply drop them here — disabling the attach affordance while thinking is the Composer's job.
       dispatch({ kind: 'steer-queued', id: nextId('ps'), text })
       send({ type: 'steer', text })
       return
     }
-    dispatch({ kind: 'user-send', id: nextId('u'), text })
-    send({ type: 'send', text })
+    // Optimistic attachments carry only id/name/mediaType — at send time we don't yet know whether
+    // the server will direct-upload or parse each image, so route/description are omitted and filled
+    // in later when the authoritative snapshot echoes the message back.
+    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) })
+    send({ type: 'send', text, images })
   }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).

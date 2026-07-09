@@ -1,4 +1,4 @@
-import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart } from '@zuse/protocol'
+import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart, MessageAttachment } from '@zuse/protocol'
 import { isTurnOpener, type AppState, type Connection, type Part } from './types.js'
 
 export const initialState: AppState = {
@@ -8,7 +8,7 @@ export const initialState: AppState = {
 
 export type Action =
   | { kind: 'server'; msg: ServerMessage }
-  | { kind: 'user-send'; id: string; text: string; steer?: boolean }
+  | { kind: 'user-send'; id: string; text: string; steer?: boolean; attachments?: MessageAttachment[] }
   | { kind: 'steer-queued'; id: string; text: string }
   | { kind: 'connection'; status: Connection }
   | { kind: 'notice'; text: string; noticeKind?: 'info' | 'warn' | 'error' | 'help' }
@@ -64,6 +64,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   const mapped = s.messages.map((m, i) => ({
     id: m.steer ? 'hs' + i : 'h' + (m.ledgerIndex ?? i),
     role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId, steer: m.steer,
+    attachments: m.attachments,
   }))
   return {
     ...state,
@@ -80,7 +81,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   }
 }
 
-type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string; steer?: boolean }
+type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string; steer?: boolean; attachments?: MessageAttachment[] }
 
 /**
  * In the API ledger a tool's result is a `role: 'user'` message holding only a tool_result
@@ -182,7 +183,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
 export function reduce(state: AppState, action: Action): AppState {
   switch (action.kind) {
     case 'user-send':
-      return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }], steer: action.steer }] }
+      return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }], steer: action.steer, attachments: action.attachments }] }
     case 'steer-queued':
       return { ...state, pendingSteers: [...state.pendingSteers, { id: action.id, text: action.text }] }
     case 'connection':

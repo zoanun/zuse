@@ -1,4 +1,4 @@
-import type { TodoItemLite, PendingPermissionLite, Usage } from '@zuse/protocol'
+import type { TodoItemLite, PendingPermissionLite, Usage, MessageAttachment } from '@zuse/protocol'
 
 export type Part =
   | { kind: 'text'; text: string }
@@ -17,6 +17,9 @@ export interface Message {
   // streaming). Rendered with a "↪ 插话" marker; also stops the preceding assistant message from
   // being treated as turn-final (so it doesn't spuriously grow a copy/share footer mid-turn).
   steer?: boolean
+  // Images attached to this message (snapshot projection carries route/description; the optimistic
+  // user-send bubble carries only id/name/mediaType until the server snapshot fills the rest).
+  attachments?: MessageAttachment[]
 }
 /**
  * A "turn opener" is a real user message — the start of a turn. A mid-turn steer bubble is also

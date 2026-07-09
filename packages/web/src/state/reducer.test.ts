@@ -106,6 +106,29 @@ describe('reduce', () => {
     ], checkpointId: undefined })
   })
 
+  it('user-send carries optimistic attachments onto the user message', () => {
+    const s = reduce(initialState, { kind: 'user-send', id: 'u1', text: 'look', attachments: [
+      { id: 'img1', name: 'a.png', mediaType: 'image/png' },
+    ] })
+    expect(s.messages[0]!.attachments).toEqual([{ id: 'img1', name: 'a.png', mediaType: 'image/png' }])
+  })
+
+  it('applySnapshot carries attachments onto messages (route/description round-tripped)', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'what is this' }], attachments: [
+          { id: 'img1', name: 'a.png', mediaType: 'image/png', route: 'parsed', description: 'a red square' },
+        ] },
+      ],
+      checkpoints: [],
+    } } })
+    expect(s.messages[0]!.attachments).toEqual([
+      { id: 'img1', name: 'a.png', mediaType: 'image/png', route: 'parsed', description: 'a red square' },
+    ])
+  })
+
   it('applySnapshot carries checkpointId onto user messages', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', cwd: '/x',
