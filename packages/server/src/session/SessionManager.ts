@@ -4,6 +4,7 @@ import {
   decide,
   runAgent,
   resolveContextWindow,
+  resolveVision,
   findCompactionCut,
   findCompactionCutByBudget,
   summarizeForCompaction,
@@ -29,6 +30,8 @@ import {
   generateSessionTitle,
   steerFoldSuffix,
   type ModelClient,
+  type Message,
+  type MessageAttachment,
   type FileReadTracker,
   type ResolvedSettings,
   type ProviderConfig,
@@ -47,12 +50,34 @@ import type {
   SessionCheckpoint,
   SnapshotStore,
 } from './events.js'
-import type { SnapshotPart, SnapshotMessage } from '@zuse/protocol'
+import type { SnapshotPart, SnapshotMessage, UploadedImageRef } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
 
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
+
+/** Output cap for a single image-description round-trip (parsed fallback for non-vision models). */
+const IMAGE_DESCRIPTION_MAX_TOKENS = 1024
+
+/**
+ * Prompt sent to the auxiliary image model (parsed fallback): ask it to describe an image objectively
+ * and completely so the non-vision main model can answer the user's question from the description.
+ */
+const IMAGE_PROMPT =
+  '请客观、完整地描述这张图片的内容（包括文字、图表、界面、代码、人物特征等一切可见细节），以便另一个模型据此回答用户的问题。'
+
+/**
+ * Remove the parsed-fallback `<uploaded-images>…</uploaded-images>` block (baked into the model's
+ * user text by submit()) for DISPLAY only — the ledger keeps the baked text so the model's history
+ * stays faithful; this strips it back out (with its leading `\n\n`) so a late-joining client renders
+ * the user's original question, not the machine-baked descriptions. The image metadata is surfaced
+ * separately via SnapshotMessage.attachments.
+ */
+const UPLOADED_IMAGES_RE = /\n\n<uploaded-images>\n[\s\S]*?\n<\/uploaded-images>\s*$/
+function stripUploadedImages(text: string): string {
+  return text.replace(UPLOADED_IMAGES_RE, '')
+}
 
 export interface PermissionPolicy {
   interactive: boolean
@@ -93,6 +118,25 @@ export interface SessionManagerOptions {
   titleModel?: string
   /** True when a title already exists (restored manual/generated record) → don't auto-generate. */
   titleAlreadySet?: boolean
+  /**
+   * Auxiliary vision-capable client + model for the PARSED fallback (I2): when the main model is
+   * NOT vision-capable, each uploaded image is sent to this client to obtain a text description,
+   * which is baked into the main model's user text. Absent → images cannot be handled for a
+   * non-vision main model (submit emits an error and refuses to send).
+   */
+  imageClient?: ModelClient
+  imageModel?: string
+  /**
+   * Reads an uploaded image's bytes as base64 (parsed fallback constructs the image block from it).
+   * Provided by startServer via UploadService.readBase64; SessionManager never touches the uploads dir.
+   */
+  readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
+  /**
+   * Send-time image-expansion hook forwarded to runAgent for the DIRECT route (vision main model):
+   * reads each message's `attachments` → base64 → prepends image blocks to a request-only copy.
+   * Provided by startServer; the ledger stays base64-free. Absent → direct route sends text only.
+   */
+  expandAttachments?: (messages: Message[]) => Promise<Message[]>
 }
 
 interface Pending {
@@ -120,6 +164,13 @@ export class SessionManager {
   /** Small-model client + model for title generation; undefined when smallModel unset. */
   private readonly titleClient: ModelClient | undefined
   private readonly titleModel: string | undefined
+  /** Parsed-fallback image model (I2): describes images for a non-vision main model. */
+  private readonly imageClient: ModelClient | undefined
+  private readonly imageModel: string | undefined
+  /** Reads an uploaded image as base64 (parsed fallback); injected, uploads dir stays server-owned. */
+  private readonly readImageBase64: ((id: string) => Promise<{ data: string; mediaType: string }>) | undefined
+  /** Send-time image-expansion hook for the direct route; forwarded to runAgent. */
+  private readonly expandAttachments: ((messages: Message[]) => Promise<Message[]>) | undefined
   /** A title exists (generated or manual) → don't auto-generate again. */
   private titleSettled = false
   /** A title-generation call is in flight → don't start a second one. */
@@ -196,6 +247,10 @@ export class SessionManager {
     this.createClient = opts.createClient ?? createModelClient
     this.titleClient = opts.titleClient
     this.titleModel = opts.titleModel
+    this.imageClient = opts.imageClient
+    this.imageModel = opts.imageModel
+    this.readImageBase64 = opts.readImageBase64
+    this.expandAttachments = opts.expandAttachments
     this.titleSettled = !!opts.titleAlreadySet
     // Initialise totalUsage from the conversation only if there is prior usage.
     // Conversation.totalUsage always returns a Usage object (never undefined), so
@@ -358,7 +413,7 @@ export class SessionManager {
    */
   private projectMessages(): SnapshotMessage[] {
     const out: SnapshotMessage[] = []
-    this.conversation.getMessages().forEach(({ role, content, steer }, i) => {
+    this.conversation.getMessages().forEach(({ role, content, steer, attachments }, i) => {
       const parts: SnapshotPart[] = []
       for (const block of content) {
         if (block.type === 'text') {
@@ -366,7 +421,9 @@ export class SessionManager {
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
           // pattern, and only from user text — never touch assistant text.
-          const text = role === 'user' ? stripUserStamp(block.text) : block.text
+          // Strip submit()'s stamp prefix, then the parsed-fallback <uploaded-images> block (both
+          // live in the ledger but must not surface in the displayed user text). User-only.
+          const text = role === 'user' ? stripUploadedImages(stripUserStamp(block.text)) : block.text
           parts.push({ kind: 'text', text })
         } else if (block.type === 'tool_use') {
           parts.push({ kind: 'tool-use', id: block.id, name: block.name, input: block.input })
@@ -385,7 +442,9 @@ export class SessionManager {
       // message's ledger index. Attach the hash so the web can render a per-message revert.
       // Match by index regardless of role (only user turns will match by construction).
       const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
-      out.push({ role, parts, checkpointId, ledgerIndex: i })
+      // Carry the message's image attachments (route/description; no base64) so the client can render
+      // an image thumbnail row. Structurally identical to protocol's MessageAttachment → assign directly.
+      out.push({ role, parts, checkpointId, ledgerIndex: i, attachments })
       // Emit each folded steer as its own "↪ 插话" bubble after the carrier message. Driven by the
       // structural `steer` field — a message that merely CONTAINS the marker text (e.g. a Read of
       // steer.ts) has no such field and is left untouched.
@@ -705,11 +764,44 @@ export class SessionManager {
   }
 
   /**
+   * Parsed fallback (I2): describe ONE image via the auxiliary image client. Sends a single message
+   * carrying the image block + IMAGE_PROMPT + the user's question, collects the streamed text
+   * (throwing on an error event, mirroring title.ts's collect loop), and returns the trimmed
+   * description. Callers guard on imageClient/readImageBase64 presence; the `!` asserts are safe there.
+   */
+  private async describeImage(
+    data: string,
+    mediaType: string,
+    question: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const request: Message[] = [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', mediaType, data } },
+        { type: 'text', text: `${IMAGE_PROMPT}\n\n用户的问题：${question}` },
+      ],
+    }]
+    let out = ''
+    const events = this.imageClient!.sendMessages(
+      request,
+      { model: this.imageModel!, max_tokens: IMAGE_DESCRIPTION_MAX_TOKENS },
+      undefined,
+      signal,
+    )
+    for await (const e of events) {
+      if (e.type === 'text-delta') out += e.text
+      else if (e.type === 'error') throw new Error(e.message)
+    }
+    return out.trim()
+  }
+
+  /**
    * Run ONE user turn: drive runAgent and forward its stream as SessionEvents
    * (tool output forwarded RAW — no truncation/spill; that is the frontend's job),
    * then emit usage/context, and always emit turn-end in finally.
    */
-  async submit(text: string, _parts?: unknown, opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
+  async submit(text: string, images?: UploadedImageRef[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
     // Reject EXTERNAL concurrent submits while a turn runs. An isResend call is a
     // RECURSIVE re-entry from inside submit (failover resend) and must be allowed.
     if (this.isThinking && !opts?.isResend) {
@@ -754,6 +846,53 @@ export class SessionManager {
       // as its own follow-up turn, same as the post-turn path.
       if (!opts?.isResend) await this.drainSteerAsFollowUp()
       return
+    }
+
+    // Image routing (I2): split by whether the MAIN model is vision-capable.
+    //  - vision → DIRECT: images ride the staged user message as attachments (route:'direct') and are
+    //    expanded to native image blocks at send time by the injected expandAttachments hook; text is
+    //    NOT baked.
+    //  - non-vision → PARSED fallback: each image is described by the auxiliary imageClient and the
+    //    descriptions are baked into the main model's user text; attachments record route:'parsed'.
+    //    With no imageClient/readImageBase64 configured we cannot handle the image at all → error + bail.
+    // No images → both stay undefined and the turn runs exactly as before (regression-safe).
+    let effectiveText = text
+    let userAttachments: MessageAttachment[] | undefined
+    let expandFn: ((messages: Message[]) => Promise<Message[]>) | undefined
+    if (images && images.length > 0) {
+      const vision = resolveVision(this.settings, this.currentProviderId, this.client.getModel())
+      if (vision) {
+        userAttachments = images.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType, route: 'direct' as const }))
+        expandFn = this.expandAttachments
+      } else if (!this.imageClient || !this.readImageBase64) {
+        // Non-vision main model and no parse fallback wired → cannot handle the image. Refuse to send.
+        this.emit({ type: 'error', message: '当前模型不支持图片，且未配置图片解析模型', category: 'other' })
+        this.isThinking = false
+        this.abort = null
+        this.emit({ type: 'turn-end' })
+        if (!opts?.isResend) await this.drainSteerAsFollowUp()
+        return
+      } else {
+        // Describe each image via the auxiliary model. A single image's failure records an error
+        // string as its description (not aborting the others); Stop cancels via the shared signal.
+        const descriptions: string[] = []
+        for (const im of images) {
+          try {
+            const { data, mediaType } = await this.readImageBase64(im.id)
+            descriptions.push(await this.describeImage(data, mediaType, text, controller.signal))
+          } catch {
+            descriptions.push('(图片解析失败)')
+          }
+        }
+        effectiveText =
+          `${text}\n\n<uploaded-images>\n` +
+          images.map((im, i) => `${i + 1}. ${im.name}：${descriptions[i]}`).join('\n') +
+          '\n</uploaded-images>'
+        userAttachments = images.map((i, idx) => ({
+          id: i.id, name: i.name, mediaType: i.mediaType, route: 'parsed' as const, description: descriptions[idx],
+        }))
+        // No expandFn: route:'parsed' carries no base64 expansion — the description is already baked.
+      }
     }
 
     // Build the LLM context view AFTER auto-compaction (which may have updated this.compaction).
@@ -812,7 +951,9 @@ export class SessionManager {
         conversation,
         client: this.client,
         registry: this.registry,
-        userText: applyUserStamp(text),
+        userText: applyUserStamp(effectiveText),
+        userAttachments,
+        expandAttachments: expandFn,
         config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: systemWithRuntime },
         cwd: this.cwd,
         signal: controller.signal,

@@ -1762,3 +1762,170 @@ describe('SessionManager persistence accessors', () => {
     expect(mgr.getModelId()).toBe('test-model-xyz')
   })
 })
+
+describe('SessionManager image routing (I2)', () => {
+  const textTurn: StreamEvent[] = [
+    { type: 'message-start', id: 'm1', model: 'fake-model' },
+    { type: 'text-delta', text: 'ok' },
+    { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+  ]
+
+  function visionSettings(vision: boolean): ResolvedSettings {
+    return {
+      providers: { p: { vision } },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+  }
+
+  function makeImageMgr(opts: {
+    scripts: StreamEvent[][]
+    vision: boolean
+    imageClient?: ModelClient
+    imageModel?: string
+    readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
+    expandAttachments?: (messages: Message[]) => Promise<Message[]>
+  }) {
+    const { client, calls } = fakeClient(opts.scripts)
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
+      settings: visionSettings(opts.vision), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(),
+      providerId: 'p',
+      imageClient: opts.imageClient,
+      imageModel: opts.imageModel,
+      readImageBase64: opts.readImageBase64,
+      expandAttachments: opts.expandAttachments,
+    })
+    return { mgr, calls }
+  }
+
+  const img = (over: Partial<{ id: string; name: string; mediaType: string }> = {}) =>
+    ({ id: 'img1', name: 'shot.png', mediaType: 'image/png', ...over })
+
+  function userTextOf(mgr: SessionManager): string {
+    const m = mgr.getConversation().getMessages().find((x) => x.role === 'user')!
+    return m.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('')
+  }
+  function userMsgOf(mgr: SessionManager) {
+    return mgr.getConversation().getMessages().find((x) => x.role === 'user')!
+  }
+
+  it('vision main model + images: attachments route:direct, text NOT baked, expandAttachments forwarded', async () => {
+    let expandCalled = false
+    let expandArg: Message[] | undefined
+    const expandAttachments = async (messages: Message[]) => { expandCalled = true; expandArg = messages; return messages }
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn], vision: true, expandAttachments })
+    await mgr.submit('describe this', [img()])
+    expect(calls).toHaveLength(1)
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'img1', name: 'shot.png', mediaType: 'image/png', route: 'direct' },
+    ])
+    expect(userTextOf(mgr)).not.toContain('<uploaded-images>')
+    expect(expandCalled).toBe(true)
+    // the hook received the outbound messages (contains the current user turn carrying attachments)
+    expect(expandArg!.some((m) => (m.attachments?.length ?? 0) > 0)).toBe(true)
+  })
+
+  it('non-vision main model + images: imageClient called with image block + question; main text baked; route:parsed + description', async () => {
+    const imageClientCalls: Message[][] = []
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages(messages, _config, _tools, _signal) {
+        imageClientCalls.push(messages)
+        yield { type: 'text-delta', text: 'a red cat' }
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'BASE64DATA', mediaType: 'image/png' })
+    const { mgr, calls } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    await mgr.submit('what is this', [img({ name: 'cat.png' })])
+
+    expect(imageClientCalls).toHaveLength(1)
+    const sent = imageClientCalls[0]![0]!
+    expect(sent.content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'BASE64DATA' } })
+    const q = sent.content.find((b) => b.type === 'text') as { text: string }
+    expect(q.text).toContain('what is this')
+
+    expect(calls).toHaveLength(1)   // main model still ran
+    const t = userTextOf(mgr)
+    expect(t).toContain('<uploaded-images>')
+    expect(t).toContain('a red cat')
+    expect(t).toContain('cat.png')
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'img1', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' },
+    ])
+  })
+
+  it('single-image parse failure records an error description but does not block others', async () => {
+    let n = 0
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages(_messages, _config, _tools, _signal) {
+        n++
+        if (n === 1) { yield { type: 'error', message: 'boom', category: 'other' }; return } // first image fails
+        yield { type: 'text-delta', text: 'good desc' }
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    await mgr.submit('one', [img({ id: 'a', name: 'a.png' }), img({ id: 'b', name: 'b.png' })])
+    const atts = userMsgOf(mgr).attachments!
+    expect(atts).toHaveLength(2)
+    expect(atts[0]!.description).toBe('(图片解析失败)')
+    expect(atts[1]!.description).toBe('good desc')
+  })
+
+  it('non-vision + no imageClient configured: emits error and does NOT enter runAgent', async () => {
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn], vision: false }) // no imageClient/readImageBase64
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+    await mgr.submit('describe', [img()])
+    expect(types).toContain('error')
+    expect(calls).toHaveLength(0)                 // main model never called this turn
+    expect(mgr.getConversation().length).toBe(0)  // nothing committed
+    expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  it('projectMessages: strips <uploaded-images> from displayed text and carries attachments', async () => {
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages() { yield { type: 'text-delta', text: 'a red cat' } },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    await mgr.submit('what is this', [img({ name: 'cat.png' })])
+    const snap = mgr.getState().messages
+    const userSnap = snap.find((m) => m.role === 'user')!
+    const t = userSnap.parts.filter((p) => p.kind === 'text').map((p) => (p as { text: string }).text).join('')
+    expect(t).not.toContain('<uploaded-images>')
+    expect(t).toBe('what is this')
+    expect(userSnap.attachments).toEqual([
+      { id: 'img1', name: 'cat.png', mediaType: 'image/png', route: 'parsed', description: 'a red cat' },
+    ])
+  })
+
+  it('no images: old path unchanged (no attachments, no imageClient call, text verbatim)', async () => {
+    const imageClientCalls: Message[][] = []
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages(messages) { imageClientCalls.push(messages); yield { type: 'text-delta', text: 'x' } },
+    }
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64: async () => ({ data: 'B', mediaType: 'image/png' }) })
+    await mgr.submit('plain question')       // no images arg
+    expect(calls).toHaveLength(1)
+    expect(imageClientCalls).toHaveLength(0)
+    expect(userMsgOf(mgr).attachments).toBeUndefined()
+    expect(userTextOf(mgr)).toContain('plain question')     // stamped, but no baking
+    expect(userTextOf(mgr)).not.toContain('<uploaded-images>')
+    // empty array also takes the old path
+    await mgr.submit('another', [])
+    expect(imageClientCalls).toHaveLength(0)
+  })
+})
