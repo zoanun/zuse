@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import * as core from '@zuse/core'
 import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -604,6 +605,27 @@ describe('/api/models + /api/model (model switcher)', () => {
       expect(typeof o.providerId).toBe('string')
       expect(typeof o.model).toBe('string')
       expect(typeof o.vision).toBe('boolean')
+    }
+  })
+
+  it('GET /api/models includes the current default even when no provider lists it (flat default)', async () => {
+    const cookie = await authCookie()
+    // Providers empty, but settings.model is set (flat/synthesized default) → listSelectableModels
+    // yields nothing, yet the current default must still be selectable.
+    const spy = vi.spyOn(core, 'loadSettings').mockReturnValue({
+      providers: {},
+      model: 'claude-sonnet-4-5',
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings)
+    try {
+      const res = await fetch(`${base}/api/models`, { headers: { cookie } })
+      expect(res.status).toBe(200)
+      const body = await res.json()
+      expect(body.options.some((o: { providerId: string; model: string }) => o.model === 'claude-sonnet-4-5')).toBe(true)
+      expect(body.defaultModel).toBe('claude-sonnet-4-5')
+    } finally {
+      spy.mockRestore()
     }
   })
 
