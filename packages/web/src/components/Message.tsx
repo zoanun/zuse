@@ -1,10 +1,11 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import type { MessageAttachment } from '@zuse/protocol'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
 import { uploadedImageUrl } from '../state/manageApi.js'
+import { ImageLightbox } from './ImageLightbox.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
 export function partsText(parts: Part[]): string {
@@ -128,11 +129,13 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
  *  collapsible description. Extracted from the user branch's attachment map; DOM/classes unchanged. */
 function MessageImage({ a }: { a: MessageAttachment }) {
   const url = uploadedImageUrl(a.id)
+  const [zoom, setZoom] = useState(false)
   return (
     <div className="msg-img-item">
-      <a href={url} target="_blank" rel="noreferrer">
+      <button type="button" className="msg-img-btn" onClick={() => setZoom(true)} aria-label={`查看 ${a.name}`}>
         <img className="msg-img" src={url} alt={a.name} title={a.name} />
-      </a>
+      </button>
+      {zoom ? <ImageLightbox src={url} alt={a.name} onClose={() => setZoom(false)} /> : null}
       {a.route ? (
         <span className="msg-img-badge">{a.route === 'direct' ? '图·直传' : '图·解析'}</span>
       ) : null}
