@@ -1,6 +1,6 @@
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
+import type { Message, ContentBlock, StreamEvent, ModelConfig, Usage, ResolvedSettings, PermissionRequest, PermissionVerdict, MessageAttachment } from './types.js'
 import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolContext, ToolRegistry, FileReadTracker, Tool } from './tool.js'
@@ -118,6 +118,18 @@ export interface RunAgentOptions {
    * The text is appended to the last tool result before feeding back to the model.
    */
   consumeSteer?: () => string | null
+  /**
+   * 本回合用户上传的图片引用（id/name/mediaType/…，不含 base64）。挂到本回合暂存的
+   * user 消息的 `attachments` 上，随账本持久化；image 块的展开是 expandAttachments 的事。
+   */
+  userAttachments?: MessageAttachment[]
+  /**
+   * 发送前的图片展开钩子（运行期依赖，类似 client —— 不是模型参数，故不放 ModelConfig）。
+   * 契约：读每条消息的 `attachments`→base64→在该条 content 前插入 image 块，返回**新副本**；
+   * 绝不 mutate 入参消息/其 content。core 不认识 `~/.zuse/uploads`,只调这个注入的函数（服务端
+   * 提供实现），保持解耦。缺省时行为完全不变（直接发原消息数组，不展开）。
+   */
+  expandAttachments?: (messages: Message[]) => Promise<Message[]>
 }
 
 interface PendingToolUse {
@@ -156,7 +168,13 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   }
 
   const base = conversation.getMessages()
-  const staged: Message[] = [{ role: 'user', content: [{ type: 'text', text: userText }] }]
+  // 本回合的 user 消息：text 块 + attachments 引用（若有）。image 块不在这里放 —— 展开是
+  // expandAttachments 的事，账本/持久化的消息绝不含 base64。
+  const stagedUser: Message = { role: 'user', content: [{ type: 'text', text: userText }] }
+  if (opts.userAttachments && opts.userAttachments.length > 0) {
+    stagedUser.attachments = opts.userAttachments
+  }
+  const staged: Message[] = [stagedUser]
   const turnUsage: Usage = emptyUsage()
 
   // 会话当前工作目录。Bash 的 cd 通过 ctx.setCwd 回写到这里,既让本回合后续工具
@@ -181,8 +199,13 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     let errored = false
     let runaway = false
 
+    // 发送前展开图片：把带 attachments 的消息在 content 前插入 image 块，产出请求专用副本。
+    // 缺省钩子时直接用原数组（行为不变）；有钩子时只把返回值发出去，原 base/staged 不被 mutate。
+    const messages = [...base, ...staged]
+    const outbound = opts.expandAttachments ? await opts.expandAttachments(messages) : messages
+
     for await (const event of client.sendMessages(
-      [...base, ...staged],
+      outbound,
       effectiveConfig,
       toolDefs,
       signal, // 接到底层 SDK：流卡死时 Esc 能真正取消（否则 for-await 永久阻塞）。

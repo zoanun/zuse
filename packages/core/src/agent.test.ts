@@ -796,6 +796,98 @@ describe('runAgent', () => {
     }
   })
 
+  // ——— I2 图片直传：expandAttachments 钩子 + userAttachments ———
+
+  // 钩子实现：把任何带 attachments 的消息 content 前插一个 image 块（读盘→base64 的模拟）。
+  // 返回新副本，绝不 mutate 入参消息/其 content 数组。
+  const expandStub = async (messages: Message[]): Promise<Message[]> =>
+    messages.map((m) =>
+      m.attachments && m.attachments.length > 0
+        ? {
+            ...m,
+            content: [
+              ...m.attachments.map((att) => ({
+                type: 'image' as const,
+                source: { type: 'base64' as const, mediaType: att.mediaType, data: 'BASE64' },
+              })),
+              ...m.content,
+            ],
+          }
+        : m,
+    )
+
+  it('expandAttachments hook injects image blocks into the outbound copy without mutating the ledger', async () => {
+    const { client, calls } = fakeClient([
+      [{ type: 'text-delta', text: 'ok' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const conv = new Conversation()
+    // 账本里一条 user 消息只带 attachments 引用（不含 base64）。
+    conv.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'look at this' }],
+      attachments: [{ id: 'a', name: 'x.png', mediaType: 'image/png' }],
+    })
+
+    await collect(runAgent({
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'go', config, cwd: '.', signal,
+      expandAttachments: expandStub,
+    }))
+
+    // 假 client 收到的那条 user 消息含展开的 image 块（在原 text 块之前）。
+    const sent = calls[0]!
+    const seeded = sent[0]!
+    expect(seeded.content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'BASE64' } })
+    expect(seeded.content[1]).toEqual({ type: 'text', text: 'look at this' })
+
+    // 原 conversation 未被 mutate：该消息 content 仍只有原 text 块、无 image。
+    const msgs = conv.getMessages()
+    expect(msgs[0]!.content).toEqual([{ type: 'text', text: 'look at this' }])
+    expect(msgs[0]!.content.some((b) => b.type === 'image')).toBe(false)
+  })
+
+  it('without expandAttachments, attachment-bearing messages are sent verbatim (no image block, no error)', async () => {
+    const { client, calls } = fakeClient([
+      [{ type: 'text-delta', text: 'ok' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const conv = new Conversation()
+    conv.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'look' }],
+      attachments: [{ id: 'a', name: 'x.png', mediaType: 'image/png' }],
+    })
+
+    await collect(runAgent({
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'go', config, cwd: '.', signal,
+    }))
+
+    const sent = calls[0]!
+    expect(sent[0]!.content).toEqual([{ type: 'text', text: 'look' }])
+    expect(sent.every((m) => m.content.every((b) => b.type !== 'image'))).toBe(true)
+  })
+
+  it('userAttachments ride the staged current-turn user message (ledger stays text-only; expanded for the model)', async () => {
+    const { client, calls } = fakeClient([
+      [{ type: 'text-delta', text: 'ok' }, { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE }],
+    ])
+    const conv = new Conversation()
+    const userAttachments = [{ id: 'u1', name: 'shot.png', mediaType: 'image/png' }]
+
+    await collect(runAgent({
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'describe', config, cwd: '.', signal,
+      userAttachments, expandAttachments: expandStub,
+    }))
+
+    // 账本：当前回合 user 消息带该 attachments 引用，但 content 仍只有 text（无 base64/image）。
+    const msgs = conv.getMessages()
+    expect(msgs[0]!.role).toBe('user')
+    expect(msgs[0]!.attachments).toEqual(userAttachments)
+    expect(msgs[0]!.content).toEqual([{ type: 'text', text: 'describe' }])
+
+    // 通过钩子间接断言：模型看到的当前回合 user 消息含展开出的 image 块。
+    const sent = calls[0]!
+    expect(sent[0]!.content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'BASE64' } })
+  })
+
   it('disabled tool is denied even if the model calls it', async () => {
     const reg = new ToolRegistry(); reg.register(echoTool())
     const s: ResolvedSettings = { tools: { disabled: ['echo'] }, permissions: askSettings.permissions, providers: {} }
