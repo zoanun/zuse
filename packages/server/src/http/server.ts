@@ -2,7 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename } from 'node:path'
-import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, resolveVision, isNonChatModelType } from '@zuse/core'
+import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -748,16 +748,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'GET' && path === '/api/models') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       const settings = loadSettings()
-      const options: { providerId: string; model: string; vision: boolean }[] = []
-      for (const [providerId, p] of Object.entries(settings.providers ?? {})) {
-        for (const entry of p.models ?? []) {
-          // Skip non-conversational models (image/tts/embedding/…) — they can't be a main model.
-          if (typeof entry !== 'string' && isNonChatModelType(entry.type)) continue
-          const model = typeof entry === 'string' ? entry : entry.name
-          options.push({ providerId, model, vision: resolveVision(settings, providerId, model) })
-        }
-      }
-      return sendJson(res, 200, { options, defaultModel: settings.model ?? null })
+      return sendJson(res, 200, { options: listSelectableModels(settings), defaultModel: settings.model ?? null })
     }
 
     // PUT /api/model — persist the default model. body {providerId, model}. Writes a bare model
@@ -775,7 +766,8 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       }
       // Flat default = the synthetic 'default' provider with no explicit providers.default entry:
       // store just the bare model name so it round-trips through resolveModelSelection.
-      const flat = providerId === DEFAULT_PROVIDER_ID && !loadSettings().providers?.[providerId]
+      const settings = loadSettings()
+      const flat = providerId === DEFAULT_PROVIDER_ID && !settings.providers?.[providerId]
       const spec = flat ? model : `${providerId}/${model}`
       try {
         deps.persistModel(spec)

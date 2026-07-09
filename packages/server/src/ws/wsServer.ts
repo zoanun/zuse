@@ -52,7 +52,7 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
       // getOrLoad is async (it may hit disk); resolve it before wiring the socket.
       void (async () => {
         if (deps.sessionErr) {
-          sendJson(ws, { type: 'error', message: `session unavailable: ${deps.sessionErr}` })
+          sendJson(ws, { type: 'error', code: 'session_not_found', message: `session unavailable: ${deps.sessionErr}` })
           return
         }
         let mgr: SessionManager | null
@@ -66,7 +66,7 @@ export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { c
           return
         }
         if (!mgr) {
-          sendJson(ws, { type: 'error', message: `session unavailable: no session "${sessionId}"` })
+          sendJson(ws, { type: 'error', code: 'session_not_found', message: `session unavailable: no session "${sessionId}"` })
           return
         }
         wireSocket(ws, mgr)

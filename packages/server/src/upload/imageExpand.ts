@@ -23,13 +23,17 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
       ),
     )).filter((b): b is Block => b !== null)
     // parsed：非空描述合并成单个带编号标签的 text 块，让模型能区分是第几张图。
-    const parsed = atts.filter((a) => a.route === 'parsed' && !!a.description && a.description.trim() !== '')
+    // 先 trim 一次成 {name, desc}、过滤掉空描述，避免在 filter 与 map 各 trim 一遍 + 非空断言。
+    const parsed = atts
+      .filter((a) => a.route === 'parsed')
+      .map((a) => ({ name: a.name, desc: (a.description ?? '').trim() }))
+      .filter((a) => a.desc !== '')
     const blocks: Block[] = [...imageBlocks]
     if (parsed.length > 0) {
       const multi = parsed.length > 1
       const header = `[本条消息附带 ${parsed.length} 张图片，以下是${multi ? '每张' : '其'}内容描述（由图像解析模型转述，非用户原话）：]\n\n`
       const body = parsed
-        .map((a, i) => (multi ? `▍图片 ${i + 1}（${a.name}）\n${a.description!.trim()}` : a.description!.trim()))
+        .map((a, i) => (multi ? `▍图片 ${i + 1}（${a.name}）\n${a.desc}` : a.desc))
         .join('\n\n')
       blocks.push({ type: 'text', text: header + body })
     }
