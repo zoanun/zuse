@@ -174,6 +174,19 @@ describe('Message', () => {
     ])
   })
 
+  it('splitThink: a </think> inside a code fence is literal prose, NOT a reasoning boundary', () => {
+    // A fenced code block that shows the </think> tag must stay fully visible — the lone-closing
+    // fold must not swallow everything above it into hidden reasoning.
+    const fenced = '```\n</think>\n```'
+    expect(splitThink(fenced)).toEqual([{ think: false, text: fenced }])
+    const withFence = 'Here is how to write it:\n```html\n</think>\n```\nThat is the tag.'
+    expect(splitThink(withFence)).toEqual([{ think: false, text: withFence }])
+    // Without any fence, a bare reasoning</think>answer still folds (the intended behavior).
+    expect(splitThink('some reasoning</think>the answer')).toEqual([
+      { think: true, text: 'some reasoning' }, { think: false, text: 'the answer' },
+    ])
+  })
+
   it('marks an error tool-result with the err class', () => {
     const { container } = render(<Message msg={{ id: 'a1', role: 'assistant', parts: [
       { kind: 'tool-use', id: 't1', name: 'Bash', input: {} },

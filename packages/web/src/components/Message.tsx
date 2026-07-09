@@ -224,6 +224,13 @@ export function splitThink(text: string): TextSeg[] {
   if (!hasOpen) {
     const close = text.match(/<\/think(?:ing)?>/i)
     if (!close || close.index === undefined) return [{ think: false, text }]
+    // Guard against folding away real answer text: if a ``` code fence appears BEFORE the first
+    // lone </think>, treat the whole thing as literal prose (the tag is being shown/discussed inside
+    // a fenced code block, not emitted as a reasoning boundary). Otherwise a reply that merely quotes
+    // </think> in a code block would silently lose everything above it into hidden reasoning.
+    // (A naked </think> discussed in prose WITHOUT any fence is the rare accepted limitation.)
+    const before = text.slice(0, close.index)
+    if (before.includes('```')) return [{ think: false, text }]
     const segs: TextSeg[] = [{ think: true, text: text.slice(0, close.index) }]
     const rest = text.slice(close.index + close[0].length)
     if (rest) segs.push(...splitThink(rest)) // remainder may contain further tags
