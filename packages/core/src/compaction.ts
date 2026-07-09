@@ -71,7 +71,7 @@ export function resolveVision(
 
 /** Model `type`s that are NOT conversational — zuse has no call path for them, so the model
  *  selector must never offer them as a main model (selecting one would just fail on send). */
-export const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video'])
+export const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video', 'ocr'])
 
 /** True if a model entry's `type` marks it non-conversational (image/tts/embedding/…). */
 export function isNonChatModelType(type: string | undefined): boolean {

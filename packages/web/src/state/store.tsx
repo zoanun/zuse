@@ -49,6 +49,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   sessionsRef.current = sessions
   const currentIdRef = useRef<string>(currentSessionId)
   currentIdRef.current = currentSessionId
+  // Guards the auto-recovery below so a persistent server error can't spin a create/attach loop.
+  const recoveringRef = useRef(false)
 
   const refreshSessions = async (): Promise<void> => {
     // Ignore a malformed (non-array) response rather than corrupting `sessions` into a
@@ -62,6 +64,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // to the real /ws?session=<id> URL before opening for real.
       url: wsUrl(getSessionId() ?? ''),
       onMessage: (m) => {
+        // Auto-recover from a stale session id: the last-used id in localStorage may point at a
+        // session the daemon no longer has (an empty session was never persisted, then a restart;
+        // or it was deleted). Instead of dead-ending on the red "session unavailable" error, forget
+        // it and spin up a fresh session. Guard against a create/attach loop.
+        if (m.type === 'error' && /no session|session unavailable/i.test(m.message) && !recoveringRef.current) {
+          recoveringRef.current = true
+          void (async () => {
+            try {
+              const nid = await createSession()
+              setSessionId(nid)
+              setCurrentSessionId(nid)
+              clientRef.current?.reconnect(wsUrl(nid))
+              void refreshSessions()
+            } catch { /* leave the error visible if even creating a session fails */ }
+            finally { recoveringRef.current = false }
+          })()
+          return
+        }
         dispatch({ kind: 'server', msg: m })
         if (m.type === 'event' && m.event.type === 'title-changed') {
           // The event carries the new title — patch the current session's row in place.

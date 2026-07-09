@@ -263,7 +263,7 @@ describe('resolveVision', () => {
 
 describe('isNonChatModelType', () => {
   it('flags image/tts/embedding/… as non-conversational, chat/vision/undefined as conversational', () => {
-    for (const t of ['image', 'tts', 'embedding', 'audio', 'rerank', 'video']) expect(isNonChatModelType(t)).toBe(true)
+    for (const t of ['image', 'tts', 'embedding', 'audio', 'rerank', 'video', 'ocr']) expect(isNonChatModelType(t)).toBe(true)
     for (const t of ['chat', 'vision', undefined]) expect(isNonChatModelType(t)).toBe(false)
   })
 })
