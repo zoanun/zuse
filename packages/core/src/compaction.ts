@@ -60,11 +60,22 @@ export function resolveVision(
 ): boolean {
   const p = settings.providers[providerId]
   for (const entry of p?.models ?? []) {
-    if (typeof entry !== 'string' && entry.name === model && entry.vision !== undefined) {
-      return entry.vision
+    if (typeof entry !== 'string' && entry.name === model) {
+      // Explicit `vision` flag wins; otherwise the human `type: 'vision'` annotation counts too.
+      if (entry.vision !== undefined) return entry.vision
+      if (entry.type === 'vision') return true
     }
   }
   return p?.vision ?? false
+}
+
+/** Model `type`s that are NOT conversational — zuse has no call path for them, so the model
+ *  selector must never offer them as a main model (selecting one would just fail on send). */
+export const NON_CHAT_MODEL_TYPES = new Set(['image', 'tts', 'embedding', 'audio', 'rerank', 'reranker', 'video'])
+
+/** True if a model entry's `type` marks it non-conversational (image/tts/embedding/…). */
+export function isNonChatModelType(type: string | undefined): boolean {
+  return type !== undefined && NON_CHAT_MODEL_TYPES.has(type)
 }
 
 /** 占用超过窗口的此比例即触发自动压缩。 */

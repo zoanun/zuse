@@ -113,8 +113,14 @@ export interface ModelEntryObject {
   name: string
   /** 该模型的上下文窗口(token),压过 provider 级 contextWindow。 */
   contextWindow?: number
-  /** 该模型是否支持视觉输入。 */
+  /** 该模型是否支持视觉输入。（`type: 'vision'` 也视为支持,见 resolveVision。） */
   vision?: boolean
+  /**
+   * 模型用途标注。'chat'/'vision' 可用于对话(可被选为主模型);
+   * 'image'(文生图)/'tts'(语音)/'embedding' 等非对话模型 zuse 无调用通道,会被模型选择器排除。
+   * 缺省视为可对话。
+   */
+  type?: string
 }
 
 /** providers.models 的条目:纯字符串(常态),或带模型级覆盖的对象。 */

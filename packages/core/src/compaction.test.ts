@@ -14,6 +14,7 @@ import {
   splitMemoryCandidates,
   resolveContextWindow,
   resolveVision,
+  isNonChatModelType,
   DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
 
@@ -246,6 +247,24 @@ describe('resolveVision', () => {
   it('model-level vision:false overrides provider-level vision:true (!== undefined, not truthy)', () => {
     const s = settings({ p: { vision: true, models: [{ name: 'm', vision: false }] } })
     expect(resolveVision(s, 'p', 'm')).toBe(false)
+  })
+
+  it("honours the human `type: 'vision'` annotation when no explicit vision flag is set", () => {
+    const s = settings({ p: { models: [{ name: 'm', type: 'vision' }, { name: 'n', type: 'chat' }] } })
+    expect(resolveVision(s, 'p', 'm')).toBe(true)
+    expect(resolveVision(s, 'p', 'n')).toBe(false)
+  })
+
+  it('explicit vision flag still wins over the type annotation', () => {
+    const s = settings({ p: { models: [{ name: 'm', type: 'vision', vision: false }] } })
+    expect(resolveVision(s, 'p', 'm')).toBe(false)
+  })
+})
+
+describe('isNonChatModelType', () => {
+  it('flags image/tts/embedding/… as non-conversational, chat/vision/undefined as conversational', () => {
+    for (const t of ['image', 'tts', 'embedding', 'audio', 'rerank', 'video']) expect(isNonChatModelType(t)).toBe(true)
+    for (const t of ['chat', 'vision', undefined]) expect(isNonChatModelType(t)).toBe(false)
   })
 })
 
