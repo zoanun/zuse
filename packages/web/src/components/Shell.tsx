@@ -14,6 +14,7 @@ import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
 import type { DirPickerHandle } from './DirPicker.js'
+import { persistModel } from '../state/manageApi.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -127,6 +128,14 @@ export function Shell() {
     dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) })
     send({ type: 'send', text, images })
   }
+  // Model switch from the Header picker. Temporary switch takes effect on this session immediately
+  // (WS 'switch-model' — the server rebuilds its client but emits no event, so we optimistically
+  // reflect it in the Header). `persist` also writes the choice to project settings for new sessions.
+  const onSwitchModel = (providerId: string, model: string, persist: boolean) => {
+    send({ type: 'switch-model', providerId, model })
+    dispatch({ kind: 'model-changed', model })
+    if (persist) void persistModel(providerId, model)
+  }
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
   const onRevert = useCallback((checkpointId: string) => send({ type: 'revert', checkpointId }), [send])
@@ -222,7 +231,7 @@ export function Shell() {
           onJump={(id, idx) => { searchJump(id, idx); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} dirPickerRef={dirPickerRef} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} dirPickerRef={dirPickerRef} />
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">

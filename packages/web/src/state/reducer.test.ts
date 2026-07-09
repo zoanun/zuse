@@ -14,6 +14,11 @@ describe('reduce', () => {
     expect(s.messages).toEqual([{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }])
   })
 
+  it('model-changed optimistically updates state.model', () => {
+    const s = reduce({ ...initialState, model: 'old-model' }, { kind: 'model-changed', model: 'new-model' })
+    expect(s.model).toBe('new-model')
+  })
+
   it('user-echo appends the re-submitted question as a user message (retry)', () => {
     const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: 'do it again' }) })
     expect(s.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'do it again' }] }])

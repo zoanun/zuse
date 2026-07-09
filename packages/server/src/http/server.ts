@@ -2,7 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename } from 'node:path'
-import { VERSION } from '@zuse/core'
+import { VERSION, loadSettings, modelNames, DEFAULT_PROVIDER_ID } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -32,6 +32,9 @@ export interface RequestHandlerDeps {
   file: FileService
   mcp: McpService
   upload: UploadService
+  /** Persist the default model spec (bare name for flat-default, else `providerId/model`) to
+   *  project settings. Injected so tests can assert the computed spec without touching disk. */
+  persistModel: (spec: string) => void
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
@@ -733,6 +736,48 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 500, { error: { code: 'write_failed', message: err instanceof Error ? err.message : String(err) } })
       }
       return sendJson(res, 200, { ok: true, restartRequired: true })
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/models + /api/model — Header model switcher (parity with TUI /model), auth-gated.
+    // GET reads the configured options; PUT persists the default to project settings. Temporary
+    // (this-session-only) switching goes over WS ({type:'switch-model'}), not through here.
+    // -----------------------------------------------------------------------
+
+    // GET /api/models — { options: {providerId, model}[]; defaultModel } expanded from settings.providers.
+    if (method === 'GET' && path === '/api/models') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const settings = loadSettings()
+      const options: { providerId: string; model: string }[] = []
+      for (const [providerId, p] of Object.entries(settings.providers ?? {})) {
+        for (const model of modelNames(p)) options.push({ providerId, model })
+      }
+      return sendJson(res, 200, { options, defaultModel: settings.model ?? null })
+    }
+
+    // PUT /api/model — persist the default model. body {providerId, model}. Writes a bare model
+    // name for the flat default provider, else `providerId/model` (matches TUI --save + setModelInSettings).
+    if (method === 'PUT' && path === '/api/model') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { providerId?: unknown; model?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const providerId = body?.providerId
+      const model = body?.model
+      if (typeof providerId !== 'string' || providerId.trim() === '' || typeof model !== 'string' || model.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'providerId and model are required' } })
+      }
+      // Flat default = the synthetic 'default' provider with no explicit providers.default entry:
+      // store just the bare model name so it round-trips through resolveModelSelection.
+      const flat = providerId === DEFAULT_PROVIDER_ID && !loadSettings().providers?.[providerId]
+      const spec = flat ? model : `${providerId}/${model}`
+      try {
+        deps.persistModel(spec)
+      } catch (err) {
+        return sendJson(res, 500, { error: { code: 'write_failed', message: err instanceof Error ? err.message : String(err) } })
+      }
+      return sendJson(res, 200, { ok: true })
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

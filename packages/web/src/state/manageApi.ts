@@ -217,6 +217,22 @@ export function uploadedImageUrl(id: string): string {
   return '/api/uploads/' + encodeURIComponent(id)
 }
 
+// --- Models (Header switcher) ---
+
+export interface ModelOption { providerId: string; model: string }
+export interface ModelsResponse { options: ModelOption[]; defaultModel: string | null }
+
+/** GET /api/models → configured {providerId, model} options + the persisted default. Throws on non-ok. */
+export async function listModels(): Promise<ModelsResponse> {
+  const r = await request('/api/models', {}, 'list models')
+  return (await r.json()) as ModelsResponse
+}
+
+/** PUT /api/model → persist the default model to project settings. Throws on non-ok. */
+export async function persistModel(providerId: string, model: string): Promise<void> {
+  await request('/api/model', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ providerId, model }) }, 'persist model')
+}
+
 // --- MCP servers (M4) ---
 
 export interface AddMcpBody { name: string; command?: string; args?: string[]; env?: Record<string, string>; cwd?: string; url?: string }

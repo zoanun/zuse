@@ -12,6 +12,7 @@ export type Action =
   | { kind: 'steer-queued'; id: string; text: string }
   | { kind: 'connection'; status: Connection }
   | { kind: 'notice'; text: string; noticeKind?: 'info' | 'warn' | 'error' | 'help' }
+  | { kind: 'model-changed'; model: string }
   | { kind: 'reset' }
 
 function withNotice(state: AppState, text: string, kind: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'): AppState {
@@ -190,6 +191,10 @@ export function reduce(state: AppState, action: Action): AppState {
       return { ...state, connection: action.status }
     case 'notice':
       return withNotice(state, action.text, action.noticeKind ?? 'info')
+    // Optimistic Header update after a temporary model switch — the server acks 'switch-model'
+    // over WS with no event, so the reducer reflects the choice locally.
+    case 'model-changed':
+      return { ...state, model: action.model }
     case 'reset':
       return { ...initialState, connection: state.connection }
     case 'server': {

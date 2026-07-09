@@ -397,6 +397,22 @@ button.head:hover .caret { opacity: 1; }
 .dirpick-up .dirpick-ico { color: var(--muted); }
 .dirpick-actions { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .dirpick-ok { flex: 1; }
+/* Model switcher (Header): a clickable chip that opens a provider-grouped picker popover. */
+.chip-btn { cursor: pointer; color: var(--text); }
+.chip-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+/* Fixed anchor (portaled to body) positioned from the chip's rect; the popover sits inside it. */
+.model-pop-anchor { position: fixed; z-index: 51; }
+.model-pop { width: 300px; max-width: 92vw; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 32px var(--shadow); padding: 10px; }
+.model-pop-head { font: 600 12px/1 var(--sans, inherit); color: var(--muted); padding: 2px 4px 9px; border-bottom: 1px solid var(--line); }
+.model-list { list-style: none; margin: 6px 0 8px; padding: 0; max-height: 52vh; overflow: auto; }
+.model-group { font: 600 10.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 10px 6px 4px; }
+.model-row { display: flex; align-items: center; justify-content: space-between; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font: 13px/1.4 var(--mono); padding: 7px 9px; border-radius: 8px; cursor: pointer; }
+.model-row:hover { background: var(--surface-2); }
+.model-row.current { color: var(--accent); background: var(--accent-soft); }
+.model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-badge { flex: none; font: 500 10px/1 var(--mono); color: var(--accent); border: 1px solid var(--accent-border); border-radius: 999px; padding: 3px 7px; }
+.model-persist { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 9px 5px 3px; border-top: 1px solid var(--line); cursor: pointer; }
+.model-persist input { cursor: pointer; }
 /* Usage (M5) */
 .usage-total { text-align: center; padding: 14px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
 .usage-total-num { font-size: 30px; font-weight: 600; line-height: 1.1; }

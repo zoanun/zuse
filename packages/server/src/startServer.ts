@@ -19,7 +19,7 @@ import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
 import {
   loadSettings, resolveModelSelection, resolveContextWindow, resolveImageModelSelection,
-  getProviderConfig, createModelClient, McpManager, type ToolRegistry, type ModelClient,
+  getProviderConfig, createModelClient, setModelInSettings, McpManager, type ToolRegistry, type ModelClient,
 } from '@zuse/core'
 import { makeExpandAttachments } from './upload/imageExpand.js'
 import { LspManager, createLspTool, createLspInstallTool } from '@zuse/tools'
@@ -187,7 +187,7 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, upload, devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()

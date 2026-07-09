@@ -50,7 +50,10 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
 }
 
 let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService
+// Captures the spec the /api/model handler computed, so tests assert it without writing settings.
+let persistedSpec: string | undefined
 beforeEach(async () => {
+  persistedSpec = undefined
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
   const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
@@ -73,7 +76,7 @@ beforeEach(async () => {
   } })
   // Real UploadService over a temp uploads dir so /api/uploads is exercised end-to-end.
   upload = new UploadService(join(dir, 'uploads'))
-  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, upload, devPage: false, tokenTtlSec: 3600 }))
+  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, upload, persistModel: (spec) => { persistedSpec = spec }, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -581,6 +584,63 @@ describe('/api/uploads REST', () => {
     })
     expect(res.status).toBe(413)
     expect((await res.json()).error.code).toBe('too_large')
+  })
+})
+
+describe('/api/models + /api/model (model switcher)', () => {
+  it('unauthenticated GET /api/models → 401', async () => {
+    expect((await fetch(`${base}/api/models`)).status).toBe(401)
+  })
+
+  it('authed GET /api/models → 200 with options[] + defaultModel', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/models`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // Content depends on the machine's settings; assert only the stable shape.
+    expect(Array.isArray(body.options)).toBe(true)
+    expect('defaultModel' in body).toBe(true)
+    for (const o of body.options) {
+      expect(typeof o.providerId).toBe('string')
+      expect(typeof o.model).toBe('string')
+    }
+  })
+
+  it('unauthenticated PUT /api/model → 401', async () => {
+    expect((await fetch(`${base}/api/model`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(401)
+  })
+
+  it('PUT /api/model with a provider persists `providerId/model`', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/model`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: 'qwen', model: 'kimi-k2.6' }),
+    })
+    expect(res.status).toBe(200)
+    expect((await res.json()).ok).toBe(true)
+    expect(persistedSpec).toBe('qwen/kimi-k2.6')
+  })
+
+  it('PUT /api/model with the flat default provider persists a bare model name', async () => {
+    const cookie = await authCookie()
+    // The test machine may or may not declare a providers.default entry; only assert flatness
+    // when it doesn't (the common case). Either way the endpoint must succeed.
+    const res = await fetch(`${base}/api/model`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: 'default', model: 'claude-sonnet-4-5' }),
+    })
+    expect(res.status).toBe(200)
+    expect(persistedSpec === 'claude-sonnet-4-5' || persistedSpec === 'default/claude-sonnet-4-5').toBe(true)
+  })
+
+  it('PUT /api/model missing fields → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/model`, {
+      method: 'PUT', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: 'qwen' }),
+    })
+    expect(res.status).toBe(400)
+    expect(persistedSpec).toBeUndefined()
   })
 })
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { MemoryItem } from '@zuse/protocol'
-import { listMemory, createMemory, updateMemory, deleteMemory, uploadImage, uploadedImageUrl } from './manageApi.js'
+import { listMemory, createMemory, updateMemory, deleteMemory, uploadImage, uploadedImageUrl, listModels, persistModel } from './manageApi.js'
 
 function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Partial<Response>>) {
   const fn = vi.fn(impl as unknown as typeof fetch)
@@ -116,5 +116,36 @@ describe('manageApi', () => {
     const mockCompress = vi.fn(async () => ({ blob: new Blob([new Uint8Array([1])]), mediaType: 'image/jpeg' }))
     const file = new File([new Uint8Array([1])], 'big.jpg', { type: 'image/jpeg' })
     await expect(uploadImage(file, mockCompress)).rejects.toThrow(/upload image failed: 413/)
+  })
+
+  // --- Models (Header switcher) ---
+
+  it('listModels GETs /api/models and returns options + defaultModel', async () => {
+    const payload = { options: [{ providerId: 'qwen', model: 'kimi-k2.6' }], defaultModel: 'qwen/kimi-k2.6' }
+    const fn = mockFetch(async () => ({ ok: true, status: 200, json: async () => payload }))
+    const out = await listModels()
+    expect(out).toEqual(payload)
+    expect(fn).toHaveBeenCalledWith('/api/models', expect.objectContaining({ credentials: 'same-origin' }))
+  })
+
+  it('listModels throws on non-ok', async () => {
+    mockFetch(async () => ({ ok: false, status: 401 }))
+    await expect(listModels()).rejects.toThrow(/list models failed: 401/)
+  })
+
+  it('persistModel PUTs /api/model with {providerId, model}', async () => {
+    const fn = mockFetch(async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    await persistModel('qwen', 'kimi-k2.6')
+    expect(fn).toHaveBeenCalledWith('/api/model', expect.objectContaining({
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providerId: 'qwen', model: 'kimi-k2.6' }),
+    }))
+  })
+
+  it('persistModel throws on non-ok', async () => {
+    mockFetch(async () => ({ ok: false, status: 400 }))
+    await expect(persistModel('', '')).rejects.toThrow(/persist model failed: 400/)
   })
 })

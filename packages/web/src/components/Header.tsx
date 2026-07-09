@@ -1,16 +1,27 @@
 import type { AppState } from '../state/types.js'
 import { getTheme, toggleTheme } from '../theme.js'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { DirPicker } from './DirPicker.js'
 import type { DirPickerHandle } from './DirPicker.js'
+import { ModelPicker } from './ModelPicker.js'
 
 function fmt(n: number | undefined): string {
   if (n === null || n === undefined) return '—'
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu, onOpenManage, onChangeCwd, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
+export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
   const [, force] = useState(0)
+  // Model picker popover: anchored under the model chip, portaled so it escapes the header's overflow.
+  const [modelOpen, setModelOpen] = useState(false)
+  const modelBtnRef = useRef<HTMLButtonElement>(null)
+  const [modelPos, setModelPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const openModelPicker = () => {
+    const r = modelBtnRef.current?.getBoundingClientRect()
+    if (r) setModelPos({ top: r.bottom + 4, left: r.left })
+    setModelOpen((o) => !o)
+  }
   const ctx = state.contextTokens
   const win = state.contextWindow
   let ctxText = ''
@@ -26,7 +37,22 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, dirPickerRef 
         <button className="icon-btn menu-btn" aria-label="打开侧边栏" onClick={onMenu}>☰</button>
         <div className="brand mh-brand"><span className="mark">Z</span> zuse</div>
         <DirPicker ref={dirPickerRef} cwd={state.cwd ?? ''} onChange={onChangeCwd} />
-        {state.model ? <span className="chip">模型 {state.model}</span> : null}
+        {state.model ? (
+          <button ref={modelBtnRef} className="chip chip-btn" title="切换模型" onClick={openModelPicker}>模型 {state.model} ▾</button>
+        ) : null}
+        {modelOpen ? createPortal(
+          <>
+            <div className="dirpick-backdrop" onClick={() => setModelOpen(false)} />
+            <div className="model-pop-anchor" style={{ top: modelPos.top, left: modelPos.left }}>
+              <ModelPicker
+                current={state.model ?? ''}
+                onPick={onSwitchModel}
+                onClose={() => setModelOpen(false)}
+              />
+            </div>
+          </>,
+          document.body,
+        ) : null}
         {ctxText ? <span className="chip">{ctxText}{tok ? ' · ' + tok : ''}</span> : null}
         <span className={'chip ' + (conn === 'live' ? 'live' : conn === 'connecting' ? 'warn' : 'down')}>
           <span className="dot" />{conn === 'live' ? '已连接' : conn === 'connecting' ? '连接中' : '离线'}

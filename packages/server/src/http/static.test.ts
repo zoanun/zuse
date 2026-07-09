@@ -37,7 +37,7 @@ const fakeUpload = { save: async () => ({ id: 'x' }), load: async () => ({ abs: 
 let dir: string, server: Server, base: string
 
 async function start(webDir?: string): Promise<void> {
-  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, upload: fakeUpload, devPage: true, tokenTtlSec: 3600, webDir }))
+  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, upload: fakeUpload, persistModel: () => {}, devPage: true, tokenTtlSec: 3600, webDir }))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const a = server.address()
   base = 'http://127.0.0.1:' + (typeof a === 'object' && a ? a.port : 0)
