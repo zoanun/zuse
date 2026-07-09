@@ -271,6 +271,22 @@ button.head:hover .caret { opacity: 1; }
 .composer textarea:focus { box-shadow: none; }
 .send-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 17px; display: flex; align-items: center; justify-content: center; flex: none; }
 .composer .ghost { align-self: center; padding: 8px 13px; border-radius: 16px; }
+/* Paperclip attach button: neutral, sits at the left of the composer; dims when disabled (thinking). */
+.attach-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; border: none; background: transparent; color: var(--muted); display: flex; align-items: center; justify-content: center; flex: none; cursor: pointer; align-self: flex-end; }
+.attach-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.attach-btn:disabled { opacity: 0.4; cursor: default; }
+.attach-btn svg { display: block; }
+/* Staged-image tray, pinned just above the composer (same 7% inset via composer-wrap). */
+.attach-tray { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
+.attach-thumb { position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); flex: none; }
+.attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-thumb.uploading img { opacity: 0.5; }
+.attach-thumb.error { border-color: var(--bad); }
+.attach-remove { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.attach-retry { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.attach-spinner { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; animation: attach-spin 0.7s linear infinite; }
+@keyframes attach-spin { to { transform: rotate(360deg); } }
+.attach-error { margin: 0 0 8px; font-size: 12.5px; color: var(--bad); }
 
 .stream::-webkit-scrollbar, .tool .result::-webkit-scrollbar, .todos::-webkit-scrollbar { width: 10px; }
 .stream::-webkit-scrollbar-thumb, .tool .result::-webkit-scrollbar-thumb, .todos::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }

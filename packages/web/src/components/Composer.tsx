@@ -1,19 +1,50 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { UploadedImageRef } from '@zuse/protocol'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
+import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
 
 interface ComposerProps {
   thinking: boolean
-  onSend: (text: string) => void
+  onSend: (text: string, images?: UploadedImageRef[]) => void
   onStop: () => void
   history?: string[]
   commands?: SlashCommand[]
   onRunCommand?: (cmd: SlashCommand) => void
 }
 
+/** A locally-staged image: created on paste/drop/pick, uploaded async, sent (as `ref`) on submit. */
+interface PendingImage {
+  key: string
+  name: string
+  status: 'uploading' | 'done' | 'error'
+  ref?: UploadedImageRef
+  previewUrl?: string
+}
+
+const MAX_IMAGES = 10
+const MAX_BYTES = 25 * 1024 * 1024
+
+/** Pull image Files out of a paste/drop payload — files first, then items (kind==='file', image/*). */
+function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return []
+  const out: File[] = []
+  for (const f of Array.from(dt.files ?? [])) if (f && f.type.startsWith('image/')) out.push(f)
+  if (out.length === 0 && dt.items) {
+    for (const it of Array.from(dt.items)) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        const f = it.getAsFile()
+        if (f) out.push(f)
+      }
+    }
+  }
+  return out
+}
+
 export function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }: ComposerProps) {
   const [value, setValue] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   // Esc dismisses the menu even though input still starts with '/'. Cleared whenever the input changes.
   const [menuDismissed, setMenuDismissed] = useState(false)
   // Command menu: candidate list derived from current input + a highlighted index.
@@ -22,6 +53,10 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
   const [menuIdx, setMenuIdx] = useState(0)
   // History cursor: null = editing a fresh draft; otherwise an index into `history` (0 = oldest).
   const [histIdx, setHistIdx] = useState<number | null>(null)
+  // Staged images awaiting send + an inline attach-error line (size/count/upload feedback).
+  const [pending, setPending] = useState<PendingImage[]>([])
+  const [attachError, setAttachError] = useState('')
+  const keySeq = useRef(0)
 
   useEffect(() => { taRef.current?.focus() }, [])
   useEffect(() => { if (!thinking) taRef.current?.focus() }, [thinking])
@@ -39,11 +74,96 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
     ta.style.height = Math.min(ta.scrollHeight, 168) + 'px'
   }, [value])
 
+  // Revoke every outstanding object-URL on unmount so instant-preview blobs don't leak.
+  const pendingRef = useRef(pending)
+  pendingRef.current = pending
+  useEffect(() => () => {
+    for (const p of pendingRef.current) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+  }, [])
+
+  // Stage + upload a batch of picked images. Only stores images (no model/parse checks here — the
+  // "model can't read images" error surfaces on send, from the server, as a chat error event).
+  function addFiles(files: File[]) {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0) return
+    const errors: string[] = []
+    const sized = images.filter((f) => {
+      if (f.size > MAX_BYTES) { errors.push(`${f.name} 超过 25MB，已跳过`); return false }
+      return true
+    })
+    const room = Math.max(0, MAX_IMAGES - pending.length)
+    let batch = sized
+    if (sized.length > room) {
+      batch = sized.slice(0, room)
+      errors.push(`最多 ${MAX_IMAGES} 张图片`)
+    }
+    setAttachError(errors.join('；'))
+    for (const file of batch) {
+      const key = 'img-' + ++keySeq.current
+      const previewUrl = URL.createObjectURL(file)
+      setPending((p) => [...p, { key, name: file.name, status: 'uploading', previewUrl }])
+      uploadImage(file).then(
+        (ref) => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
+        () => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
+      )
+    }
+  }
+
+  function removePending(key: string) {
+    setPending((p) => {
+      const item = p.find((it) => it.key === key)
+      if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl)
+      return p.filter((it) => it.key !== key)
+    })
+  }
+
+  function retry(key: string) {
+    setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'uploading' as const } : it)))
+    // Re-upload from the preview blob (the original File isn't retained; refetch the blob URL).
+    const item = pendingRef.current.find((it) => it.key === key)
+    if (!item?.previewUrl) return
+    fetch(item.previewUrl)
+      .then((r) => r.blob())
+      .then((blob) => uploadImage(new File([blob], item.name, { type: blob.type || 'image/png' })))
+      .then(
+        (ref) => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
+        () => setPending((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
+      )
+  }
+
+  function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = imageFilesFrom(e.clipboardData)
+    if (files.length === 0) return
+    e.preventDefault() // don't also paste the image as text/markup
+    if (thinking) { setAttachError('回复生成中不能加图'); return }
+    addFiles(files)
+  }
+
+  function onDrop(e: React.DragEvent) {
+    const files = imageFilesFrom(e.dataTransfer)
+    if (files.length === 0) return
+    e.preventDefault()
+    if (thinking) { setAttachError('回复生成中不能加图'); return }
+    addFiles(files)
+  }
+
+  const uploading = pending.some((p) => p.status === 'uploading')
+  const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)
+  const canSend = (value.trim() !== '' || doneRefs.length > 0) && !uploading
+
+  function clearPending() {
+    for (const p of pending) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
+    setPending([])
+    setAttachError('')
+  }
+
   function submit() {
+    if (uploading) { setAttachError('图片上传中，请稍候'); return }
     const v = value.trim()
-    if (!v) return
+    if (!v && doneRefs.length === 0) return
     // Sending is allowed even while `thinking`: Shell routes it to a mid-turn steer.
-    onSend(v)
+    onSend(v, doneRefs.length ? doneRefs : undefined)
+    clearPending()
     setValue(''); setHistIdx(null)
     taRef.current?.focus()
   }
@@ -69,7 +189,7 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
   }
 
   return (
-    <div className="composer-wrap">
+    <div className="composer-wrap" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
       {menuOpen ? (
         <ul className="slash-menu" role="listbox" aria-label="命令">
           {menu.map((c, i) => (
@@ -87,12 +207,46 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
           ))}
         </ul>
       ) : null}
+      {pending.length > 0 ? (
+        <div className="attach-tray">
+          {pending.map((p) => (
+            <div key={p.key} className={'attach-thumb' + (p.status === 'error' ? ' error' : '') + (p.status === 'uploading' ? ' uploading' : '')}>
+              <img src={p.previewUrl ?? (p.ref ? uploadedImageUrl(p.ref.id) : '')} alt={p.name} />
+              {p.status === 'uploading' ? <span className="attach-spinner" aria-label="上传中" /> : null}
+              {p.status === 'error' ? (
+                <button className="attach-retry" aria-label={`重试 ${p.name}`} onClick={() => retry(p.key)}>↻</button>
+              ) : null}
+              <button className="attach-remove" aria-label={`移除 ${p.name}`} onClick={() => removePending(p.key)}>×</button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {attachError ? <div className="attach-error" role="alert">{attachError}</div> : null}
       <div className="composer">
+        <button
+          className="attach-btn"
+          aria-label="添加图片"
+          disabled={thinking}
+          onClick={() => fileRef.current?.click()}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = '' }}
+        />
         <textarea
           ref={taRef}
           rows={1}
           placeholder={thinking ? '插入消息到当前回合…' : '给 zuse 发消息…'}
           value={value}
+          onPaste={onPaste}
           onChange={(e) => { setValue(e.target.value); setHistIdx(null); setMenuDismissed(false) }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return
@@ -124,7 +278,7 @@ export function Composer({ thinking, onSend, onStop, history = [], commands = []
             <svg viewBox="0 0 15 15" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="9" height="9" rx="2.5" /></svg>
           </button>
         ) : null}
-        <button className="send-btn" aria-label="发送消息" disabled={value.trim() === ''} onClick={submit}>
+        <button className="send-btn" aria-label="发送消息" disabled={!canSend} onClick={submit}>
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <polyline points="9 10 4 15 9 20" />
             <path d="M20 4v7a4 4 0 0 1-4 4H4" />

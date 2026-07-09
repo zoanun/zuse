@@ -1,7 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { Composer } from './Composer.js'
 import { SLASH_COMMANDS } from './commands.js'
+import { uploadImage } from '../state/manageApi.js'
+
+// The upload entry points call uploadImage(file); mock it so tests don't hit the network.
+// uploadedImageUrl is a pure path builder, kept real-ish here.
+vi.mock('../state/manageApi.js', () => ({
+  uploadImage: vi.fn(async (file: File) => ({ id: 'id-' + file.name, name: file.name, mediaType: 'image/png' })),
+  uploadedImageUrl: (id: string) => '/api/uploads/' + id,
+}))
 
 describe('Composer', () => {
   it('auto-focuses the textarea on mount', () => {
@@ -26,7 +34,7 @@ describe('Composer', () => {
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'hello' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('hello')
+    expect(onSend).toHaveBeenCalledWith('hello', undefined)
     expect(ta.value).toBe('')
   })
 
@@ -36,7 +44,7 @@ describe('Composer', () => {
     const ta = screen.getByPlaceholderText('插入消息到当前回合…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'wait, also do X' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith('wait, also do X')
+    expect(onSend).toHaveBeenCalledWith('wait, also do X', undefined)
     expect(ta.value).toBe('')
   })
 
@@ -228,5 +236,120 @@ describe('Composer Esc-to-stop and disabled send', () => {
     const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
     fireEvent.change(ta, { target: { value: 'hi' } })
     expect(btn).not.toBeDisabled()
+  })
+})
+
+describe('Composer image upload', () => {
+  const mockedUpload = vi.mocked(uploadImage)
+
+  function pngFile(name = 'a.png', size = 8): File {
+    return new File(['x'.repeat(size)], name, { type: 'image/png' })
+  }
+  function bigFile(name = 'huge.png'): File {
+    const f = new File(['x'], name, { type: 'image/png' })
+    Object.defineProperty(f, 'size', { value: 26 * 1024 * 1024 })
+    return f
+  }
+  function fileInput(container: HTMLElement): HTMLInputElement {
+    return container.querySelector('input[type="file"]') as HTMLInputElement
+  }
+
+  it('pastes an image → uploads it → shows a thumbnail in the tray', async () => {
+    mockedUpload.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    const file = pngFile('pasted.png')
+    await act(async () => {
+      fireEvent.paste(ta, { clipboardData: { files: [file], items: [] } })
+    })
+    expect(mockedUpload).toHaveBeenCalledWith(file)
+    expect(await screen.findByAltText('pasted.png')).toBeInTheDocument()
+    expect(container.querySelectorAll('.attach-thumb').length).toBe(1)
+  })
+
+  it('drops an image → uploads it → shows a thumbnail', async () => {
+    mockedUpload.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const wrap = container.querySelector('.composer-wrap') as HTMLElement
+    const file = pngFile('dropped.png')
+    await act(async () => {
+      fireEvent.drop(wrap, { dataTransfer: { files: [file], items: [] } })
+    })
+    expect(mockedUpload).toHaveBeenCalledWith(file)
+    expect(await screen.findByAltText('dropped.png')).toBeInTheDocument()
+  })
+
+  it('picks an image via the paperclip file input → uploads it', async () => {
+    mockedUpload.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const input = fileInput(container)
+    const file = pngFile('picked.png')
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } })
+    })
+    expect(mockedUpload).toHaveBeenCalledWith(file)
+    expect(await screen.findByAltText('picked.png')).toBeInTheDocument()
+  })
+
+  it('caps at 10 images and shows an error when more are added', async () => {
+    mockedUpload.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const wrap = container.querySelector('.composer-wrap') as HTMLElement
+    const files = Array.from({ length: 11 }, (_, i) => pngFile(`f${i}.png`))
+    await act(async () => {
+      fireEvent.drop(wrap, { dataTransfer: { files, items: [] } })
+    })
+    await waitFor(() => expect(container.querySelectorAll('.attach-thumb').length).toBe(10))
+    expect(screen.getByRole('alert')).toHaveTextContent(/10/)
+    expect(mockedUpload).toHaveBeenCalledTimes(10)
+  })
+
+  it('skips a file larger than 25 MiB and shows an error', async () => {
+    mockedUpload.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const wrap = container.querySelector('.composer-wrap') as HTMLElement
+    await act(async () => {
+      fireEvent.drop(wrap, { dataTransfer: { files: [bigFile('huge.png')], items: [] } })
+    })
+    expect(mockedUpload).not.toHaveBeenCalled()
+    expect(container.querySelectorAll('.attach-thumb').length).toBe(0)
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  it('sends the uploaded image refs then clears the tray', async () => {
+    mockedUpload.mockClear()
+    const onSend = vi.fn()
+    const { container } = render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    await act(async () => {
+      fireEvent.paste(ta, { clipboardData: { files: [pngFile('sent.png')], items: [] } })
+    })
+    // wait until the upload resolves and the item is 'done' (send button becomes enabled)
+    await waitFor(() => expect(screen.getByLabelText('发送消息')).not.toBeDisabled())
+    fireEvent.change(ta, { target: { value: 'here' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('here', [{ id: 'id-sent.png', name: 'sent.png', mediaType: 'image/png' }])
+    expect(container.querySelectorAll('.attach-thumb').length).toBe(0)
+  })
+
+  it('blocks sending while an image is still uploading', async () => {
+    mockedUpload.mockClear()
+    // A never-resolving upload keeps the item in the 'uploading' state.
+    mockedUpload.mockImplementationOnce(() => new Promise(() => {}))
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByPlaceholderText('给 zuse 发消息…') as HTMLTextAreaElement
+    await act(async () => {
+      fireEvent.paste(ta, { clipboardData: { files: [pngFile('slow.png')], items: [] } })
+    })
+    fireEvent.change(ta, { target: { value: 'go' } })
+    expect(screen.getByLabelText('发送消息')).toBeDisabled()
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('disables the attach button while thinking', () => {
+    render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
+    expect(screen.getByLabelText('添加图片')).toBeDisabled()
   })
 })
