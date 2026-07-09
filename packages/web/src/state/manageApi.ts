@@ -1,5 +1,6 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo, UploadedImageRef } from '@zuse/protocol'
 import { request, RequestError } from './session.js'
+import { compressImage } from './imageCompress.js'
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
 
@@ -183,6 +184,37 @@ export function rawDownloadUrl(path: string, cwd?: string): string {
 export async function navigateDirs(path?: string): Promise<DirNav> {
   const r = await request('/api/dirs' + (path ? '?path=' + encodeURIComponent(path) : ''), {}, 'navigate dirs')
   return (await r.json()) as DirNav
+}
+
+// --- Uploads (I2) ---
+
+/** Blob → 裸 base64（去掉 "data:...;base64," 前缀）。用 FileReader.readAsDataURL，jsdom/浏览器皆可用。 */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      resolve(result.slice(result.indexOf(',') + 1))
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('读取图片失败'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
+ * 上传图片：客户端压缩 → base64 → POST /api/uploads → { id, name, mediaType }。
+ * `compress` 默认 compressImage，可注入以便测试（默认参数做依赖注入，不引框架）。
+ */
+export async function uploadImage(file: File, compress = compressImage): Promise<UploadedImageRef> {
+  const { blob, mediaType } = await compress(file)
+  const dataBase64 = await blobToBase64(blob)
+  const r = await request('/api/uploads', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ mediaType, dataBase64, name: file.name }) }, 'upload image')
+  return (await r.json()) as UploadedImageRef
+}
+
+/** 上传图片的读取 URL（气泡缩略图 src、同源 cookie）。 */
+export function uploadedImageUrl(id: string): string {
+  return '/api/uploads/' + encodeURIComponent(id)
 }
 
 // --- MCP servers (M4) ---

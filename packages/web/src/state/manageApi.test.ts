@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { MemoryItem } from '@zuse/protocol'
-import { listMemory, createMemory, updateMemory, deleteMemory } from './manageApi.js'
+import { listMemory, createMemory, updateMemory, deleteMemory, uploadImage, uploadedImageUrl } from './manageApi.js'
 
 function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Partial<Response>>) {
   const fn = vi.fn(impl as unknown as typeof fetch)
@@ -81,5 +81,40 @@ describe('manageApi', () => {
   it('deleteMemory throws on non-ok', async () => {
     mockFetch(async () => ({ ok: false, status: 500 }))
     await expect(deleteMemory(3)).rejects.toThrow(/delete memory failed: 500/)
+  })
+
+  // --- Uploads (I2) ---
+
+  it('uploadedImageUrl builds the raw byte endpoint', () => {
+    expect(uploadedImageUrl('abc')).toBe('/api/uploads/abc')
+    expect(uploadedImageUrl('a b/c')).toBe('/api/uploads/a%20b%2Fc')
+  })
+
+  it('uploadImage compresses then POSTs base64 to /api/uploads and returns the ref', async () => {
+    const ref = { id: 'u1', name: 'photo.png', mediaType: 'image/png' }
+    const fn = mockFetch(async () => ({ ok: true, status: 200, json: async () => ref }))
+    // bytes [1,2,3] → base64 "AQID"
+    const mockCompress = vi.fn(async () => ({ blob: new Blob([new Uint8Array([1, 2, 3])]), mediaType: 'image/png' }))
+    const file = new File([new Uint8Array([9, 9])], 'photo.png', { type: 'image/png' })
+
+    const out = await uploadImage(file, mockCompress)
+
+    expect(out).toEqual(ref)
+    expect(mockCompress).toHaveBeenCalledWith(file)
+    expect(fn).toHaveBeenCalledWith('/api/uploads', expect.objectContaining({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+    }))
+    const init = fn.mock.calls[0]![1] as RequestInit
+    const body = JSON.parse(init.body as string)
+    expect(body).toEqual({ mediaType: 'image/png', dataBase64: 'AQID', name: 'photo.png' })
+  })
+
+  it('uploadImage throws on non-ok', async () => {
+    mockFetch(async () => ({ ok: false, status: 413 }))
+    const mockCompress = vi.fn(async () => ({ blob: new Blob([new Uint8Array([1])]), mediaType: 'image/jpeg' }))
+    const file = new File([new Uint8Array([1])], 'big.jpg', { type: 'image/jpeg' })
+    await expect(uploadImage(file, mockCompress)).rejects.toThrow(/upload image failed: 413/)
   })
 })
