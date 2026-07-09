@@ -18,8 +18,10 @@ import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
 import {
-  loadSettings, resolveModelSelection, resolveContextWindow, McpManager, type ToolRegistry,
+  loadSettings, resolveModelSelection, resolveContextWindow, resolveImageModelSelection,
+  getProviderConfig, createModelClient, McpManager, type ToolRegistry, type ModelClient,
 } from '@zuse/core'
+import { makeExpandAttachments } from './upload/imageExpand.js'
 import { LspManager, createLspTool, createLspInstallTool } from '@zuse/tools'
 
 export interface StartServerDeps {
@@ -106,15 +108,44 @@ export async function startServer(
   // existing single-session behaviour. Seeding can throw (real client build);
   // on failure we record sessionErr → /ws returns an error frame, while
   // health/setup/login stay up.
+  // User image uploads (I2): stored under the auth dir (alongside web-sessions), not the project.
+  // Built before SessionService so its readBase64 can back the per-session image hooks below.
+  const upload = new UploadService(join(cfg.authDir, 'uploads'))
+
+  // Auxiliary vision model for the PARSED fallback (I2): when the main model can't see images, each
+  // upload is described by this client and the text is baked into the prompt. Soft-degrade like the
+  // small/title model — any failure (missing config, bad key) disables the fallback, never crashes.
+  let imageClient: ModelClient | undefined
+  let imageModel: string | undefined
+  const imageSel = resolveImageModelSelection(loadSettings())
+  if (imageSel) {
+    try {
+      imageClient = createModelClient(getProviderConfig(loadSettings(), imageSel.providerId), imageSel.model)
+      imageModel = imageSel.model
+    } catch (err) {
+      console.warn(`[zuse-server] imageModel 不可用，图片解析兜底将禁用：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  // DIRECT route (vision main model): expand route:'direct' attachments to base64 image blocks at
+  // send time. PARSED fallback reads bytes via readImageBase64. Both are backed by the UploadService.
+  const expandAttachments = makeExpandAttachments(upload)
+  const readImageBase64 = (id: string): Promise<{ data: string; mediaType: string }> => upload.readBase64(id)
+
   const sessionsDir = join(cfg.authDir, 'web-sessions')
-  const service = new SessionService({ dir: sessionsDir, cwd: cfg.cwd, registerExtraTools })
+  const service = new SessionService({
+    dir: sessionsDir, cwd: cfg.cwd, registerExtraTools,
+    imageClient, imageModel, readImageBase64, expandAttachments,
+  })
   let sessionErr: string | undefined
   try {
     // Reuse a disk-persisted default if present; otherwise seed one. Tests inject
     // deps.session (a fake-client manager) — adopt it as the default.
     const existing = await service.getOrLoad(DEFAULT_SESSION_ID)
     if (!existing) {
-      const mgr = deps.session ?? createSession({ sessionId: DEFAULT_SESSION_ID, cwd: cfg.cwd, registerExtraTools })
+      const mgr = deps.session ?? createSession({
+        sessionId: DEFAULT_SESSION_ID, cwd: cfg.cwd, registerExtraTools,
+        imageClient, imageModel, readImageBase64, expandAttachments,
+      })
       await service.adopt(DEFAULT_SESSION_ID, mgr)
     }
   } catch (err) {
@@ -144,8 +175,6 @@ export async function startServer(
   const search = new SearchService({ dir: sessionsDir })
   // Read-only project file browser (M7), rooted at the daemon's cwd.
   const file = new FileService(cfg.cwd)
-  // User image uploads (I2): stored under the auth dir (alongside web-sessions), not the project.
-  const upload = new UploadService(join(cfg.authDir, 'uploads'))
   // Skill management (M3): scans ~/.zuse/skills + project .zuse/skills under the daemon's cwd.
   const skill = new SkillService({ cwd: cfg.cwd })
   // MCP management view (M4): merges configured servers with live status/tools; reconnect lets the

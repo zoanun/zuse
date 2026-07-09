@@ -1,4 +1,4 @@
-import { Conversation, type ToolRegistry } from '@zuse/core'
+import { Conversation, type ToolRegistry, type ModelClient, type Message } from '@zuse/core'
 import { SessionRegistry } from './SessionRegistry.js'
 import { createSession as defaultCreateSession } from './createSession.js'
 import type { SessionManager } from './SessionManager.js'
@@ -22,6 +22,11 @@ export interface SessionServiceOpts {
   createSession?: typeof defaultCreateSession
   /** forwarded into every createSession so daemon-owned MCP tools (B4) register per session. */
   registerExtraTools?: (registry: ToolRegistry) => void
+  /** I2 图片:下面四项由 startServer 建好后透传给每个 createSession(→ SessionManager)。 */
+  imageClient?: ModelClient
+  imageModel?: string
+  readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
+  expandAttachments?: (messages: Message[]) => Promise<Message[]>
 }
 
 /**
@@ -43,6 +48,11 @@ export class SessionService {
   private readonly registry = new SessionRegistry()
   private readonly createSession: typeof defaultCreateSession
   private readonly registerExtraTools?: (registry: ToolRegistry) => void
+  /** I2 图片:透传给每个 createSession 的注入项(startServer 提供)。 */
+  private readonly imageClient?: ModelClient
+  private readonly imageModel?: string
+  private readonly readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
+  private readonly expandAttachments?: (messages: Message[]) => Promise<Message[]>
   /** Per-id in-flight guard so concurrent persists don't interleave writes. */
   private readonly persisting = new Set<string>()
   /** Set when a persist was requested while one was already in flight (coalesce). */
@@ -62,6 +72,10 @@ export class SessionService {
     this.cwd = opts.cwd
     this.createSession = opts.createSession ?? defaultCreateSession
     this.registerExtraTools = opts.registerExtraTools
+    this.imageClient = opts.imageClient
+    this.imageModel = opts.imageModel
+    this.readImageBase64 = opts.readImageBase64
+    this.expandAttachments = opts.expandAttachments
   }
 
   /**
@@ -92,6 +106,10 @@ export class SessionService {
       // manually titled) → don't auto-generate a title again on its next message.
       titleAlreadySet: rec.messages.length > 0 || !!rec.titleManual || !!rec.titleGenerated,
       registerExtraTools: this.registerExtraTools,
+      imageClient: this.imageClient,
+      imageModel: this.imageModel,
+      readImageBase64: this.readImageBase64,
+      expandAttachments: this.expandAttachments,
     })
     // Re-seed manual/generated title from disk so a restart doesn't lose it (and so
     // the next autosave won't overwrite it, nor re-generate). Manual wins over generated.
@@ -112,7 +130,15 @@ export class SessionService {
   async create(opts?: { cwd?: string; title?: string }): Promise<{ id: string }> {
     const id = newSessionId()
     const cwd = opts?.cwd ?? this.cwd
-    const mgr = this.createSession({ sessionId: id, cwd, registerExtraTools: this.registerExtraTools })
+    const mgr = this.createSession({
+      sessionId: id,
+      cwd,
+      registerExtraTools: this.registerExtraTools,
+      imageClient: this.imageClient,
+      imageModel: this.imageModel,
+      readImageBase64: this.readImageBase64,
+      expandAttachments: this.expandAttachments,
+    })
     this.tombstones.delete(id) // (re)using this id is legal
     this.registry.set(id, mgr)
     this.wireAutosave(id, mgr)

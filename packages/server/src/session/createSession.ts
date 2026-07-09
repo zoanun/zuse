@@ -12,6 +12,7 @@ import {
   type ModelClient,
   type Conversation,
   type ToolRegistry,
+  type Message,
 } from '@zuse/core'
 import {
   createDefaultRegistry,
@@ -49,6 +50,16 @@ export interface CreateSessionOpts {
    * MCP server 工具（B4）注册进每个会话的 registry —— 连接生命周期由 daemon 持有,这里只注册。
    */
   registerExtraTools?: (registry: ToolRegistry) => void
+  /**
+   * I2 图片:视觉兜底用的辅助 client + model(主模型不支持视觉时,把图片描述成文本)。
+   * 由 startServer 从 settings.imageModel 软降级构建;缺省 → 非视觉主模型无法处理图片。
+   */
+  imageClient?: ModelClient
+  imageModel?: string
+  /** I2:读取上传图片字节为 base64(解析兜底构造 image 块用)。由 startServer 经 UploadService 提供。 */
+  readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
+  /** I2:发送时的直传展开钩子(route==='direct' 的 attachments 读盘展开成 image 块)。由 startServer 提供。 */
+  expandAttachments?: (messages: Message[]) => Promise<Message[]>
 }
 
 /**
@@ -148,6 +159,11 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     titleClient,
     titleModel,
     titleAlreadySet: opts.titleAlreadySet,
+    // I2 图片:startServer 建好后经会话构造链透传;缺省则各能力自然降级(见 SessionManager)。
+    imageClient: opts.imageClient,
+    imageModel: opts.imageModel,
+    readImageBase64: opts.readImageBase64,
+    expandAttachments: opts.expandAttachments,
   })
   return mgr
 }
