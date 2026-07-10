@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { UploadedImageRef, PastedTextInput } from '@zuse/protocol'
-import { pastedLineCount } from '@zuse/core'
+import { pastedLineCount } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'

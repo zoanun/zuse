@@ -93,12 +93,6 @@ export function isNonChatModel(settings: ResolvedSettings, providerId: string, m
   return false
 }
 
-/** 粘贴文本的行数标记 M（= 换行符个数，"a\nb\nc" → 2）。与 cc-haha getPastedTextRefNumLines
- *  同义；client 卡片与气泡共用，保证 "+M 行" 口径一致。 */
-export function pastedLineCount(text: string): number {
-  return (text.match(/\r\n|\r|\n/g) || []).length
-}
-
 /**
  * 展开所有 provider 的“可作为主模型”的模型（排除 image/tts/embedding/ocr 等非对话类型），
  * 每个带 vision 能力。就地读取 entry 的 vision/type + provider 级回退，避免重复遍历
