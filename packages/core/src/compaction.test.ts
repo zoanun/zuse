@@ -18,6 +18,7 @@ import {
   isNonChatModel,
   listSelectableModels,
   DEFAULT_CONTEXT_WINDOW,
+  pastedLineCount,
 } from './compaction.js'
 
 const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
@@ -441,5 +442,18 @@ describe('buildIterativeSummaryPrompt', () => {
   it('includes temporal anchoring', () => {
     const prompt = buildIterativeSummaryPrompt('summary', [user('hi')])
     expect(prompt).toContain('TEMPORAL ANCHORING:')
+  })
+})
+
+describe('pastedLineCount', () => {
+  it('counts newline occurrences (CC semantics: "a\\nb\\nc" → 2)', () => {
+    expect(pastedLineCount('')).toBe(0)
+    expect(pastedLineCount('one line')).toBe(0)
+    expect(pastedLineCount('a\nb\nc')).toBe(2)
+    expect(pastedLineCount('a\nb\nc\n')).toBe(3) // trailing newline counts
+  })
+  it('handles \\r\\n and lone \\r', () => {
+    expect(pastedLineCount('a\r\nb')).toBe(1)   // \r\n = one break
+    expect(pastedLineCount('a\rb\rc')).toBe(2)  // lone \r
   })
 })

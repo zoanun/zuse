@@ -29,13 +29,15 @@ export interface Message {
   attachments?: MessageAttachment[]
 }
 
-/** 附着在一条消息上的图片（与 protocol 的 MessageAttachment 结构对齐；不含 base64）。 */
+/** 附着在一条消息上的附件（图片或粘贴文本；与 protocol 的 MessageAttachment 结构对齐；图片不含 base64）。 */
 export interface MessageAttachment {
   id: string
   name: string
   mediaType: string
-  route?: 'direct' | 'parsed'
+  route?: 'direct' | 'parsed' | 'pasted'
   description?: string
+  /** route==='pasted' 时的粘贴全文。 */
+  text?: string
 }
 
 /** 模型调用错误的归类:供编排层决定是否降级。 */
