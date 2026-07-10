@@ -129,6 +129,24 @@ describe('Composer', () => {
     fireEvent.click(screen.getByLabelText(/移除 Pasted text #1/))
     expect(screen.queryByText(/Pasted text #1/)).toBeNull()
   })
+
+  it('clicking a staged pasted-text card opens TextLightbox with the full text', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('AAA\nBBB\nCCC\nDDD'))
+    fireEvent.click(screen.getByRole('button', { name: /查看 Pasted text #1/ }))
+    expect(screen.getByText('AAA\nBBB\nCCC\nDDD', { normalizer: (s) => s })).toBeTruthy()
+  })
+
+  it('clicking × on a staged pasted-text card removes it WITHOUT opening the preview', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('one\ntwo\nthree\nfour'))
+    fireEvent.click(screen.getByLabelText(/移除 Pasted text #1/))
+    expect(screen.queryByText(/Pasted text #1/)).toBeNull() // removed
+    // no TextLightbox opened (its close button would be present if it had)
+    expect(screen.queryByLabelText('关闭')).toBeNull()
+  })
 })
 
 describe('Composer slash menu', () => {

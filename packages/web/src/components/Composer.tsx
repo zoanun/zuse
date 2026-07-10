@@ -4,6 +4,8 @@ import { pastedLineCount } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
+import { ImageLightbox } from './ImageLightbox.js'
+import { TextLightbox } from './TextLightbox.js'
 
 interface ComposerProps {
   thinking: boolean
@@ -70,6 +72,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const pasteSeqRef = useRef(0)
   const [attachError, setAttachError] = useState('')
   const keySeq = useRef(0)
+  // Staged-attachment preview (image lightbox or full-text lightbox), opened by clicking a tray item.
+  const [preview, setPreview] = useState<
+    { kind: 'image'; src: string; alt: string } | { kind: 'text'; text: string; title: string } | null
+  >(null)
 
   useEffect(() => { taRef.current?.focus() }, [])
   useEffect(() => { if (!thinking) taRef.current?.focus() }, [thinking])
@@ -252,7 +258,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <div className="attach-tray">
           {pending.map((p) => (
             <div key={p.key} className={'attach-thumb' + (p.status === 'error' ? ' error' : '') + (p.status === 'uploading' ? ' uploading' : '')}>
-              <img src={p.previewUrl ?? (p.ref ? uploadedImageUrl(p.ref.id) : '')} alt={p.name} />
+              <button
+                type="button"
+                className="attach-thumb-btn"
+                aria-label={`查看 ${p.name}`}
+                onClick={() => setPreview({ kind: 'image', src: p.previewUrl ?? (p.ref ? uploadedImageUrl(p.ref.id) : ''), alt: p.name })}
+              >
+                <img src={p.previewUrl ?? (p.ref ? uploadedImageUrl(p.ref.id) : '')} alt={p.name} />
+              </button>
               {p.status === 'uploading' ? <span className="attach-spinner" aria-label="上传中" /> : null}
               {p.status === 'error' ? (
                 <button className="attach-retry" aria-label={`重试 ${p.name}`} onClick={() => retry(p.key)}>↻</button>
@@ -269,8 +282,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             const label = m === 0 ? `Pasted text #${i + 1}` : `Pasted text #${i + 1} (+${m} 行)`
             return (
               <div key={p.id} className="paste-card" title={label}>
-                <span className="paste-card-icon" aria-hidden="true">📄</span>
-                <span className="paste-card-label">{label}</span>
+                <button
+                  type="button"
+                  className="paste-card-btn"
+                  aria-label={`查看 Pasted text #${i + 1}`}
+                  onClick={() => setPreview({ kind: 'text', text: p.text, title: `Pasted text #${i + 1}` })}
+                >
+                  <span className="paste-card-icon" aria-hidden="true">📄</span>
+                  <span className="paste-card-label">{label}</span>
+                </button>
                 <button className="attach-remove" aria-label={`移除 Pasted text #${i + 1}`} onClick={() => removePaste(p.id)}>×</button>
               </div>
             )
@@ -341,6 +361,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </svg>
         </button>
       </div>
+      {preview?.kind === 'image' ? <ImageLightbox src={preview.src} alt={preview.alt} onClose={() => setPreview(null)} /> : null}
+      {preview?.kind === 'text' ? <TextLightbox text={preview.text} title={preview.title} onClose={() => setPreview(null)} /> : null}
     </div>
   )
 })

@@ -300,6 +300,7 @@ button.head:hover .caret { opacity: 1; }
 /* Staged-image tray, pinned just above the composer (same 7% inset via composer-wrap). */
 .attach-tray { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
 .attach-thumb { position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); flex: none; }
+.attach-thumb-btn { display: block; width: 100%; height: 100%; padding: 0; border: none; background: none; cursor: pointer; }
 .attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .attach-thumb.uploading img { opacity: 0.5; }
 .attach-thumb.error { border-color: var(--bad); }
