@@ -102,6 +102,14 @@ describe('Composer', () => {
     expect(screen.queryByText(/粘贴文本 #/)).toBeNull()
   })
 
+  it('long paste while thinking is refused with a notice (not silently dropped, no card)', () => {
+    render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('l1\nl2\nl3\nl4')) // would-be card, but mid-turn
+    expect(screen.queryByText(/粘贴文本 #/)).toBeNull() // no card staged
+    expect(screen.getByText('回复生成中不能粘贴长文本')).toBeTruthy() // visible notice
+  })
+
   it('sends pastedTexts and clears them after submit', () => {
     const onSend = vi.fn()
     render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)

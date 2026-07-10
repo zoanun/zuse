@@ -177,6 +177,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const text = raw.replace(/\r\n?/g, '\n') // normalize \r\n and lone \r → \n
     if (text.length > PASTE_CHAR_THRESHOLD || pastedLineCount(text) > PASTE_NEWLINE_THRESHOLD) {
       e.preventDefault()
+      // Mid-turn interjection (steer) is text-only — a pasted-text card would be silently dropped on
+      // send (Shell routes to a text-only steer). Refuse it with a visible notice, mirroring images.
+      if (thinking) { setAttachError('回复生成中不能粘贴长文本'); return }
       const id = `pasted-${pasteSeqRef.current++}`
       setPastes((prev) => [...prev, { id, text }])
     }
