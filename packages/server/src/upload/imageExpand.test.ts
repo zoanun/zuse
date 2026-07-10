@@ -179,6 +179,7 @@ describe('makeExpandAttachments (I2)', () => {
     expect(block).toContain('以下是我粘贴的 1 段文本')
     expect(block).toContain('ERROR foo\nERROR bar')
     expect(block).not.toContain('▍粘贴文本 1') // single → not numbered
+    expect(block.endsWith('[粘贴内容结束]')).toBe(true) // closing fence before the user question
     expect(content[1]).toEqual({ type: 'text', text: '分析这段日志' })
   })
 

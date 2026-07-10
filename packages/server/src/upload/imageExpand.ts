@@ -50,7 +50,9 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
       const body = pasted
         .map((t, i) => (multi ? `▍粘贴文本 ${i + 1}\n${t}` : t))
         .join('\n\n')
-      blocks.push({ type: 'text', text: header + body })
+      // 收尾边界：粘贴内容与紧随其后的用户问题（带 [时间戳] 前缀）之间加显式围栏，避免模型
+      // 把问题的时间戳误当成最后一段粘贴文本的一部分。
+      blocks.push({ type: 'text', text: `${header}${body}\n\n[粘贴内容结束]` })
     }
     return blocks.length ? { ...m, content: [...blocks, ...m.content] } : m
   }))
