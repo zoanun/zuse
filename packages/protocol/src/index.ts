@@ -299,7 +299,7 @@ export interface SessionSnapshot {
 export type ClientMessage =
   | { type: 'send'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }
   | { type: 'interrupt' }
-  | { type: 'steer'; text: string }
+  | { type: 'steer'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
