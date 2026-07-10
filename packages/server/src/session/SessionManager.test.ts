@@ -2142,6 +2142,20 @@ describe('SessionManager image routing (I2)', () => {
     ])
   })
 
+  it('I5a retry re-runs a pasted-only (empty-text) turn instead of bailing on empty text', async () => {
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn, textTurn], vision: true })
+    await mgr.submit('', undefined, [{ id: 'pa', text: '日志内容' }]) // attachment-only interjection, empty text
+    expect(calls).toHaveLength(1)
+
+    await mgr.retry()
+
+    // retry must NOT no-op on the empty recovered text — it re-runs, re-attaching the pasted text.
+    expect(calls).toHaveLength(2)
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志内容' },
+    ])
+  })
+
   it('#2 failover resend carries the images to the new model', async () => {
     // PRIMARY yields a preStream quota error → auto failover to BACKUP, which must receive this
     // turn's images (both vision here → route:'direct').

@@ -73,6 +73,18 @@ describe('applyClientMessage', () => {
     expect(err).not.toHaveBeenCalled()
   })
 
+  it('an IDLE steer carrying attachments forwards them to submit (not dropped)', () => {
+    // Idle-race: the steer becomes a normal echoed send. Its images/pastedTexts MUST reach submit —
+    // dropping them (submit(text, undefined, undefined, …)) silently loses the attachments (data loss).
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    const images = [{ id: 'i1', name: 'a.png', mediaType: 'image/png' }]
+    const pastedTexts = [{ id: 'pa', text: '日志' }]
+    applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: '', images, pastedTexts }), err)
+    expect(mgr.submit).toHaveBeenCalledWith('', images, pastedTexts, { echo: true })
+    expect(err).not.toHaveBeenCalled()
+  })
+
   it('dispatches compact to compactNow (no payload required)', () => {
     const mgr = fakeMgr()
     const err = vi.fn()

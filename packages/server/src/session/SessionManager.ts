@@ -135,6 +135,18 @@ interface Pending {
   resolve: (v: PermissionVerdict) => void
 }
 
+/** Display-only attachments for a `user-echo` bubble (mid-turn interjection / retry / idle-race resend).
+ *  Images carry id/name/mediaType (route/description fill in from the authoritative snapshot); pasted
+ *  carry route+text so the 📄 chip renders live before the snapshot round-trips. Numbering matches the
+ *  client's optimistic `粘贴文本 #N`. */
+function echoAttachments(images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]): MessageAttachment[] | undefined {
+  const atts: MessageAttachment[] = [
+    ...(images ?? []).map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })),
+    ...(pastedTexts ?? []).map((p, idx) => ({ id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text })),
+  ]
+  return atts.length > 0 ? atts : undefined
+}
+
 export class SessionManager {
   private readonly sessionId: string
   private conversation: Conversation
@@ -832,7 +844,7 @@ export class SessionManager {
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
     // A steer that raced past turn-end is delivered as a normal turn (ws layer), but the client took
     // the steer path and rendered no bubble — echo it so its transient "queued" preview resolves.
-    if (opts?.echo) this.emit({ type: 'user-echo', text })
+    if (opts?.echo) this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts) })
 
     // Publish the abort controller SYNCHRONOUSLY, before any await below, so the Stop button works
     // during the pre-send / background-compaction waits too (interrupt() checks this.abort).
@@ -1207,7 +1219,15 @@ export class SessionManager {
     if (this.steerQueue.length === 0) return
     const items = this.steerQueue.splice(0)
     const unechoed = items.filter((s) => !s.echoed)
-    if (unechoed.length > 0) this.emit({ type: 'user-echo', text: unechoed.map((s) => s.text).join('\n') })
+    if (unechoed.length > 0) {
+      // Carry the interjection's attachments on the echo so the follow-up bubble shows its chip/thumbnail
+      // live (not just after a reload); filter empty text so an attachment-only interjection doesn't
+      // echo a blank/newline-only string.
+      const echoText = unechoed.map((s) => s.text).filter((t) => t !== '').join('\n')
+      const echoImages = unechoed.flatMap((s) => s.images ?? [])
+      const echoPasted = unechoed.flatMap((s) => s.pastedTexts ?? [])
+      this.emit({ type: 'user-echo', text: echoText, attachments: echoAttachments(echoImages, echoPasted) })
+    }
     // Merge any attachments carried by the drained items onto this follow-up submit — reuses
     // submit's existing image/pastedText handling instead of duplicating it here.
     const text = items.map((s) => s.text).filter((t) => t !== '').join('\n')
@@ -1303,10 +1323,10 @@ export class SessionManager {
     if (!userMsg || userMsg.role !== 'user') return
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
     const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))
-    if (text.trim() === '') return
     // #3 / I5a: recover the turn's attachments so retry re-attaches them. Split by route: image
     // attachments (direct/parsed) → images param (re-routed via resolveVision); pasted → pastedTexts
-    // param (never sent through the image path — no disk file exists for them).
+    // param (never sent through the image path — no disk file exists for them). Recovered BEFORE the
+    // empty-text bail so an attachment-only turn (empty text) is still retryable.
     const atts = userMsg.attachments ?? []
     const images: UploadedImageRef[] | undefined = (() => {
       const imgs = atts.filter((a) => a.route !== 'pasted').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
@@ -1316,11 +1336,13 @@ export class SessionManager {
       const ps = atts.filter((a) => a.route === 'pasted').map((a) => ({ id: a.id, text: a.text ?? '' }))
       return ps.length > 0 ? ps : undefined
     })()
+    // Nothing to retry only when there is neither text NOR any attachment.
+    if (text.trim() === '' && !images && !pastedTexts) return
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
-    // "user message" event, so clients wouldn't show it until a reconnect. Echo it now so the
-    // re-submitted question reappears immediately (mirrors send()'s live optimistic add).
-    this.emit({ type: 'user-echo', text })
+    // "user message" event, so clients wouldn't show it until a reconnect. Echo it now (with its
+    // attachments) so the re-submitted question reappears immediately (mirrors send()'s optimistic add).
+    this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts) })
     await this.submit(text, images, pastedTexts)      // fresh attempt from the clean checkpoint
   }
 
