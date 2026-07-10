@@ -9,6 +9,8 @@ type Block = Message['content'][number]
  *  - route==='parsed'（非视觉解析兜底）→ 全部非空描述**合并成一个带编号标签的 text 块**，
  *    形如「[本条消息附带 N 张图片…] ▍图片1（name）\n<描述>\n\n▍图片2…」。多图时标签让模型能把
  *    每段描述对应到用户看到的第几张图（否则多段裸描述会被模型当成一张图而混淆/漏答）。
+ *  - route==='pasted'（粘贴长文本）→ 全部非空段合并成**一个带编号标签的前置 text 块**，
+ *    形如「[以下是我粘贴的 N 段文本：] ▍粘贴文本1\n<全文>…」，插在原 content 之前（材料在前）。
  *  无 attachments 的消息原样返回。账本/持久化的消息绝不含 base64，也不烘焙描述进文本。 */
 export function makeExpandAttachments(upload: UploadService): (messages: Message[]) => Promise<Message[]> {
   return async (messages) => Promise.all(messages.map(async (m) => {
@@ -34,6 +36,19 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
       const header = `[本条消息附带 ${parsed.length} 张图片，以下是${multi ? '每张' : '其'}内容描述（由图像解析模型转述，非用户原话）：]\n\n`
       const body = parsed
         .map((a, i) => (multi ? `▍图片 ${i + 1}（${a.name}）\n${a.desc}` : a.desc))
+        .join('\n\n')
+      blocks.push({ type: 'text', text: header + body })
+    }
+    // pasted：粘贴长文本合并成单个前置 text 块（材料在前、问题在后）；空/纯空白项跳过。
+    const pasted = atts
+      .filter((a) => a.route === 'pasted')
+      .map((a) => (a.text ?? ''))
+      .filter((t) => t.trim() !== '')
+    if (pasted.length > 0) {
+      const multi = pasted.length > 1
+      const header = `[以下是我粘贴的 ${pasted.length} 段文本：]\n\n`
+      const body = pasted
+        .map((t, i) => (multi ? `▍粘贴文本 ${i + 1}\n${t}` : t))
         .join('\n\n')
       blocks.push({ type: 'text', text: header + body })
     }

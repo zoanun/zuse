@@ -163,4 +163,79 @@ describe('makeExpandAttachments (I2)', () => {
       { type: 'text', text: 'mixed' },
     ])
   })
+
+  it("expands a single route:'pasted' attachment into a labeled text block (no numbering)", async () => {
+    const expand = makeExpandAttachments(fakeUpload({}))
+    const msg: Message = {
+      ...textMsg('分析这段日志'),
+      attachments: [{ id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: 'ERROR foo\nERROR bar' }],
+    }
+
+    const out = await expand([msg])
+
+    const content = out[0]!.content
+    expect(content).toHaveLength(2) // one pasted-text block + the user text
+    const block = (content[0] as { type: 'text'; text: string }).text
+    expect(block).toContain('以下是我粘贴的 1 段文本')
+    expect(block).toContain('ERROR foo\nERROR bar')
+    expect(block).not.toContain('▍粘贴文本 1') // single → not numbered
+    expect(content[1]).toEqual({ type: 'text', text: '分析这段日志' })
+  })
+
+  it('merges MULTIPLE pasted texts into ONE numbered block, material before the question', async () => {
+    const expand = makeExpandAttachments(fakeUpload({}))
+    const msg: Message = {
+      ...textMsg('对比这两段'),
+      attachments: [
+        { id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '第一段内容' },
+        { id: 'p2', name: 'Pasted text #2', mediaType: 'text/plain', route: 'pasted', text: '第二段内容' },
+      ],
+    }
+
+    const out = await expand([msg])
+
+    const content = out[0]!.content
+    expect(content).toHaveLength(2) // ONE combined block + user text
+    const block = (content[0] as { type: 'text'; text: string }).text
+    expect(block).toContain('以下是我粘贴的 2 段文本')
+    expect(block).toContain('▍粘贴文本 1')
+    expect(block).toContain('第一段内容')
+    expect(block).toContain('▍粘贴文本 2')
+    expect(block).toContain('第二段内容')
+    expect(block.indexOf('粘贴文本 1')).toBeLessThan(block.indexOf('粘贴文本 2'))
+    expect(content[1]).toEqual({ type: 'text', text: '对比这两段' })
+  })
+
+  it('orders blocks image → parsed-image-desc → pasted-text → original content', async () => {
+    const upload = fakeUpload({ d1: { data: 'IMG', mediaType: 'image/png' } })
+    const expand = makeExpandAttachments(upload)
+    const msg: Message = {
+      ...textMsg('看图和文本'),
+      attachments: [
+        { id: 'd1', name: 'pic.png', mediaType: 'image/png', route: 'direct' },
+        { id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '一段文字' },
+      ],
+    }
+
+    const out = await expand([msg])
+
+    const content = out[0]!.content
+    expect(content).toHaveLength(3)
+    expect(content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'IMG' } })
+    expect((content[1] as { type: 'text'; text: string }).text).toContain('一段文字')
+    expect(content[2]).toEqual({ type: 'text', text: '看图和文本' })
+  })
+
+  it("skips a route:'pasted' attachment whose text is empty/whitespace", async () => {
+    const expand = makeExpandAttachments(fakeUpload({}))
+    const msg: Message = {
+      ...textMsg('q'),
+      attachments: [{ id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '   ' }],
+    }
+
+    const out = await expand([msg])
+
+    expect(out[0]).toBe(msg) // nothing to prepend → untouched original
+    expect(out[0]!.content).toEqual([{ type: 'text', text: 'q' }])
+  })
 })
