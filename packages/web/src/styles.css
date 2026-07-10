@@ -131,6 +131,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .lightbox-img { max-width: 94vw; max-height: 92vh; object-fit: contain; border-radius: 8px; box-shadow: 0 12px 48px rgba(0,0,0,0.5); cursor: default; }
 .lightbox-close { position: fixed; top: 18px; right: 22px; width: 40px; height: 40px; border-radius: 999px; border: none; background: rgba(255,255,255,0.14); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
 .lightbox-close:hover { background: rgba(255,255,255,0.26); }
+.textbox-panel { max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; background: var(--surface, #1e1e1e); border-radius: 8px; box-shadow: 0 12px 48px rgba(0,0,0,0.5); cursor: default; overflow: hidden; }
+.textbox-title { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--fg); }
+.textbox-pre { margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; color: var(--fg); }
 .msg-img-badge { align-self: flex-start; font-size: 10.5px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 7px; white-space: nowrap; }
 .msg-img-desc { font-size: 11.5px; color: var(--faint); }
 .msg-img-desc > summary { cursor: pointer; color: var(--faint); }
@@ -304,6 +307,7 @@ button.head:hover .caret { opacity: 1; }
 .paste-card { position: relative; display: flex; align-items: center; gap: 6px; height: 60px; padding: 0 26px 0 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); flex: none; max-width: 220px; }
 .paste-card-icon { font-size: 18px; line-height: 1; }
 .paste-card-label { font-size: 12px; color: var(--fg-2, var(--fg)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paste-card-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; cursor: pointer; color: inherit; overflow: hidden; }
 .attach-retry { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
 .attach-spinner { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; animation: attach-spin 0.7s linear infinite; }
 @keyframes attach-spin { to { transform: rotate(360deg); } }

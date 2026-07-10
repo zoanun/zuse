@@ -6,6 +6,8 @@ import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
 import { uploadedImageUrl } from '../state/manageApi.js'
 import { ImageLightbox } from './ImageLightbox.js'
+import { TextLightbox } from './TextLightbox.js'
+import { pastedLineCount } from './pasted.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
 export function partsText(parts: Part[]): string {
@@ -81,7 +83,11 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
         <div className="bubble">
           {msg.attachments?.length ? (
             <div className="msg-imgs">
-              {msg.attachments.map((a) => <MessageImage key={a.id} a={a} />)}
+              {msg.attachments.map((a) => (
+                a.route === 'pasted'
+                  ? <PastedTextChip key={a.id} a={a} />
+                  : <MessageImage key={a.id} a={a} />
+              ))}
             </div>
           ) : null}
           {text}
@@ -145,6 +151,24 @@ function MessageImage({ a }: { a: MessageAttachment }) {
           <div className="msg-img-desc-body">{a.description}</div>
         </details>
       ) : null}
+    </div>
+  )
+}
+
+/** One pasted-text attachment: a folded card (📄 Pasted text #N (+M 行)) that opens the full text in
+ *  a TextLightbox on click. Full text comes from the persisted attachment.text, so it renders the same
+ *  live and after reload. */
+function PastedTextChip({ a }: { a: MessageAttachment }) {
+  const [open, setOpen] = useState(false)
+  const m = pastedLineCount(a.text ?? '')
+  const label = m === 0 ? a.name : `${a.name} (+${m} 行)`
+  return (
+    <div className="paste-card">
+      <button type="button" className="paste-card-btn" onClick={() => setOpen(true)} aria-label={`查看 ${a.name}`}>
+        <span className="paste-card-icon" aria-hidden="true">📄</span>
+        <span className="paste-card-label">{label}</span>
+      </button>
+      {open ? <TextLightbox text={a.text ?? ''} title={a.name} onClose={() => setOpen(false)} /> : null}
     </div>
   )
 }

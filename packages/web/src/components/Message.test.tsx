@@ -43,6 +43,20 @@ describe('Message', () => {
     expect(screen.queryByText('图·解析')).toBeNull()
   })
 
+  it('renders a pasted-text attachment as a card and opens full text on click', () => {
+    const msg = {
+      id: 'u1', role: 'user' as const,
+      parts: [{ kind: 'text' as const, text: '分析' }],
+      attachments: [{ id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted' as const, text: 'LINE A\nLINE B' }],
+    }
+    render(<Message msg={msg} />)
+    expect(screen.getByText(/Pasted text #1 \(\+1 行\)/)).toBeTruthy() // 1 newline → +1 行
+    fireEvent.click(screen.getByRole('button', { name: /查看 Pasted text #1/ }))
+    // Default getByText normalizer collapses the newline to a space — use an identity normalizer so
+    // this actually asserts the <pre> preserves the literal line break, not just "the words appear".
+    expect(screen.getByText('LINE A\nLINE B', { normalizer: (s) => s })).toBeTruthy()
+  })
+
   it('renders no thumbnails on a user message without attachments', () => {
     const { container } = render(<Message msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }} />)
     expect(container.querySelector('.msg-imgs')).toBeNull()
