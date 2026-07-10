@@ -321,6 +321,13 @@ describe('pending steer previews (transient, client-only)', () => {
     expect(s.pendingSteers).toEqual([])
   })
 
+  it('steer-queued carries attachments into pendingSteers', () => {
+    const s = reduce(initialState, { kind: 'steer-queued', id: 'ps1', text: '看这个', attachments: [
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
+    ] })
+    expect(s.pendingSteers[0]).toMatchObject({ id: 'ps1', text: '看这个', attachments: [{ id: 'pa', route: 'pasted' }] })
+  })
+
   it('a fresh snapshot drops any transient previews', () => {
     const withPreview = reduce(initialState, { kind: 'steer-queued', id: 'ps1', text: 'X' })
     const snap = reduce(withPreview, { kind: 'server', msg: { type: 'snapshot', snapshot: {

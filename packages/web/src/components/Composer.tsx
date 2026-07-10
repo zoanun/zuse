@@ -160,7 +160,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // bail if none, refuse mid-turn, else upload. Callers that own a DOM event preventDefault first.
   function stage(files: File[]) {
     if (files.length === 0) return
-    if (thinking) { setAttachError('回复生成中不能加图'); return }
     addFiles(files)
   }
 
@@ -177,9 +176,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const text = raw.replace(/\r\n?/g, '\n') // normalize \r\n and lone \r → \n
     if (text.length > PASTE_CHAR_THRESHOLD || pastedLineCount(text) > PASTE_NEWLINE_THRESHOLD) {
       e.preventDefault()
-      // Mid-turn interjection (steer) is text-only — a pasted-text card would be silently dropped on
-      // send (Shell routes to a text-only steer). Refuse it with a visible notice, mirroring images.
-      if (thinking) { setAttachError('回复生成中不能粘贴长文本'); return }
+      // Mid-turn interjection (steer) now carries attachments too — the server queues them and
+      // delivers as a follow-up turn, so staging while thinking is allowed here.
       const id = `pasted-${pasteSeqRef.current++}`
       setPastes((prev) => [...prev, { id, text }])
     }
@@ -305,7 +303,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <button
           className="attach-btn"
           aria-label="添加图片"
-          disabled={thinking}
           onClick={() => fileRef.current?.click()}
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

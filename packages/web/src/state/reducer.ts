@@ -9,7 +9,7 @@ export const initialState: AppState = {
 export type Action =
   | { kind: 'server'; msg: ServerMessage }
   | { kind: 'user-send'; id: string; text: string; steer?: boolean; attachments?: MessageAttachment[] }
-  | { kind: 'steer-queued'; id: string; text: string }
+  | { kind: 'steer-queued'; id: string; text: string; attachments?: MessageAttachment[] }
   | { kind: 'connection'; status: Connection }
   | { kind: 'notice'; text: string; noticeKind?: 'info' | 'warn' | 'error' | 'help' }
   | { kind: 'model-changed'; model: string; providerId?: string }
@@ -191,7 +191,7 @@ export function reduce(state: AppState, action: Action): AppState {
     case 'user-send':
       return { ...state, messages: [...state.messages, { id: action.id, role: 'user', parts: [{ kind: 'text', text: action.text }], steer: action.steer, attachments: action.attachments }] }
     case 'steer-queued':
-      return { ...state, pendingSteers: [...state.pendingSteers, { id: action.id, text: action.text }] }
+      return { ...state, pendingSteers: [...state.pendingSteers, { id: action.id, text: action.text, attachments: action.attachments }] }
     case 'connection':
       return { ...state, connection: action.status }
     case 'notice':

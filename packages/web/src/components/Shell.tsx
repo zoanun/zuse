@@ -116,10 +116,16 @@ export function Shell() {
     const arr = historyRef.current.get(key) ?? []
     historyRef.current.set(key, [...arr, text].slice(-100))
     if (state.thinking) {
-      // Mid-turn steer stays text-only this iteration (no images on steer); if any were passed we
-      // simply drop them here — disabling the attach affordance while thinking is the Composer's job.
-      dispatch({ kind: 'steer-queued', id: nextId('ps'), text })
-      send({ type: 'steer', text })
+      // Mid-turn interjection. Attachments ride along on the steer frame; the server queues them and
+      // delivers as a follow-up turn (submit handles images/pastedTexts). Show an optimistic ↪插话
+      // preview carrying the attachments so the user gets immediate feedback.
+      const imageAtts = images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) ?? []
+      const pastedAtts = pastedTexts?.map((p, idx) => ({
+        id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
+      })) ?? []
+      const attachments = [...imageAtts, ...pastedAtts]
+      dispatch({ kind: 'steer-queued', id: nextId('ps'), text, attachments: attachments.length ? attachments : undefined })
+      send({ type: 'steer', text, images, pastedTexts })
       return
     }
     // Optimistic image attachments carry only id/name/mediaType (route/description filled by the
@@ -272,7 +278,10 @@ export function Shell() {
               {state.pendingSteers.map((p) => (
                 <div key={p.id} className="pending-steer">
                   <span className="pending-steer-tag">↪ 插话</span>
-                  <span className="pending-steer-text">{p.text}</span>
+                  {p.text ? <span className="pending-steer-text">{p.text}</span> : null}
+                  {p.attachments?.length ? (
+                    <span className="pending-steer-attach">📎 {p.attachments.length} 个附件</span>
+                  ) : null}
                 </div>
               ))}
             </div>

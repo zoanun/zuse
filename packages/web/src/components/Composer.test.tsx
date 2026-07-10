@@ -102,12 +102,12 @@ describe('Composer', () => {
     expect(screen.queryByText(/粘贴文本 #/)).toBeNull()
   })
 
-  it('long paste while thinking is refused with a notice (not silently dropped, no card)', () => {
+  it('long paste while thinking now stages a card (mid-turn attachment allowed)', () => {
     render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
-    fireEvent.paste(ta, pasteEvent('l1\nl2\nl3\nl4')) // would-be card, but mid-turn
-    expect(screen.queryByText(/粘贴文本 #/)).toBeNull() // no card staged
-    expect(screen.getByText('回复生成中不能粘贴长文本')).toBeTruthy() // visible notice
+    fireEvent.paste(ta, pasteEvent('l1\nl2\nl3\nl4'))
+    expect(screen.getByText(/粘贴文本 #1/)).toBeTruthy() // card staged even while thinking
+    expect(screen.queryByText('回复生成中不能粘贴长文本')).toBeNull() // no block notice
   })
 
   it('sends pastedTexts and clears them after submit', () => {
@@ -353,13 +353,13 @@ describe('Composer image upload', () => {
     expect(await screen.findByAltText('dropped.png')).toBeInTheDocument()
   })
 
-  it('addImages refuses while thinking (mid-turn) and surfaces a hint', async () => {
+  it('addImages now stages+uploads while thinking (mid-turn attachment allowed)', async () => {
     mockedUpload.mockClear()
     const ref = createRef<ComposerHandle>()
     render(<Composer ref={ref} thinking onSend={() => {}} onStop={() => {}} />)
     await act(async () => { ref.current!.addImages([pngFile('x.png')]) })
-    expect(mockedUpload).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent(/回复生成中/)
+    expect(mockedUpload).toHaveBeenCalledWith(expect.objectContaining({ name: 'x.png' }))
+    expect(await screen.findByAltText('x.png')).toBeInTheDocument()
   })
 
   it('picks an image via the paperclip file input → uploads it', async () => {
@@ -442,8 +442,8 @@ describe('Composer image upload', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('disables the attach button while thinking', () => {
+  it('keeps the attach button enabled while thinking (mid-turn attachment allowed)', () => {
     render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
-    expect(screen.getByLabelText('添加图片')).toBeDisabled()
+    expect(screen.getByLabelText('添加图片')).not.toBeDisabled()
   })
 })

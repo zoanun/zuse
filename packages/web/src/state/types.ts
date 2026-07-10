@@ -41,7 +41,7 @@ export interface AppState {
   // Mid-turn steers the user just sent, shown as a transient preview pinned at the bottom (NOT real
   // messages — never persisted). Each clears when the server echoes it at its real delivery point
   // (fold / idle-drain), or on abort / a fresh snapshot. Purely client-side immediate feedback.
-  pendingSteers: { id: string; text: string }[]
+  pendingSteers: { id: string; text: string; attachments?: MessageAttachment[] }[]
   model?: string
   /** Provider id of the active model — lets ModelPicker disambiguate same-named models across providers. */
   modelProviderId?: string
