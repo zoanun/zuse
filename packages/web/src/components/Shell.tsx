@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict, UploadedImageRef } from '@zuse/protocol'
+import type { PermissionVerdict, UploadedImageRef, PastedTextInput } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar, type SidebarHandle } from './Sidebar.js'
@@ -103,7 +103,7 @@ export function Shell() {
   const onRunCommand = (cmd: SlashCommand) => cmd.run(commandCtx)
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
-  const onSend = (text: string, images?: UploadedImageRef[]) => {
+  const onSend = (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]) => {
     // A slash command can still reach onSend even though the menu normally runs it via onRunCommand:
     // an Esc-dismissed menu then Enter, a trailing space that stops the prefix matching, or the send
     // button. Intercept and run it here too, so the command fires instead of being posted as a
@@ -122,11 +122,16 @@ export function Shell() {
       send({ type: 'steer', text })
       return
     }
-    // Optimistic attachments carry only id/name/mediaType — at send time we don't yet know whether
-    // the server will direct-upload or parse each image, so route/description are omitted and filled
-    // in later when the authoritative snapshot echoes the message back.
-    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) })
-    send({ type: 'send', text, images })
+    // Optimistic image attachments carry only id/name/mediaType (route/description filled by the
+    // authoritative snapshot). Pasted-text attachments are fully known now (route + full text), so
+    // include them so the bubble shows the folded card immediately.
+    const imageAtts = images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) ?? []
+    const pastedAtts = pastedTexts?.map((p, idx) => ({
+      id: p.id, name: `Pasted text #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
+    })) ?? []
+    const attachments = [...imageAtts, ...pastedAtts]
+    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: attachments.length ? attachments : undefined })
+    send({ type: 'send', text, images, pastedTexts })
   }
   // Model switch from the Header picker. Temporary switch takes effect on this session immediately
   // (WS 'switch-model' — the server rebuilds its client but emits no event, so we optimistically

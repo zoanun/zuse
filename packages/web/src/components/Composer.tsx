@@ -1,12 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import type { UploadedImageRef } from '@zuse/protocol'
+import type { UploadedImageRef, PastedTextInput } from '@zuse/protocol'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
 
 interface ComposerProps {
   thinking: boolean
-  onSend: (text: string, images?: UploadedImageRef[]) => void
+  onSend: (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]) => void
   onStop: () => void
   history?: string[]
   commands?: SlashCommand[]

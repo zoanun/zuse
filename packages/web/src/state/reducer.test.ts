@@ -128,6 +128,15 @@ describe('reduce', () => {
     expect(s.messages[0]!.attachments).toEqual([{ id: 'img1', name: 'a.png', mediaType: 'image/png' }])
   })
 
+  it('user-send carries pasted-text attachments onto the optimistic user message', () => {
+    const s = reduce(initialState, { kind: 'user-send', id: 'u1', text: '分析', attachments: [
+      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
+    ] })
+    expect(s.messages[0]!.attachments).toEqual([
+      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
+    ])
+  })
+
   it('applySnapshot carries attachments onto messages (route/description round-tripped)', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
