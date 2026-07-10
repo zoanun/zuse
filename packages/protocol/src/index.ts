@@ -274,7 +274,7 @@ export type SessionEvent =
   | { type: 'aborted' }
   | { type: 'model-select-needed'; reason: string }
   | { type: 'reverted'; checkpointId: string }
-  | { type: 'user-echo'; text: string; steer?: boolean }
+  | { type: 'user-echo'; text: string; steer?: boolean; attachments?: MessageAttachment[] }
   | { type: 'title-changed'; title: string }
 
 /** 连上时发给晚加入订阅者的全量状态快照。 */
