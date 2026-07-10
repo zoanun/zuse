@@ -82,6 +82,53 @@ describe('Composer', () => {
     fireEvent.click(screen.getByLabelText('停止'))
     expect(onStop).toHaveBeenCalled()
   })
+
+  function pasteEvent(text: string) {
+    return { clipboardData: { getData: (t: string) => (t === 'text' || t === 'text/plain' ? text : ''), files: [], items: [] } }
+  }
+
+  it('paste exceeding threshold becomes a card, NOT textarea text', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('l1\nl2\nl3\nl4')) // 3 newlines > 2 → card
+    expect(screen.getByText(/Pasted text #1/)).toBeTruthy()
+    expect(ta.value).toBe('') // not inserted into textarea
+  })
+
+  it('short paste (<=800 chars, <=2 newlines) is left to the browser (no card)', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('a\nb')) // 1 newline, short → no card
+    expect(screen.queryByText(/Pasted text #/)).toBeNull()
+  })
+
+  it('sends pastedTexts and clears them after submit', () => {
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('x\ny\nz\nw'))
+    fireEvent.change(ta, { target: { value: '分析这段' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('分析这段', undefined, [expect.objectContaining({ text: 'x\ny\nz\nw' })])
+    expect(screen.queryByText(/Pasted text #/)).toBeNull() // cleared
+  })
+
+  it('can send with only a pasted card and no typed text', () => {
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('big\nblock\nof\ntext'))
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('', undefined, [expect.objectContaining({ text: 'big\nblock\nof\ntext' })])
+  })
+
+  it('× removes a pasted card', () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.paste(ta, pasteEvent('one\ntwo\nthree\nfour'))
+    fireEvent.click(screen.getByLabelText(/移除 Pasted text #1/))
+    expect(screen.queryByText(/Pasted text #1/)).toBeNull()
+  })
 })
 
 describe('Composer slash menu', () => {

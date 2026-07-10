@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { UploadedImageRef, PastedTextInput } from '@zuse/protocol'
+import { pastedLineCount } from '@zuse/core'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
@@ -24,8 +25,13 @@ interface PendingImage {
   file: File
 }
 
+/** A locally-staged pasted-text segment: shown as a card, sent inline on submit. */
+interface PendingPaste { id: string; text: string }
+
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
+const PASTE_CHAR_THRESHOLD = 800
+const PASTE_NEWLINE_THRESHOLD = 2
 
 /** Imperative surface so a whole-page drop zone (Shell) can hand dropped image files to the composer. */
 export interface ComposerHandle { addImages: (files: File[]) => void }
@@ -60,6 +66,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [histIdx, setHistIdx] = useState<number | null>(null)
   // Staged images awaiting send + an inline attach-error line (size/count/upload feedback).
   const [pending, setPending] = useState<PendingImage[]>([])
+  const [pastes, setPastes] = useState<PendingPaste[]>([])
+  const pasteSeqRef = useRef(0)
   const [attachError, setAttachError] = useState('')
   const keySeq = useRef(0)
 
@@ -152,9 +160,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = imageFilesFrom(e.clipboardData)
-    if (files.length === 0) return // let normal text paste through
-    e.preventDefault() // don't also paste the image as a data-URL string
-    stage(files)
+    if (files.length > 0) {
+      e.preventDefault() // don't also paste the image as a data-URL string
+      stage(files)
+      return
+    }
+    // Long-text paste → card (CC threshold: >800 chars OR >2 newlines). Shorter paste: let it through.
+    const raw = e.clipboardData.getData('text') || e.clipboardData.getData('text/plain')
+    if (!raw) return
+    const text = raw.replace(/\r\n?/g, '\n') // normalize \r\n and lone \r → \n
+    if (text.length > PASTE_CHAR_THRESHOLD || pastedLineCount(text) > PASTE_NEWLINE_THRESHOLD) {
+      e.preventDefault()
+      const id = `pasted-${pasteSeqRef.current++}`
+      setPastes((prev) => [...prev, { id, text }])
+    }
+    // else: no preventDefault → browser inserts it into the textarea normally.
   }
 
   // Shell hosts a whole-page drop zone and forwards dropped image files here (recreated each render
@@ -163,20 +183,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   const uploading = pending.some((p) => p.status === 'uploading')
   const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)
-  const canSend = (value.trim() !== '' || doneRefs.length > 0) && !uploading
+  const canSend = (value.trim() !== '' || doneRefs.length > 0 || pastes.length > 0) && !uploading
 
   function clearPending() {
     for (const p of pending) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
     setPending([])
+    setPastes([])
     setAttachError('')
   }
+
+  function removePaste(id: string) { setPastes((prev) => prev.filter((p) => p.id !== id)) }
 
   function submit() {
     if (uploading) { setAttachError('图片上传中，请稍候'); return }
     const v = value.trim()
-    if (!v && doneRefs.length === 0) return
+    if (!v && doneRefs.length === 0 && pastes.length === 0) return
+    const images = doneRefs.length ? doneRefs : undefined
     // Sending is allowed even while `thinking`: Shell routes it to a mid-turn steer.
-    onSend(v, doneRefs.length ? doneRefs : undefined)
+    // Omit the pastedTexts arg entirely when there are none, rather than passing `undefined` —
+    // callers/tests that assert onSend's exact arg list shouldn't see a phantom 3rd argument.
+    if (pastes.length) onSend(v, images, pastes.map((p) => ({ id: p.id, text: p.text })))
+    else onSend(v, images)
     clearPending()
     setValue(''); setHistIdx(null)
     taRef.current?.focus()
@@ -233,6 +260,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <button className="attach-remove" aria-label={`移除 ${p.name}`} onClick={() => removePending(p.key)}>×</button>
             </div>
           ))}
+        </div>
+      ) : null}
+      {pastes.length > 0 ? (
+        <div className="attach-tray">
+          {pastes.map((p, i) => {
+            const m = pastedLineCount(p.text)
+            const label = m === 0 ? `Pasted text #${i + 1}` : `Pasted text #${i + 1} (+${m} 行)`
+            return (
+              <div key={p.id} className="paste-card" title={label}>
+                <span className="paste-card-icon" aria-hidden="true">📄</span>
+                <span className="paste-card-label">{label}</span>
+                <button className="attach-remove" aria-label={`移除 Pasted text #${i + 1}`} onClick={() => removePaste(p.id)}>×</button>
+              </div>
+            )
+          })}
         </div>
       ) : null}
       {attachError ? <div className="attach-error" role="alert">{attachError}</div> : null}

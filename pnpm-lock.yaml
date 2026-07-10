@@ -318,6 +318,9 @@ importers:
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@5.4.21(@types/node@22.19.19))
+      '@zuse/core':
+        specifier: workspace:*
+        version: link:../core
       '@zuse/protocol':
         specifier: workspace:*
         version: link:../protocol
