@@ -178,7 +178,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
       const wrapped = '\n' + e.text + '\n'
       return {
         ...state,
-        messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer }],
+        messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer, attachments: e.attachments }],
         pendingSteers: state.pendingSteers.filter((p) => !wrapped.includes('\n' + p.text + '\n')),
       }
     }

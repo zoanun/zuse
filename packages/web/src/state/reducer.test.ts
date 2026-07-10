@@ -33,6 +33,12 @@ describe('reduce', () => {
     expect(s.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'do it again' }] }])
   })
 
+  it('user-echo carries attachments onto the echoed message (mid-turn interjection / retry live view)', () => {
+    const atts = [{ id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted' as const, text: '日志' }]
+    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: '看这个', attachments: atts }) })
+    expect(s.messages[s.messages.length - 1]!.attachments).toEqual(atts)
+  })
+
   it('accumulates text-delta into one assistant message', () => {
     const s = run([
       { kind: 'server', msg: ev({ type: 'turn-start', isResend: false }) },
