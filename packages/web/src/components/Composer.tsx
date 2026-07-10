@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
 import type { UploadedImageRef, PastedTextInput } from '@zuse/protocol'
-import { pastedLineCount } from './pasted.js'
+import { pastedLineCount, pastedLabel } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
@@ -27,8 +27,10 @@ interface PendingImage {
   file: File
 }
 
-/** A locally-staged pasted-text segment: shown as a card, sent inline on submit. */
-interface PendingPaste { id: string; text: string }
+/** A locally-staged pasted-text segment: shown as a card, sent inline on submit. `lines` is the
+ *  newline count computed once at paste time (for the "+M 行" label — avoids rescanning the full
+ *  text on every composer re-render). */
+interface PendingPaste { id: string; text: string; lines: number }
 
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
@@ -174,12 +176,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const raw = e.clipboardData.getData('text') || e.clipboardData.getData('text/plain')
     if (!raw) return
     const text = raw.replace(/\r\n?/g, '\n') // normalize \r\n and lone \r → \n
-    if (text.length > PASTE_CHAR_THRESHOLD || pastedLineCount(text) > PASTE_NEWLINE_THRESHOLD) {
+    const lines = pastedLineCount(text)
+    if (text.length > PASTE_CHAR_THRESHOLD || lines > PASTE_NEWLINE_THRESHOLD) {
       e.preventDefault()
       // Mid-turn interjection (steer) now carries attachments too — the server queues them and
       // delivers as a follow-up turn, so staging while thinking is allowed here.
       const id = `pasted-${pasteSeqRef.current++}`
-      setPastes((prev) => [...prev, { id, text }])
+      setPastes((prev) => [...prev, { id, text, lines }])
     }
     // else: no preventDefault → browser inserts it into the textarea normally.
   }
@@ -279,20 +282,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       {pastes.length > 0 ? (
         <div className="attach-tray">
           {pastes.map((p, i) => {
-            const m = pastedLineCount(p.text)
-            const label = m === 0 ? `粘贴文本 #${i + 1}` : `粘贴文本 #${i + 1} (+${m} 行)`
+            const base = `粘贴文本 #${i + 1}`
             return (
-              <div key={p.id} className="paste-card" title={label}>
+              <div key={p.id} className="paste-card" title={pastedLabel(base, p.lines)}>
                 <button
                   type="button"
                   className="paste-card-btn"
-                  aria-label={`查看 粘贴文本 #${i + 1}`}
-                  onClick={() => setPreview({ kind: 'text', text: p.text, title: `粘贴文本 #${i + 1}` })}
+                  aria-label={`查看 ${base}`}
+                  onClick={() => setPreview({ kind: 'text', text: p.text, title: base })}
                 >
                   <span className="paste-card-icon" aria-hidden="true">📄</span>
-                  <span className="paste-card-label">{label}</span>
+                  <span className="paste-card-label">{pastedLabel(base, p.lines)}</span>
                 </button>
-                <button className="attach-remove" aria-label={`移除 粘贴文本 #${i + 1}`} onClick={() => removePaste(p.id)}>×</button>
+                <button className="attach-remove" aria-label={`移除 ${base}`} onClick={() => removePaste(p.id)}>×</button>
               </div>
             )
           })}

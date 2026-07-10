@@ -7,7 +7,7 @@ import { useCopy } from '../state/useCopy.js'
 import { uploadedImageUrl } from '../state/manageApi.js'
 import { ImageLightbox } from './ImageLightbox.js'
 import { TextLightbox } from './TextLightbox.js'
-import { pastedLineCount } from './pasted.js'
+import { pastedLineCount, pastedLabel } from './pasted.js'
 
 /** Concatenate the text of all text parts (ignores tool parts). */
 export function partsText(parts: Part[]): string {
@@ -160,8 +160,7 @@ function MessageImage({ a }: { a: MessageAttachment }) {
  *  live and after reload. */
 function PastedTextChip({ a }: { a: MessageAttachment }) {
   const [open, setOpen] = useState(false)
-  const m = pastedLineCount(a.text ?? '')
-  const label = m === 0 ? a.name : `${a.name} (+${m} 行)`
+  const label = pastedLabel(a.name, pastedLineCount(a.text ?? ''))
   return (
     <div className="paste-card">
       <button type="button" className="paste-card-btn" onClick={() => setOpen(true)} aria-label={`查看 ${a.name}`}>

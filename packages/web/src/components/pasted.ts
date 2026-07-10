@@ -4,3 +4,9 @@
 export function pastedLineCount(text: string): number {
   return (text.match(/\r\n|\r|\n/g) || []).length
 }
+
+/** Card label for a pasted-text attachment: base name, plus "(+M 行)" when it spans >0 line breaks.
+ *  Keeps the "+M 行" convention in one place (composer staged card + message bubble chip share it). */
+export function pastedLabel(base: string, lineCount: number): string {
+  return lineCount === 0 ? base : `${base} (+${lineCount} 行)`
+}

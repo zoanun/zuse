@@ -115,28 +115,23 @@ export function Shell() {
     const key = currentSessionId ?? ''
     const arr = historyRef.current.get(key) ?? []
     historyRef.current.set(key, [...arr, text].slice(-100))
-    if (state.thinking) {
-      // Mid-turn interjection. Attachments ride along on the steer frame; the server queues them and
-      // delivers as a follow-up turn (submit handles images/pastedTexts). Show an optimistic ↪插话
-      // preview carrying the attachments so the user gets immediate feedback.
-      const imageAtts = images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) ?? []
-      const pastedAtts = pastedTexts?.map((p, idx) => ({
-        id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
-      })) ?? []
-      const attachments = [...imageAtts, ...pastedAtts]
-      dispatch({ kind: 'steer-queued', id: nextId('ps'), text, attachments: attachments.length ? attachments : undefined })
-      send({ type: 'steer', text, images, pastedTexts })
-      return
-    }
-    // Optimistic image attachments carry only id/name/mediaType (route/description filled by the
-    // authoritative snapshot). Pasted-text attachments are fully known now (route + full text), so
-    // include them so the bubble shows the folded card immediately.
+    // Optimistic attachments for the bubble/preview. Images carry only id/name/mediaType
+    // (route/description filled by the authoritative snapshot); pasted-text is fully known now
+    // (route + full text). Same for both the mid-turn steer preview and the normal send.
     const imageAtts = images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) ?? []
     const pastedAtts = pastedTexts?.map((p, idx) => ({
       id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
     })) ?? []
-    const attachments = [...imageAtts, ...pastedAtts]
-    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: attachments.length ? attachments : undefined })
+    const attachments = imageAtts.length || pastedAtts.length ? [...imageAtts, ...pastedAtts] : undefined
+    if (state.thinking) {
+      // Mid-turn interjection: attachments ride along on the steer frame; the server queues them and
+      // delivers as a follow-up turn (submit handles images/pastedTexts). The optimistic ↪插话 preview
+      // carries the attachments for immediate feedback.
+      dispatch({ kind: 'steer-queued', id: nextId('ps'), text, attachments })
+      send({ type: 'steer', text, images, pastedTexts })
+      return
+    }
+    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments })
     send({ type: 'send', text, images, pastedTexts })
   }
   // Model switch from the Header picker. Temporary switch takes effect on this session immediately
