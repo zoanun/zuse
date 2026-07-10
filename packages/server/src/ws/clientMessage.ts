@@ -45,7 +45,7 @@ export function applyClientMessage(
         // idle (the steer raced past turn-end), there's no turn to fold into — queuing it would let
         // it bleed into a later, unrelated turn. Deliver it as a normal turn instead, echoed so the
         // client's transient "queued" preview resolves into a real message.
-        if (mgr.isBusy()) mgr.steer(msg.text)
+        if (mgr.isBusy()) mgr.steer(msg.text, msg.images, msg.pastedTexts)
         else mgr.submit(msg.text, undefined, undefined, { echo: true }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'permission-reply': {

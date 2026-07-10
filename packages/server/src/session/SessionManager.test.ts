@@ -1632,6 +1632,76 @@ describe('SessionManager steer', () => {
 
     expect(JSON.stringify(calls)).not.toContain('USER MESSAGE')
   })
+
+  it('an attachments-only interjection (empty text) is not dropped; it drains as its own follow-up turn', async () => {
+    // steer('') alone would be dropped (blank text, see test above) — but carrying a pastedText
+    // attachment means there IS something to deliver, so it must survive and drain as a follow-up
+    // turn instead of being silently discarded.
+    const textTurn = (t: string): StreamEvent[] => [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: t },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { mgr, calls } = makeManagerWith([textTurn('reply'), textTurn('addressed')])
+
+    mgr.steer('', undefined, [{ id: 'pa', text: '一段长文本' }]) // empty text, but carries an attachment
+    await mgr.submit('start')
+
+    // 2 model calls: the original reply, then the drained follow-up turn carrying the attachment.
+    expect(calls).toHaveLength(2)
+    const userMsgs = mgr.getConversation().getMessages().filter((m) => m.role === 'user')
+    expect(userMsgs).toHaveLength(2)
+    expect(userMsgs[1]!.attachments).toEqual([
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '一段长文本' },
+    ])
+  })
+
+  it('consumeSteer folds only text-only steers; an attachment-bearing steer stays queued and drains as a follow-up turn', async () => {
+    // Attachments can't fold into a running tool_result, so a mixed batch must split: the plain-text
+    // steer folds into the tool batch (echoed as a "↪ 插话" bubble) while the attachment-bearing one
+    // rides along untouched and is delivered as its own follow-up turn once this turn ends.
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'Noop', description: 'no-op tool', inputSchema: { type: 'object', properties: {} }, readOnly: true,
+      run: async (): Promise<ToolResult> => ({ output: 'ok' }),
+    })
+    const toolUse: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'tool-use', id: 't', name: 'Noop', input: {} },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const stop: StreamEvent[] = [
+      { type: 'message-start', id: 'm', model: 'fake-model' },
+      { type: 'text-delta', text: 'done' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const followUp: StreamEvent[] = [
+      { type: 'message-start', id: 'm2', model: 'fake-model' },
+      { type: 'text-delta', text: 'addressed' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]
+    const { mgr, calls } = makeManagerWith([toolUse, stop, followUp], registry)
+    const echoes: Array<{ text: string; steer?: boolean }> = []
+    mgr.subscribe((e) => { if (e.type === 'user-echo') echoes.push({ text: e.text, steer: e.steer }) })
+
+    mgr.steer('plain text steer')                                    // text-only → foldable
+    mgr.steer('', undefined, [{ id: 'pb', text: 'attached text' }])   // attachment-bearing → not foldable
+    await mgr.submit('start')
+
+    // The text-only steer folded into the tool batch (echoed as a steer bubble); the attachment
+    // steer must NOT appear anywhere in the running turn's model calls (it wasn't folded).
+    expect(echoes[0]).toEqual({ text: 'plain text steer', steer: true })
+    expect(JSON.stringify(calls.slice(0, 2))).not.toContain('attached text')
+
+    // It drained as its own follow-up turn instead, carrying the attachment. (Note: the tool batch's
+    // tool_result is itself modeled as a 'user'-role ledger message, so there are more than 2 user
+    // messages total — check the LAST one, which is the drained follow-up turn's own user message.)
+    expect(calls).toHaveLength(3)
+    const userMsgs = mgr.getConversation().getMessages().filter((m) => m.role === 'user')
+    expect(userMsgs[userMsgs.length - 1]!.attachments).toEqual([
+      { id: 'pb', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: 'attached text' },
+    ])
+  })
 })
 
 describe('SessionManager reset ("New chat")', () => {

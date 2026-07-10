@@ -171,7 +171,7 @@ export class SessionManager {
   // folded into a tool_result then re-queued after a Stop), so the idle-drain re-delivers it without
   // a second echo. Per-item (not a turn-level flag) so a turn can hold a mix of echoed/un-echoed
   // steers — e.g. one folded early + one queued during the final pure-text reply — each echoed once.
-  private readonly steerQueue: { text: string; echoed: boolean }[] = []
+  private readonly steerQueue: { text: string; echoed: boolean; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }[] = []
   private todos: TodoItemLite[] = []
   /** Shadow-git checkpoint anchors recorded per turn (Phase 12); drives revert(). */
   private checkpoints: SessionCheckpoint[] = []
@@ -504,11 +504,20 @@ export class SessionManager {
     })
   }
 
-  /** Queue a mid-turn steer message; runAgent consumes it after each tool batch. */
-  steer(text: string): void {
+  /**
+   * Queue a mid-turn steer message; runAgent consumes it after each tool batch. A steer carrying
+   * attachments (images/pastedTexts) can't fold into a running tool_result, so it rides along
+   * un-folded and is delivered as its own follow-up turn once the current turn ends (see
+   * consumeSteer's filter and drainSteerAsFollowUp) — reusing submit's existing attachment
+   * handling instead of duplicating it here.
+   */
+  steer(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]): void {
     const trimmed = text.trim()
-    if (trimmed === '') return
-    this.steerQueue.push({ text: trimmed, echoed: false })
+    const hasAttachments = (images?.length ?? 0) > 0 || (pastedTexts?.length ?? 0) > 0
+    // An empty text-only interjection is a no-op — but an attachments-only one still has something
+    // to deliver, so only bail when there's neither text nor attachments.
+    if (trimmed === '' && !hasAttachments) return
+    this.steerQueue.push({ text: trimmed, echoed: false, images, pastedTexts })
   }
 
   /** Cheap liveness check — true while a turn is running. Lets callers avoid a full getState()
@@ -1004,9 +1013,17 @@ export class SessionManager {
           this.emit({ type: 'cwd-change', cwd: next })
         },
         consumeSteer: () => {
-          if (this.steerQueue.length === 0) return null
-          const combined = this.steerQueue.map((s) => s.text).join('\n')
-          this.steerQueue.length = 0
+          // Attachments can't fold into a running tool_result — only fold TEXT-ONLY steers; leave
+          // attachment-bearing items queued for drainSteerAsFollowUp (delivered as a fresh turn).
+          const foldable = this.steerQueue.filter((s) => !(s.images?.length || s.pastedTexts?.length))
+          if (foldable.length === 0) return null
+          const combined = foldable.map((s) => s.text).filter((t) => t !== '').join('\n')
+          // Remove the folded (text-only) items in place; keep attachment-bearing ones queued.
+          for (let i = this.steerQueue.length - 1; i >= 0; i--) {
+            const s = this.steerQueue[i]!
+            if (!(s.images?.length || s.pastedTexts?.length)) this.steerQueue.splice(i, 1)
+          }
+          if (combined === '') return null
           consumedThisTurn.push(combined) // so an abort can re-queue it (staged is discarded)
           // Folded into a tool_result: echo it now (after the tool cards the client just received)
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
@@ -1192,7 +1209,12 @@ export class SessionManager {
     const items = this.steerQueue.splice(0)
     const unechoed = items.filter((s) => !s.echoed)
     if (unechoed.length > 0) this.emit({ type: 'user-echo', text: unechoed.map((s) => s.text).join('\n') })
-    await this.submit(items.map((s) => s.text).join('\n'))
+    // Merge any attachments carried by the drained items onto this follow-up submit — reuses
+    // submit's existing image/pastedText handling instead of duplicating it here.
+    const text = items.map((s) => s.text).filter((t) => t !== '').join('\n')
+    const images = items.flatMap((s) => s.images ?? [])
+    const pastedTexts = items.flatMap((s) => s.pastedTexts ?? [])
+    await this.submit(text, images.length > 0 ? images : undefined, pastedTexts.length > 0 ? pastedTexts : undefined)
   }
 
   /**

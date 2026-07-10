@@ -55,7 +55,7 @@ describe('applyClientMessage', () => {
     applyClientMessage(mgr, JSON.stringify({ type: 'permission-reply', id: 'p1', verdict: 'allow' }), err)
     applyClientMessage(mgr, JSON.stringify({ type: 'switch-model', providerId: 'anthropic', model: 'x' }), err)
     expect(mgr.interrupt).toHaveBeenCalled()
-    expect(mgr.steer).toHaveBeenCalledWith('go')
+    expect(mgr.steer).toHaveBeenCalledWith('go', undefined, undefined)
     expect(mgr.resolvePermission).toHaveBeenCalledWith('p1', 'allow')
     expect(mgr.switchModel).toHaveBeenCalledWith('anthropic', 'x')
     expect(err).not.toHaveBeenCalled()
