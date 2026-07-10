@@ -15,6 +15,7 @@ import {
   resolveContextWindow,
   resolveVision,
   isNonChatModelType,
+  isNonChatModel,
   listSelectableModels,
   DEFAULT_CONTEXT_WINDOW,
 } from './compaction.js'
@@ -311,6 +312,33 @@ describe('listSelectableModels', () => {
 
   it('returns [] when no providers are configured', () => {
     expect(listSelectableModels(settings({}))).toEqual([])
+  })
+})
+
+describe('isNonChatModel', () => {
+  const settings = (providers: Record<string, unknown>): import('./types.js').ResolvedSettings =>
+    ({
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
+      providers,
+    }) as import('./types.js').ResolvedSettings
+
+  it('is true for a model entry marked with a non-chat type', () => {
+    const s = settings({ qwen: { models: [{ name: 'q-ocr', type: 'ocr' }, { name: 'q-img', type: 'Image' }] } })
+    expect(isNonChatModel(s, 'qwen', 'q-ocr')).toBe(true)
+    expect(isNonChatModel(s, 'qwen', 'q-img')).toBe(true) // normalized case
+  })
+
+  it('is false for chat/vision/no-type entries', () => {
+    const s = settings({ p: { models: ['bare', { name: 'c', type: 'chat' }, { name: 'v', type: 'vision' }] } })
+    expect(isNonChatModel(s, 'p', 'bare')).toBe(false)
+    expect(isNonChatModel(s, 'p', 'c')).toBe(false)
+    expect(isNonChatModel(s, 'p', 'v')).toBe(false)
+  })
+
+  it('is false for a model absent from providers (e.g. a flat default)', () => {
+    expect(isNonChatModel(settings({}), 'default', 'whatever')).toBe(false)
+    expect(isNonChatModel(settings({ p: { models: ['x'] } }), 'p', 'not-listed')).toBe(false)
   })
 })
 

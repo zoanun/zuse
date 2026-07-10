@@ -81,6 +81,19 @@ export function isNonChatModelType(type: string | undefined): boolean {
 }
 
 /**
+ * True if `providerId/model` is configured as a non-chat type (image/tts/ocr/…) — i.e. the same
+ * models `listSelectableModels` excludes. A model NOT found in `providers` (e.g. a flat default
+ * with no matching entry) is treated as a normal chat model → returns false. Callers use this so
+ * the flat-default guard doesn't smuggle an excluded model back into the picker.
+ */
+export function isNonChatModel(settings: ResolvedSettings, providerId: string, model: string): boolean {
+  for (const entry of settings.providers[providerId]?.models ?? []) {
+    if (typeof entry !== 'string' && entry.name === model) return isNonChatModelType(entry.type)
+  }
+  return false
+}
+
+/**
  * 展开所有 provider 的“可作为主模型”的模型（排除 image/tts/embedding/ocr 等非对话类型），
  * 每个带 vision 能力。就地读取 entry 的 vision/type + provider 级回退，避免重复遍历
  * （不再对每个模型另调 resolveVision 而在其内部再遍历该 provider 的 models）。

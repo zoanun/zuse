@@ -2,7 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename } from 'node:path'
-import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision } from '@zuse/core'
+import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -753,9 +753,11 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       // 'default' provider — no matching providers entry — listSelectableModels yields nothing for
       // it, leaving the picker unable to show/select the model actually in use. Ensure the current
       // default is always present (dedup on providerId+model so a listed model isn't duplicated).
+      // A default configured as a non-chat model (type:ocr/image/…) is NOT re-added: it must stay
+      // excluded exactly like listSelectableModels excludes it — the guard must not smuggle it back.
       if (settings.model) {
         const { providerId, model } = resolveModelSelection(settings)
-        if (!options.some((o) => o.providerId === providerId && o.model === model)) {
+        if (!isNonChatModel(settings, providerId, model) && !options.some((o) => o.providerId === providerId && o.model === model)) {
           options.unshift({ providerId, model, vision: resolveVision(settings, providerId, model) })
         }
       }
