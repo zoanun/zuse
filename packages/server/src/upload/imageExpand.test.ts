@@ -168,7 +168,7 @@ describe('makeExpandAttachments (I2)', () => {
     const expand = makeExpandAttachments(fakeUpload({}))
     const msg: Message = {
       ...textMsg('分析这段日志'),
-      attachments: [{ id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: 'ERROR foo\nERROR bar' }],
+      attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: 'ERROR foo\nERROR bar' }],
     }
 
     const out = await expand([msg])
@@ -188,8 +188,8 @@ describe('makeExpandAttachments (I2)', () => {
     const msg: Message = {
       ...textMsg('对比这两段'),
       attachments: [
-        { id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '第一段内容' },
-        { id: 'p2', name: 'Pasted text #2', mediaType: 'text/plain', route: 'pasted', text: '第二段内容' },
+        { id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '第一段内容' },
+        { id: 'p2', name: '粘贴文本 #2', mediaType: 'text/plain', route: 'pasted', text: '第二段内容' },
       ],
     }
 
@@ -214,7 +214,7 @@ describe('makeExpandAttachments (I2)', () => {
       ...textMsg('看图和文本'),
       attachments: [
         { id: 'd1', name: 'pic.png', mediaType: 'image/png', route: 'direct' },
-        { id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '一段文字' },
+        { id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '一段文字' },
       ],
     }
 
@@ -231,7 +231,7 @@ describe('makeExpandAttachments (I2)', () => {
     const expand = makeExpandAttachments(fakeUpload({}))
     const msg: Message = {
       ...textMsg('q'),
-      attachments: [{ id: 'p1', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '   ' }],
+      attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '   ' }],
     }
 
     const out = await expand([msg])

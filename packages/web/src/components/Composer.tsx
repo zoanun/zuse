@@ -279,19 +279,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <div className="attach-tray">
           {pastes.map((p, i) => {
             const m = pastedLineCount(p.text)
-            const label = m === 0 ? `Pasted text #${i + 1}` : `Pasted text #${i + 1} (+${m} 行)`
+            const label = m === 0 ? `粘贴文本 #${i + 1}` : `粘贴文本 #${i + 1} (+${m} 行)`
             return (
               <div key={p.id} className="paste-card" title={label}>
                 <button
                   type="button"
                   className="paste-card-btn"
-                  aria-label={`查看 Pasted text #${i + 1}`}
-                  onClick={() => setPreview({ kind: 'text', text: p.text, title: `Pasted text #${i + 1}` })}
+                  aria-label={`查看 粘贴文本 #${i + 1}`}
+                  onClick={() => setPreview({ kind: 'text', text: p.text, title: `粘贴文本 #${i + 1}` })}
                 >
                   <span className="paste-card-icon" aria-hidden="true">📄</span>
                   <span className="paste-card-label">{label}</span>
                 </button>
-                <button className="attach-remove" aria-label={`移除 Pasted text #${i + 1}`} onClick={() => removePaste(p.id)}>×</button>
+                <button className="attach-remove" aria-label={`移除 粘贴文本 #${i + 1}`} onClick={() => removePaste(p.id)}>×</button>
               </div>
             )
           })}

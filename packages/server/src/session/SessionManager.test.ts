@@ -2122,8 +2122,8 @@ describe('SessionManager image routing (I2)', () => {
       { id: 'pb', text: '第二段' },
     ])
     expect(userMsgOf(mgr).attachments).toEqual([
-      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '第一段' },
-      { id: 'pb', name: 'Pasted text #2', mediaType: 'text/plain', route: 'pasted', text: '第二段' },
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '第一段' },
+      { id: 'pb', name: '粘贴文本 #2', mediaType: 'text/plain', route: 'pasted', text: '第二段' },
     ])
   })
 
@@ -2133,7 +2133,7 @@ describe('SessionManager image routing (I2)', () => {
     const snap = mgr.getState().messages
     const userSnap = snap.find((m) => m.role === 'user')!
     expect(userSnap.attachments).toEqual([
-      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志内容' },
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志内容' },
     ])
   })
 })

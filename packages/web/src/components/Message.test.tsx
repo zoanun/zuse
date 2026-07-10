@@ -47,11 +47,11 @@ describe('Message', () => {
     const msg = {
       id: 'u1', role: 'user' as const,
       parts: [{ kind: 'text' as const, text: '分析' }],
-      attachments: [{ id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted' as const, text: 'LINE A\nLINE B' }],
+      attachments: [{ id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted' as const, text: 'LINE A\nLINE B' }],
     }
     render(<Message msg={msg} />)
-    expect(screen.getByText(/Pasted text #1 \(\+1 行\)/)).toBeTruthy() // 1 newline → +1 行
-    fireEvent.click(screen.getByRole('button', { name: /查看 Pasted text #1/ }))
+    expect(screen.getByText(/粘贴文本 #1 \(\+1 行\)/)).toBeTruthy() // 1 newline → +1 行
+    fireEvent.click(screen.getByRole('button', { name: /查看 粘贴文本 #1/ }))
     // Default getByText normalizer collapses the newline to a space — use an identity normalizer so
     // this actually asserts the <pre> preserves the literal line break, not just "the words appear".
     expect(screen.getByText('LINE A\nLINE B', { normalizer: (s) => s })).toBeTruthy()

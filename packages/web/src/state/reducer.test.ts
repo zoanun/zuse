@@ -130,10 +130,10 @@ describe('reduce', () => {
 
   it('user-send carries pasted-text attachments onto the optimistic user message', () => {
     const s = reduce(initialState, { kind: 'user-send', id: 'u1', text: '分析', attachments: [
-      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
     ] })
     expect(s.messages[0]!.attachments).toEqual([
-      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
+      { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志' },
     ])
   })
 

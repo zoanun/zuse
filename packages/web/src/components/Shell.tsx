@@ -127,7 +127,7 @@ export function Shell() {
     // include them so the bubble shows the folded card immediately.
     const imageAtts = images?.map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })) ?? []
     const pastedAtts = pastedTexts?.map((p, idx) => ({
-      id: p.id, name: `Pasted text #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
+      id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
     })) ?? []
     const attachments = [...imageAtts, ...pastedAtts]
     dispatch({ kind: 'user-send', id: nextId('u'), text, attachments: attachments.length ? attachments : undefined })

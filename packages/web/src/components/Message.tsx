@@ -155,7 +155,7 @@ function MessageImage({ a }: { a: MessageAttachment }) {
   )
 }
 
-/** One pasted-text attachment: a folded card (📄 Pasted text #N (+M 行)) that opens the full text in
+/** One pasted-text attachment: a folded card (📄 粘贴文本 #N (+M 行)) that opens the full text in
  *  a TextLightbox on click. Full text comes from the persisted attachment.text, so it renders the same
  *  live and after reload. */
 function PastedTextChip({ a }: { a: MessageAttachment }) {

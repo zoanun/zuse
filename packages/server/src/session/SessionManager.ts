@@ -917,7 +917,7 @@ export class SessionManager {
       const pastedAtts: MessageAttachment[] = pastedTexts
         .filter((p) => (p.text ?? '').trim() !== '')
         .map((p, idx) => ({
-          id: p.id, name: `Pasted text #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
+          id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
         }))
       if (pastedAtts.length > 0) userAttachments = [...(userAttachments ?? []), ...pastedAtts]
     }

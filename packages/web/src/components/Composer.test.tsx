@@ -91,7 +91,7 @@ describe('Composer', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.paste(ta, pasteEvent('l1\nl2\nl3\nl4')) // 3 newlines > 2 → card
-    expect(screen.getByText(/Pasted text #1/)).toBeTruthy()
+    expect(screen.getByText(/粘贴文本 #1/)).toBeTruthy()
     expect(ta.value).toBe('') // not inserted into textarea
   })
 
@@ -99,7 +99,7 @@ describe('Composer', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.paste(ta, pasteEvent('a\nb')) // 1 newline, short → no card
-    expect(screen.queryByText(/Pasted text #/)).toBeNull()
+    expect(screen.queryByText(/粘贴文本 #/)).toBeNull()
   })
 
   it('sends pastedTexts and clears them after submit', () => {
@@ -110,7 +110,7 @@ describe('Composer', () => {
     fireEvent.change(ta, { target: { value: '分析这段' } })
     fireEvent.keyDown(ta, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('分析这段', undefined, [expect.objectContaining({ text: 'x\ny\nz\nw' })])
-    expect(screen.queryByText(/Pasted text #/)).toBeNull() // cleared
+    expect(screen.queryByText(/粘贴文本 #/)).toBeNull() // cleared
   })
 
   it('can send with only a pasted card and no typed text', () => {
@@ -126,15 +126,15 @@ describe('Composer', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.paste(ta, pasteEvent('one\ntwo\nthree\nfour'))
-    fireEvent.click(screen.getByLabelText(/移除 Pasted text #1/))
-    expect(screen.queryByText(/Pasted text #1/)).toBeNull()
+    fireEvent.click(screen.getByLabelText(/移除 粘贴文本 #1/))
+    expect(screen.queryByText(/粘贴文本 #1/)).toBeNull()
   })
 
   it('clicking a staged pasted-text card opens TextLightbox with the full text', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.paste(ta, pasteEvent('AAA\nBBB\nCCC\nDDD'))
-    fireEvent.click(screen.getByRole('button', { name: /查看 Pasted text #1/ }))
+    fireEvent.click(screen.getByRole('button', { name: /查看 粘贴文本 #1/ }))
     expect(screen.getByText('AAA\nBBB\nCCC\nDDD', { normalizer: (s) => s })).toBeTruthy()
   })
 
@@ -142,8 +142,8 @@ describe('Composer', () => {
     render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.paste(ta, pasteEvent('one\ntwo\nthree\nfour'))
-    fireEvent.click(screen.getByLabelText(/移除 Pasted text #1/))
-    expect(screen.queryByText(/Pasted text #1/)).toBeNull() // removed
+    fireEvent.click(screen.getByLabelText(/移除 粘贴文本 #1/))
+    expect(screen.queryByText(/粘贴文本 #1/)).toBeNull() // removed
     // no TextLightbox opened (its close button would be present if it had)
     expect(screen.queryByLabelText('关闭')).toBeNull()
   })
