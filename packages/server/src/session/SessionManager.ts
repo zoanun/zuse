@@ -50,7 +50,7 @@ import type {
   SessionCheckpoint,
   SnapshotStore,
 } from './events.js'
-import type { SnapshotPart, SnapshotMessage, UploadedImageRef } from '@zuse/protocol'
+import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
 
@@ -808,7 +808,7 @@ export class SessionManager {
    * (tool output forwarded RAW — no truncation/spill; that is the frontend's job),
    * then emit usage/context, and always emit turn-end in finally.
    */
-  async submit(text: string, images?: UploadedImageRef[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
+  async submit(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
     // Reject EXTERNAL concurrent submits while a turn runs. An isResend call is a
     // RECURSIVE re-entry from inside submit (failover resend) and must be allowed.
     if (this.isThinking && !opts?.isResend) {
@@ -908,6 +908,18 @@ export class SessionManager {
           id: i.id, name: i.name, mediaType: i.mediaType, route: 'parsed' as const, description: descriptions[idx],
         }))
       }
+    }
+
+    // Pasted long text (I5a): each staged segment becomes a route:'pasted' attachment carrying the
+    // full text inline. No vision/imageClient branching — expandAttachments materializes them as a
+    // labeled text block at send time (same pipeline as images). Merge onto any image attachments.
+    if (pastedTexts && pastedTexts.length > 0) {
+      const pastedAtts: MessageAttachment[] = pastedTexts
+        .filter((p) => (p.text ?? '').trim() !== '')
+        .map((p, idx) => ({
+          id: p.id, name: `Pasted text #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
+        }))
+      if (pastedAtts.length > 0) userAttachments = [...(userAttachments ?? []), ...pastedAtts]
     }
 
     // Build the LLM context view AFTER auto-compaction (which may have updated this.compaction).
@@ -1092,7 +1104,7 @@ export class SessionManager {
           // resolveVision on the NEW model, so a vision↔non-vision swap re-routes correctly.
           this.abort = null
           resent = true
-          await this.submit(text, images, { isResend: true })
+          await this.submit(text, images, pastedTexts, { isResend: true })
         } else {
           // dialog mode / auth / no available next model: hand off to client model picker.
           const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
@@ -1271,20 +1283,24 @@ export class SessionManager {
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
     const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))
     if (text.trim() === '') return
-    // #3: recover the turn's image attachments so the retry re-attaches them — otherwise a retried
-    // image turn silently loses its images. Map the ledger's MessageAttachment refs back to
-    // UploadedImageRef (id/name/mediaType); submit re-routes them via resolveVision (the parsed path
-    // re-describes, which is acceptable — a retry is a fresh attempt from the clean checkpoint).
-    const images: UploadedImageRef[] | undefined =
-      userMsg.attachments && userMsg.attachments.length > 0
-        ? userMsg.attachments.map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
-        : undefined
+    // #3 / I5a: recover the turn's attachments so retry re-attaches them. Split by route: image
+    // attachments (direct/parsed) → images param (re-routed via resolveVision); pasted → pastedTexts
+    // param (never sent through the image path — no disk file exists for them).
+    const atts = userMsg.attachments ?? []
+    const images: UploadedImageRef[] | undefined = (() => {
+      const imgs = atts.filter((a) => a.route !== 'pasted').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
+      return imgs.length > 0 ? imgs : undefined
+    })()
+    const pastedTexts: PastedTextInput[] | undefined = (() => {
+      const ps = atts.filter((a) => a.route === 'pasted').map((a) => ({ id: a.id, text: a.text ?? '' }))
+      return ps.length > 0 ? ps : undefined
+    })()
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
     // "user message" event, so clients wouldn't show it until a reconnect. Echo it now so the
     // re-submitted question reappears immediately (mirrors send()'s live optimistic add).
     this.emit({ type: 'user-echo', text })
-    await this.submit(text, images)      // fresh attempt from the clean checkpoint
+    await this.submit(text, images, pastedTexts)      // fresh attempt from the clean checkpoint
   }
 
   /**

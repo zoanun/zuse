@@ -581,7 +581,7 @@ describe('SessionManager re-entrancy guard', () => {
     // The isResend re-entry must NOT be rejected by the guard. It starts a nested
     // runAgent that also awaits the gate; we only assert the guard did not fire.
     let guardError: unknown
-    const resend = mgr.submit('x', undefined, { isResend: true }).catch((e) => {
+    const resend = mgr.submit('x', undefined, undefined, { isResend: true }).catch((e) => {
       guardError = e
     })
 
@@ -2113,5 +2113,27 @@ describe('SessionManager image routing (I2)', () => {
       { id: 'img1', name: 'shot.png', mediaType: 'image/png', route: 'direct' },
     ])
     expect(expandCount).toBeGreaterThan(0) // expandAttachments materialized on the resend
+  })
+
+  it('submit with pastedTexts attaches route:pasted attachments (name #N, inline text)', async () => {
+    const { mgr } = makeImageMgr({ scripts: [textTurn], vision: true })
+    await mgr.submit('看这两段', undefined, [
+      { id: 'pa', text: '第一段' },
+      { id: 'pb', text: '第二段' },
+    ])
+    expect(userMsgOf(mgr).attachments).toEqual([
+      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '第一段' },
+      { id: 'pb', name: 'Pasted text #2', mediaType: 'text/plain', route: 'pasted', text: '第二段' },
+    ])
+  })
+
+  it('projectMessages carries pasted attachments (with text) into the snapshot', async () => {
+    const { mgr } = makeImageMgr({ scripts: [textTurn], vision: true })
+    await mgr.submit('分析', undefined, [{ id: 'pa', text: '日志内容' }])
+    const snap = mgr.getState().messages
+    const userSnap = snap.find((m) => m.role === 'user')!
+    expect(userSnap.attachments).toEqual([
+      { id: 'pa', name: 'Pasted text #1', mediaType: 'text/plain', route: 'pasted', text: '日志内容' },
+    ])
   })
 })
