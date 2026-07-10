@@ -1015,15 +1015,14 @@ export class SessionManager {
         consumeSteer: () => {
           // Attachments can't fold into a running tool_result — only fold TEXT-ONLY steers; leave
           // attachment-bearing items queued for drainSteerAsFollowUp (delivered as a fresh turn).
-          const foldable = this.steerQueue.filter((s) => !(s.images?.length || s.pastedTexts?.length))
+          const isFoldable = (s: { images?: unknown[]; pastedTexts?: unknown[] }) => !(s.images?.length || s.pastedTexts?.length)
+          const foldable = this.steerQueue.filter(isFoldable)
           if (foldable.length === 0) return null
-          const combined = foldable.map((s) => s.text).filter((t) => t !== '').join('\n')
-          // Remove the folded (text-only) items in place; keep attachment-bearing ones queued.
-          for (let i = this.steerQueue.length - 1; i >= 0; i--) {
-            const s = this.steerQueue[i]!
-            if (!(s.images?.length || s.pastedTexts?.length)) this.steerQueue.splice(i, 1)
-          }
-          if (combined === '') return null
+          // A foldable (attachment-less) item always has non-empty text (steer() only enqueues an
+          // attachment-less item when its text is non-empty), so no empty-string guard is needed.
+          const combined = foldable.map((s) => s.text).join('\n')
+          // Keep only the attachment-bearing items queued; the folded text-only ones are consumed now.
+          this.steerQueue.splice(0, this.steerQueue.length, ...this.steerQueue.filter((s) => !isFoldable(s)))
           consumedThisTurn.push(combined) // so an abort can re-queue it (staged is discarded)
           // Folded into a tool_result: echo it now (after the tool cards the client just received)
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
