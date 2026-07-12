@@ -57,16 +57,16 @@ core `MessageAttachment` 同步加 `'file'`。
 ### 发送物化（`packages/server/src/upload/imageExpand.ts`）
 `makeExpandAttachments` 加 `route==='file'` 分支：对每个文件附件产出**一条文本说明块**（不是原生块），插在原 content 之前（材料在前）。块顺序变为：image → 图片parsed → pasted → **file** → 原始问题。
 
-单/多文件都逐个列出路径（不像 pasted 那样合并正文，因为每个文件是独立实体）：
+**说明文案用英文**（给模型看，指令遵循更稳）。单/多文件都逐个列出路径（不像 pasted 那样合并正文，因为每个文件是独立实体）：
 ```
-[用户上传了 N 个文件，均已存到本机；需要内容就用 Read/Bash 或相应 skill/agent 处理这些路径，处理不了就直说：]
+[The user attached N file(s), saved on this machine. To use their contents, read these paths with the Read/Bash tools or an appropriate skill/agent; if you can't process a file, say so plainly.]
 
 ▍<name1> — <abs path1>
 ▍<name2> — <abs path2>
 ```
-单文件时可省略"N 个"表述，仍给"用 Read/Bash 或相应 skill/agent 处理该路径，处理不了直说"的提示。路径由 `upload.filePath(a.id, a.name)` 现算（expandAttachments 已持有 `upload`）。
+单文件时省略"N"计数，仍是英文：`[The user attached a file, saved at <abs path>. To use it, read the path with Read/Bash or an appropriate skill/agent; if you can't process it, say so plainly.]`。路径由 `upload.filePath(a.id, a.name)` 现算（expandAttachments 已持有 `upload`）。
 
-> 说明文案点名 **Read/Bash + skill/agent**（hermes 式具名提示），让模型知道有哪些手段、且"读不了就直说"，避免踢回用户。
+> 说明点名 **Read/Bash + skill/agent**（hermes 式具名提示），让模型知道有哪些手段、且"读不了就直说"，避免踢回用户。
 
 ## 后端会话层
 
@@ -92,10 +92,10 @@ core `MessageAttachment` 同步加 `'file'`。
 
 ## I5a 小改：粘贴文本过大截断（照 CC）
 
-在 `imageExpand.ts` 的 **pasted 分支**，对每段粘贴文本 `t`：若 `t.length > PASTE_TRUNCATE_THRESHOLD`（**10000**，同 cc-haha `TRUNCATION_THRESHOLD`），发给模型的正文改为：
+在 `imageExpand.ts` 的 **pasted 分支**，对每段粘贴文本 `t`：若 `t.length > PASTE_TRUNCATE_THRESHOLD`（**10000**，同 cc-haha `TRUNCATION_THRESHOLD`），发给模型的正文改为（截断标记也用英文，模型侧一致）：
 ```
 <前 500 字符>
-[……中间已截断 <M> 行……]
+[… <M> lines truncated …]
 <后 500 字符>
 ```
 - 首尾各 `PASTE_PREVIEW_HALF = 500`（同 cc `PREVIEW_LENGTH/2`）。
