@@ -34,7 +34,7 @@ export interface MessageAttachment {
   id: string
   name: string
   mediaType: string
-  route?: 'direct' | 'parsed' | 'pasted'
+  route?: 'direct' | 'parsed' | 'pasted' | 'file'
   description?: string
   /** route==='pasted' 时的粘贴全文。 */
   text?: string
