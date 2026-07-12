@@ -50,7 +50,7 @@ import type {
   SessionCheckpoint,
   SnapshotStore,
 } from './events.js'
-import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput } from '@zuse/protocol'
+import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
 
@@ -139,10 +139,11 @@ interface Pending {
  *  Images carry id/name/mediaType (route/description fill in from the authoritative snapshot); pasted
  *  carry route+text so the 📄 chip renders live before the snapshot round-trips. Numbering matches the
  *  client's optimistic `粘贴文本 #N`. */
-function echoAttachments(images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]): MessageAttachment[] | undefined {
+function echoAttachments(images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[]): MessageAttachment[] | undefined {
   const atts: MessageAttachment[] = [
     ...(images ?? []).map((i) => ({ id: i.id, name: i.name, mediaType: i.mediaType })),
     ...(pastedTexts ?? []).map((p, idx) => ({ id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text })),
+    ...(files ?? []).map((f) => ({ id: f.id, name: f.name, mediaType: f.mediaType, route: 'file' as const })),
   ]
   return atts.length > 0 ? atts : undefined
 }
@@ -183,7 +184,7 @@ export class SessionManager {
   // folded into a tool_result then re-queued after a Stop), so the idle-drain re-delivers it without
   // a second echo. Per-item (not a turn-level flag) so a turn can hold a mix of echoed/un-echoed
   // steers — e.g. one folded early + one queued during the final pure-text reply — each echoed once.
-  private readonly steerQueue: { text: string; echoed: boolean; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }[] = []
+  private readonly steerQueue: { text: string; echoed: boolean; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }[] = []
   private todos: TodoItemLite[] = []
   /** Shadow-git checkpoint anchors recorded per turn (Phase 12); drives revert(). */
   private checkpoints: SessionCheckpoint[] = []
@@ -523,13 +524,13 @@ export class SessionManager {
    * consumeSteer's filter and drainSteerAsFollowUp) — reusing submit's existing attachment
    * handling instead of duplicating it here.
    */
-  steer(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]): void {
+  steer(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[]): void {
     const trimmed = text.trim()
-    const hasAttachments = (images?.length ?? 0) > 0 || (pastedTexts?.length ?? 0) > 0
+    const hasAttachments = (images?.length ?? 0) > 0 || (pastedTexts?.length ?? 0) > 0 || (files?.length ?? 0) > 0
     // An empty text-only interjection is a no-op — but an attachments-only one still has something
     // to deliver, so only bail when there's neither text nor attachments.
     if (trimmed === '' && !hasAttachments) return
-    this.steerQueue.push({ text: trimmed, echoed: false, images, pastedTexts })
+    this.steerQueue.push({ text: trimmed, echoed: false, images, pastedTexts, files })
   }
 
   /** Cheap liveness check — true while a turn is running. Lets callers avoid a full getState()
@@ -829,7 +830,7 @@ export class SessionManager {
    * (tool output forwarded RAW — no truncation/spill; that is the frontend's job),
    * then emit usage/context, and always emit turn-end in finally.
    */
-  async submit(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
+  async submit(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
     // Reject EXTERNAL concurrent submits while a turn runs. An isResend call is a
     // RECURSIVE re-entry from inside submit (failover resend) and must be allowed.
     if (this.isThinking && !opts?.isResend) {
@@ -844,7 +845,7 @@ export class SessionManager {
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
     // A steer that raced past turn-end is delivered as a normal turn (ws layer), but the client took
     // the steer path and rendered no bubble — echo it so its transient "queued" preview resolves.
-    if (opts?.echo) this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts) })
+    if (opts?.echo) this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts, files) })
 
     // Publish the abort controller SYNCHRONOUSLY, before any await below, so the Stop button works
     // during the pre-send / background-compaction waits too (interrupt() checks this.abort).
@@ -943,6 +944,14 @@ export class SessionManager {
       if (pastedAtts.length > 0) userAttachments = [...(userAttachments ?? []), ...pastedAtts]
     }
 
+    // Uploaded files (I5b): each ref becomes a route:'file' attachment (id/name/mediaType only —
+    // no text/description). expandAttachments materializes the path note at send time (same
+    // pipeline as images/pastedTexts). Merge onto any image/pasted attachments.
+    if (files && files.length > 0) {
+      const fileAtts: MessageAttachment[] = files.map((f) => ({ id: f.id, name: f.name, mediaType: f.mediaType, route: 'file' as const }))
+      userAttachments = [...(userAttachments ?? []), ...fileAtts]
+    }
+
     // Build the LLM context view AFTER auto-compaction (which may have updated this.compaction).
     // With no compaction this returns the full ledger itself (unchanged behavior); otherwise a
     // transient [summary, ...tail] view whose new tail is folded back into the ledger after the
@@ -1027,7 +1036,7 @@ export class SessionManager {
         consumeSteer: () => {
           // Attachments can't fold into a running tool_result — only fold TEXT-ONLY steers; leave
           // attachment-bearing items queued for drainSteerAsFollowUp (delivered as a fresh turn).
-          const isFoldable = (s: { images?: unknown[]; pastedTexts?: unknown[] }) => !(s.images?.length || s.pastedTexts?.length)
+          const isFoldable = (s: { images?: unknown[]; pastedTexts?: unknown[]; files?: unknown[] }) => !(s.images?.length || s.pastedTexts?.length || s.files?.length)
           const foldable = this.steerQueue.filter(isFoldable)
           if (foldable.length === 0) return null
           // A foldable (attachment-less) item always has non-empty text (steer() only enqueues an
@@ -1132,7 +1141,7 @@ export class SessionManager {
           // resolveVision on the NEW model, so a vision↔non-vision swap re-routes correctly.
           this.abort = null
           resent = true
-          await this.submit(text, images, pastedTexts, { isResend: true })
+          await this.submit(text, images, pastedTexts, files, { isResend: true })
         } else {
           // dialog mode / auth / no available next model: hand off to client model picker.
           const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
@@ -1226,14 +1235,16 @@ export class SessionManager {
       const echoText = unechoed.map((s) => s.text).filter((t) => t !== '').join('\n')
       const echoImages = unechoed.flatMap((s) => s.images ?? [])
       const echoPasted = unechoed.flatMap((s) => s.pastedTexts ?? [])
-      this.emit({ type: 'user-echo', text: echoText, attachments: echoAttachments(echoImages, echoPasted) })
+      const echoFiles = unechoed.flatMap((s) => s.files ?? [])
+      this.emit({ type: 'user-echo', text: echoText, attachments: echoAttachments(echoImages, echoPasted, echoFiles) })
     }
     // Merge any attachments carried by the drained items onto this follow-up submit — reuses
-    // submit's existing image/pastedText handling instead of duplicating it here.
+    // submit's existing image/pastedText/file handling instead of duplicating it here.
     const text = items.map((s) => s.text).filter((t) => t !== '').join('\n')
     const images = items.flatMap((s) => s.images ?? [])
     const pastedTexts = items.flatMap((s) => s.pastedTexts ?? [])
-    await this.submit(text, images.length > 0 ? images : undefined, pastedTexts.length > 0 ? pastedTexts : undefined)
+    const files = items.flatMap((s) => s.files ?? [])
+    await this.submit(text, images.length > 0 ? images : undefined, pastedTexts.length > 0 ? pastedTexts : undefined, files.length > 0 ? files : undefined)
   }
 
   /**
@@ -1329,21 +1340,27 @@ export class SessionManager {
     // empty-text bail so an attachment-only turn (empty text) is still retryable.
     const atts = userMsg.attachments ?? []
     const images: UploadedImageRef[] | undefined = (() => {
-      const imgs = atts.filter((a) => a.route !== 'pasted').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
+      const imgs = atts.filter((a) => a.route !== 'pasted' && a.route !== 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
       return imgs.length > 0 ? imgs : undefined
     })()
     const pastedTexts: PastedTextInput[] | undefined = (() => {
       const ps = atts.filter((a) => a.route === 'pasted').map((a) => ({ id: a.id, text: a.text ?? '' }))
       return ps.length > 0 ? ps : undefined
     })()
+    // I5b: file attachments (route:'file') recover separately from images — they never had a
+    // local disk file to re-route through resolveVision, only id/name/mediaType.
+    const filesR: UploadedFileRef[] | undefined = (() => {
+      const fs = atts.filter((a) => a.route === 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
+      return fs.length > 0 ? fs : undefined
+    })()
     // Nothing to retry only when there is neither text NOR any attachment.
-    if (text.trim() === '' && !images && !pastedTexts) return
+    if (text.trim() === '' && !images && !pastedTexts && !filesR) return
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
     // "user message" event, so clients wouldn't show it until a reconnect. Echo it now (with its
     // attachments) so the re-submitted question reappears immediately (mirrors send()'s optimistic add).
-    this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts) })
-    await this.submit(text, images, pastedTexts)      // fresh attempt from the clean checkpoint
+    this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts, filesR) })
+    await this.submit(text, images, pastedTexts, filesR)      // fresh attempt from the clean checkpoint
   }
 
   /**

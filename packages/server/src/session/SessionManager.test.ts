@@ -581,7 +581,7 @@ describe('SessionManager re-entrancy guard', () => {
     // The isResend re-entry must NOT be rejected by the guard. It starts a nested
     // runAgent that also awaits the gate; we only assert the guard did not fire.
     let guardError: unknown
-    const resend = mgr.submit('x', undefined, undefined, { isResend: true }).catch((e) => {
+    const resend = mgr.submit('x', undefined, undefined, undefined, { isResend: true }).catch((e) => {
       guardError = e
     })
 
@@ -2219,5 +2219,20 @@ describe('SessionManager image routing (I2)', () => {
     expect(userSnap.attachments).toEqual([
       { id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '日志内容' },
     ])
+  })
+
+  it('submit with files attaches route:file attachments (I5b)', async () => {
+    const { mgr } = makeImageMgr({ scripts: [textTurn], vision: true })
+    await mgr.submit('看文件', undefined, undefined, [{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf' }])
+    expect(userMsgOf(mgr).attachments).toEqual([{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf', route: 'file' }])
+  })
+
+  it('retry re-attaches a file-only turn (route-split recovers files, not images) (I5b)', async () => {
+    const { mgr, calls } = makeImageMgr({ scripts: [textTurn, textTurn], vision: true })
+    await mgr.submit('', undefined, undefined, [{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf' }])
+    expect(calls).toHaveLength(1)
+    await mgr.retry()
+    expect(calls).toHaveLength(2)
+    expect(userMsgOf(mgr).attachments).toEqual([{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf', route: 'file' }])
   })
 })

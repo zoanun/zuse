@@ -34,7 +34,7 @@ export function applyClientMessage(
     switch (msg.type) {
       case 'send':
         if (typeof msg.text !== 'string') { sendError('send: "text" must be a string'); return }
-        mgr.submit(msg.text, msg.images, msg.pastedTexts).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        mgr.submit(msg.text, msg.images, msg.pastedTexts, msg.files).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'interrupt':
         mgr.interrupt()
@@ -45,8 +45,8 @@ export function applyClientMessage(
         // idle (the steer raced past turn-end), there's no turn to fold into — queuing it would let
         // it bleed into a later, unrelated turn. Deliver it as a normal turn instead, echoed so the
         // client's transient "queued" preview resolves into a real message.
-        if (mgr.isBusy()) mgr.steer(msg.text, msg.images, msg.pastedTexts)
-        else mgr.submit(msg.text, msg.images, msg.pastedTexts, { echo: true }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        if (mgr.isBusy()) mgr.steer(msg.text, msg.images, msg.pastedTexts, msg.files)
+        else mgr.submit(msg.text, msg.images, msg.pastedTexts, msg.files, { echo: true }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'permission-reply': {
         if (typeof msg.id !== 'string') { sendError('permission-reply: "id" must be a string'); return }
