@@ -84,9 +84,9 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
           {msg.attachments?.length ? (
             <div className="msg-imgs">
               {msg.attachments.map((a) => (
-                a.route === 'pasted'
-                  ? <PastedTextChip key={a.id} a={a} />
-                  : <MessageImage key={a.id} a={a} />
+                a.route === 'pasted' ? <PastedTextChip key={a.id} a={a} />
+                : a.route === 'file' ? <FileChip key={a.id} a={a} />
+                : <MessageImage key={a.id} a={a} />
               ))}
             </div>
           ) : null}
@@ -168,6 +168,17 @@ function PastedTextChip({ a }: { a: MessageAttachment }) {
         <span className="paste-card-label">{label}</span>
       </button>
       {open ? <TextLightbox text={a.text ?? ''} title={a.name} onClose={() => setOpen(false)} /> : null}
+    </div>
+  )
+}
+
+/** One uploaded-file attachment: a folded 📎 card (name only). No preview — the file lives on the
+ *  server and the model reads it via tools; there's no generic client-side viewer. */
+function FileChip({ a }: { a: MessageAttachment }) {
+  return (
+    <div className="paste-card" title={a.name}>
+      <span className="paste-card-icon" aria-hidden="true">📎</span>
+      <span className="paste-card-label">{a.name}</span>
     </div>
   )
 }

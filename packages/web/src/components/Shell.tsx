@@ -9,7 +9,7 @@ import { isTurnOpener, type Message as Msg } from '../state/types.js'
 import { TodosPanel } from './TodosPanel.js'
 import { AgentsPanel } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
-import { Composer, type ComposerHandle, imageFilesFrom } from './Composer.js'
+import { Composer, type ComposerHandle, imageFilesFrom, otherFilesFrom } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
@@ -79,7 +79,10 @@ export function Shell() {
     e.preventDefault()
     dragDepth.current = 0
     setDragging(false)
-    composerRef.current?.addImages(imageFilesFrom(e.dataTransfer))
+    const imgs = imageFilesFrom(e.dataTransfer)
+    const others = otherFilesFrom(e.dataTransfer)
+    if (imgs.length) composerRef.current?.addImages(imgs)
+    if (others.length) composerRef.current?.addFiles(others)
   }
   const focusHistorySearch = useCallback(() => {
     setMenuOpen(true)

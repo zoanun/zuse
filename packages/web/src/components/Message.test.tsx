@@ -57,6 +57,17 @@ describe('Message', () => {
     expect(screen.getByText('LINE A\nLINE B', { normalizer: (s) => s })).toBeTruthy()
   })
 
+  it('renders a route:file attachment as a 📎 file card (no preview button)', () => {
+    const msg = {
+      id: 'u1', role: 'user' as const,
+      parts: [{ kind: 'text' as const, text: '解析' }],
+      attachments: [{ id: 'f1', name: 'report.pdf', mediaType: 'application/pdf', route: 'file' as const }],
+    }
+    render(<Message msg={msg} />)
+    expect(screen.getByText(/report\.pdf/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /查看/ })).toBeNull()
+  })
+
   it('renders no thumbnails on a user message without attachments', () => {
     const { container } = render(<Message msg={{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'hi' }] }} />)
     expect(container.querySelector('.msg-imgs')).toBeNull()
