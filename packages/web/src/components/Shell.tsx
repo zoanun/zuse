@@ -225,7 +225,7 @@ export function Shell() {
               <circle cx="8.5" cy="8.5" r="1.5" />
               <path d="M21 15l-5-5L5 21" />
             </svg>
-            <div className="dropzone-text">松开以上传图片</div>
+            <div className="dropzone-text">松开以上传附件</div>
           </div>
         </div>
       ) : null}

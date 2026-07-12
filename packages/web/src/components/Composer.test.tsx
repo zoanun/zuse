@@ -3,14 +3,18 @@ import { createRef } from 'react'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { Composer, type ComposerHandle } from './Composer.js'
 import { SLASH_COMMANDS } from './commands.js'
-import { uploadImage } from '../state/manageApi.js'
+import { uploadImage, uploadFile } from '../state/manageApi.js'
 
 // The upload entry points call uploadImage(file); mock it so tests don't hit the network.
-// uploadedImageUrl is a pure path builder, kept real-ish here.
+// uploadedImageUrl is a pure path builder, kept real-ish here. uploadFile rejects for any file
+// whose name contains 'fail', so tests can force an error row deterministically.
 vi.mock('../state/manageApi.js', () => ({
   uploadImage: vi.fn(async (file: File) => ({ id: 'id-' + file.name, name: file.name, mediaType: 'image/png' })),
   uploadedImageUrl: (id: string) => '/api/uploads/' + id,
-  uploadFile: vi.fn(async (f: File) => ({ id: 'fid-' + f.name, name: f.name, mediaType: f.type || 'application/octet-stream' })),
+  uploadFile: vi.fn(async (f: File) => {
+    if (f.name.includes('fail')) throw new Error('upload failed')
+    return { id: 'fid-' + f.name, name: f.name, mediaType: f.type || 'application/octet-stream' }
+  }),
 }))
 
 describe('Composer', () => {
@@ -450,8 +454,15 @@ describe('Composer image upload', () => {
 })
 
 describe('Composer file upload', () => {
+  const mockedUploadFile = vi.mocked(uploadFile)
+
   function dropFile(name: string, type: string) {
     const file = new File(['data'], name, { type })
+    return { dataTransfer: { files: [file], items: [{ kind: 'file', type, getAsFile: () => file }] } }
+  }
+  function dropSized(name: string, type: string, size: number) {
+    const file = new File(['data'], name, { type })
+    Object.defineProperty(file, 'size', { value: size })
     return { dataTransfer: { files: [file], items: [{ kind: 'file', type, getAsFile: () => file }] } }
   }
 
@@ -482,5 +493,50 @@ describe('Composer file upload', () => {
     await screen.findByText(/x\.zip/)
     fireEvent.click(screen.getByLabelText(/移除 x\.zip/))
     expect(screen.queryByText(/x\.zip/)).toBeNull()
+  })
+
+  it('skips a file over the 50 MiB client cap — no chip, no upload call', () => {
+    mockedUploadFile.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropSized('big.bin', 'application/octet-stream', 50 * 1024 * 1024 + 1))
+    expect(mockedUploadFile).not.toHaveBeenCalled()
+    expect(container.querySelectorAll('.paste-card').length).toBe(0) // no file chip staged
+    expect(screen.getByRole('alert')).toHaveTextContent(/50MB/)
+  })
+
+  it('skips a folder-like drop (empty type, zero size) — no chip, no upload call', () => {
+    mockedUploadFile.mockClear()
+    const { container } = render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropSized('myfolder', '', 0))
+    expect(mockedUploadFile).not.toHaveBeenCalled()
+    expect(container.querySelectorAll('.paste-card').length).toBe(0) // no file chip staged
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+
+  it('blocks send (onSend not called) when a file row is in error', async () => {
+    mockedUploadFile.mockClear()
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropFile('will-fail.bin', 'application/octet-stream'))
+    await screen.findByText(/失败/)
+    fireEvent.change(ta, { target: { value: 'go' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent(/上传失败/)
+  })
+
+  it('retry (↻) after a failed upload re-uploads and clears the error', async () => {
+    mockedUploadFile.mockClear()
+    mockedUploadFile.mockImplementationOnce(async () => { throw new Error('boom') }) // first call fails; retry uses the base (success) impl
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropFile('retry-me.bin', 'application/octet-stream'))
+    await screen.findByText(/失败/)
+    fireEvent.click(screen.getByLabelText(/重试 retry-me\.bin/))
+    await waitFor(() => expect(screen.queryByText(/失败/)).toBeNull())
+    expect(mockedUploadFile).toHaveBeenCalledTimes(2)
   })
 })

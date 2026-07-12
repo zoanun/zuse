@@ -33,10 +33,18 @@ interface PendingImage {
 interface PendingPaste { id: string; text: string; lines: number }
 
 /** A locally-staged non-image file: uploaded async, sent (as ref) on submit. */
-interface PendingFile { key: string; name: string; status: 'uploading' | 'done' | 'error'; ref?: UploadedFileRef }
+interface PendingFile {
+  key: string
+  name: string
+  status: 'uploading' | 'done' | 'error'
+  ref?: UploadedFileRef
+  /** The original File, retained so retry re-uploads the exact bytes (no blob refetch). */
+  file: File
+}
 
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
+const FILE_MAX_BYTES = 50 * 1024 * 1024 // matches server FILE_MAX_BYTES
 const PASTE_CHAR_THRESHOLD = 800
 const PASTE_NEWLINE_THRESHOLD = 2
 
@@ -184,13 +192,34 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Stage + upload a batch of picked non-image files (attachments sent as `files` on submit).
   function stageFiles(picked: File[]) {
     for (const file of picked) {
+      if (file.size > FILE_MAX_BYTES) {
+        setAttachError(`${file.name} 超过 50MB，已跳过`)
+        continue
+      }
+      if (file.type === '' && file.size === 0) {
+        setAttachError(`无法上传「${file.name}」（可能是文件夹或空文件）`)
+        continue
+      }
       const key = 'file-' + ++keySeq.current
-      setFiles((p) => [...p, { key, name: file.name, status: 'uploading' }])
-      uploadFile(file).then(
-        (ref) => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
-        () => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
-      )
+      setFiles((p) => [...p, { key, name: file.name, status: 'uploading', file }])
+      uploadFileInto(key, file)
     }
+  }
+
+  /** Upload `file`, mapping the result onto the pending file row `key` (done+ref / error). Shared
+   *  by the initial stage (stageFiles) and retryFile, so both take the same success/failure path. */
+  function uploadFileInto(key: string, file: File) {
+    uploadFile(file).then(
+      (ref) => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
+      () => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
+    )
+  }
+
+  function retryFile(key: string) {
+    const item = files.find((f) => f.key === key)
+    if (!item) return
+    setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'uploading' as const } : it)))
+    uploadFileInto(key, item.file)
   }
 
   function removeFile(key: string) { setFiles((p) => p.filter((it) => it.key !== key)) }
@@ -227,6 +256,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Mirrors Shell's whole-page drop zone for drops that land directly on the input.
   function onDrop(e: React.DragEvent<HTMLTextAreaElement>) {
     e.preventDefault()
+    e.stopPropagation() // don't also let Shell's whole-page drop zone stage this same drop again
     const imgs = imageFilesFrom(e.dataTransfer)
     const others = otherFilesFrom(e.dataTransfer)
     if (imgs.length) stage(imgs)
@@ -255,6 +285,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   function submit() {
     if (uploading || uploadingFiles) { setAttachError('附件上传中，请稍候'); return }
+    if (files.some((f) => f.status === 'error')) { setAttachError('有附件上传失败，请重试或移除'); return }
     const v = value.trim()
     if (!v && doneRefs.length === 0 && pastes.length === 0 && doneFileRefs.length === 0) return
     const images = doneRefs.length ? doneRefs : undefined
@@ -358,6 +389,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <div key={f.key} className={'paste-card' + (f.status === 'error' ? ' error' : '')} title={f.name}>
               <span className="paste-card-icon" aria-hidden="true">📎</span>
               <span className="paste-card-label">{f.name}{f.status === 'uploading' ? ' …' : ''}{f.status === 'error' ? ' (失败)' : ''}</span>
+              {f.status === 'error' ? (
+                <button className="attach-retry" aria-label={`重试 ${f.name}`} onClick={() => retryFile(f.key)}>↻</button>
+              ) : null}
               <button className="attach-remove" aria-label={`移除 ${f.name}`} onClick={() => removeFile(f.key)}>×</button>
             </div>
           ))}
