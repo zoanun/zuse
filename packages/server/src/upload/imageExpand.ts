@@ -3,18 +3,6 @@ import type { UploadService } from './UploadService.js'
 
 type Block = Message['content'][number]
 
-/** 发送前物化附件（两条图片路径统一经此展开）：对每条消息的 attachments 构造前置块，插到
- *  content 前，产出请求专用副本（原消息不被 mutate）。
- *  - route==='direct'（视觉主模型直传）→ 每张读盘为一个 base64 image 块；读不出的图跳过。
- *  - route==='parsed'（非视觉解析兜底）→ 全部非空描述**合并成一个带编号标签的 text 块**，
- *    形如「[本条消息附带 N 张图片…] ▍图片1（name）\n<描述>\n\n▍图片2…」。多图时标签让模型能把
- *    每段描述对应到用户看到的第几张图（否则多段裸描述会被模型当成一张图而混淆/漏答）。
- *  - route==='pasted'（粘贴长文本）→ 全部非空段合并成**一个带编号标签的前置 text 块**，
- *    形如「[以下是我粘贴的 N 段文本：] ▍粘贴文本1\n<全文>…」，插在原 content 之前（材料在前）。
- *  - route==='file'（上传的任意文件）→ 一条英文说明块 + 每个文件的绝对路径（不读盘、不进原生块），
- *    让模型用 Read/Bash 或 skill/agent 自行处理。
- *  无 attachments 的消息原样返回。账本/持久化的消息绝不含 base64，也不烘焙描述进文本。 */
-
 /** Pasted text longer than this (chars) is truncated in the model-facing block — matches cc-haha's
  *  TRUNCATION_THRESHOLD. The full text still lives on the attachment (bubble/lightbox show all). */
 const PASTE_TRUNCATE_THRESHOLD = 10000
@@ -29,6 +17,17 @@ function truncateForModel(t: string): string {
   return `${head}\n[… ${lines} lines truncated …]\n${tail}`
 }
 
+/** 发送前物化附件（两条图片路径统一经此展开）：对每条消息的 attachments 构造前置块，插到
+ *  content 前，产出请求专用副本（原消息不被 mutate）。
+ *  - route==='direct'（视觉主模型直传）→ 每张读盘为一个 base64 image 块；读不出的图跳过。
+ *  - route==='parsed'（非视觉解析兜底）→ 全部非空描述**合并成一个带编号标签的 text 块**，
+ *    形如「[本条消息附带 N 张图片…] ▍图片1（name）\n<描述>\n\n▍图片2…」。多图时标签让模型能把
+ *    每段描述对应到用户看到的第几张图（否则多段裸描述会被模型当成一张图而混淆/漏答）。
+ *  - route==='pasted'（粘贴长文本）→ 全部非空段合并成**一个带编号标签的前置 text 块**，
+ *    形如「[以下是我粘贴的 N 段文本：] ▍粘贴文本1\n<全文>…」，插在原 content 之前（材料在前）。
+ *  - route==='file'（上传的任意文件）→ 一条英文说明块 + 每个文件的绝对路径（不读盘、不进原生块），
+ *    让模型用 Read/Bash 或 skill/agent 自行处理。
+ *  无 attachments 的消息原样返回。账本/持久化的消息绝不含 base64，也不烘焙描述进文本。 */
 export function makeExpandAttachments(upload: UploadService): (messages: Message[]) => Promise<Message[]> {
   return async (messages) => Promise.all(messages.map(async (m) => {
     const atts = m.attachments ?? []
@@ -75,8 +74,7 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
     // Read/Bash 或 skill/agent 处理（读不了就直说）。路径由 upload.filePath 现算；坏 id 跳过该文件。
     const fileEntries = atts
       .filter((a) => a.route === 'file')
-      .map((a) => { try { return `▍${a.name} — ${upload.filePath(a.id, a.name)}` } catch { return null } })
-      .filter((s): s is string => s !== null)
+      .flatMap((a) => { try { return [`▍${a.name} — ${upload.filePath(a.id, a.name)}`] } catch { return [] } })
     if (fileEntries.length > 0) {
       const multi = fileEntries.length > 1
       const header = multi

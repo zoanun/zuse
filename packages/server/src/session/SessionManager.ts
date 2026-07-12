@@ -135,6 +135,12 @@ interface Pending {
   resolve: (v: PermissionVerdict) => void
 }
 
+/** `[]` → `undefined`, else the array — collapses the "empty means omit this arg" dance at the
+ *  submit() call sites (retry route-split, steer drain). */
+function orUndef<T>(a: T[]): T[] | undefined {
+  return a.length > 0 ? a : undefined
+}
+
 /** Display-only attachments for a `user-echo` bubble (mid-turn interjection / retry / idle-race resend).
  *  Images carry id/name/mediaType (route/description fill in from the authoritative snapshot); pasted
  *  carry route+text so the 📄 chip renders live before the snapshot round-trips. Numbering matches the
@@ -1244,7 +1250,7 @@ export class SessionManager {
     const images = items.flatMap((s) => s.images ?? [])
     const pastedTexts = items.flatMap((s) => s.pastedTexts ?? [])
     const files = items.flatMap((s) => s.files ?? [])
-    await this.submit(text, images.length > 0 ? images : undefined, pastedTexts.length > 0 ? pastedTexts : undefined, files.length > 0 ? files : undefined)
+    await this.submit(text, orUndef(images), orUndef(pastedTexts), orUndef(files))
   }
 
   /**
@@ -1339,20 +1345,17 @@ export class SessionManager {
     // param (never sent through the image path — no disk file exists for them). Recovered BEFORE the
     // empty-text bail so an attachment-only turn (empty text) is still retryable.
     const atts = userMsg.attachments ?? []
-    const images: UploadedImageRef[] | undefined = (() => {
-      const imgs = atts.filter((a) => a.route !== 'pasted' && a.route !== 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
-      return imgs.length > 0 ? imgs : undefined
-    })()
-    const pastedTexts: PastedTextInput[] | undefined = (() => {
-      const ps = atts.filter((a) => a.route === 'pasted').map((a) => ({ id: a.id, text: a.text ?? '' }))
-      return ps.length > 0 ? ps : undefined
-    })()
-    // I5b: file attachments (route:'file') recover separately from images — they never had a
-    // local disk file to re-route through resolveVision, only id/name/mediaType.
-    const filesR: UploadedFileRef[] | undefined = (() => {
-      const fs = atts.filter((a) => a.route === 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType }))
-      return fs.length > 0 ? fs : undefined
-    })()
+    // Split the reverted turn's attachments back by route: images (direct/parsed) re-route via
+    // resolveVision; pasted → pastedTexts; file → files (never a disk file to re-route, only the ref).
+    const images: UploadedImageRef[] | undefined = orUndef(
+      atts.filter((a) => a.route !== 'pasted' && a.route !== 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType })),
+    )
+    const pastedTexts: PastedTextInput[] | undefined = orUndef(
+      atts.filter((a) => a.route === 'pasted').map((a) => ({ id: a.id, text: a.text ?? '' })),
+    )
+    const filesR: UploadedFileRef[] | undefined = orUndef(
+      atts.filter((a) => a.route === 'file').map((a) => ({ id: a.id, name: a.name, mediaType: a.mediaType })),
+    )
     // Nothing to retry only when there is neither text NOR any attachment.
     if (text.trim() === '' && !images && !pastedTexts && !filesR) return
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
