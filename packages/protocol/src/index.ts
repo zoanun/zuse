@@ -43,14 +43,21 @@ export interface PastedTextInput {
   text: string  // 粘贴全文，已规范化 \r→\n（入栈即规范化，展示/计数/发送口径统一）
 }
 
+/** 一次上传后的任意文件引用（客户端持有、随 send 上行）。 */
+export interface UploadedFileRef {
+  id: string
+  name: string
+  mediaType: string
+}
+
 /** 附着在一条消息上的附件（图片或粘贴文本；快照投影用）。图片不含 base64（字节在磁盘）；
  *  粘贴文本的全文内联在 `text` 字段。 */
 export interface MessageAttachment {
   id: string
   name: string
   mediaType: string
-  /** 该附件走了哪条路：direct=图直传主模型 / parsed=图经解析模型转述 / pasted=粘贴长文本。 */
-  route?: 'direct' | 'parsed' | 'pasted'
+  /** direct=图直传 / parsed=图解析转述 / pasted=粘贴长文本 / file=上传的任意文件（只带 name，路径发送时服务端现算）。 */
+  route?: 'direct' | 'parsed' | 'pasted' | 'file'
   /** 解析路径下模型看到的文字描述（供气泡折叠展示）；direct 无。 */
   description?: string
   /** route==='pasted' 时的粘贴全文（内联持久化 + 随 snapshot 下发；图片路径无此字段）。 */
@@ -297,9 +304,9 @@ export interface SessionSnapshot {
 
 /** 上行 client → server。 */
 export type ClientMessage =
-  | { type: 'send'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }
+  | { type: 'send'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
   | { type: 'interrupt' }
-  | { type: 'steer'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[] }
+  | { type: 'steer'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
