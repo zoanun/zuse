@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as core from '@zuse/core'
-import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server } from 'node:http'
@@ -585,6 +585,46 @@ describe('/api/uploads REST', () => {
     })
     expect(res.status).toBe(413)
     expect((await res.json()).error.code).toBe('too_large')
+  })
+})
+
+describe('/api/uploads/file REST (I5b)', () => {
+  it('unauthenticated POST → 401', async () => {
+    const res = await fetch(`${base}/api/uploads/file`, json({ name: 'a.bin', mediaType: 'application/octet-stream', dataBase64: 'AAAA' }))
+    expect(res.status).toBe(401)
+  })
+
+  it('POST stores an arbitrary file → 200 {id, name, mediaType}, bytes persisted on disk', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    const bytes = Buffer.from('hello arbitrary file bytes')
+    const dataBase64 = bytes.toString('base64')
+
+    const created = await fetch(`${base}/api/uploads/file`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'a.bin', mediaType: 'application/octet-stream', dataBase64 }) })
+    expect(created.status).toBe(200)
+    const out = await created.json() as { id: string; name: string; mediaType: string }
+    expect(out.id).toBeTruthy()
+    expect(out.name).toBe('a.bin')
+    expect(out.mediaType).toBe('application/octet-stream')
+
+    // Assert persistence via the same UploadService the test injected.
+    const stored = upload.filePath(out.id, out.name)
+    expect(existsSync(stored)).toBe(true)
+    expect(readFileSync(stored).equals(bytes)).toBe(true)
+  })
+
+  it('POST with missing name → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/uploads/file`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ mediaType: 'application/octet-stream', dataBase64: 'AAAA' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
+  })
+
+  it('POST with missing dataBase64 → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/uploads/file`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'a.bin', mediaType: 'application/octet-stream' }) })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error.code).toBe('bad_request')
   })
 })
 

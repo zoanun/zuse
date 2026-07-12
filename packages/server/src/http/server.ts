@@ -17,7 +17,7 @@ import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } 
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
-import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES } from '../upload/UploadService.js'
+import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES, FileTooLargeError, FILE_MAX_BYTES } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo } from '@zuse/protocol'
 
@@ -132,6 +132,9 @@ export async function readJsonBody(req: IncomingMessage, maxBytes?: number): Pro
  * 25 MiB image ceiling. Bodies past this are rejected mid-stream (413) rather than fully buffered.
  */
 const UPLOAD_BODY_CAP = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 1024 * 1024
+
+/** Body cap for POST /api/uploads/file: base64 inflates ~4/3 over the raw file, + 1 MiB slack. */
+const FILE_BODY_CAP = Math.ceil(FILE_MAX_BYTES * 4 / 3) + 1024 * 1024
 
 export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
   // Per-handler closure so each handler instance starts with a clean backoff
@@ -628,6 +631,32 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       } catch (e) {
         if (e instanceof UnsupportedMediaError) return sendJson(res, 415, { error: { code: 'unsupported_media', message: e.message } })
         if (e instanceof TooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
+      }
+    }
+
+    // POST /api/uploads/file — arbitrary (non-image) files. body {name, mediaType?, dataBase64}
+    // → 200 {id, name, mediaType}. Server only stores; no MIME whitelist. Same base64-in-JSON
+    // transport as /api/uploads.
+    if (method === 'POST' && path === '/api/uploads/file') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { name?: unknown; mediaType?: unknown; dataBase64?: unknown } | undefined
+      try { body = (await readJsonBody(req, FILE_BODY_CAP)) as typeof body } catch (e) {
+        if (e instanceof PayloadTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      const name = body?.name
+      const dataBase64 = body?.dataBase64
+      if (typeof name !== 'string' || typeof dataBase64 !== 'string') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'name and dataBase64 required' } })
+      }
+      const mediaType = typeof body?.mediaType === 'string' && body.mediaType ? body.mediaType : 'application/octet-stream'
+      try {
+        const bytes = Buffer.from(dataBase64, 'base64')
+        const { id, name: stored } = await deps.upload.saveFile(bytes, name)
+        return sendJson(res, 200, { id, name: stored, mediaType })
+      } catch (e) {
+        if (e instanceof FileTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: (e as Error).message } })
       }
     }
