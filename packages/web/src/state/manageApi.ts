@@ -1,4 +1,4 @@
-import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo, UploadedImageRef } from '@zuse/protocol'
+import type { MemoryItem, ProjectInfo, PersonaItem, PersonasState, SkillItem, SkillsState, UsageStats, DirListing, FileEntry, FilePreview, WriteFileResult, DirNav, McpServerInfo, UploadedImageRef, UploadedFileRef } from '@zuse/protocol'
 import { request, RequestError } from './session.js'
 import { compressImage } from './imageCompress.js'
 
@@ -215,6 +215,13 @@ export async function uploadImage(file: File, compress = compressImage): Promise
 /** 上传图片的读取 URL（气泡缩略图 src、同源 cookie）。 */
 export function uploadedImageUrl(id: string): string {
   return '/api/uploads/' + encodeURIComponent(id)
+}
+
+/** 上传任意文件（非图片）：base64-in-JSON → POST /api/uploads/file → {id,name,mediaType}。无压缩。 */
+export async function uploadFile(file: File): Promise<UploadedFileRef> {
+  const dataBase64 = await blobToBase64(file)
+  const r = await request('/api/uploads/file', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ name: file.name, mediaType: file.type || 'application/octet-stream', dataBase64 }) }, 'upload file')
+  return (await r.json()) as UploadedFileRef
 }
 
 // --- Models (Header switcher) ---

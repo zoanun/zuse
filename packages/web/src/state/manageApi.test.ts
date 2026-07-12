@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { MemoryItem } from '@zuse/protocol'
-import { listMemory, createMemory, updateMemory, deleteMemory, uploadImage, uploadedImageUrl, listModels, persistModel } from './manageApi.js'
+import { listMemory, createMemory, updateMemory, deleteMemory, uploadImage, uploadFile, uploadedImageUrl, listModels, persistModel } from './manageApi.js'
 
 function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Partial<Response>>) {
   const fn = vi.fn(impl as unknown as typeof fetch)
@@ -116,6 +116,31 @@ describe('manageApi', () => {
     const mockCompress = vi.fn(async () => ({ blob: new Blob([new Uint8Array([1])]), mediaType: 'image/jpeg' }))
     const file = new File([new Uint8Array([1])], 'big.jpg', { type: 'image/jpeg' })
     await expect(uploadImage(file, mockCompress)).rejects.toThrow(/upload image failed: 413/)
+  })
+
+  it('uploadFile POSTs base64 to /api/uploads/file and returns the ref', async () => {
+    const ref = { id: 'f1', name: 'notes.txt', mediaType: 'text/plain' }
+    const fn = mockFetch(async () => ({ ok: true, status: 200, json: async () => ref }))
+    // bytes [1,2,3] → base64 "AQID"
+    const file = new File([new Uint8Array([1, 2, 3])], 'notes.txt', { type: 'text/plain' })
+
+    const out = await uploadFile(file)
+
+    expect(out).toEqual(ref)
+    expect(fn).toHaveBeenCalledWith('/api/uploads/file', expect.objectContaining({
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+    }))
+    const init = fn.mock.calls[0]![1] as RequestInit
+    const body = JSON.parse(init.body as string)
+    expect(body).toEqual({ name: 'notes.txt', mediaType: 'text/plain', dataBase64: 'AQID' })
+  })
+
+  it('uploadFile throws on non-ok', async () => {
+    mockFetch(async () => ({ ok: false, status: 500 }))
+    const file = new File([new Uint8Array([1])], 'big.bin', { type: 'application/octet-stream' })
+    await expect(uploadFile(file)).rejects.toThrow(/upload file failed: 500/)
   })
 
   // --- Models (Header switcher) ---

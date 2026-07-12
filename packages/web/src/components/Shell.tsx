@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict, UploadedImageRef, PastedTextInput } from '@zuse/protocol'
+import type { PermissionVerdict, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import { useStore, nextId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar, type SidebarHandle } from './Sidebar.js'
@@ -103,7 +103,7 @@ export function Shell() {
   const onRunCommand = (cmd: SlashCommand) => cmd.run(commandCtx)
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
 
-  const onSend = (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]) => {
+  const onSend = (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[]) => {
     // A slash command can still reach onSend even though the menu normally runs it via onRunCommand:
     // an Esc-dismissed menu then Enter, a trailing space that stops the prefix matching, or the send
     // button. Intercept and run it here too, so the command fires instead of being posted as a
@@ -122,17 +122,18 @@ export function Shell() {
     const pastedAtts = pastedTexts?.map((p, idx) => ({
       id: p.id, name: `粘贴文本 #${idx + 1}`, mediaType: 'text/plain', route: 'pasted' as const, text: p.text,
     })) ?? []
-    const attachments = imageAtts.length || pastedAtts.length ? [...imageAtts, ...pastedAtts] : undefined
+    const fileAtts = files?.map((f) => ({ id: f.id, name: f.name, mediaType: f.mediaType, route: 'file' as const })) ?? []
+    const attachments = imageAtts.length || pastedAtts.length || fileAtts.length ? [...imageAtts, ...pastedAtts, ...fileAtts] : undefined
     if (state.thinking) {
       // Mid-turn interjection: attachments ride along on the steer frame; the server queues them and
       // delivers as a follow-up turn (submit handles images/pastedTexts). The optimistic ↪插话 preview
       // carries the attachments for immediate feedback.
       dispatch({ kind: 'steer-queued', id: nextId('ps'), text, attachments })
-      send({ type: 'steer', text, images, pastedTexts })
+      send({ type: 'steer', text, images, pastedTexts, files })
       return
     }
     dispatch({ kind: 'user-send', id: nextId('u'), text, attachments })
-    send({ type: 'send', text, images, pastedTexts })
+    send({ type: 'send', text, images, pastedTexts, files })
   }
   // Model switch from the Header picker. Temporary switch takes effect on this session immediately
   // (WS 'switch-model' — the server rebuilds its client but emits no event, so we optimistically

@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
-import type { UploadedImageRef, PastedTextInput } from '@zuse/protocol'
+import type { UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import { pastedLineCount, pastedLabel } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
@@ -9,7 +9,7 @@ import { TextLightbox } from './TextLightbox.js'
 
 interface ComposerProps {
   thinking: boolean
-  onSend: (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[]) => void
+  onSend: (text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[]) => void
   onStop: () => void
   history?: string[]
   commands?: SlashCommand[]
