@@ -239,4 +239,65 @@ describe('makeExpandAttachments (I2)', () => {
     expect(out[0]).toBe(msg) // nothing to prepend → untouched original
     expect(out[0]!.content).toEqual([{ type: 'text', text: 'q' }])
   })
+
+  it("expands route:'file' attachments into an English note with the absolute path", async () => {
+    const upload = { readBase64: async () => ({ data: '', mediaType: '' }), filePath: (id: string, name: string) => `/up/${id}/${name}` } as unknown as UploadService
+    const expand = makeExpandAttachments(upload)
+    const msg: Message = { ...textMsg('read it'), attachments: [{ id: 'f1', name: 'report.pdf', mediaType: 'application/pdf', route: 'file' }] }
+    const out = await expand([msg])
+    const content = out[0]!.content
+    expect(content).toHaveLength(2)
+    const note = (content[0] as { type: 'text'; text: string }).text
+    expect(note).toContain('The user attached a file')
+    expect(note).toContain('Read/Bash')
+    expect(note).toContain('/up/f1/report.pdf')
+    expect(content[1]).toEqual({ type: 'text', text: 'read it' })
+  })
+
+  it('multiple route:file attachments list each path under a plural header', async () => {
+    const upload = { readBase64: async () => ({ data: '', mediaType: '' }), filePath: (id: string, name: string) => `/up/${id}/${name}` } as unknown as UploadService
+    const expand = makeExpandAttachments(upload)
+    const msg: Message = { ...textMsg('q'), attachments: [
+      { id: 'a', name: 'x.csv', mediaType: 'text/csv', route: 'file' },
+      { id: 'b', name: 'y.zip', mediaType: 'application/zip', route: 'file' },
+    ] }
+    const note = ((await expand([msg]))[0]!.content[0] as { type: 'text'; text: string }).text
+    expect(note).toContain('The user attached 2 files')
+    expect(note).toContain('▍x.csv — /up/a/x.csv')
+    expect(note).toContain('▍y.zip — /up/b/y.zip')
+  })
+
+  it('block order is image → parsed → pasted → file → original content', async () => {
+    const upload = { readBase64: async (_id: string) => ({ data: 'IMG', mediaType: 'image/png' }), filePath: (id: string, name: string) => `/up/${id}/${name}` } as unknown as UploadService
+    const expand = makeExpandAttachments(upload)
+    const msg: Message = { ...textMsg('all'), attachments: [
+      { id: 'd', name: 'p.png', mediaType: 'image/png', route: 'direct' },
+      { id: 'p', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: '段' },
+      { id: 'f', name: 'a.bin', mediaType: 'application/octet-stream', route: 'file' },
+    ] }
+    const content = (await expand([msg]))[0]!.content
+    expect(content[0]).toEqual({ type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'IMG' } })
+    expect((content[1] as { type: 'text'; text: string }).text).toContain('段')
+    expect((content[2] as { type: 'text'; text: string }).text).toContain('/up/f/a.bin')
+    expect(content[3]).toEqual({ type: 'text', text: 'all' })
+  })
+
+  it('truncates an oversized pasted segment CC-style; attachment.text stays full', async () => {
+    const expand = makeExpandAttachments({ readBase64: async () => ({ data: '', mediaType: '' }) } as unknown as UploadService)
+    const huge = 'A'.repeat(600) + '\n'.repeat(7) + 'B'.repeat(600) + 'C'.repeat(10000)
+    const msg: Message = { ...textMsg('q'), attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: huge }] }
+    const note = ((await expand([msg]))[0]!.content[0] as { type: 'text'; text: string }).text
+    expect(note.length).toBeLessThan(huge.length)
+    expect(note).toContain('lines truncated …]')
+    expect(note).toContain('以下是我粘贴的 1 段文本')
+    expect(msg.attachments![0]!.text).toBe(huge) // not mutated
+  })
+
+  it('a short pasted segment is not truncated', async () => {
+    const expand = makeExpandAttachments({ readBase64: async () => ({ data: '', mediaType: '' }) } as unknown as UploadService)
+    const msg: Message = { ...textMsg('q'), attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: 'short' }] }
+    const note = ((await expand([msg]))[0]!.content[0] as { type: 'text'; text: string }).text
+    expect(note).toContain('short')
+    expect(note).not.toContain('truncated')
+  })
 })

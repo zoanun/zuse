@@ -11,7 +11,24 @@ type Block = Message['content'][number]
  *    每段描述对应到用户看到的第几张图（否则多段裸描述会被模型当成一张图而混淆/漏答）。
  *  - route==='pasted'（粘贴长文本）→ 全部非空段合并成**一个带编号标签的前置 text 块**，
  *    形如「[以下是我粘贴的 N 段文本：] ▍粘贴文本1\n<全文>…」，插在原 content 之前（材料在前）。
+ *  - route==='file'（上传的任意文件）→ 一条英文说明块 + 每个文件的绝对路径（不读盘、不进原生块），
+ *    让模型用 Read/Bash 或 skill/agent 自行处理。
  *  无 attachments 的消息原样返回。账本/持久化的消息绝不含 base64，也不烘焙描述进文本。 */
+
+/** Pasted text longer than this (chars) is truncated in the model-facing block — matches cc-haha's
+ *  TRUNCATION_THRESHOLD. The full text still lives on the attachment (bubble/lightbox show all). */
+const PASTE_TRUNCATE_THRESHOLD = 10000
+const PASTE_PREVIEW_HALF = 500 // chars kept at head and tail (cc-haha PREVIEW_LENGTH / 2)
+
+/** CC-style truncation: keep head + tail, replace the middle with a line-count marker. */
+function truncateForModel(t: string): string {
+  if (t.length <= PASTE_TRUNCATE_THRESHOLD) return t
+  const head = t.slice(0, PASTE_PREVIEW_HALF)
+  const tail = t.slice(-PASTE_PREVIEW_HALF)
+  const lines = (t.slice(PASTE_PREVIEW_HALF, -PASTE_PREVIEW_HALF).match(/\r\n|\r|\n/g) || []).length
+  return `${head}\n[… ${lines} lines truncated …]\n${tail}`
+}
+
 export function makeExpandAttachments(upload: UploadService): (messages: Message[]) => Promise<Message[]> {
   return async (messages) => Promise.all(messages.map(async (m) => {
     const atts = m.attachments ?? []
@@ -48,11 +65,24 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
       const multi = pasted.length > 1
       const header = `[以下是我粘贴的 ${pasted.length} 段文本：]\n\n`
       const body = pasted
-        .map((t, i) => (multi ? `▍粘贴文本 ${i + 1}\n${t}` : t))
+        .map((t, i) => { const shown = truncateForModel(t); return multi ? `▍粘贴文本 ${i + 1}\n${shown}` : shown })
         .join('\n\n')
       // 收尾边界：粘贴内容与紧随其后的用户问题（带 [时间戳] 前缀）之间加显式围栏，避免模型
       // 把问题的时间戳误当成最后一段粘贴文本的一部分。
       blocks.push({ type: 'text', text: `${header}${body}\n\n[粘贴内容结束]` })
+    }
+    // file (I5b)：上传的任意文件——不读盘、不进原生块，只产出一条英文说明 + 绝对路径，让模型自己用
+    // Read/Bash 或 skill/agent 处理（读不了就直说）。路径由 upload.filePath 现算；坏 id 跳过该文件。
+    const fileEntries = atts
+      .filter((a) => a.route === 'file')
+      .map((a) => { try { return `▍${a.name} — ${upload.filePath(a.id, a.name)}` } catch { return null } })
+      .filter((s): s is string => s !== null)
+    if (fileEntries.length > 0) {
+      const multi = fileEntries.length > 1
+      const header = multi
+        ? `[The user attached ${fileEntries.length} files, saved on this machine. To use their contents, read these paths with the Read/Bash tools or an appropriate skill/agent; if you can't process a file, say so plainly.]\n\n`
+        : `[The user attached a file, saved on this machine. To use it, read the path with the Read/Bash tools or an appropriate skill/agent; if you can't process it, say so plainly.]\n\n`
+      blocks.push({ type: 'text', text: header + fileEntries.join('\n') })
     }
     return blocks.length ? { ...m, content: [...blocks, ...m.content] } : m
   }))
