@@ -43,14 +43,15 @@ const PASTE_NEWLINE_THRESHOLD = 2
 /** Imperative surface so a whole-page drop zone (Shell) can hand dropped image/other files to the composer. */
 export interface ComposerHandle { addImages: (files: File[]) => void; addFiles: (files: File[]) => void }
 
-/** Pull image Files out of a paste/drop payload — files first, then items (kind==='file', image/*). */
-export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+/** Pull Files out of a paste/drop payload — files first, then items (kind==='file') — keeping only
+ *  those whose mediaType satisfies `pred`. Shared body of imageFilesFrom / otherFilesFrom. */
+function filesFrom(dt: DataTransfer | null | undefined, pred: (type: string) => boolean): File[] {
   if (!dt) return []
   const out: File[] = []
-  for (const f of Array.from(dt.files ?? [])) if (f && f.type.startsWith('image/')) out.push(f)
+  for (const f of Array.from(dt.files ?? [])) if (f && pred(f.type)) out.push(f)
   if (out.length === 0 && dt.items) {
     for (const it of Array.from(dt.items)) {
-      if (it.kind === 'file' && it.type.startsWith('image/')) {
+      if (it.kind === 'file' && pred(it.type)) {
         const f = it.getAsFile()
         if (f) out.push(f)
       }
@@ -59,17 +60,14 @@ export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
   return out
 }
 
+/** Image files from a paste/drop payload. */
+export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
+  return filesFrom(dt, (t) => t.startsWith('image/'))
+}
+
 /** Non-image files from a paste/drop payload (files imageFilesFrom would NOT take). */
 export function otherFilesFrom(dt: DataTransfer | null | undefined): File[] {
-  if (!dt) return []
-  const out: File[] = []
-  for (const f of Array.from(dt.files ?? [])) if (f && !f.type.startsWith('image/')) out.push(f)
-  if (out.length === 0 && dt.items) {
-    for (const it of Array.from(dt.items)) {
-      if (it.kind === 'file' && !it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) out.push(f) }
-    }
-  }
-  return out
+  return filesFrom(dt, (t) => !t.startsWith('image/'))
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }, ref) {
@@ -128,7 +126,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   // Stage + upload a batch of picked images. Only stores images (no model/parse checks here — the
   // "model can't read images" error surfaces on send, from the server, as a chat error event).
-  function addFiles(files: File[]) {
+  // NB: images-only — distinct from stageFiles() (non-image files) and the handle's addFiles.
+  function addImageFiles(files: File[]) {
     const images = files.filter((f) => f.type.startsWith('image/'))
     if (images.length === 0) return
     const errors: string[] = []
@@ -179,7 +178,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // bail if none, refuse mid-turn, else upload. Callers that own a DOM event preventDefault first.
   function stage(files: File[]) {
     if (files.length === 0) return
-    addFiles(files)
+    addImageFiles(files)
   }
 
   // Stage + upload a batch of picked non-image files (attachments sent as `files` on submit).
@@ -384,7 +383,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             const picked = Array.from(e.target.files ?? [])
             const imgs = picked.filter((f) => f.type.startsWith('image/'))
             const others = picked.filter((f) => !f.type.startsWith('image/'))
-            if (imgs.length) addFiles(imgs)
+            if (imgs.length) addImageFiles(imgs)
             if (others.length) stageFiles(others)
             e.target.value = ''
           }}
