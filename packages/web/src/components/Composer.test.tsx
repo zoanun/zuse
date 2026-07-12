@@ -10,6 +10,7 @@ import { uploadImage } from '../state/manageApi.js'
 vi.mock('../state/manageApi.js', () => ({
   uploadImage: vi.fn(async (file: File) => ({ id: 'id-' + file.name, name: file.name, mediaType: 'image/png' })),
   uploadedImageUrl: (id: string) => '/api/uploads/' + id,
+  uploadFile: vi.fn(async (f: File) => ({ id: 'fid-' + f.name, name: f.name, mediaType: f.type || 'application/octet-stream' })),
 }))
 
 describe('Composer', () => {
@@ -444,6 +445,42 @@ describe('Composer image upload', () => {
 
   it('keeps the attach button enabled while thinking (mid-turn attachment allowed)', () => {
     render(<Composer thinking={true} onSend={() => {}} onStop={() => {}} />)
-    expect(screen.getByLabelText('添加图片')).not.toBeDisabled()
+    expect(screen.getByLabelText('添加附件')).not.toBeDisabled()
+  })
+})
+
+describe('Composer file upload', () => {
+  function dropFile(name: string, type: string) {
+    const file = new File(['data'], name, { type })
+    return { dataTransfer: { files: [file], items: [{ kind: 'file', type, getAsFile: () => file }] } }
+  }
+
+  it('a dropped non-image file becomes a 📎 file card, not textarea text', async () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropFile('report.pdf', 'application/pdf'))
+    expect(await screen.findByText(/report\.pdf/)).toBeTruthy()
+    expect(ta.value).toBe('')
+  })
+
+  it('sends files and clears them after submit', async () => {
+    const onSend = vi.fn()
+    render(<Composer thinking={false} onSend={onSend} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropFile('a.bin', 'application/octet-stream'))
+    await screen.findByText(/a\.bin/)
+    fireEvent.change(ta, { target: { value: '解析这个' } })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('解析这个', undefined, undefined, [expect.objectContaining({ name: 'a.bin' })])
+    expect(screen.queryByText(/a\.bin/)).toBeNull()
+  })
+
+  it('× removes a file card', async () => {
+    render(<Composer thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.drop(ta, dropFile('x.zip', 'application/zip'))
+    await screen.findByText(/x\.zip/)
+    fireEvent.click(screen.getByLabelText(/移除 x\.zip/))
+    expect(screen.queryByText(/x\.zip/)).toBeNull()
   })
 })

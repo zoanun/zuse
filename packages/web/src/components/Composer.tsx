@@ -3,7 +3,7 @@ import type { UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/p
 import { pastedLineCount, pastedLabel } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
-import { uploadImage, uploadedImageUrl } from '../state/manageApi.js'
+import { uploadImage, uploadedImageUrl, uploadFile } from '../state/manageApi.js'
 import { ImageLightbox } from './ImageLightbox.js'
 import { TextLightbox } from './TextLightbox.js'
 
@@ -32,13 +32,16 @@ interface PendingImage {
  *  text on every composer re-render). */
 interface PendingPaste { id: string; text: string; lines: number }
 
+/** A locally-staged non-image file: uploaded async, sent (as ref) on submit. */
+interface PendingFile { key: string; name: string; status: 'uploading' | 'done' | 'error'; ref?: UploadedFileRef }
+
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
 const PASTE_CHAR_THRESHOLD = 800
 const PASTE_NEWLINE_THRESHOLD = 2
 
-/** Imperative surface so a whole-page drop zone (Shell) can hand dropped image files to the composer. */
-export interface ComposerHandle { addImages: (files: File[]) => void }
+/** Imperative surface so a whole-page drop zone (Shell) can hand dropped image/other files to the composer. */
+export interface ComposerHandle { addImages: (files: File[]) => void; addFiles: (files: File[]) => void }
 
 /** Pull image Files out of a paste/drop payload — files first, then items (kind==='file', image/*). */
 export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
@@ -51,6 +54,19 @@ export function imageFilesFrom(dt: DataTransfer | null | undefined): File[] {
         const f = it.getAsFile()
         if (f) out.push(f)
       }
+    }
+  }
+  return out
+}
+
+/** Non-image files from a paste/drop payload (files imageFilesFrom would NOT take). */
+export function otherFilesFrom(dt: DataTransfer | null | undefined): File[] {
+  if (!dt) return []
+  const out: File[] = []
+  for (const f of Array.from(dt.files ?? [])) if (f && !f.type.startsWith('image/')) out.push(f)
+  if (out.length === 0 && dt.items) {
+    for (const it of Array.from(dt.items)) {
+      if (it.kind === 'file' && !it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) out.push(f) }
     }
   }
   return out
@@ -71,6 +87,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // Staged images awaiting send + an inline attach-error line (size/count/upload feedback).
   const [pending, setPending] = useState<PendingImage[]>([])
   const [pastes, setPastes] = useState<PendingPaste[]>([])
+  const [files, setFiles] = useState<PendingFile[]>([])
   const pasteSeqRef = useRef(0)
   const [attachError, setAttachError] = useState('')
   const keySeq = useRef(0)
@@ -165,11 +182,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     addFiles(files)
   }
 
+  // Stage + upload a batch of picked non-image files (attachments sent as `files` on submit).
+  function stageFiles(picked: File[]) {
+    for (const file of picked) {
+      const key = 'file-' + ++keySeq.current
+      setFiles((p) => [...p, { key, name: file.name, status: 'uploading' }])
+      uploadFile(file).then(
+        (ref) => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'done', ref } : it))),
+        () => setFiles((p) => p.map((it) => (it.key === key ? { ...it, status: 'error' } : it))),
+      )
+    }
+  }
+
+  function removeFile(key: string) { setFiles((p) => p.filter((it) => it.key !== key)) }
+
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = imageFilesFrom(e.clipboardData)
     if (files.length > 0) {
       e.preventDefault() // don't also paste the image as a data-URL string
       stage(files)
+      return
+    }
+    const otherFiles = otherFilesFrom(e.clipboardData)
+    if (otherFiles.length > 0) {
+      e.preventDefault()
+      stageFiles(otherFiles)
       return
     }
     // Long-text paste → card (CC threshold: >800 chars OR >2 newlines). Shorter paste: let it through.
@@ -187,32 +224,48 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     // else: no preventDefault → browser inserts it into the textarea normally.
   }
 
-  // Shell hosts a whole-page drop zone and forwards dropped image files here (recreated each render
-  // so `stage` closes over the current `thinking`/`pending`).
-  useImperativeHandle(ref, () => ({ addImages: stage }))
+  // Textarea drop target: image files → stage (uploadImage), other files → stageFiles (uploadFile).
+  // Mirrors Shell's whole-page drop zone for drops that land directly on the input.
+  function onDrop(e: React.DragEvent<HTMLTextAreaElement>) {
+    e.preventDefault()
+    const imgs = imageFilesFrom(e.dataTransfer)
+    const others = otherFilesFrom(e.dataTransfer)
+    if (imgs.length) stage(imgs)
+    if (others.length) stageFiles(others)
+  }
+
+  // Shell hosts a whole-page drop zone and forwards dropped image/other files here (recreated each
+  // render so `stage`/`stageFiles` close over the current `thinking`/`pending`/`files`).
+  useImperativeHandle(ref, () => ({ addImages: stage, addFiles: stageFiles }))
 
   const uploading = pending.some((p) => p.status === 'uploading')
   const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)
-  const canSend = (value.trim() !== '' || doneRefs.length > 0 || pastes.length > 0) && !uploading
+  const uploadingFiles = files.some((f) => f.status === 'uploading')
+  const doneFileRefs = files.filter((f) => f.status === 'done' && f.ref).map((f) => f.ref!)
+  const canSend = (value.trim() !== '' || doneRefs.length > 0 || pastes.length > 0 || doneFileRefs.length > 0) && !uploading && !uploadingFiles
 
   function clearPending() {
     for (const p of pending) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
     setPending([])
     setPastes([])
+    setFiles([])
     setAttachError('')
   }
 
   function removePaste(id: string) { setPastes((prev) => prev.filter((p) => p.id !== id)) }
 
   function submit() {
-    if (uploading) { setAttachError('图片上传中，请稍候'); return }
+    if (uploading || uploadingFiles) { setAttachError('附件上传中，请稍候'); return }
     const v = value.trim()
-    if (!v && doneRefs.length === 0 && pastes.length === 0) return
+    if (!v && doneRefs.length === 0 && pastes.length === 0 && doneFileRefs.length === 0) return
     const images = doneRefs.length ? doneRefs : undefined
+    const attachFiles = doneFileRefs.length ? doneFileRefs : undefined
     // Sending is allowed even while `thinking`: Shell routes it to a mid-turn steer.
-    // Omit the pastedTexts arg entirely when there are none, rather than passing `undefined` —
-    // callers/tests that assert onSend's exact arg list shouldn't see a phantom 3rd argument.
-    if (pastes.length) onSend(v, images, pastes.map((p) => ({ id: p.id, text: p.text })))
+    // Omit the pastedTexts/files args entirely when there are none, rather than passing `undefined` —
+    // callers/tests that assert onSend's exact arg list shouldn't see a phantom trailing argument.
+    if (pastes.length && attachFiles) onSend(v, images, pastes.map((p) => ({ id: p.id, text: p.text })), attachFiles)
+    else if (pastes.length) onSend(v, images, pastes.map((p) => ({ id: p.id, text: p.text })))
+    else if (attachFiles) onSend(v, images, undefined, attachFiles)
     else onSend(v, images)
     clearPending()
     setValue(''); setHistIdx(null)
@@ -300,11 +353,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           })}
         </div>
       ) : null}
+      {files.length > 0 ? (
+        <div className="attach-tray">
+          {files.map((f) => (
+            <div key={f.key} className={'paste-card' + (f.status === 'error' ? ' error' : '')} title={f.name}>
+              <span className="paste-card-icon" aria-hidden="true">📎</span>
+              <span className="paste-card-label">{f.name}{f.status === 'uploading' ? ' …' : ''}{f.status === 'error' ? ' (失败)' : ''}</span>
+              <button className="attach-remove" aria-label={`移除 ${f.name}`} onClick={() => removeFile(f.key)}>×</button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {attachError ? <div className="attach-error" role="alert">{attachError}</div> : null}
       <div className="composer">
         <button
           className="attach-btn"
-          aria-label="添加图片"
+          aria-label="添加附件"
           onClick={() => fileRef.current?.click()}
         >
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -314,10 +378,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
           multiple
           hidden
-          onChange={(e) => { addFiles(Array.from(e.target.files ?? [])); e.target.value = '' }}
+          onChange={(e) => {
+            const picked = Array.from(e.target.files ?? [])
+            const imgs = picked.filter((f) => f.type.startsWith('image/'))
+            const others = picked.filter((f) => !f.type.startsWith('image/'))
+            if (imgs.length) addFiles(imgs)
+            if (others.length) stageFiles(others)
+            e.target.value = ''
+          }}
         />
         <textarea
           ref={taRef}
@@ -325,6 +395,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           placeholder={thinking ? '插入消息到当前回合…' : '给 zuse 发消息…'}
           value={value}
           onPaste={onPaste}
+          onDrop={onDrop}
           onChange={(e) => { setValue(e.target.value); setHistIdx(null); setMenuDismissed(false) }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return
