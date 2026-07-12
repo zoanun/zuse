@@ -1,9 +1,12 @@
 import { mkdir, writeFile, rename, readFile, stat } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 
 /** Hard ceiling on a single upload: 25 MiB. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
+/** Hard ceiling on a single arbitrary-file upload: 50 MiB (wider than images — docs/archives). */
+export const FILE_MAX_BYTES = 50 * 1024 * 1024
 
 /** Default byte budget for the base64 read cache (64 MiB). Eviction is by total bytes, not count. */
 export const MAX_CACHE_BYTES = 64 * 1024 * 1024
@@ -21,6 +24,14 @@ export class TooLargeError extends Error {
   constructor() {
     super(`upload exceeds ${MAX_UPLOAD_BYTES} bytes`)
     this.name = 'TooLargeError'
+  }
+}
+
+/** Thrown when an arbitrary-file upload exceeds FILE_MAX_BYTES. → 413. */
+export class FileTooLargeError extends Error {
+  constructor() {
+    super(`file upload exceeds ${FILE_MAX_BYTES} bytes`)
+    this.name = 'FileTooLargeError'
   }
 }
 
@@ -65,6 +76,14 @@ const MEDIA_BY_EXT: Record<string, string> = Object.fromEntries(
  * no separator, no `..`, no drive letter. Ids that don't match are rejected before any join().
  */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/** Reduce an arbitrary client filename to a safe basename (no directory parts, no traversal). Runs on
+ *  both save and filePath so the two agree. Backslashes are normalized to '/' first so a Windows path
+ *  is stripped by posix basename regardless of host. Empty / '.' / '..' fall back to 'file'. */
+function safeFilename(name: string): string {
+  const b = basename((name ?? '').replace(/[\\/]+/g, '/')).trim()
+  return b === '' || b === '.' || b === '..' ? 'file' : b
+}
 
 /**
  * Stores user-uploaded images (I2). Files are written under a single uploads directory
@@ -153,5 +172,32 @@ export class UploadService {
     this.cache.set(id, entry)
     this.cacheBytes += newLen
     return entry
+  }
+
+  /**
+   * Persist an arbitrary uploaded file under `<uploadsDir>/<uuid>/<safeName>` — a per-upload uuid dir
+   * isolates it (no name collisions, no traversal out of the dir), while the original (sanitized)
+   * filename is preserved so its extension survives for the agent/skill that reads it. No MIME check.
+   * Written to a `.tmp` sibling then renamed. Returns the id + the actually-stored (safe) name.
+   */
+  async saveFile(bytes: Buffer, name: string): Promise<{ id: string; name: string }> {
+    if (bytes.length > FILE_MAX_BYTES) throw new FileTooLargeError()
+    const id = randomUUID()
+    const safe = safeFilename(name)
+    const dir = join(this.uploadsDir, id)
+    await mkdir(dir, { recursive: true })
+    const finalPath = join(dir, safe)
+    const tmpPath = `${finalPath}.tmp`
+    await writeFile(tmpPath, bytes)
+    await rename(tmpPath, finalPath)
+    return { id, name: safe }
+  }
+
+  /** Absolute path of a stored arbitrary file. Validates the id shape (no disk access, no traversal),
+   *  re-applies safeFilename so a caller-passed name can't smuggle a separator. Used by
+   *  expandAttachments to put the path in the model-facing note. */
+  filePath(id: string, name: string): string {
+    if (!UUID_RE.test(id)) throw new InvalidUploadIdError(id)
+    return join(this.uploadsDir, id, safeFilename(name))
   }
 }

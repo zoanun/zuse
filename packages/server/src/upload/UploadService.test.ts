@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { UploadService, UnsupportedMediaError, TooLargeError, MAX_UPLOAD_BYTES } from './UploadService.js'
+import {
+  UploadService,
+  UnsupportedMediaError,
+  TooLargeError,
+  MAX_UPLOAD_BYTES,
+  FileTooLargeError,
+  FILE_MAX_BYTES,
+} from './UploadService.js'
 
 // A 1x1 transparent PNG (real header) — used to check bytes round-trip exactly.
 const PNG = Buffer.from(
@@ -144,5 +151,47 @@ describe('UploadService (I2)', () => {
     await s.readBase64(id) // read succeeds but must NOT be cached (would blow the budget)
     rmSync(join(dir, `${id}.png`), { force: true })
     await expect(s.readBase64(id)).rejects.toThrow() // not cached → disk read fails
+  })
+})
+
+function svc() {
+  return new UploadService(mkdtempSync(join(tmpdir(), 'zuse-up-')))
+}
+
+describe('UploadService.saveFile (I5b)', () => {
+  it('stores arbitrary bytes under <uuid>/<name> and filePath resolves to it', async () => {
+    const s = svc()
+    const { id, name } = await s.saveFile(Buffer.from('hello'), 'report.pdf')
+    expect(name).toBe('report.pdf')
+    const p = s.filePath(id, name)
+    expect(existsSync(p)).toBe(true)
+    expect(readFileSync(p).toString()).toBe('hello')
+    expect(p.replace(/\\/g, '/')).toContain(`/${id}/report.pdf`)
+  })
+
+  it('accepts any media type (no image whitelist)', async () => {
+    const s = svc()
+    const { name } = await s.saveFile(Buffer.from('a,b\n1,2'), 'data.csv')
+    expect(name).toBe('data.csv')
+  })
+
+  it('sanitizes path-traversal names to a safe basename', async () => {
+    const s = svc()
+    const { id, name } = await s.saveFile(Buffer.from('x'), '../../etc/passwd')
+    expect(name).toBe('passwd')
+    expect(s.filePath(id, name)).toContain('passwd')
+    const bad = await s.saveFile(Buffer.from('x'), '..')
+    expect(bad.name).toBe('file')
+  })
+
+  it('rejects oversize files with FileTooLargeError', async () => {
+    const s = svc()
+    await expect(s.saveFile(Buffer.alloc(FILE_MAX_BYTES + 1), 'big.bin')).rejects.toBeInstanceOf(FileTooLargeError)
+  })
+
+  it('filePath is idempotent w.r.t. the stored (already-safe) name', async () => {
+    const s = svc()
+    const { id, name } = await s.saveFile(Buffer.from('x'), 'a.txt')
+    expect(s.filePath(id, name)).toBe(s.filePath(id, name))
   })
 })
