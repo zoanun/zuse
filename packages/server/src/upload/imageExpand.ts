@@ -3,20 +3,6 @@ import type { UploadService } from './UploadService.js'
 
 type Block = Message['content'][number]
 
-/** Pasted text longer than this (chars) is truncated in the model-facing block — matches cc-haha's
- *  TRUNCATION_THRESHOLD. The full text still lives on the attachment (bubble/lightbox show all). */
-const PASTE_TRUNCATE_THRESHOLD = 10000
-const PASTE_PREVIEW_HALF = 500 // chars kept at head and tail (cc-haha PREVIEW_LENGTH / 2)
-
-/** CC-style truncation: keep head + tail, replace the middle with a line-count marker. */
-function truncateForModel(t: string): string {
-  if (t.length <= PASTE_TRUNCATE_THRESHOLD) return t
-  const head = t.slice(0, PASTE_PREVIEW_HALF)
-  const tail = t.slice(-PASTE_PREVIEW_HALF)
-  const lines = (t.slice(PASTE_PREVIEW_HALF, -PASTE_PREVIEW_HALF).match(/\r\n|\r|\n/g) || []).length
-  return `${head}\n[… ${lines} lines truncated …]\n${tail}`
-}
-
 /** 发送前物化附件（两条图片路径统一经此展开）：对每条消息的 attachments 构造前置块，插到
  *  content 前，产出请求专用副本（原消息不被 mutate）。
  *  - route==='direct'（视觉主模型直传）→ 每张读盘为一个 base64 image 块；读不出的图跳过。
@@ -63,8 +49,9 @@ export function makeExpandAttachments(upload: UploadService): (messages: Message
     if (pasted.length > 0) {
       const multi = pasted.length > 1
       const header = `[以下是我粘贴的 ${pasted.length} 段文本：]\n\n`
+      // cc-haha 语义：粘贴文本按全文喂给模型（截断只是显示层的事，Web 端由折叠卡片/TextLightbox 承担）。
       const body = pasted
-        .map((t, i) => { const shown = truncateForModel(t); return multi ? `▍粘贴文本 ${i + 1}\n${shown}` : shown })
+        .map((t, i) => (multi ? `▍粘贴文本 ${i + 1}\n${t}` : t))
         .join('\n\n')
       // 收尾边界：粘贴内容与紧随其后的用户问题（带 [时间戳] 前缀）之间加显式围栏，避免模型
       // 把问题的时间戳误当成最后一段粘贴文本的一部分。

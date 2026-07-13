@@ -282,22 +282,14 @@ describe('makeExpandAttachments (I2)', () => {
     expect(content[3]).toEqual({ type: 'text', text: 'all' })
   })
 
-  it('truncates an oversized pasted segment CC-style; attachment.text stays full', async () => {
+  it('an oversized pasted segment is sent to the model in FULL (cc-haha semantics — no model-side truncation)', async () => {
     const expand = makeExpandAttachments({ readBase64: async () => ({ data: '', mediaType: '' }) } as unknown as UploadService)
     const huge = 'A'.repeat(600) + '\n'.repeat(7) + 'B'.repeat(600) + 'C'.repeat(10000)
     const msg: Message = { ...textMsg('q'), attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: huge }] }
     const note = ((await expand([msg]))[0]!.content[0] as { type: 'text'; text: string }).text
-    expect(note.length).toBeLessThan(huge.length)
-    expect(note).toContain('lines truncated …]')
+    expect(note).toContain(huge)          // whole text reaches the model — middle NOT dropped
+    expect(note).not.toContain('truncated')
     expect(note).toContain('以下是我粘贴的 1 段文本')
     expect(msg.attachments![0]!.text).toBe(huge) // not mutated
-  })
-
-  it('a short pasted segment is not truncated', async () => {
-    const expand = makeExpandAttachments({ readBase64: async () => ({ data: '', mediaType: '' }) } as unknown as UploadService)
-    const msg: Message = { ...textMsg('q'), attachments: [{ id: 'p1', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted', text: 'short' }] }
-    const note = ((await expand([msg]))[0]!.content[0] as { type: 'text'; text: string }).text
-    expect(note).toContain('short')
-    expect(note).not.toContain('truncated')
   })
 })
