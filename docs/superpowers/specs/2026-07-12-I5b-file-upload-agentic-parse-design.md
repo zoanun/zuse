@@ -90,18 +90,22 @@ core `MessageAttachment` 同步加 `'file'`。
 - **Message.tsx**：气泡渲染 `route:'file'` 的附件为 `📎 <name>` 卡片（复用 `.paste-card` 外观，无 lightbox）。
 - **reducer/types**：`user-send`/`steer-queued`/`pendingSteers`/`user-echo` 的 attachments 已是 `MessageAttachment[]`，`route:'file'` 自动兼容，无需改结构。
 
-## I5a 小改：粘贴文本过大截断（照 CC）
+## I5a 小改：粘贴文本过大——按 cc 真实语义，模型拿全文
 
-在 `imageExpand.ts` 的 **pasted 分支**，对每段粘贴文本 `t`：若 `t.length > PASTE_TRUNCATE_THRESHOLD`（**10000**，同 cc-haha `TRUNCATION_THRESHOLD`），发给模型的正文改为（截断标记也用英文，模型侧一致）：
-```
-<前 500 字符>
-[… <M> lines truncated …]
-<后 500 字符>
-```
-- 首尾各 `PASTE_PREVIEW_HALF = 500`（同 cc `PREVIEW_LENGTH/2`）。
-- `M` = 被截中段（`t.slice(500, -500)`）的换行数（`pastedLineCount`）。
-- **attachment.text 仍存全文**（不截）——气泡卡片行数、点开 TextLightbox 看全文都不受影响。截断只作用于"喂给模型的文本块"。
-- 阈值/首尾常量放 server（`imageExpand.ts` 或相邻），因为截断只发生在发送物化处。
+> **2026-07-12 修正**：初版误读了 cc-haha，做成了"砍发给模型的文本"（前 500 + `[… M lines truncated …]` + 后 500）。
+> 复核 cc-haha 源码后确认其真实语义相反 —— **截断纯属输入框显示层**：`maybeTruncateInput`（`inputPaste.ts`）
+> 把中段存进 `pastedContents[N]`，输入框只显示紧凑占位符 `[...Truncated text #N...]`；**提交时 `expandPastedTextRefs`
+> （`history.ts`）把占位符原样还原成全文**，`handlePromptSubmit.ts` 里 `finalInput` = 完整全文才发给模型。
+> 中段一个字都不丢。（processUserInput 的 `applyTruncation` 只作用于 hook 输出，与用户粘贴无关。）
+
+因此 `imageExpand.ts` 的 **pasted 分支不做任何模型侧截断，直接把 `attachment.text` 全文喂给模型**。已删除
+`truncateForModel` / `PASTE_TRUNCATE_THRESHOLD` / `PASTE_PREVIEW_HALF`。
+
+- 我们 Web 端的"显示层截断"由 I5a 的粘贴管道天然承担：粘贴长文折成卡片、textarea 不刷裸文本，
+  点开 TextLightbox 看全文——等价于 cc 的输入框占位符 + 展开，不需要在模型侧另做截断。
+- cc 是本地 CLI，唯一约束是模型 context window，它选择"信任大 context、全喂"；我们跟随该语义。
+  超大粘贴吃 token/爆窗口的兜底，日后若要做，走"落盘 + 给路径让模型按需 Read"（同上传文件路径），
+  而不是无条件砍中段丢信息。
 
 ## "无法解析"
 

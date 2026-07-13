@@ -409,6 +409,8 @@ Expected: FAIL（'file' 分支缺失；截断未实现）。
 
 - [ ] **Step 3: 实现**
 
+> **⚠️ 已废止（2026-07-12）**：下面 3a/3b 的"模型侧截断"（`truncateForModel` + 两个常量）误读了 cc-haha —— cc 的截断只作用于输入框显示，提交时展开成全文喂给模型。本仓库随后删除了这段模型侧截断，pasted 分支改为发全文。3a/3b 保留仅作历史记录，勿照抄。详见 spec 的"2026-07-12 修正"节。
+
 3a. 在 `imageExpand.ts` 顶部（`makeExpandAttachments` 之前）加常量 + 截断 helper：
 ```ts
 /** Pasted text longer than this (chars) is truncated in the model-facing block — matches cc-haha's
