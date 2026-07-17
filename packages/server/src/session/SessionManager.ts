@@ -41,7 +41,7 @@ import {
   type Usage,
   type ErrorCategory,
 } from '@zuse/core'
-import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug, createAgentTool } from '@zuse/tools'
+import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug } from '@zuse/tools'
 import type {
   SessionEvent,
   SessionSnapshot,
@@ -50,6 +50,7 @@ import type {
   SessionCheckpoint,
   SnapshotStore,
 } from './events.js'
+import { SESSION_CAPABILITY_TOOLS, type SessionCapabilityContext } from './sessionCapabilities.js'
 import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
@@ -270,21 +271,24 @@ export class SessionManager {
       this.totalUsage = usage
     }
 
-    // Wire the Agent (sub-agent) tool here, not in createSession: it needs the LIVE model
-    // client (failover hot-swaps this.client), the manager's permission flow, and the shared
-    // sessionAllow — all private to the manager. getClient/getSystemPrompt are getters so a
-    // failover-swapped client and the current prompt are always picked up at call time.
-    // onBackground is intentionally omitted: a runInBackground sub-agent is awaited inline
-    // (it still runs; it just isn't detached) until the server grows a message-injection seam.
-    if (!this.registry.get('Agent')) {
-      this.registry.register(createAgentTool({
-        registry: this.registry,
-        getClient: () => this.client,
-        settings: this.settings,
-        getSystemPrompt: () => this.systemPrompt,
-        sessionAllow: this.sessionAllow,
-        canUseTool: this.canUseTool,
-      }))
+    // Register session-scoped tools (Agent, TodoWrite) from the capability list. These need the
+    // manager's private state — the LIVE model client (failover hot-swaps this.client), the
+    // permission flow, the shared sessionAllow, the todo sink — so they wire here, not in
+    // createSession. getClient/getSystemPrompt are thunks so a failover-swapped client and the
+    // current prompt are picked up at call time. The `registry.get(name)` guard keeps this
+    // idempotent (a re-used registry already holding a tool isn't double-registered).
+    const capabilityCtx: SessionCapabilityContext = {
+      registry: this.registry,
+      getClient: () => this.client,
+      getSystemPrompt: () => this.systemPrompt,
+      settings: this.settings,
+      sessionAllow: this.sessionAllow,
+      canUseTool: this.canUseTool,
+      setTodos: (todos) => this.setTodos(todos),
+    }
+    for (const make of SESSION_CAPABILITY_TOOLS) {
+      const tool = make(capabilityCtx)
+      if (!this.registry.get(tool.name)) this.registry.register(tool)
     }
   }
 
