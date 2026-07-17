@@ -423,3 +423,5 @@ export const BashTool: Tool = {
     })
   },
 }
+
+export const toolModule = { make: () => BashTool } satisfies import('./tool-module.js').ToolModule

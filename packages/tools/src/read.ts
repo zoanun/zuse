@@ -146,3 +146,5 @@ export const ReadTool: Tool = {
     return { output: rendered.join('\n') + note, isError: false }
   },
 }
+
+export const toolModule = { make: () => ReadTool } satisfies import('./tool-module.js').ToolModule

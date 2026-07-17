@@ -270,3 +270,5 @@ export const WebFetchTool: Tool = {
     return { output, isError: false }
   },
 }
+
+export const toolModule = { make: () => WebFetchTool } satisfies import('./tool-module.js').ToolModule

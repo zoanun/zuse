@@ -159,3 +159,5 @@ export const EditTool: Tool = {
     return { output: `Edited ${input.file_path} (${replaced} replacement(s)).`, isError: false }
   },
 }
+
+export const toolModule = { make: () => EditTool } satisfies import('./tool-module.js').ToolModule

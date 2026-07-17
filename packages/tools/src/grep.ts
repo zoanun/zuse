@@ -279,3 +279,5 @@ export const GrepTool: Tool = {
     })
   },
 }
+
+export const toolModule = { make: () => GrepTool } satisfies import('./tool-module.js').ToolModule

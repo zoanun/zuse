@@ -159,3 +159,5 @@ export const GlobTool: Tool = {
     return { output: shown.map((m) => m.rel).join('\n') + note, isError: false }
   },
 }
+
+export const toolModule = { make: () => GlobTool } satisfies import('./tool-module.js').ToolModule

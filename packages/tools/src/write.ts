@@ -98,3 +98,5 @@ export const WriteTool: Tool = {
     return { output: `Wrote ${bytes} bytes to ${input.file_path}`, isError: false }
   },
 }
+
+export const toolModule = { make: () => WriteTool } satisfies import('./tool-module.js').ToolModule
