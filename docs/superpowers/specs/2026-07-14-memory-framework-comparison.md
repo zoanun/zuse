@@ -134,3 +134,80 @@
 - **未跑 live demo**：如需，最小成本顺序建议 = mem0（Ollama+Chroma 全本地，最贴合）> Letta（`--backend local`）> Graphiti（要 Neo4j，最重）。喂同一组 Zuse 真实用例（跨会话事实召回 / 项目隔离 / 标题补全 / 长期偏好），按本表 10 维复评召回质量。
 - **许可证/版本**：集成前实测各仓库 LICENSE 与当前主版本。
 - **召回质量**：本文的 dim 1 分数是范式推断，真实负载下的召回率需 demo 实测才能定论。
+
+---
+
+# 附录 A：四框架机制深挖 + 记忆组织模式 + Zuse 映射与引入代价
+
+> 2026-07-14 补。每框架由独立研究 agent 用 context7 + web 源佐证产出，机制细节可回溯；Zuse 映射与代价分析基于逐行读源码的基线。**通用警告：各家 benchmark 互相注水、且 LoCoMo/LongMemEval 只测"从对话检索"、不测"agent 是否越用越会干活"——不要按分数选型。**（Zep 84%→75.14%→Mem0 复现 58.44% 的公案即例。）
+
+## A.1 记忆组织模式（跨框架抽象出的"好想法"）
+
+| 模式 | 谁在用 | 一句话 | Zuse 有没有 |
+|---|---|---|---|
+| **自动事实抽取** | Mem0 / Cognee / Zep / Letta(agent) | 从对话自动蒸馏出"事实"入库 | ⚠️ 半有：靠模型经工具**显式** save，非被动全自动 |
+| **双时态失效** | Zep(招牌) / Mem0 v3(ADD-only+expiration) / Cognee(TEMPORAL) | 事实变了不删旧的，关旧的有效期+开新边，可点时间查询 | ❌ 只有"N 天前"标注 + 硬删除 |
+| **图/关系组织** | Zep / Cognee / Mem0(实体层) | 实体+关系边，支持多跳"X 依赖啥" | ❌ 扁平分型行，无关系 |
+| **向量语义检索** | 全部 | embedding 相似度召回"意思相近" | ❌ FTS 关键词 + LIKE |
+| **混合检索(向量+BM25+图, RRF/rerank 融合)** | Zep / Cognee / Mem0 | 多路召回融合排序 | ⚠️ 仅 FTS + LIKE 兜底 |
+| **分层记忆 + 上下文分页 + 自编辑** | Letta/MemGPT | in-context core block ↔ 外部 archival，agent 自己换页、自动压缩 | ⚠️ 部分：全量注入 MEMORY.md + 70% 触发巩固，非按需分页 |
+| **自改进/反馈重加权** | Cognee(memify/FEEDBACK) / SimpleMem | 用反馈重加权图/检索，越用越准 | ❌ 无 |
+| **巩固/去重/dreaming** | Zuse / Mem0(dedup) / Cognee(memify) | 定期合并去重压缩 | ✅ autoDream-lite（≥70% 且 ≥24h，DELETE/SAVE 操作行，删>20 整体放弃） |
+| **情景记忆(搜历史对话)** | Zuse / Letta(conversation_search) / Zep(episodic node) | 检索过去的对话本身 | ✅ recall / episode-store 对转录 FTS |
+| **可审计 CRUD** | Zuse | 人能直接列/查/改/删每条记忆 | ✅ M1 面板 + MEMORY.md 可读投影 |
+
+**Zuse 的形状**：强在**巩固 / 情景召回 / 可审计 / 分型作用域 / 零依赖离线**；弱在**语义(向量)检索 / 时间有效性 / 图关系 / 按需分页(扩展性) / 自改进**。
+
+## A.2 各框架机制 + 优缺点（源佐证见 §Sources）
+
+### Mem0（向量事实层，~48K star，最流行）
+- **组织**：一条"记忆"= 一句蒸馏事实 + embedding + metadata（id/created/updated/categories/expiration），按 `user_id/agent_id/run_id` 作用域；扁平事实 + 并联实体图。
+- **机制**：`add()` = 抽取(单次 LLM 蒸馏事实)→去重→存。**v3 改为 hash 去重 + ADD-only**（只加不改删，靠相关性+时间提升+expiration 顶出当前值）；v2/OSS 曾用 LLM 判 ADD/UPDATE/DELETE/NOOP。检索 `search()` = 向量+BM25+实体+时间提升融合成一个 score（`rerank` 默认关）。历史存本地 SQLite。
+- **优**：省 token；后端灵活可自托管(Apache-2.0)；v3 实体图不再需外部图库；生态大。
+- **缺**：每次写 = 一次 LLM 调用(延迟+成本)；抽取质量受模型限；**图能力/分析历史长期锁 Pro $249/mo**；2026-04 披露过高危 SQL/Cypher 注入 CVE(CVSS 8.1，须查补丁)；ADD-only 会膨胀条数；benchmark 争议。
+- **本地**：**能全离线**(Ollama LLM+embedder + Chroma/Qdrant/in-mem + 本地 SQLite)。Python 为主，**有 Node client**。
+
+### Zep / Graphiti（双时态知识图谱，时间推理最强）
+- **组织**：三层节点(Episodic 原始单元 / Entity 实体 / Community 簇)；边分 episodic(`MENTIONS`) 与 entity(`RELATES_TO`，边上挂 fact 字符串+时间戳)；`group_id`/按用户建图 + thread 层。
+- **机制**：每条 episode 触发一串 LLM 调用(实体抽取→节点去重→关系抽取→逐边时间归结)。**双时态**：event 轴 `valid_at`/`invalid_at` + ingestion 轴 `created_at`/expiry；事实变了**关旧边有效期+开新边**，不删不改，可点时间/回溯查询。存储 Neo4j(默认)/FalkorDB/Neptune（**嵌入式 Kuzu 已废弃**）。检索 = 向量+BM25+图遍历，RRF 融合(+可选 cross-encoder)，**查询期无 LLM** → 亚秒。
+- **优**：原生时间推理("T 时刻什么为真")；多跳关系查询；非破坏式更新有审计；检索快；后端/LLM 灵活。
+- **缺**：**摄入贵**——每条消息多次 LLM 调用(Mem0 论文测 Graphiti ~60 万 token/会话 vs Mem0 ~1764，Zep 有异议)；benchmark 公案；**Zep 本体云、OSS 只有 Graphiti 裸核**；依赖重(图库+搜索索引+LLM)；单用户是过度设计。
+- **本地**：Graphiti(**Python-only**)可全离线接 OpenAI 兼容端点(Ollama/vLLM)，但**图库服务绕不开**(FalkorDB Lite / Neo4j)，无 server-less 正路。
+
+### Letta / MemGPT（分层记忆 + agent 自编辑，是运行时）
+- **组织**：in-context **core memory blocks**(带 label/value/description/字符 limit 默认 5000) + 外部 **recall**(全历史,`conversation_search`) + **archival**(读写向量库,打 tag,无限) + **files**(大文档)。
+- **机制**：MemGPT 把 context 当 RAM、外部当磁盘，agent 自己换页；满了 **compact**(滑窗+可用小模型摘要)。**自编辑靠工具**(`memory_insert/replace/rethink`、`archival_memory_insert/search`、`conversation_search`)，模型自己决定何时写。状态存 **Postgres + pgvector**。
+- **优**：agent 自管、持久 persona/user；为长时会话而生(自动压缩+分页);共享 block 支持多 agent;可视可审(ADE)。
+- **缺**：**是完整有状态 agent 运行时,不是可插拔 store**——接它=让它接管 agent 循环/工具/状态,迁移**2–6 周**、锁定高;**与已有 agent 循环冲突**;需 Postgres+pgvector、上手陡;写记忆吃推理 token;"模型没存就没了"。server 是 Python(**有 TS client**)。
+- **本地**：`--backend local` 内嵌状态(但**不使推理本地**,要接 Ollama)；或 Docker+Postgres。
+
+### Cognee（图+向量混合，全嵌入式栈——最贴合 local-first）
+- **组织**：知识图谱(实体/关系节点边) + 同源向量 embedding 的**混合**;ECL(Extract→Cognify→Load)管线;可选 OWL 本体;**~14+ 检索模式**(GRAPH_COMPLETION 默认 / RAG / CHUNKS / INSIGHTS / CYPHER / TEMPORAL / FEEDBACK…)。
+- **机制**：`cognee.add()` 入原始数据 → `cognee.cognify()` 跑(分类→分块→LLM 抽 KnowledgeGraph→摘要→存 DataPoints) → `cognee.search(query, query_type)`。**存储默认全嵌入式：SQLite + LanceDB(向量) + Kuzu(图)，文件级、进程内、无 server**(可换 Neo4j/Postgres/Qdrant)。`memify()` 后处理重加权/剪枝(内部部分未证)。
+- **优**：**全嵌入式本地栈,零基建**;图+向量混合多跳强;每层可换、无锁定;检索面广。
+- **缺**：cognify 每次摄入需 LLM+embedder(贵、偏批量);**核心是 Python**(`@cognee/cognee-ts` 疑为薄客户端,非全端口);成熟度/社区小于 mem0(~12K star)、文档滞后;依赖多(LanceDB+Kuzu+SQLite+rdflib+FastAPI);benchmark 自证。
+- **本地**：**能全离线**(Ollama LLM+embedder + 默认嵌入式三件套)。Python 3.10–3.14。**Node/TS 无法在进程内嵌入 cognify 核**——只能起它的 FastAPI server 走 HTTP / 用 MCP。
+
+## A.3 若 Zuse 引入，各要付什么代价（本文核心）
+
+> 三条贯穿性的硬代价，先摆前面：
+> 1. **语言错配**：Zuse 是 Node/TS + 进程内 `better-sqlite3`。这四家的**引擎核都是 Python**(仅 mem0 有可用 Node client)。除 mem0 外,要用就得**起一个 Python 边车/服务**——Zuse 干净的单进程 Node daemon 就没了。这是"接入 X"话术最爱掩盖的成本。
+> 2. **几乎都要 embedder + 每次写一次 LLM**：除"双时态失效"这一个纯本地想法外,其余能力都引入 embedding 依赖或 write 时 LLM 调用。Zuse 现在的**零 embedding FTS** 是真实架构资产。
+> 3. **benchmark 不能作为选型依据**(见顶部警告)。
+
+| 想吸收的能力 | 借自 | 在 Zuse 的做法 | 代价 | 值不值(单用户/本地/Node) |
+|---|---|---|---|---|
+| **双时态软失效** | Zep | 加 `supersededBy?`/`invalidAt?` 列;过时记忆软失效(投影折叠/降权)而非硬删;复用现有"写入时矛盾轻推 + 巩固"管线 | **低**:一个 migration + 投影改动 + 巩固判定微调;**纯本地、零新依赖、纯 TS** | ✅ **最划算**,补最弱维 |
+| **可选向量召回** | mem0/Cognee | 在**已有 `MemoryStore` 接口**后并列向量 provider,仅当配了本地 embedder 才启用,默认仍 FTS | **中高**:引入 embedder(Ollama 进程/模型) + 向量索引(better-sqlite3 的 sqlite-vec 可留在进程内,避免起 Qdrant) + save 时算 embedding | ⚠️ 仅当"语义漏召回"成真实痛点;**必须可选、非默认** |
+| **图/关系(多跳)** | Zep/Cognee | 要么起图库(破 local-first),要么在 sqlite 里自建实体表 + write 时 LLM 抽关系 | **高**:图库依赖 or 大 schema 改 + 每次写多次 LLM | ❌ 单用户编码助手多跳查询罕见,不值 |
+| **按需检索式注入(替代全量注入)** | Letta | 从"每回合全量注入 MEMORY.md"改为"按当前上下文检索只喂相关" | **中高**:改记忆进 prompt 的方式;丢"模型每回合看得见全部"的确定性/简单性 | ⏳ **真正的长期天花板**,但记忆量小时不咬人,现在不做 |
+| **被动自动抽取** | mem0 | 回合末一次抽取步从对话提候选记忆 | **中**:每回合/会话一次 LLM + 去重;且冲突 Zuse 的"显式+可审计"哲学 | ❌ 建议不做,显式模型对单用户更可信 |
+| **自改进/反馈重加权** | Cognee | 用 M1 的编辑/删除信号重加权检索 | **中**:需先有向量层才有意义 | ⏳ 依赖向量层,靠后 |
+
+**直接把某框架当 store 用的代价小结**：
+- **mem0**：唯一有 Node client、能"可替换 store"接进已有 `MemoryStore` 接口的——但仍拖 embedder + 向量库,破"无外部依赖"。至多做可选增强,不设默认。
+- **Zep/Graphiti**：Python-only + 图库服务绕不开 → 破 local-first + 起 Python 边车。**排除。**
+- **Letta**：是 agent 运行时、想接管 core 引擎循环,与 `packages/core` 架构冲突。**排除。**
+- **Cognee**：最贴合 local-first(全嵌入式),但**核是 Python、Node 只能走 HTTP/MCP 边车** → 破"单进程 Node"。是"若哪天要引外部框架"的首选,但没在硬约束下**显著超过**现状零依赖 FTS。
+
+**结论(不变,但更有据)**：继续自研。唯一低代价、纯本地、纯 TS、补最弱维的改进 = **双时态软失效**;其余能力要么引依赖、要么起 Python 边车、要么改架构,对单用户本地 Node 工具都不划算。真要动手先做软失效;要不要上可选向量层,等"语义漏召回"成真实痛点再说(那时先起 mem0/Cognee + Ollama 的最小 demo 实测召回率再定)。
