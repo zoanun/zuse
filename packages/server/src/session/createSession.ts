@@ -16,7 +16,6 @@ import {
 } from '@zuse/core'
 import {
   createDefaultRegistry,
-  createTodoWriteTool,
   getShellLabel,
   scanSkills,
   createSnapshotStore,
@@ -109,16 +108,14 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     skills: scanSkills(home, cwd).filter((s) => !disabledSkills.has(s.name)),
   })
 
-  // late-bind：TodoWrite.onUpdate 要回调到下面才构造的 manager（镜像 TUI 的 ref 套路）。
-  let mgr!: SessionManager
-  registry.register(createTodoWriteTool({ onUpdate: (todos) => mgr.setTodos(todos) }))
   // daemon-provided extra tools (B4 MCP server tools + B3 Lsp/LspInstall). Best-effort —
   // a bad registration must not break session construction.
   try { opts.registerExtraTools?.(registry) } catch (err) {
     console.warn(`[zuse-server] registerExtraTools 失败:${err instanceof Error ? err.message : String(err)}`)
   }
-  // 注：Agent（子代理）工具由 SessionManager 构造时自行注册 —— 它需反向访问 manager 的
-  // live client（failover 会热替换）/权限流/sessionAllow，放在 manager 内闭包最自然。
+  // 注：会话级工具（Agent 子代理 + TodoWrite）由 SessionManager 构造时经能力清单
+  // （SESSION_CAPABILITY_TOOLS）统一注册 —— 它们需反向访问 manager 的 live client（failover
+  // 会热替换）/权限流/sessionAllow/todo 汇聚点，放在 manager 内构造最自然。
   // ScheduleWakeup（B2）仍未接 —— 它需要把唤醒消息注入会话的回调，建议并入 C1 cron 一起做。
 
   // Prompt sections = the read-only file layers (SYSTEM.md/ZUSE.md/MEMORY.md), plus the active
@@ -142,7 +139,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
 
   const snapshotStore = opts.snapshotStore ?? createSnapshotStore(cwd)
 
-  mgr = new SessionManager({
+  const mgr = new SessionManager({
     sessionId,
     cwd,
     client,
