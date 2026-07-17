@@ -287,7 +287,14 @@ export class SessionManager {
     }
     for (const make of SESSION_CAPABILITY_TOOLS) {
       const tool = make(capabilityCtx)
-      if (!this.registry.get(tool.name)) this.registry.register(tool)
+      if (this.registry.get(tool.name)) {
+        // Fresh registries never hit this. If the name is already taken — e.g. an extra tool
+        // from registerExtraTools (which now runs before this loop) claimed it — skip but warn:
+        // silently shadowing a built-in session tool would be undebuggable.
+        console.warn(`[zuse-server] 会话工具 ${tool.name} 名称已被占用，跳过内置注册（可能被 registerExtraTools 的工具遮蔽）`)
+        continue
+      }
+      this.registry.register(tool)
     }
   }
 

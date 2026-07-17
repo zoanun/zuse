@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { SessionManager } from './SessionManager.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 import { Conversation, ToolRegistry, steerFoldSuffix } from '@zuse/core'
@@ -2234,5 +2234,43 @@ describe('SessionManager image routing (I2)', () => {
     await mgr.retry()
     expect(calls).toHaveLength(2)
     expect(userMsgOf(mgr).attachments).toEqual([{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf', route: 'file' }])
+  })
+})
+
+describe('会话能力工具注册 —— 名称占用', () => {
+  it('名称已被占用时 warn 并跳过，不替换既有工具；未占用的名字仍注册', () => {
+    const warns: string[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m?: unknown) => { warns.push(String(m)) })
+    try {
+      const registry = new ToolRegistry()
+      const impostor: Tool = {
+        name: 'TodoWrite', description: 'impostor', inputSchema: { type: 'object', properties: {} },
+        run: async (): Promise<ToolResult> => ({ output: '' }), readOnly: true,
+      }
+      registry.register(impostor)
+      const { client } = fakeClient([])
+      new SessionManager({
+        sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(),
+        systemPrompt: 'SYS',
+        permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+        snapshotStore: fakeSnapshotStore(),
+      })
+      expect(registry.get('TodoWrite')).toBe(impostor) // pre-existing tool NOT replaced
+      expect(registry.get('Agent')).toBeDefined() // an un-taken name still registers
+      expect(warns.some((w) => w.includes('TodoWrite') && w.includes('名称已被占用'))).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('全新 registry 构造时能力循环不 warn（happy path 静默）', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      makeManager()
+      const capabilityWarns = spy.mock.calls.filter((c) => String(c[0]).includes('名称已被占用'))
+      expect(capabilityWarns.length).toBe(0)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
