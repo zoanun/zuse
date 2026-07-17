@@ -29,14 +29,7 @@ export interface SessionCapabilityContext {
  * ScheduleWakeup 待 C1（需 ctx 加「注入消息+触发回合」的能力）。
  */
 export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => Tool> = [
-  (ctx) =>
-    createAgentTool({
-      registry: ctx.registry,
-      getClient: ctx.getClient,
-      settings: ctx.settings,
-      getSystemPrompt: ctx.getSystemPrompt,
-      sessionAllow: ctx.sessionAllow,
-      canUseTool: ctx.canUseTool,
-    }),
+  // ctx supplies exactly AgentToolDeps' fields (plus setTodos, which createAgentTool ignores).
+  (ctx) => createAgentTool(ctx),
   (ctx) => createTodoWriteTool({ onUpdate: ctx.setTodos }),
 ]

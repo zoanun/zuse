@@ -271,12 +271,11 @@ export class SessionManager {
       this.totalUsage = usage
     }
 
-    // Register session-scoped tools (Agent, TodoWrite) from the capability list. These need the
-    // manager's private state — the LIVE model client (failover hot-swaps this.client), the
-    // permission flow, the shared sessionAllow, the todo sink — so they wire here, not in
-    // createSession. getClient/getSystemPrompt are thunks so a failover-swapped client and the
-    // current prompt are picked up at call time. The `registry.get(name)` guard keeps this
-    // idempotent (a re-used registry already holding a tool isn't double-registered).
+    // Register session-scoped tools (Agent, TodoWrite) from the capability list. They wire here,
+    // not in createSession, because they need manager-private state — the live client, the
+    // permission flow, the shared sessionAllow, the todo sink (see SessionCapabilityContext for
+    // per-field semantics). The `registry.get(name)` guard keeps this idempotent (a re-used
+    // registry already holding a tool isn't double-registered).
     const capabilityCtx: SessionCapabilityContext = {
       registry: this.registry,
       getClient: () => this.client,
@@ -1277,11 +1276,10 @@ export class SessionManager {
   }
 
   /**
-   * Mirror the model's todo list into session state and notify subscribers. Public
-   * seam: the SessionManager receives a pre-built registry and does not own the
-   * TodoWrite tool, so whoever constructs the registry must wire the tool's onUpdate
-   * to this method (see createTodoWriteTool({ onUpdate })). Automatic in-manager wiring
-   * is intentionally deferred to avoid the manager owning tool construction.
+   * Mirror the model's todo list into session state and notify subscribers. The TodoWrite
+   * tool's onUpdate is wired to this method by the session-capability list: the constructor
+   * builds a SessionCapabilityContext whose setTodos points here, and createTodoWriteTool
+   * receives it as onUpdate (see sessionCapabilities.ts / SESSION_CAPABILITY_TOOLS).
    */
   setTodos(todos: TodoItemLite[]): void {
     this.todos = todos
