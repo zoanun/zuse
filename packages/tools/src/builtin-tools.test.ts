@@ -39,3 +39,30 @@ describe('createDefaultRegistry — 内置工具集与顺序（回归锁）', ()
     ])
   })
 })
+
+import { toolModule as skillToolModule } from './skills.js'
+import { toolModule as websearchToolModule } from './websearch.js'
+import { toolModule as lspToolModule } from './lsp/index.js'
+import { toolModule as lspInstallToolModule } from './lsp/install.js'
+import { toolModule as readToolModule } from './read.js'
+
+describe('toolModule.enabled 真值表', () => {
+  it('skill: 空/无 → 关，非空 → 开', () => {
+    expect(skillToolModule.enabled!({})).toBe(false)
+    expect(skillToolModule.enabled!({ skills: [] })).toBe(false)
+    expect(skillToolModule.enabled!({ skills: fakeSkills })).toBe(true)
+  })
+  it('websearch: 无 → 关，有 → 开', () => {
+    expect(websearchToolModule.enabled!({})).toBe(false)
+    expect(websearchToolModule.enabled!({ webSearch: fakeWebSearch })).toBe(true)
+  })
+  it('lsp / lspInstall: 无 lsp → 关，有 → 开', () => {
+    expect(lspToolModule.enabled!({})).toBe(false)
+    expect(lspInstallToolModule.enabled!({})).toBe(false)
+    expect(lspToolModule.enabled!({ lsp: fakeLsp })).toBe(true)
+    expect(lspInstallToolModule.enabled!({ lsp: fakeLsp })).toBe(true)
+  })
+  it('无条件工具无 enabled（缺省启用）', () => {
+    expect('enabled' in readToolModule).toBe(false)
+  })
+})
