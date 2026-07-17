@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { createDefaultRegistry } from './index.js'
 import type { WebSearchConfig } from '@zuse/core'
+import { toolModule as readToolModule } from './read.js'
+import { toolModule as skillToolModule } from './skills.js'
+import { toolModule as websearchToolModule } from './websearch.js'
+import { toolModule as lspToolModule } from './lsp/index.js'
+import { toolModule as lspInstallToolModule } from './lsp/install.js'
 
 // 取注册表里工具名的有序列表。ToolRegistry.list() 按注册顺序返回。
 function names(opts: Parameters<typeof createDefaultRegistry>[0] = {}): string[] {
@@ -39,12 +44,6 @@ describe('createDefaultRegistry — 内置工具集与顺序（回归锁）', ()
     ])
   })
 })
-
-import { toolModule as skillToolModule } from './skills.js'
-import { toolModule as websearchToolModule } from './websearch.js'
-import { toolModule as lspToolModule } from './lsp/index.js'
-import { toolModule as lspInstallToolModule } from './lsp/install.js'
-import { toolModule as readToolModule } from './read.js'
 
 describe('toolModule.enabled 真值表', () => {
   it('skill: 空/无 → 关，非空 → 开', () => {
