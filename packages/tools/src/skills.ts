@@ -172,3 +172,8 @@ ${listing}`,
     },
   }
 }
+
+export const toolModule = {
+  make: (o) => createSkillTool(o.skills ?? []),
+  enabled: (o) => (o.skills?.length ?? 0) > 0,
+} satisfies import('./tool-module.js').ToolModule

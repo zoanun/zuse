@@ -134,3 +134,8 @@ export function createLspInstallTool(run: InstallRunner = defaultRunner): Tool {
     },
   }
 }
+
+export const toolModule = {
+  make: () => createLspInstallTool(),
+  enabled: (o) => !!o.lsp,
+} satisfies import('../tool-module.js').ToolModule

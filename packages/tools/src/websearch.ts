@@ -335,3 +335,8 @@ export function createWebSearchTool(config: WebSearchConfig): Tool {
     },
   }
 }
+
+export const toolModule = {
+  make: (o) => createWebSearchTool(o.webSearch!),
+  enabled: (o) => !!o.webSearch,
+} satisfies import('./tool-module.js').ToolModule

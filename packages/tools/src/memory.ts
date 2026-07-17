@@ -311,3 +311,7 @@ Save sparingly: durable facts only (preferences, constraints, corrections). Do N
     },
   }
 }
+
+export const toolModule = {
+  make: (o) => createMemoryTool(o.memoryProject ?? ''),
+} satisfies import('./tool-module.js').ToolModule

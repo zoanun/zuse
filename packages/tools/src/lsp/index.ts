@@ -241,3 +241,8 @@ export function createLspTool(manager: LspManager): Tool {
     },
   }
 }
+
+export const toolModule = {
+  make: (o) => createLspTool(o.lsp!),
+  enabled: (o) => !!o.lsp,
+} satisfies import('../tool-module.js').ToolModule
