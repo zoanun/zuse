@@ -121,9 +121,8 @@ function foldToolResults(msgs: Hist[]): Hist[] {
       // cancel landed mid-tool-call) is ledger housekeeping, not user content — surface it as a
       // low-key system notice instead of a user bubble, and strip it out of any real remaining text.
       if (rest.length) {
-        const hasMarker = rest.some((p) => p.kind === 'text' && INTERRUPT_MARKERS.includes(p.text))
         const realRest = rest.filter((p) => !(p.kind === 'text' && INTERRUPT_MARKERS.includes(p.text)))
-        if (hasMarker) out.push({ id: 'sys-int-' + out.length, role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
+        if (realRest.length !== rest.length) out.push({ id: 'sys-int-' + out.length, role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
         if (realRest.length) out.push({ ...m, parts: realRest })
       }
     } else {
