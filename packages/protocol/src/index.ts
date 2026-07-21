@@ -283,6 +283,8 @@ export type SessionEvent =
   | { type: 'reverted'; checkpointId: string }
   | { type: 'user-echo'; text: string; steer?: boolean; attachments?: MessageAttachment[] }
   | { type: 'title-changed'; title: string }
+  // 用户在"啥都还没生成"时中断：账本不留痕，改让 web 把这段原始输入退回输入框供编辑（CC rewind）。
+  | { type: 'restore-input'; text: string }
 
 /** 连上时发给晚加入订阅者的全量状态快照。 */
 export interface SessionSnapshot {
