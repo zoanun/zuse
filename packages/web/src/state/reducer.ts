@@ -1,6 +1,9 @@
 import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart, MessageAttachment } from '@zuse/protocol'
 import { isTurnOpener, type AppState, type Connection, type Part } from './types.js'
 
+// 与 packages/core/src/agent.ts 的中断标记保持一致（web 不能 value-import core，故本地复刻）。
+const INTERRUPT_MARKERS = ['[Request interrupted by user]', '[Request interrupted by user for tool use]']
+
 export const initialState: AppState = {
   messages: [], todos: [], pendingPermissions: [], pendingSteers: [],
   thinking: false, connection: 'connecting',
@@ -83,7 +86,17 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   }
 }
 
-type Hist = { id: string; role: 'user' | 'assistant' | 'system'; parts: Part[]; checkpointId?: string; steer?: boolean; attachments?: MessageAttachment[] }
+type Hist = {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  parts: Part[]
+  checkpointId?: string
+  steer?: boolean
+  attachments?: MessageAttachment[]
+  // only set for role:'system' — mirrors Message.noticeKind so a folded-in interrupt marker
+  // (see foldToolResults) renders as the same low-key notice as 'aborted'/'reverted'.
+  noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'
+}
 
 /**
  * In the API ledger a tool's result is a `role: 'user'` message holding only a tool_result
@@ -104,7 +117,15 @@ function foldToolResults(msgs: Hist[]): Hist[] {
       else if (toolResults.length) out.push({ ...m, role: 'assistant', parts: toolResults, checkpointId: undefined })
       // Keep the user bubble only if it has real (non-tool-result) content; an empty turn
       // (tool-result carrier, or a message of only unknown blocks) would render as a blank pill.
-      if (rest.length) out.push({ ...m, parts: rest })
+      // A cancel-preserving interrupt marker (standalone, or riding alongside a tool_result when the
+      // cancel landed mid-tool-call) is ledger housekeeping, not user content — surface it as a
+      // low-key system notice instead of a user bubble, and strip it out of any real remaining text.
+      if (rest.length) {
+        const hasMarker = rest.some((p) => p.kind === 'text' && INTERRUPT_MARKERS.includes(p.text))
+        const realRest = rest.filter((p) => !(p.kind === 'text' && INTERRUPT_MARKERS.includes(p.text)))
+        if (hasMarker) out.push({ id: 'sys-int-' + out.length, role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
+        if (realRest.length) out.push({ ...m, parts: realRest })
+      }
     } else {
       out.push(m)
     }

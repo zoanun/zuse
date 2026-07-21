@@ -203,6 +203,43 @@ describe('reduce', () => {
     expect(s.messages).toHaveLength(0)
   })
 
+  it('applySnapshot renders a bare interrupt marker as a system notice, not a user bubble', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+        { role: 'assistant', parts: [{ kind: 'text', text: 'half' }] },
+        { role: 'user', parts: [{ kind: 'text', text: '[Request interrupted by user]' }] },
+      ],
+      checkpoints: [],
+    } } })
+    const marker = s.messages.find((m) => m.role === 'system' && m.parts.some((p) => p.kind === 'text' && p.text === '已被用户中断'))
+    expect(marker).toBeDefined()
+    expect(marker!.noticeKind).toBe('info')
+    expect(s.messages.some((m) => m.role === 'user' && m.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted by user]')))).toBe(false)
+  })
+
+  it('applySnapshot: tool-in-flight interrupt marker becomes a notice, not part of the tool card or a user bubble', () => {
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
+      sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
+      totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
+      messages: [
+        { role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+        { role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'echo', input: {} }] },
+        { role: 'user', parts: [
+          { kind: 'tool-result', id: 't1', name: 'echo', output: '[Tool interrupted by user]', isError: true },
+          { kind: 'text', text: '[Request interrupted by user for tool use]' },
+        ] },
+      ],
+      checkpoints: [],
+    } } })
+    expect(s.messages.some((m) => m.role === 'system' && m.parts.some((p) => p.kind === 'text' && p.text === '已被用户中断'))).toBe(true)
+    expect(s.messages.some((m) => m.role === 'user' && m.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted')))).toBe(false)
+    const toolMsg = s.messages.find((m) => m.parts.some((p) => p.kind === 'tool-result'))!
+    expect(toolMsg.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted'))).toBe(false)
+  })
+
   it('checkpoint-recorded attaches e.id to the last user message lacking a checkpointId', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'first' },
