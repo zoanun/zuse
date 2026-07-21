@@ -762,17 +762,13 @@ describe('SessionManager re-entrancy guard', () => {
     expect(texts.some((t) => t.includes('[Request interrupted by user]'))).toBe(true) // marker kept
   })
 
-  it('reset() ("new chat") during a folded-steer turn: no ghost follow-up turn or stale todos (#2)', async () => {
+  it('reset() ("new chat") during a folded-steer turn: no ghost follow-up turn, no stale todos, no leaked tail (#2)', async () => {
     // A steer folds into a tool batch, then the user hits "New chat" (reset) mid-turn. The
     // SessionManager-level tail (idle-drain) runs async AFTER reset cleared everything; it must NOT
     // resurrect the folded steer as a ghost FOLLOW-UP TURN (a 3rd client call) or re-emit the old
-    // todos. NOTE (known consequence of Task 1 "preserve the turn on interrupt" + reset()'s race):
-    // runAgent still finalizes-and-commits the interrupted turn into the Conversation OBJECT it was
-    // given, which is the pre-reset object — but submit()'s fold-back (`conversation !== this.conversation`)
-    // then folds that tail onto whatever this.conversation IS AT THAT POINT, which by then is the
-    // fresh post-reset Conversation. So the interrupted turn's tail lands on the new session instead
-    // of vanishing with the old one. This fold-back is intentionally left unchanged by this task; the
-    // assertion below documents actual behavior rather than the old (pre-preserve-turn) expectation.
+    // todos. Since Task 1 now PRESERVES the interrupted turn, runAgent finalizes-and-commits it into
+    // the pre-reset Conversation object; submit()'s fold-back is epoch-gated so that committed tail
+    // is NOT folded onto the fresh post-reset conversation — it vanishes with the orphaned old one.
     let call = 0
     let releaseCont!: () => void
     let signalReached!: () => void
@@ -813,13 +809,14 @@ describe('SessionManager re-entrancy guard', () => {
     expect(call).toBe(2)
     // reset() itself synchronously clears todos; nothing re-populates them afterward.
     expect(mgr.getState().todos).toEqual([])
-    // Known leak (see NOTE above): the interrupted turn's committed tail (tool_result + fold + the
-    // "[Request interrupted by user]" marker) lands on the fresh post-reset conversation.
+    // No leaked tail: the interrupted turn committed into the ORPHANED pre-reset conversation, and
+    // the epoch-gated fold-back refuses to carry it onto the fresh post-reset one — so the new
+    // session starts empty; the folded steer text never appears in it.
     const messages = mgr.getConversation().getMessages()
-    expect(messages.length).toBeGreaterThan(0)
+    expect(messages).toHaveLength(0)
     const toolResultContents = messages.flatMap((m) => m.content)
       .filter((b) => b.type === 'tool_result').map((b) => (b as { content: string }).content)
-    expect(toolResultContents.some((c) => c.includes('old interjection'))).toBe(true)
+    expect(toolResultContents.some((c) => c.includes('old interjection'))).toBe(false)
   })
 
   it('用例6: a steer FOLDED into a tool turn then Stop preserves the turn (no re-delivery)', async () => {

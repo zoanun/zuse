@@ -1097,7 +1097,12 @@ export class SessionManager {
       // the full ledger (never folded) and carry the turn's usage onto it. When there was no
       // compaction, `conversation` IS the ledger — runAgent already appended to it, so skip. The
       // view was seeded with zero usage, so its totalUsage equals exactly this turn's usage.
-      if (conversation !== this.conversation) {
+      // Epoch guard: reset() ("new chat") mid-turn swaps in a fresh this.conversation, which makes
+      // `conversation !== this.conversation` true even with no compaction. Without this guard the
+      // (now-committed, since we preserve interrupted turns) tail would fold onto the post-reset
+      // session — a ghost of the discarded chat. If reset ran, the turn is void: skip the fold-back
+      // and let its tail vanish with the orphaned pre-reset conversation.
+      if (this.turnEpoch === epoch && conversation !== this.conversation) {
         // sliceMessages clones only the turn's new tail; getMessages().slice would deep-clone the
         // whole compacted view (summary + kept tail) every post-compaction turn just to drop it.
         for (const m of conversation.sliceMessages(viewPreLen)) this.conversation.append(m)
