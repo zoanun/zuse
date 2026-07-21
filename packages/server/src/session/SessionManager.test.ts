@@ -745,6 +745,22 @@ describe('SessionManager re-entrancy guard', () => {
     expect(mgr.getConversation().getMessages()).toHaveLength(0)
   })
 
+  it('reset() during an empty-interrupt turn does NOT emit restore-input (new chat stays clean)', async () => {
+    // reset() interrupts the in-flight turn AND swaps in a fresh session. That is an empty interrupt,
+    // but the user asked for a CLEAN new chat — the old prompt must NOT be resurrected into the
+    // fresh composer. The epoch guard on the restore-input emit ensures that.
+    const { client, release } = gatedClient() // nothing streamed before the gate
+    const mgr = makeManagerFromClient(client)
+    const events: string[] = []
+    mgr.subscribe((e) => events.push(e.type))
+    const p = mgr.submit('原始输入')
+    mgr.reset()      // "new chat" mid-turn → interrupt() + fresh conversation + turnEpoch++
+    release()        // gated client observes the abort → error → empty interrupt, but epoch changed
+    await p
+    expect(events).not.toContain('restore-input')
+    expect(mgr.getConversation().getMessages()).toHaveLength(0)
+  })
+
   it('mid-stream interrupt (content streamed) preserves the turn in the ledger', async () => {
     const { client, release } = midStreamGatedClient() // streams 'partial answer' then gates
     const mgr = makeManagerFromClient(client)

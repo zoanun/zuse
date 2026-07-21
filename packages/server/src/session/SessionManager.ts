@@ -990,7 +990,6 @@ export class SessionManager {
 
     let accumulated = ''
     let assistantStarted = false
-    // True once any tool-use has streamed this turn. Together with `accumulated`, distinguishes an
     let lastInputTokens: number | undefined
     // Failover decision: the error branch only RECORDS the category here; the swap/
     // resend runs after the loop ends (never re-enter runAgent inside its own for-await).
@@ -1086,7 +1085,10 @@ export class SessionManager {
       // length grown: runAgent already committed the partial reply + synthesized interrupted
       // tool_results + "[Request interrupted by user]" marker, so that turn is preserved, not rewound.
       // (Reading the committed length avoids re-deriving core's "has content" predicate here — no drift.)
-      const emptyInterrupt = controller.signal.aborted && conversation.length === viewPreLen
+      // Epoch guard: reset() ("new chat") interrupts the turn AND swaps in a fresh session. That is an
+      // empty interrupt too, but the user wants a CLEAN new chat — so don't resurrect the old prompt
+      // into the fresh composer. If reset ran (epoch changed), skip the restore-input.
+      const emptyInterrupt = this.turnEpoch === epoch && controller.signal.aborted && conversation.length === viewPreLen
       if (emptyInterrupt) this.emit({ type: 'restore-input', text })
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
