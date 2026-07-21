@@ -991,10 +991,6 @@ export class SessionManager {
     let accumulated = ''
     let assistantStarted = false
     // True once any tool-use has streamed this turn. Together with `accumulated`, distinguishes an
-    // "empty interrupt" (Stop hit before anything was generated — nothing to preserve, so restore
-    // the user's text instead) from a mid-stream interrupt (partial reply/tool activity exists and
-    // is committed by runAgent into the ledger).
-    let sawToolUse = false
     let lastInputTokens: number | undefined
     // Failover decision: the error branch only RECORDS the category here; the swap/
     // resend runs after the loop ends (never re-enter runAgent inside its own for-await).
@@ -1057,7 +1053,6 @@ export class SessionManager {
             this.emit({ type: 'text-delta', text: event.text })
             break
           case 'tool-use':
-            sawToolUse = true
             this.emit({ type: 'tool-use', id: event.id, name: event.name, input: event.input, invalid_args: event.invalid_args })
             break
           case 'tool-result':
@@ -1085,11 +1080,13 @@ export class SessionManager {
       }
       // "Empty interrupt": Stop landed before anything was generated (no text, no tool-use) — runAgent
       // has nothing to commit, so there is no preserved turn to show. Restore the user's original text
-      // to the input box (CC-style rewind) instead of leaving a hollow turn in the ledger. A Stop that
-      // lands AFTER content streamed leaves this false: runAgent already committed the partial reply +
-      // synthesized interrupted tool_results + "[Request interrupted by user]" marker into the ledger,
-      // so that turn is preserved as real history, not rewound.
-      const emptyInterrupt = controller.signal.aborted && accumulated === '' && !sawToolUse
+      // to the input box (CC-style rewind) instead of leaving a hollow turn in the ledger. Detected
+      // by observing the OUTCOME directly: runAgent commits nothing on an empty interrupt, so the
+      // view length is unchanged from viewPreLen. A Stop that lands AFTER content streamed leaves the
+      // length grown: runAgent already committed the partial reply + synthesized interrupted
+      // tool_results + "[Request interrupted by user]" marker, so that turn is preserved, not rewound.
+      // (Reading the committed length avoids re-deriving core's "has content" predicate here — no drift.)
+      const emptyInterrupt = controller.signal.aborted && conversation.length === viewPreLen
       if (emptyInterrupt) this.emit({ type: 'restore-input', text })
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
