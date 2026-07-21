@@ -314,7 +314,7 @@ describe('reduce', () => {
     ])
     const notices = s.messages.filter((m) => m.role === 'system')
     expect(notices.some((m) => m.parts.some((p) => p.kind === 'text' && p.text.startsWith('正在压缩上下文')))).toBe(false)
-    expect(notices.map((m) => m.parts[0])).toContainEqual({ kind: 'text', text: '已停止' })
+    expect(notices.map((m) => m.parts[0])).toContainEqual({ kind: 'text', text: '已被用户中断' })
   })
 })
 

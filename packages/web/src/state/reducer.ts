@@ -163,7 +163,9 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'error': return withNotice(state, e.message, 'error')
     // Stop also drops any transient queued-steer previews (per the chosen UX: they clear when shown
     // or on abort). A re-delivered steer re-appears via its own user-echo below.
-    case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false, pendingSteers: [] }, '已停止', 'warn')
+    // "已被用户中断": same wording (and low-key 'info' style) as the ledger interrupt marker rendered
+    // on snapshot re-projection, so the live indicator and the post-refresh one read identically.
+    case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false, pendingSteers: [] }, '已被用户中断', 'info')
     case 'checkpoint-recorded': {
       // Attach the checkpoint id to the most recent turn opener (real user message) that lacks one
       // — one checkpoint per turn, in order → that turn's opener. Prefer a real opener over a
