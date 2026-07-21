@@ -40,7 +40,7 @@ function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
 const EMPTY_HISTORY: string[] = []
 
 export function Shell() {
-  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo } = useStore()
+  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo, pendingRestoreInput, clearRestoreInput } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
@@ -189,6 +189,14 @@ export function Shell() {
     }
     setShareSel(null)
   }
+  // Empty-interrupt cancel: server sent back the in-flight text via restore-input — hand it to the
+  // Composer (which only fills it in if the input is still empty) and consume the directive.
+  useEffect(() => {
+    if (pendingRestoreInput !== null) {
+      composerRef.current?.restoreInput(pendingRestoreInput)
+      clearRestoreInput()
+    }
+  }, [pendingRestoreInput, clearRestoreInput])
   // Esc cancels share-selection mode.
   useEffect(() => {
     if (!shareSel) return

@@ -29,6 +29,10 @@ interface Store {
   pendingScrollTo: string | null
   /** Clear the pending scroll target (called by MessageList after scrolling). */
   clearScrollTo: () => void
+  /** Text to restore into the Composer's input after an empty-interrupt cancel, or null. */
+  pendingRestoreInput: string | null
+  /** Clear the pending restore-input target (called by Shell after handing it to the Composer). */
+  clearRestoreInput: () => void
 }
 const StoreCtx = createContext<Store | null>(null)
 
@@ -43,6 +47,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // S4: 点击搜索命中后,记下要滚到的消息 DOM id。独立于 reducer state,故 attachTo 的
   // dispatch({kind:'reset'}) 清空 messages 后它仍存活,待新快照消息渲染出来再被 MessageList 消费。
   const [pendingScrollTo, setPendingScrollTo] = useState<string | null>(null)
+  // Empty-interrupt cancel: server emits restore-input with the text that was in flight, so the
+  // Composer can put it back for editing. Independent of reducer state, mirroring pendingScrollTo.
+  const [pendingRestoreInput, setPendingRestoreInput] = useState<string | null>(null)
   // Keep the latest sessions list + current id reachable from the (once-bound) WS
   // onMessage closure without re-creating the client.
   const sessionsRef = useRef<SessionMeta[]>([])
@@ -87,6 +94,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return
         }
         dispatch({ kind: 'server', msg: m })
+        if (m.type === 'event' && m.event.type === 'restore-input') setPendingRestoreInput(m.event.text)
         if (m.type === 'event' && m.event.type === 'title-changed') {
           // The event carries the new title — patch the current session's row in place.
           // (Re-fetching here would race the server's async persist and could read the
@@ -182,7 +190,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     : sessions
 
   return (
-    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null) }}>
+    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null), pendingRestoreInput, clearRestoreInput: () => setPendingRestoreInput(null) }}>
       {children}
     </StoreCtx.Provider>
   )

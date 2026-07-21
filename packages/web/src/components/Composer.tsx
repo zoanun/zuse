@@ -49,7 +49,7 @@ const PASTE_CHAR_THRESHOLD = 800
 const PASTE_NEWLINE_THRESHOLD = 2
 
 /** Imperative surface so a whole-page drop zone (Shell) can hand dropped image/other files to the composer. */
-export interface ComposerHandle { addImages: (files: File[]) => void; addFiles: (files: File[]) => void }
+export interface ComposerHandle { addImages: (files: File[]) => void; addFiles: (files: File[]) => void; restoreInput: (text: string) => void }
 
 /** Pull Files out of a paste/drop payload — files first, then items (kind==='file') — keeping only
  *  those whose mediaType satisfies `pred`. Shared body of imageFilesFrom / otherFilesFrom. */
@@ -265,7 +265,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   // Shell hosts a whole-page drop zone and forwards dropped image/other files here (recreated each
   // render so `stage`/`stageFiles` close over the current `thinking`/`pending`/`files`).
-  useImperativeHandle(ref, () => ({ addImages: stage, addFiles: stageFiles }))
+  useImperativeHandle(ref, () => ({
+    addImages: stage,
+    addFiles: stageFiles,
+    restoreInput: (text: string) => {
+      setValue((cur) => (cur.trim() === '' ? text : cur))
+      taRef.current?.focus()
+    },
+  }))
 
   const uploading = pending.some((p) => p.status === 'uploading')
   const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)

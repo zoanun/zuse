@@ -346,6 +346,23 @@ describe('Composer image upload', () => {
     expect(container.querySelectorAll('.attach-thumb').length).toBe(1)
   })
 
+  it('restoreInput 把文本填回空输入框', () => {
+    const ref = createRef<ComposerHandle>()
+    render(<Composer ref={ref} thinking={false} onSend={() => {}} onStop={() => {}} />)
+    act(() => { ref.current!.restoreInput('回退的原文') })
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(ta.value).toBe('回退的原文')
+  })
+
+  it('restoreInput 不覆盖已有输入', () => {
+    const ref = createRef<ComposerHandle>()
+    render(<Composer ref={ref} thinking={false} onSend={() => {}} onStop={() => {}} />)
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '新输入' } })
+    act(() => { ref.current!.restoreInput('回退的原文') })
+    expect(ta.value).toBe('新输入')
+  })
+
   it('addImages (the whole-page drop entry point) uploads and shows a thumbnail', async () => {
     // Drop is now handled by Shell's whole-page drop zone, which forwards files here via the
     // imperative handle — so exercise addImages directly.
