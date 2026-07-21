@@ -1,7 +1,7 @@
 # 中途取消保留回合（Cancel Preserves the Turn）设计
 
 > **状态**: 设计已用户确认 → writing-plans。
-> **依据（逐行读真码）**: `packages/core/src/agent.ts`（staging/commit：:173 stagedUser、:177 staged、:186 外层回合循环、:190 顶部 abort 丢弃、:250 errored 丢弃、:252-261 runaway 保留分支、:264-269 组装+暂存助手、:272-279 无工具即提交、:295-374 工具执行+tool_result 暂存、:378-386 maxTurns 收尾、:389-390 原子提交）；`packages/core/src/anthropic-client.ts:173-182`（abort 被 catch → `yield {type:'error'}`，**不抛出**）；`packages/server/src/session/SessionManager.ts`（:1007-1008 submit 内 accumulated/assistantStarted、:1020 consumedThisTurn、:1026/1112 abortedMidTurn、:1063 折叠 steer 记录、:1096 error+aborted→emit 'aborted'、:1184 catch 里 emit 'aborted'、:1195-1204 abortedMidTurn 回滚 todos/cwd、:1218-1220 中断重排 steer、:214/221/858-859 todosBeforeTurn/cwdBeforeTurn）。
+> **依据（逐行读真码）**: `packages/core/src/agent.ts`（staging/commit：:173 stagedUser、:177 staged、:186 外层回合循环、:190 顶部 abort 丢弃、:250 errored 丢弃、:252-261 runaway 保留分支、:264-269 组装+暂存助手、:272-279 无工具即提交、:295-374 工具执行+tool_result 暂存、:378-386 maxTurns 收尾、:389-390 原子提交）；`packages/core/src/anthropic-client.ts:173-182` 与 `packages/core/src/openai-client.ts:303-322`（**两个 client 行为一致**：abort 被 catch → `yield {type:'error', ...classifyError}` + `return`，**不抛出、不重试** → 中断对两家 provider 都以 `error` 事件冒出，走 runAgent 的 errored 分支，故本修复 provider 无关）；`packages/server/src/session/SessionManager.ts`（:1007-1008 submit 内 accumulated/assistantStarted、:1020 consumedThisTurn、:1026/1112 abortedMidTurn、:1063 折叠 steer 记录、:1096 error+aborted→emit 'aborted'、:1184 catch 里 emit 'aborted'、:1195-1204 abortedMidTurn 回滚 todos/cwd、:1218-1220 中断重排 steer、:214/221/858-859 todosBeforeTurn/cwdBeforeTurn）。
 
 ## 目标
 
