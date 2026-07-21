@@ -140,6 +140,55 @@ interface PendingToolUse {
   invalidArgs?: string
 }
 
+/** 用户中断标记（对齐 CC）：作为 user 消息写进账本，下一轮模型可见。 */
+const INTERRUPT_MARKER = '[Request interrupted by user]'
+const INTERRUPT_MARKER_TOOL_USE = '[Request interrupted by user for tool use]'
+const INTERRUPTED_TOOL_RESULT = '[Tool interrupted by user]'
+
+/** 原子提交本回合暂存的消息（clean 路径与中断收尾共用）。 */
+function commitStaged(conversation: Conversation, staged: Message[], turnUsage: Usage): void {
+  for (const m of staged) conversation.append(m)
+  conversation.addUsage(turnUsage)
+}
+
+/**
+ * 把被用户中断的回合收尾并提交，而非丢弃。必要时补齐半截 assistant 消息、给没有配对
+ * tool_result 的 tool_use 合成"已中断"结果、追加中断标记，然后提交。
+ * 仅在"用户中断且本回合有生成物"时由调用点触发；真错误不调。
+ */
+function finalizeInterruptedTurn(
+  conversation: Conversation,
+  staged: Message[],
+  turnUsage: Usage,
+  partial: { text: string; toolUses: PendingToolUse[] },
+): void {
+  if (staged[staged.length - 1]?.role !== 'assistant') {
+    const content: ContentBlock[] = []
+    if (partial.text) content.push({ type: 'text', text: partial.text })
+    for (const tu of partial.toolUses) content.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input })
+    if (content.length > 0) staged.push({ role: 'assistant', content })
+  }
+  const last = staged[staged.length - 1]
+  const pendingIds: string[] = []
+  if (last?.role === 'assistant') {
+    for (const b of last.content) {
+      if (b.type === 'tool_use' && !staged.some((m) => m.content.some((x) => x.type === 'tool_result' && x.tool_use_id === b.id))) {
+        pendingIds.push(b.id)
+      }
+    }
+  }
+  if (pendingIds.length > 0) {
+    const content: ContentBlock[] = pendingIds.map((id) => ({
+      type: 'tool_result', tool_use_id: id, content: INTERRUPTED_TOOL_RESULT, is_error: true,
+    }))
+    content.push({ type: 'text', text: INTERRUPT_MARKER_TOOL_USE })
+    staged.push({ role: 'user', content })
+  } else {
+    staged.push({ role: 'user', content: [{ type: 'text', text: INTERRUPT_MARKER }] })
+  }
+  commitStaged(conversation, staged, turnUsage)
+}
+
 /**
  * runAgent —— Agent 循环（spec §4.2）。驱动模型和工具，产出一个与厂商
  * 无关的事件流供 UI 订阅。
@@ -189,7 +238,8 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     const toolDefs = registry.getDefinitions(settings.tools)
     if (signal.aborted) {
       yield { type: 'warning', message: 'Interrupted.' }
-      return // 丢弃 staged —— 什么都不提交
+      if (staged.length > 1) finalizeInterruptedTurn(conversation, staged, turnUsage, { text: '', toolUses: [] })
+      return
     }
 
     let text = ''
@@ -247,7 +297,15 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       }
     }
 
-    if (errored) return // 真·模型调用失败（error 事件）：什么都不提交
+    if (errored) {
+      // 用户中断经由 error 分支到达（anthropic/openai client 把 abort 转成 error 事件而非抛出）；
+      // signal.aborted 是判据。若本回合已有生成物（半截文本/工具调用/已暂存过消息），保留回合
+      // 而非丢弃；否则（signal.aborted 但真是"真错误"或零生成物）什么都不提交。
+      if (signal.aborted && (text !== '' || toolUses.length > 0 || staged.length > 1)) {
+        finalizeInterruptedTurn(conversation, staged, turnUsage, { text, toolUses })
+      }
+      return
+    }
 
     if (runaway) {
       // 复读退化：保留用户消息 + 截断后的助手文本（掐掉退化尾巴，不回喂垃圾），提交本回合后结束。
@@ -386,8 +444,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   }
 
   // 原子性地提交整个回合。
-  for (const m of staged) conversation.append(m)
-  conversation.addUsage(turnUsage)
+  commitStaged(conversation, staged, turnUsage)
 }
 
 interface GateDeps {

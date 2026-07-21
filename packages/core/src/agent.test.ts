@@ -43,6 +43,17 @@ async function collect(it: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
   return out
 }
 
+function abortingClient(controller: AbortController, pre: StreamEvent[]): ModelClient {
+  return {
+    getModel: () => 'fake',
+    async *sendMessages() {
+      for (const e of pre) yield e
+      controller.abort()
+      yield { type: 'error', message: 'aborted' }
+    },
+  }
+}
+
 describe('runAgent', () => {
   const config = { model: 'fake', max_tokens: 100 }
   const signal = new AbortController().signal
@@ -537,6 +548,78 @@ describe('runAgent', () => {
     expect(events).toEqual([{ type: 'warning', message: 'Interrupted.' }])
     expect(calls).toHaveLength(0)
     expect(conv.getMessages()).toHaveLength(0)
+  })
+
+  it('中途中断（纯文本）保留提问+半截文本+标记', async () => {
+    const controller = new AbortController()
+    const client = abortingClient(controller, [
+      { type: 'message-start', id: 'm1', model: 'fake' },
+      { type: 'text-delta', text: 'half answer' },
+    ])
+    const conv = new Conversation()
+    await collect(runAgent({
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'q', config, cwd: '.', signal: controller.signal,
+    }))
+    const msgs = conv.getMessages()
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(msgs[1]!.content).toEqual([{ type: 'text', text: 'half answer' }])
+    expect(msgs[2]!.content).toEqual([{ type: 'text', text: '[Request interrupted by user]' }])
+  })
+
+  it('中途中断（tool_use 已发、未执行）合成"已中断"结果 + for-tool-use 标记', async () => {
+    const controller = new AbortController()
+    const client = abortingClient(controller, [
+      { type: 'message-start', id: 'm1', model: 'fake' },
+      { type: 'text-delta', text: 'let me' },
+      { type: 'tool-use', id: 't1', name: 'echo', input: { value: 'x' } },
+    ])
+    const conv = new Conversation()
+    const reg = new ToolRegistry(); reg.register(echoTool())
+    await collect(runAgent({
+      conversation: conv, client, registry: reg, userText: 'q', config, cwd: '.', signal: controller.signal,
+    }))
+    const msgs = conv.getMessages()
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(msgs[1]!.content).toEqual([
+      { type: 'text', text: 'let me' },
+      { type: 'tool_use', id: 't1', name: 'echo', input: { value: 'x' } },
+    ])
+    expect(msgs[2]!.content).toEqual([
+      { type: 'tool_result', tool_use_id: 't1', content: '[Tool interrupted by user]', is_error: true },
+      { type: 'text', text: '[Request interrupted by user for tool use]' },
+    ])
+  })
+
+  it('啥都没生成就中断 → 不提交（rewind 交给上层）', async () => {
+    const controller = new AbortController()
+    const client = abortingClient(controller, [])
+    const conv = new Conversation()
+    await collect(runAgent({
+      conversation: conv, client, registry: new ToolRegistry(), userText: 'q', config, cwd: '.', signal: controller.signal,
+    }))
+    expect(conv.getMessages()).toHaveLength(0)
+  })
+
+  it('工具步完成后于回合边界中断 → 提交该步 + 纯文本标记', async () => {
+    const controller = new AbortController()
+    const abortEcho: Tool = {
+      name: 'echo', description: 'echo', inputSchema: { type: 'object', properties: {} },
+      run: async () => { controller.abort(); return { output: 'done' } },
+    }
+    const client = fakeClient([[
+      { type: 'message-start', id: 'm1', model: 'fake' },
+      { type: 'tool-use', id: 't1', name: 'echo', input: {} },
+      { type: 'message-stop', stop_reason: 'tool_use', usage: USAGE },
+    ]]).client
+    const conv = new Conversation()
+    const reg = new ToolRegistry(); reg.register(abortEcho)
+    await collect(runAgent({
+      conversation: conv, client, registry: reg, userText: 'q', config, cwd: '.', signal: controller.signal,
+    }))
+    const msgs = conv.getMessages()
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'user'])
+    expect(msgs[2]!.content.some((b) => b.type === 'tool_result' && b.content === 'done')).toBe(true)
+    expect(msgs[3]!.content).toEqual([{ type: 'text', text: '[Request interrupted by user]' }])
   })
 
   const askSettings: ResolvedSettings = {
