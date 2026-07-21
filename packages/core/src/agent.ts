@@ -151,6 +151,14 @@ function commitStaged(conversation: Conversation, staged: Message[], turnUsage: 
   conversation.addUsage(turnUsage)
 }
 
+/** 由本回合的文本 + tool_use 组装助手消息的内容块（clean 路径与中断收尾共用）。 */
+function assistantContentOf(text: string, toolUses: PendingToolUse[]): ContentBlock[] {
+  const content: ContentBlock[] = []
+  if (text) content.push({ type: 'text', text })
+  for (const tu of toolUses) content.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input })
+  return content
+}
+
 /**
  * 把被用户中断的回合收尾并提交，而非丢弃。必要时补齐半截 assistant 消息、给没有配对
  * tool_result 的 tool_use 合成"已中断"结果、追加中断标记，然后提交。
@@ -163,20 +171,17 @@ function finalizeInterruptedTurn(
   partial: { text: string; toolUses: PendingToolUse[] },
 ): void {
   if (staged[staged.length - 1]?.role !== 'assistant') {
-    const content: ContentBlock[] = []
-    if (partial.text) content.push({ type: 'text', text: partial.text })
-    for (const tu of partial.toolUses) content.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input })
+    const content = assistantContentOf(partial.text, partial.toolUses)
     if (content.length > 0) staged.push({ role: 'assistant', content })
   }
+  // The freshly-staged assistant is now the LAST message, so no tool_result can follow its
+  // tool_use blocks yet — every one of them is pending by construction. (If tools HAD run, their
+  // result message would be the last one and this branch wouldn't fire.)
   const last = staged[staged.length - 1]
-  const pendingIds: string[] = []
-  if (last?.role === 'assistant') {
-    for (const b of last.content) {
-      if (b.type === 'tool_use' && !staged.some((m) => m.content.some((x) => x.type === 'tool_result' && x.tool_use_id === b.id))) {
-        pendingIds.push(b.id)
-      }
-    }
-  }
+  const pendingIds =
+    last?.role === 'assistant'
+      ? last.content.filter((b): b is Extract<ContentBlock, { type: 'tool_use' }> => b.type === 'tool_use').map((b) => b.id)
+      : []
   if (pendingIds.length > 0) {
     const content: ContentBlock[] = pendingIds.map((id) => ({
       type: 'tool_result', tool_use_id: id, content: INTERRUPTED_TOOL_RESULT, is_error: true,
@@ -319,12 +324,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     // 重建助手消息（text + 任何 tool_use 块）并暂存它。
-    const assistantContent: ContentBlock[] = []
-    if (text) assistantContent.push({ type: 'text', text })
-    for (const tu of toolUses) {
-      assistantContent.push({ type: 'tool_use', id: tu.id, name: tu.name, input: tu.input })
-    }
-    staged.push({ role: 'assistant', content: assistantContent })
+    staged.push({ role: 'assistant', content: assistantContentOf(text, toolUses) })
 
     // 没有请求工具 -> 模型完事了。提交并结束。
     if (stopReason !== 'tool_use' || toolUses.length === 0) {
