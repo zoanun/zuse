@@ -207,21 +207,9 @@ export class SessionManager {
   private ineffectiveCompaction = 0
   private totalUsage: Usage | undefined = undefined
   private isThinking = false
-  // The todo list as it stood BEFORE the current (outer) turn — a reference snapshot (setTodos
-  // always swaps in a fresh array, never mutates, so this ref stays intact). On abort we revert to
-  // it: the aborted turn's conversation is discarded, so its todo changes must be discarded too,
-  // or a reload shows a stale plan from a turn that never committed.
-  private todosBeforeTurn: TodoItemLite[] = []
-  // The session cwd as it stood BEFORE the current (outer) turn. Reverted on abort for the same
-  // reason as todos — a discarded turn should leave no trace: a tool's `cd` (onCwdChange) in it left
-  // no ledger record, so the policy is to drop it rather than let a cancelled turn silently move the
-  // session's cwd. (cwd is persisted from getState() AFTER this revert, so reload matches the live
-  // reverted value. The file-read tracker is deliberately NOT reverted — it's session-scoped by
-  // design, keeping read-before-write across turns.)
-  private cwdBeforeTurn = ''
   // Bumped by reset() ("new chat"). A running turn captures it at start and checks it before its
-  // post-turn tail (abort-revert of todos/cwd, steer re-queue, idle-drain). If reset() ran mid-turn
-  // the epoch differs, so the tail bails instead of re-populating the freshly-cleared state.
+  // post-turn tail (idle-drain). If reset() ran mid-turn the epoch differs, so the tail bails
+  // instead of re-populating the freshly-cleared state.
   private turnEpoch = 0
   private readonly pending = new Map<string, Pending>()
   private permSeq = 0
@@ -854,10 +842,6 @@ export class SessionManager {
     }
     this.isThinking = true
     const epoch = this.turnEpoch // if reset() bumps this mid-turn, the post-turn tail below bails
-    if (!opts?.isResend) {
-      this.todosBeforeTurn = this.todos    // ref snapshot to revert to if this turn is aborted
-      this.cwdBeforeTurn = this.cwd        // likewise for the session cwd (a discarded turn's cd reverts)
-    }
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
     // A steer that raced past turn-end is delivered as a normal turn (ws layer), but the client took
     // the steer path and rendered no bubble — echo it so its transient "queued" preview resolves.
@@ -1006,6 +990,11 @@ export class SessionManager {
 
     let accumulated = ''
     let assistantStarted = false
+    // True once any tool-use has streamed this turn. Together with `accumulated`, distinguishes an
+    // "empty interrupt" (Stop hit before anything was generated — nothing to preserve, so restore
+    // the user's text instead) from a mid-stream interrupt (partial reply/tool activity exists and
+    // is committed by runAgent into the ledger).
+    let sawToolUse = false
     let lastInputTokens: number | undefined
     // Failover decision: the error branch only RECORDS the category here; the swap/
     // resend runs after the loop ends (never re-enter runAgent inside its own for-await).
@@ -1013,17 +1002,6 @@ export class SessionManager {
     // Set right before the recursive resend so the OUTER finally does not emit a second
     // turn-end (the nested submit already emitted one).
     let resent = false
-    // Steers folded into THIS turn's tool_results (via consumeSteer). Tracked so that if the turn
-    // is aborted (Stop) — which discards the whole staged turn, folded steer included — we can
-    // re-queue them and let idle-drain re-deliver as a fresh turn (this.steerFoldEchoedThisTurn
-    // then stops idle-drain from double-echoing what the fold already showed).
-    const consumedThisTurn: string[] = []
-    // True ONLY when this turn's staged messages were discarded — i.e. Stop landed mid-stream,
-    // before the commit block below. A Stop that lands LATER (during post-response auto-compaction)
-    // leaves this false, because by then runAgent already committed the turn to the ledger: its
-    // todos and folded steer are real history and must NOT be rolled back or re-delivered. Captured
-    // right after the runAgent loop, before signal.aborted can flip true during that compaction.
-    let abortedMidTurn = false
 
     try {
       for await (const event of runAgent({
@@ -1060,7 +1038,6 @@ export class SessionManager {
           const combined = foldable.map((s) => s.text).join('\n')
           // Keep only the attachment-bearing items queued; the folded text-only ones are consumed now.
           this.steerQueue.splice(0, this.steerQueue.length, ...this.steerQueue.filter((s) => !isFoldable(s)))
-          consumedThisTurn.push(combined) // so an abort can re-queue it (staged is discarded)
           // Folded into a tool_result: echo it now (after the tool cards the client just received)
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
           // optimistically mid-stream where it would split the reply.
@@ -1080,6 +1057,7 @@ export class SessionManager {
             this.emit({ type: 'text-delta', text: event.text })
             break
           case 'tool-use':
+            sawToolUse = true
             this.emit({ type: 'tool-use', id: event.id, name: event.name, input: event.input, invalid_args: event.invalid_args })
             break
           case 'tool-result':
@@ -1105,11 +1083,14 @@ export class SessionManager {
           }
         }
       }
-      // Snapshot the abort state BEFORE the commit/compaction below: aborted here means the loop
-      // ended on a mid-stream Stop and runAgent discarded the staged turn. A Stop that arrives
-      // during the post-response compaction further down won't flip this, so the committed turn's
-      // side effects survive (findings: todos rollback / duplicate steer re-delivery).
-      abortedMidTurn = controller.signal.aborted
+      // "Empty interrupt": Stop landed before anything was generated (no text, no tool-use) — runAgent
+      // has nothing to commit, so there is no preserved turn to show. Restore the user's original text
+      // to the input box (CC-style rewind) instead of leaving a hollow turn in the ledger. A Stop that
+      // lands AFTER content streamed leaves this false: runAgent already committed the partial reply +
+      // synthesized interrupted tool_results + "[Request interrupted by user]" marker into the ledger,
+      // so that turn is preserved as real history, not rewound.
+      const emptyInterrupt = controller.signal.aborted && accumulated === '' && !sawToolUse
+      if (emptyInterrupt) this.emit({ type: 'restore-input', text })
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
       // Feature B: if we ran against a transient compacted view, fold the turn's new tail back into
@@ -1186,45 +1167,20 @@ export class SessionManager {
     } finally {
       this.isThinking = false
       this.abort = null
-      // Revert an aborted turn's side effects BEFORE turn-end: the autosave listener reads
-      // getState().cwd synchronously on turn-end, so the revert must precede it or the discarded
-      // turn's cwd is what gets persisted (a reload then opens the wrong dir). Gated on abortedMidTurn
-      // (not signal.aborted): a Stop during post-response compaction aborts an ALREADY-COMMITTED turn,
-      // whose todos/cwd are real history and must be kept. Skipped if reset() ran out from under this
-      // turn (epoch changed) — its state is void, and re-emitting the old todos/cwd would fight reset.
-      if (abortedMidTurn && this.turnEpoch === epoch) {
-        if (this.todos !== this.todosBeforeTurn) {
-          this.todos = this.todosBeforeTurn
-          this.emit({ type: 'todos-update', todos: this.todos })
-        }
-        if (this.cwd !== this.cwdBeforeTurn) {
-          this.cwd = this.cwdBeforeTurn
-          this.emit({ type: 'cwd-change', cwd: this.cwd })
-        }
-      }
       // On a failover resend the nested submit already emitted turn-end; suppress the
       // outer one to avoid a double turn-end. isThinking/abort resets are idempotent.
       if (!resent) this.emit({ type: 'turn-end' })
     }
 
     // reset() ("new chat") ran mid-turn → this turn's transient tail targets state that's already
-    // been thrown away; drop it so it can't resurrect the discarded steer or the old todos.
+    // been thrown away; drop it so it can't resurrect the old steer queue.
     if (this.turnEpoch !== epoch) return
-
-    // 用例6: a steer folded into THIS turn's tool_result was discarded when the turn was aborted
-    // (Stop). Re-queue those so the idle-drain below re-delivers them as a fresh turn — "stop what
-    // you're doing and run my message". They were already echoed as "↪ 插话" bubbles, so they're
-    // marked echoed=true and the drain re-delivers them without a second echo.
-    if (abortedMidTurn && consumedThisTurn.length > 0) {
-      this.steerQueue.unshift(...consumedThisTurn.map((text) => ({ text, echoed: true })))
-    }
 
     // Idle-drain (Phase 2, cc-haha's model): consumeSteer drains the queue at tool-batch boundaries,
     // so a steer sent during a PURE-TEXT reply (no tool_result to fold into) is still queued at turn
     // end. Deliver it now as its OWN fresh turn — addressed right after this reply — instead of
     // letting it bleed into a later, unrelated turn's tool batch. Runs after the finally (isThinking
-    // reset) so the recursive submit starts clean. Also covers the aborted-then-re-queued case above.
-    // Skipped on a failover resend (the outer call drains).
+    // reset) so the recursive submit starts clean. Skipped on a failover resend (the outer call drains).
     if (!opts?.isResend) await this.drainSteerAsFollowUp()
   }
 

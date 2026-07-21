@@ -657,7 +657,7 @@ describe('SessionManager re-entrancy guard', () => {
     expect(texts.some((t) => t.includes('do Y instead'))).toBe(true)
   })
 
-  it('reverts todos on abort so a stopped turn leaves no stale plan (survives reload)', async () => {
+  it('keeps todos on abort (turn is preserved, not discarded)', async () => {
     const { client, release } = gatedClient()
     const mgr = makeManagerFromClient(client)
     const todoLens: number[] = []
@@ -671,16 +671,15 @@ describe('SessionManager re-entrancy guard', () => {
     release()
     await p
 
-    // Aborted → todos reverted to the pre-turn (empty) state; the snapshot the client reloads from
-    // no longer carries the stale plan.
-    expect(mgr.getState().todos).toEqual([])
-    expect(todoLens).toEqual([2, 0]) // set to 2 by setTodos, then reverted to 0 on abort
+    // Aborted → the turn is preserved (Task 1), so its todo changes are real history now and must
+    // NOT be rolled back.
+    expect(mgr.getState().todos).toHaveLength(2)          // preserved, not reverted
+    expect(todoLens).toEqual([2])                          // set to 2; no revert emit
   })
 
-  it('reverts a cwd change on abort so a discarded turn leaves no stale cwd (#10)', async () => {
-    // A tool cd's mid-turn (onCwdChange → this.cwd), then Stop. The staged turn is discarded and
-    // leaves no ledger record of the cd, so this.cwd must revert — otherwise the live session runs
-    // the next turn from a cwd a reload would never reconstruct.
+  it('keeps a cwd change on abort (turn is preserved) (#10)', async () => {
+    // A tool cd's mid-turn (onCwdChange → this.cwd), then Stop. The turn is now preserved (Task 1),
+    // so its cd is real history — this.cwd must NOT revert.
     let call = 0
     let releaseCont!: () => void
     let signalReached!: () => void
@@ -723,18 +722,57 @@ describe('SessionManager re-entrancy guard', () => {
     releaseCont()
     await p
 
-    expect(mgr.getState().cwd).toBe('/work') // reverted: the discarded turn's cd does not survive
-    // #3: the REVERT cwd-change (the last one — an earlier cwd-change fired when the tool cd'd) must
-    // precede turn-end, because autosave reads getState().cwd synchronously on turn-end — otherwise
-    // the discarded /changed dir gets persisted.
-    expect(order.lastIndexOf('cwd-change')).toBeGreaterThanOrEqual(0)
-    expect(order.lastIndexOf('cwd-change')).toBeLessThan(order.indexOf('turn-end'))
+    expect(mgr.getState().cwd).toBe('/changed') // preserved: the committed turn's cd survives
+    // The cwd-change from the tool's cd fired before turn-end (autosave reads getState().cwd
+    // synchronously on turn-end); there is no second (revert) cwd-change afterward.
+    expect(order.indexOf('cwd-change')).toBeGreaterThanOrEqual(0)
+    expect(order.indexOf('cwd-change')).toBeLessThan(order.indexOf('turn-end'))
   })
 
-  it('reset() ("new chat") during a folded-steer turn is not undone by the aborted turn tail (#2)', async () => {
-    // A steer folds into a tool batch, then the user hits "New chat" (reset) mid-turn. The aborted
-    // turn's tail (re-queue + idle-drain) runs async AFTER reset cleared everything; it must NOT
-    // resurrect the folded steer as a ghost follow-up turn or re-emit the old todos.
+  it('empty interrupt (nothing generated) emits restore-input with the original text and commits nothing', async () => {
+    const { client, release } = gatedClient() // yields nothing before the gate; on abort → error, no content
+    const mgr = makeManagerFromClient(client)
+    const events: string[] = []
+    let restoredText: string | undefined
+    mgr.subscribe((e) => { events.push(e.type); if (e.type === 'restore-input') restoredText = (e as { text: string }).text })
+    const p = mgr.submit('原始输入')
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+    expect(events).toContain('restore-input')
+    expect(restoredText).toBe('原始输入')
+    // nothing generated → ledger unchanged (no committed turn)
+    expect(mgr.getConversation().getMessages()).toHaveLength(0)
+  })
+
+  it('mid-stream interrupt (content streamed) preserves the turn in the ledger', async () => {
+    const { client, release } = midStreamGatedClient() // streams 'partial answer' then gates
+    const mgr = makeManagerFromClient(client)
+    const events: string[] = []
+    mgr.subscribe((e) => events.push(e.type))
+    const p = mgr.submit('go')
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+    expect(events).toContain('aborted')
+    expect(events).not.toContain('restore-input') // content streamed → NOT empty → preserved, no rewind
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('partial answer'))).toBe(true)    // half reply kept
+    expect(texts.some((t) => t.includes('[Request interrupted by user]'))).toBe(true) // marker kept
+  })
+
+  it('reset() ("new chat") during a folded-steer turn: no ghost follow-up turn or stale todos (#2)', async () => {
+    // A steer folds into a tool batch, then the user hits "New chat" (reset) mid-turn. The
+    // SessionManager-level tail (idle-drain) runs async AFTER reset cleared everything; it must NOT
+    // resurrect the folded steer as a ghost FOLLOW-UP TURN (a 3rd client call) or re-emit the old
+    // todos. NOTE (known consequence of Task 1 "preserve the turn on interrupt" + reset()'s race):
+    // runAgent still finalizes-and-commits the interrupted turn into the Conversation OBJECT it was
+    // given, which is the pre-reset object — but submit()'s fold-back (`conversation !== this.conversation`)
+    // then folds that tail onto whatever this.conversation IS AT THAT POINT, which by then is the
+    // fresh post-reset Conversation. So the interrupted turn's tail lands on the new session instead
+    // of vanishing with the old one. This fold-back is intentionally left unchanged by this task; the
+    // assertion below documents actual behavior rather than the old (pre-preserve-turn) expectation.
     let call = 0
     let releaseCont!: () => void
     let signalReached!: () => void
@@ -771,13 +809,20 @@ describe('SessionManager re-entrancy guard', () => {
     releaseCont()
     await p
 
-    // No ghost follow-up turn (would be a 3rd client call), and the conversation reset stays clean.
+    // No ghost FOLLOW-UP TURN (would be a 3rd client call) — the folded steer is not re-queued/re-run.
     expect(call).toBe(2)
-    expect(mgr.getConversation().getMessages()).toEqual([])
+    // reset() itself synchronously clears todos; nothing re-populates them afterward.
     expect(mgr.getState().todos).toEqual([])
+    // Known leak (see NOTE above): the interrupted turn's committed tail (tool_result + fold + the
+    // "[Request interrupted by user]" marker) lands on the fresh post-reset conversation.
+    const messages = mgr.getConversation().getMessages()
+    expect(messages.length).toBeGreaterThan(0)
+    const toolResultContents = messages.flatMap((m) => m.content)
+      .filter((b) => b.type === 'tool_result').map((b) => (b as { content: string }).content)
+    expect(toolResultContents.some((c) => c.includes('old interjection'))).toBe(true)
   })
 
-  it('用例6: a steer FOLDED into a tool turn then Stop is re-run as a follow-up, echoed once', async () => {
+  it('用例6: a steer FOLDED into a tool turn then Stop preserves the turn (no re-delivery)', async () => {
     let call = 0
     let release!: () => void
     const gate = new Promise<void>((r) => { release = r })
@@ -817,11 +862,20 @@ describe('SessionManager re-entrancy guard', () => {
     release()
     await p
 
-    // Folded steer was discarded with the aborted turn, then re-queued and re-run as a follow-up.
-    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+    // The turn is now PRESERVED (Task 1: interrupt commits, not discards) — no re-queue, so no
+    // 3rd client call re-running the fold as a fresh follow-up turn.
+    expect(call).toBe(2)
+    const messages = mgr.getConversation().getMessages()
+    // The folded steer text lives inside the tool_result content string (the fold wrapper), not a
+    // separate 'text' block.
+    const toolResultContents = messages.flatMap((m) => m.content)
+      .filter((b) => b.type === 'tool_result').map((b) => (b as { content: string }).content)
+    expect(toolResultContents.some((c) => c.includes('actually use path Y'))).toBe(true)
+    // runAgent's finalizeInterruptedTurn appends the interrupt marker as the committed turn's tail.
+    const texts = messages.flatMap((m) => m.content)
       .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
-    expect(texts.some((t) => t.includes('actually use path Y'))).toBe(true)
-    // Echoed ONCE — as the "↪ 插话" fold bubble; the re-delivery must NOT add a second normal bubble.
+    expect(texts.some((t) => t.includes('[Request interrupted by user]'))).toBe(true)
+    // Echoed ONCE — as the "↪ 插话" fold bubble; no re-delivery means no second echo either.
     expect(echoes).toEqual([{ text: 'actually use path Y', steer: true }])
   })
 })
