@@ -778,6 +778,35 @@ describe('SessionManager re-entrancy guard', () => {
     expect(texts.some((t) => t.includes('[Request interrupted by user]'))).toBe(true) // marker kept
   })
 
+  it('non-empty interrupt clears the abandoned in-flight todo plan (conversation still preserved)', async () => {
+    const { client, release } = midStreamGatedClient() // streams 'partial answer' then gates
+    const mgr = makeManagerFromClient(client)
+    const p = mgr.submit('go')
+    // model built a plan mid-turn, then the user bails
+    mgr.setTodos([{ content: 'step 1', status: 'in_progress' }] as unknown as Parameters<typeof mgr.setTodos>[0])
+    expect(mgr.getState().todos).toHaveLength(1)
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+    expect(mgr.getState().todos).toEqual([]) // ephemeral plan dropped on interrupt
+    // but the conversation is preserved (half reply kept) — only the plan was cleared
+    const texts = mgr.getConversation().getMessages().flatMap((m) => m.content)
+      .filter((b) => b.type === 'text').map((b) => (b as { text: string }).text)
+    expect(texts.some((t) => t.includes('partial answer'))).toBe(true)
+  })
+
+  it('empty interrupt keeps a pre-existing todo plan (nothing built this turn)', async () => {
+    const { client, release } = gatedClient() // nothing streamed before the gate → empty interrupt
+    const mgr = makeManagerFromClient(client)
+    mgr.setTodos([{ content: 'earlier plan', status: 'pending' }] as unknown as Parameters<typeof mgr.setTodos>[0])
+    const p = mgr.submit('新问题')
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+    // this turn generated nothing, so the earlier plan is left untouched (not wiped by an instant Stop)
+    expect(mgr.getState().todos).toHaveLength(1)
+  })
+
   it('reset() ("new chat") during a folded-steer turn: no ghost follow-up turn, no stale todos, no leaked tail (#2)', async () => {
     // A steer folds into a tool batch, then the user hits "New chat" (reset) mid-turn. The
     // SessionManager-level tail (idle-drain) runs async AFTER reset cleared everything; it must NOT

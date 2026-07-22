@@ -1088,8 +1088,17 @@ export class SessionManager {
       // Epoch guard: reset() ("new chat") interrupts the turn AND swaps in a fresh session. That is an
       // empty interrupt too, but the user wants a CLEAN new chat — so don't resurrect the old prompt
       // into the fresh composer. If reset ran (epoch changed), skip the restore-input.
-      const emptyInterrupt = this.turnEpoch === epoch && controller.signal.aborted && conversation.length === viewPreLen
-      if (emptyInterrupt) this.emit({ type: 'restore-input', text })
+      const interrupted = this.turnEpoch === epoch && controller.signal.aborted
+      if (interrupted && conversation.length === viewPreLen) {
+        // Empty interrupt → rewind the untouched input; the ledger + todos are left as they were.
+        this.emit({ type: 'restore-input', text })
+      } else if (interrupted) {
+        // Non-empty interrupt: the turn ran (and may have built a plan) before the user bailed. The
+        // todo list is ephemeral "current plan" state, not a durable side effect — drop it so an
+        // abandoned in-flight plan doesn't linger (mirrors hermes-agent's clear-on-interrupt). The
+        // conversation itself (partial reply + interrupt marker) is preserved, unchanged.
+        if (this.todos.length > 0) this.setTodos([])
+      }
 
       this.contextTokens = lastInputTokens ?? this.contextTokens
       // Feature B: if we ran against a transient compacted view, fold the turn's new tail back into
