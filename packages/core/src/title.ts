@@ -1,5 +1,6 @@
 import type { ModelClient } from './model-client.js'
 import type { Message } from './types.js'
+import { genMsgId } from './conversation.js'
 
 /** 标题最长字符数(与持久化层 deriveTitle 的截断保持一致)。 */
 const TITLE_MAX_CHARS = 60
@@ -27,7 +28,7 @@ export async function generateSessionTitle(
       '为下面这段对话的开头生成一个简洁的标题。要求:不超过 6 个词;' +
       '用与原文相同的语言;只输出标题本身,不要引号、不要句末标点、不要"标题:"之类前缀。\n\n' +
       `开头消息:\n${trimmed.slice(0, 2000)}`
-    const request: Message[] = [{ role: 'user', content: [{ type: 'text', text: prompt }] }]
+    const request: Message[] = [{ role: 'user', id: genMsgId(), content: [{ type: 'text', text: prompt }] }]
     let text = ''
     const events = client.sendMessages(request, { model, max_tokens: TITLE_MAX_TOKENS }, undefined, signal)
     for await (const e of events) {

@@ -1,5 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import type { Message, Usage } from './types.js'
 import { emptyUsage } from './types.js'
+
+/** 新消息的随机稳定 id。 */
+export function genMsgId(): string {
+  return `msg_${randomUUID()}`
+}
 
 /** 用于 /save 和 /load 的序列化形式（Phase 2.7）。version 为将来的迁移留出闸门。 */
 export interface ConversationSnapshot {
@@ -20,15 +26,16 @@ export class Conversation {
   private _totalUsage: Usage = emptyUsage()
 
   append(message: Message): void {
+    if (!message.id) throw new Error('Conversation.append: Message missing id')
     this.messages.push(message)
   }
 
   appendUserText(text: string): void {
-    this.append({ role: 'user', content: [{ type: 'text', text }] })
+    this.append({ role: 'user', id: genMsgId(), content: [{ type: 'text', text }] })
   }
 
   appendAssistantText(text: string): void {
-    this.append({ role: 'assistant', content: [{ type: 'text', text }] })
+    this.append({ role: 'assistant', id: genMsgId(), content: [{ type: 'text', text }] })
   }
 
   /**
@@ -84,7 +91,10 @@ export class Conversation {
       throw new Error(`Unsupported conversation snapshot version: ${data.version}`)
     }
     const conv = new Conversation()
-    for (const m of data.messages) conv.append(m)
+    data.messages.forEach((m, i) => {
+      // legacy 会话无 id：按下标赋确定性 id（同一存档多次加载 id 不变）。带 id 的原样保留。
+      conv.append(m.id ? m : { ...m, id: `msg_legacy_${i}` })
+    })
     conv._totalUsage = { ...data.totalUsage }
     return conv
   }

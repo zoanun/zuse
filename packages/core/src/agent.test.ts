@@ -81,9 +81,64 @@ describe('runAgent', () => {
 
     const msgs = conv.getMessages()
     expect(msgs).toHaveLength(2)
-    expect(msgs[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'hi' }] })
-    expect(msgs[1]).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'hello' }] })
+    expect(msgs[0]!.role).toBe('user')
+    expect(msgs[0]!.content).toEqual([{ type: 'text', text: 'hi' }])
+    expect(typeof msgs[0]!.id).toBe('string')
+    expect(msgs[1]!.role).toBe('assistant')
+    expect(msgs[1]!.content).toEqual([{ type: 'text', text: 'hello' }])
+    expect(typeof msgs[1]!.id).toBe('string')
     expect(conv.totalUsage).toEqual({ ...USAGE, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
+  })
+
+  it('每条提交消息都有 id；助手消息 id == message-start 事件 id；不透传模型流 id', async () => {
+    const { client } = fakeClient([
+      [
+        { type: 'message-start', id: 'PROVIDER_IGNORED', model: 'fake' },
+        { type: 'text-delta', text: 'hi' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+    const conv = new Conversation()
+    const events = await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: new ToolRegistry(),
+        userText: 'q',
+        userMessageId: 'msg_user_x',
+        config,
+        cwd: '.',
+        signal,
+      }),
+    )
+    const msgs = conv.getMessages()
+    expect(msgs.every((m) => typeof m.id === 'string' && m.id.length > 0)).toBe(true)
+    expect(msgs[0]!.id).toBe('msg_user_x')
+    const ms = events.find((e) => e.type === 'message-start') as { id: string }
+    expect(msgs[1]!.id).toBe(ms.id)
+    expect(ms.id).not.toBe('PROVIDER_IGNORED')
+  })
+
+  it('中断标记消息带 interrupt:true', async () => {
+    const controller = new AbortController()
+    const client = abortingClient(controller, [
+      { type: 'message-start', id: 'm', model: 'fake' },
+      { type: 'text-delta', text: 'half' },
+    ])
+    const conv = new Conversation()
+    await collect(
+      runAgent({
+        conversation: conv,
+        client,
+        registry: new ToolRegistry(),
+        userText: 'q',
+        config,
+        cwd: '.',
+        signal: controller.signal,
+      }),
+    )
+    const marker = conv.getMessages().find((m) => m.interrupt)
+    expect(marker).toBeDefined()
   })
 
   it('runs a tool, feeds the result back, and loops to a final answer', async () => {
@@ -907,6 +962,7 @@ describe('runAgent', () => {
     // 账本里一条 user 消息只带 attachments 引用（不含 base64）。
     conv.append({
       role: 'user',
+      id: 'm-existing-1',
       content: [{ type: 'text', text: 'look at this' }],
       attachments: [{ id: 'a', name: 'x.png', mediaType: 'image/png' }],
     })
@@ -935,6 +991,7 @@ describe('runAgent', () => {
     const conv = new Conversation()
     conv.append({
       role: 'user',
+      id: 'm-existing-2',
       content: [{ type: 'text', text: 'look' }],
       attachments: [{ id: 'a', name: 'x.png', mediaType: 'image/png' }],
     })

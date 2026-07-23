@@ -11,6 +11,7 @@ import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import { runHooks } from './hooks.js'
 import { steerFoldSuffix } from './steer.js'
 import type { Conversation } from './conversation.js'
+import { genMsgId } from './conversation.js'
 
 /** 每个用户回合内模型<->工具往返次数的默认上限（故障模式①）。 */
 export const DEFAULT_MAX_TURNS = 50
@@ -83,6 +84,8 @@ export interface RunAgentOptions {
   registry: ToolRegistry
   /** 本回合用户的新输入。 */
   userText: string
+  /** 本回合用户消息的稳定 id（approach B：由调用方/client 分配）；缺省时本地生成。 */
+  userMessageId?: string
   config: ModelConfig
   cwd: string
   signal: AbortSignal
@@ -169,10 +172,11 @@ function finalizeInterruptedTurn(
   staged: Message[],
   turnUsage: Usage,
   partial: { text: string; toolUses: PendingToolUse[] },
+  assistantMsgId: string,
 ): void {
   if (staged[staged.length - 1]?.role !== 'assistant') {
     const content = assistantContentOf(partial.text, partial.toolUses)
-    if (content.length > 0) staged.push({ role: 'assistant', content })
+    if (content.length > 0) staged.push({ role: 'assistant', id: assistantMsgId, content })
   }
   // The freshly-staged assistant is now the LAST message, so no tool_result can follow its
   // tool_use blocks yet — every one of them is pending by construction. (If tools HAD run, their
@@ -187,9 +191,9 @@ function finalizeInterruptedTurn(
       type: 'tool_result', tool_use_id: id, content: INTERRUPTED_TOOL_RESULT, is_error: true,
     }))
     content.push({ type: 'text', text: INTERRUPT_MARKER_TOOL_USE })
-    staged.push({ role: 'user', content })
+    staged.push({ role: 'user', id: genMsgId(), interrupt: true, content })
   } else {
-    staged.push({ role: 'user', content: [{ type: 'text', text: INTERRUPT_MARKER }] })
+    staged.push({ role: 'user', id: genMsgId(), interrupt: true, content: [{ type: 'text', text: INTERRUPT_MARKER }] })
   }
   commitStaged(conversation, staged, turnUsage)
 }
@@ -224,7 +228,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
   const base = conversation.getMessages()
   // 本回合的 user 消息：text 块 + attachments 引用（若有）。image 块不在这里放 —— 展开是
   // expandAttachments 的事，账本/持久化的消息绝不含 base64。
-  const stagedUser: Message = { role: 'user', content: [{ type: 'text', text: userText }] }
+  const stagedUser: Message = { role: 'user', id: opts.userMessageId ?? genMsgId(), content: [{ type: 'text', text: userText }] }
   if (opts.userAttachments && opts.userAttachments.length > 0) {
     stagedUser.attachments = opts.userAttachments
   }
@@ -241,9 +245,10 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // Re-read each turn so dynamically registered tools (e.g. via McpSearch)
     // become visible to the model on the next turn.
     const toolDefs = registry.getDefinitions(settings.tools)
+    let assistantMsgId = genMsgId()
     if (signal.aborted) {
       yield { type: 'warning', message: 'Interrupted.' }
-      if (staged.length > 1) finalizeInterruptedTurn(conversation, staged, turnUsage, { text: '', toolUses: [] })
+      if (staged.length > 1) finalizeInterruptedTurn(conversation, staged, turnUsage, { text: '', toolUses: [] }, assistantMsgId)
       return
     }
 
@@ -284,7 +289,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
         toolUses.push({ id: event.id, name: event.name, input: event.input, invalidArgs: event.invalid_args })
         yield event
       } else if (event.type === 'message-start') {
-        yield event
+        yield { type: 'message-start', id: assistantMsgId, model: event.model }
       } else if (event.type === 'message-stop') {
         stopReason = event.stop_reason
         turnUsage.input_tokens += event.usage.input_tokens
@@ -307,7 +312,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       // signal.aborted 是判据。若本回合已有生成物（半截文本/工具调用/已暂存过消息），保留回合
       // 而非丢弃；否则（signal.aborted 但真是"真错误"或零生成物）什么都不提交。
       if (signal.aborted && (text !== '' || toolUses.length > 0 || staged.length > 1)) {
-        finalizeInterruptedTurn(conversation, staged, turnUsage, { text, toolUses })
+        finalizeInterruptedTurn(conversation, staged, turnUsage, { text, toolUses }, assistantMsgId)
       }
       return
     }
@@ -317,6 +322,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
       // 截到 REPETITION_MIN_CHARS：触发时 text 必 ≥ 该阈值，且退化串在尾部，前缀通常仍是有效内容。
       staged.push({
         role: 'assistant',
+        id: assistantMsgId,
         content: [{ type: 'text', text: `${text.slice(0, REPETITION_MIN_CHARS)}\n\n[output truncated: runaway repetition detected]` }],
       })
       clean = true
@@ -324,7 +330,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     }
 
     // 重建助手消息（text + 任何 tool_use 块）并暂存它。
-    staged.push({ role: 'assistant', content: assistantContentOf(text, toolUses) })
+    staged.push({ role: 'assistant', id: assistantMsgId, content: assistantContentOf(text, toolUses) })
 
     // 没有请求工具 -> 模型完事了。提交并结束。
     if (stopReason !== 'tool_use' || toolUses.length === 0) {
@@ -419,7 +425,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // Mid-turn steer: if the user sent a message while tools were running,
     // append it to the last tool result so the model sees it on the next turn.
     const steer = opts.consumeSteer?.()
-    const toolResultMsg: Message = { role: 'user', content: resultBlocks }
+    const toolResultMsg: Message = { role: 'user', id: genMsgId(), content: resultBlocks }
     if (steer && resultBlocks.length > 0) {
       const last = resultBlocks[resultBlocks.length - 1]!
       if (last.type === 'tool_result') {
@@ -438,6 +444,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // 所以补一条助手收尾消息以保持角色交替合法，然后告警。
     staged.push({
       role: 'assistant',
+      id: genMsgId(),
       content: [{ type: 'text', text: MAX_TURNS_STOP_TEXT(maxTurns) }],
     })
     yield { type: 'warning', message: `Reached max turns (${maxTurns}); stopping.` }

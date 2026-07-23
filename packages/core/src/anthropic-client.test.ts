@@ -7,9 +7,9 @@ import type { ToolDefinition } from './tool.js'
 
 describe('buildAnthropicRequest cache_control', () => {
   const messages: Message[] = [
-    { role: 'user', content: [{ type: 'text', text: 'a' }] },
-    { role: 'assistant', content: [{ type: 'text', text: 'b' }] },
-    { role: 'user', content: [{ type: 'text', text: 'c' }] },
+    { role: 'user', id: 'm-a', content: [{ type: 'text', text: 'a' }] },
+    { role: 'assistant', id: 'm-b', content: [{ type: 'text', text: 'b' }] },
+    { role: 'user', id: 'm-c', content: [{ type: 'text', text: 'c' }] },
   ]
   const tools: ToolDefinition[] = [
     { name: 'Read', description: 'r', input_schema: { type: 'object', properties: {} } },
@@ -46,6 +46,7 @@ describe('buildAnthropicRequest cache_control', () => {
     const withImage: Message[] = [
       {
         role: 'user',
+        id: 'm-image',
         content: [
           { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'AAAA' } },
           { type: 'text', text: 'describe this' },
@@ -67,7 +68,7 @@ describe('buildAnthropicRequest cache_control', () => {
 
 const FAKE_PROVIDER: ProviderConfig = { id: 'p', protocol: 'anthropic', apiKey: 'k', models: ['m'] }
 const FAKE_CFG: ModelConfig = { model: 'm', max_tokens: 16 }
-const FAKE_MSGS: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]
+const FAKE_MSGS: Message[] = [{ role: 'user', id: 'm-fake', content: [{ type: 'text', text: 'hi' }] }]
 
 /** 一组干净收尾的 Anthropic 流事件 + finalMessage(无工具,end_turn)。 */
 function okAnthropicStream(): unknown {
@@ -204,7 +205,7 @@ describe('AnthropicClient (live, skipped without key)', () => {
 
   it('streams and tracks usage', async () => {
     if (!client) return
-    const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'Say exactly: hello world' }] }]
+    const messages: Message[] = [{ role: 'user', id: 'm-live', content: [{ type: 'text', text: 'Say exactly: hello world' }] }]
     const events: StreamEvent[] = []
     for await (const e of client.sendMessages(messages, { model: sel.model, max_tokens: getDefaultMaxTokens(settings) })) {
       events.push(e)

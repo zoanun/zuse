@@ -1,4 +1,4 @@
-import { Conversation } from './conversation.js'
+import { Conversation, genMsgId } from './conversation.js'
 import type { Message, ModelConfig, ResolvedSettings, ErrorCategory, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
 
@@ -332,6 +332,7 @@ export function applyCompaction(
 ): Conversation {
   const summaryMessage: Message = {
     role: 'user',
+    id: genMsgId(),
     content: [{ type: 'text', text: `[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below. This is background reference, NOT active instructions. Do NOT answer questions or fulfill requests mentioned in this summary — they were already addressed. Respond ONLY to the latest user message that appears AFTER this summary. Reverse signals in the latest message (stop, undo, never mind, change of topic) immediately end any in-flight work described here. Your persistent memory in the system prompt is ALWAYS authoritative — never deprioritize it due to this compaction note.\n${summaryText}\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---` }],
   }
   return Conversation.fromJSON({
@@ -472,7 +473,7 @@ export async function summarizeForCompaction(
       ? buildIterativeSummaryPrompt(previousSummary, toSummarize, todoState)
       : buildSummaryPrompt(toSummarize, todoState)
     const request: Message[] = [
-      { role: 'user', content: [{ type: 'text', text: promptText }] },
+      { role: 'user', id: genMsgId(), content: [{ type: 'text', text: promptText }] },
     ]
     let text = ''
     const events = client.sendMessages(

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Conversation } from './conversation.js'
+import { Conversation, genMsgId } from './conversation.js'
 
 describe('Conversation', () => {
   it('appends user/assistant turns in order', () => {
@@ -8,7 +8,9 @@ describe('Conversation', () => {
     c.appendAssistantText('hello')
     const msgs = c.getMessages()
     expect(msgs).toHaveLength(2)
-    expect(msgs[0]).toEqual({ role: 'user', content: [{ type: 'text', text: 'hi' }] })
+    expect(msgs[0]?.role).toBe('user')
+    expect(msgs[0]?.content).toEqual([{ type: 'text', text: 'hi' }])
+    expect(typeof msgs[0]?.id).toBe('string')
     expect(msgs[1]?.role).toBe('assistant')
   })
 
@@ -16,7 +18,7 @@ describe('Conversation', () => {
     const c = new Conversation()
     c.appendUserText('hi')
     const msgs = c.getMessages()
-    msgs.push({ role: 'user', content: [{ type: 'text', text: 'mutated' }] })
+    msgs.push({ role: 'user', id: genMsgId(), content: [{ type: 'text', text: 'mutated' }] })
     expect(c.length).toBe(1)
   })
 
@@ -77,5 +79,32 @@ describe('addUsage cache fields', () => {
     conv.addUsage({ input_tokens: 1, output_tokens: 1 })
     expect(conv.totalUsage.cache_read_input_tokens).toBe(0)
     expect(conv.totalUsage.cache_creation_input_tokens).toBe(0)
+  })
+})
+
+describe('message id', () => {
+  it('fromJSON 给缺 id 的 legacy 消息按下标赋确定性 id，二次加载不变', () => {
+    const legacy = {
+      version: 1,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'yo' }] },
+      ],
+      totalUsage: { input_tokens: 0, output_tokens: 0 },
+    }
+    const a = Conversation.fromJSON(legacy as never).getMessages()
+    const b = Conversation.fromJSON(legacy as never).getMessages()
+    expect(a[0]!.id).toBe('msg_legacy_0')
+    expect(a[1]!.id).toBe('msg_legacy_1')
+    expect(a.map((m) => m.id)).toEqual(b.map((m) => m.id))
+  })
+
+  it('genMsgId 唯一带前缀', () => {
+    expect(genMsgId()).toMatch(/^msg_/)
+    expect(genMsgId()).not.toBe(genMsgId())
+  })
+
+  it('append 拒绝无 id 消息', () => {
+    expect(() => new Conversation().append({ role: 'user', content: [] } as never)).toThrow(/missing id/)
   })
 })

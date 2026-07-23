@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { Conversation } from './conversation.js'
+import { Conversation, genMsgId } from './conversation.js'
 import type { Message, StreamEvent, Usage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import {
@@ -23,16 +23,16 @@ import {
 const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
 
 function user(text: string): Message {
-  return { role: 'user', content: [{ type: 'text', text }] }
+  return { role: 'user', id: genMsgId(), content: [{ type: 'text', text }] }
 }
 function assistant(text: string): Message {
-  return { role: 'assistant', content: [{ type: 'text', text }] }
+  return { role: 'assistant', id: genMsgId(), content: [{ type: 'text', text }] }
 }
 function toolUse(id: string): Message {
-  return { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: 'a.ts' } }] }
+  return { role: 'assistant', id: genMsgId(), content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: 'a.ts' } }] }
 }
 function toolResult(id: string, content = 'ok'): Message {
-  return { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] }
+  return { role: 'user', id: genMsgId(), content: [{ type: 'tool_result', tool_use_id: id, content }] }
 }
 
 describe('splitMemoryCandidates(压缩前记忆冲刷)', () => {
@@ -402,6 +402,7 @@ describe('extractPreviousSummary', () => {
   it('extracts summary from compacted first message', () => {
     const compacted: Message = {
       role: 'user',
+      id: genMsgId(),
       content: [{ type: 'text', text: '[CONTEXT COMPACTION — REFERENCE ONLY] ...\nSome summary\n\n--- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---' }],
     }
     const result = extractPreviousSummary([compacted])
@@ -412,6 +413,7 @@ describe('extractPreviousSummary', () => {
   it('returns full text when end marker is missing', () => {
     const compacted: Message = {
       role: 'user',
+      id: genMsgId(),
       content: [{ type: 'text', text: '[CONTEXT COMPACTION — REFERENCE ONLY] ...\nSome summary without end marker' }],
     }
     const result = extractPreviousSummary([compacted])

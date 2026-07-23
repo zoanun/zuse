@@ -7,12 +7,12 @@ import type { ToolDefinition } from './tool.js'
 describe('toOpenAIMessages', () => {
   it('prepends system, maps text, tool_use → tool_calls, tool_result → top-level tool message', () => {
     const messages: Message[] = [
-      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-      { role: 'assistant', content: [
+      { role: 'user', id: 'm-1', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 'm-2', content: [
         { type: 'text', text: 'ok' },
         { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: '/a' } },
       ] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file body' }] },
+      { role: 'user', id: 'm-3', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'file body' }] },
     ]
     const out = toOpenAIMessages(messages, 'SYS')
     expect(out[0]).toEqual({ role: 'system', content: 'SYS' })
@@ -26,7 +26,7 @@ describe('toOpenAIMessages', () => {
   })
 
   it('omits the system message when no system prompt', () => {
-    const out = toOpenAIMessages([{ role: 'user', content: [{ type: 'text', text: 'x' }] }], undefined)
+    const out = toOpenAIMessages([{ role: 'user', id: 'm-x', content: [{ type: 'text', text: 'x' }] }], undefined)
     expect(out[0]).toEqual({ role: 'user', content: 'x' })
   })
 
@@ -34,6 +34,7 @@ describe('toOpenAIMessages', () => {
     const messages: Message[] = [
       {
         role: 'user',
+        id: 'm-image',
         content: [
           { type: 'image', source: { type: 'base64', mediaType: 'image/png', data: 'AAAA' } },
           { type: 'text', text: 'what is this' },
@@ -51,7 +52,7 @@ describe('toOpenAIMessages', () => {
   })
 
   it('plain text message still maps to a string (回归)', () => {
-    const out = toOpenAIMessages([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], undefined)
+    const out = toOpenAIMessages([{ role: 'user', id: 'm-hi', content: [{ type: 'text', text: 'hi' }] }], undefined)
     expect(out[0]).toEqual({ role: 'user', content: 'hi' })
   })
 })
@@ -178,7 +179,7 @@ describe('streamToEvents', () => {
 
 const PROVIDER: ProviderConfig = { id: 'p', protocol: 'openai', apiKey: 'k', models: ['m'] }
 const CFG: ModelConfig = { model: 'm', max_tokens: 16 }
-const MSGS: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]
+const MSGS: Message[] = [{ role: 'user', id: 'm-msgs', content: [{ type: 'text', text: 'hi' }] }]
 
 /**
  * 模拟 SDK 的流：先吐 firstChunks，然后挂起，直到传入的 signal 被 abort 才以 AbortError 抛出

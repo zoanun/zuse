@@ -16,6 +16,8 @@ export type ContentBlock =
 // 之前不放进这个联合类型（见 Phase 2）。
 export interface Message {
   role: 'user' | 'assistant'
+  /** 稳定唯一 id（源头分配、终身不变；持久化/压缩/revert 都不变）。 */
+  id: string
   content: ContentBlock[]
   /**
    * Mid-turn steer texts folded into THIS message's tool_result(s), recorded structurally so the
@@ -27,6 +29,8 @@ export interface Message {
   steer?: string[]
   /** 仅账本/持久化引用载体（图片元数据，不含 base64）；回合循环与 client 忽略它。 */
   attachments?: MessageAttachment[]
+  /** 中断标记消息：web 据此渲染系统提示并略去标记文本 part。仅 finalizeInterruptedTurn 打。 */
+  interrupt?: true
 }
 
 /** 附着在一条消息上的附件（图片或粘贴文本；与 protocol 的 MessageAttachment 结构对齐；图片不含 base64）。 */
