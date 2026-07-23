@@ -29,6 +29,7 @@ import {
   parseConsolidationOps,
   generateSessionTitle,
   steerFoldSuffix,
+  genMsgId,
   type ModelClient,
   type Message,
   type MessageAttachment,
@@ -191,7 +192,7 @@ export class SessionManager {
   // folded into a tool_result then re-queued after a Stop), so the idle-drain re-delivers it without
   // a second echo. Per-item (not a turn-level flag) so a turn can hold a mix of echoed/un-echoed
   // steers — e.g. one folded early + one queued during the final pure-text reply — each echoed once.
-  private readonly steerQueue: { text: string; echoed: boolean; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }[] = []
+  private readonly steerQueue: { text: string; echoed: boolean; messageId?: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }[] = []
   private todos: TodoItemLite[] = []
   /** Shadow-git checkpoint anchors recorded per turn (Phase 12); drives revert(). */
   private checkpoints: SessionCheckpoint[] = []
@@ -437,10 +438,14 @@ export class SessionManager {
    */
   private projectMessages(): SnapshotMessage[] {
     const out: SnapshotMessage[] = []
-    this.conversation.getMessages().forEach(({ role, content, steer, attachments }, i) => {
+    this.conversation.getMessages().forEach(({ id, role, content, steer, attachments, interrupt }, i) => {
       const parts: SnapshotPart[] = []
       for (const block of content) {
         if (block.type === 'text') {
+          // Interrupt-marker text is model-facing ledger scaffolding (staged so the model sees the
+          // turn was cut short), not display content — the SnapshotMessage's `interrupt` flag already
+          // tells the client to render this as a system notice, so omit the raw marker text as a part.
+          if (interrupt && (block.text === '[Request interrupted by user]' || block.text === '[Request interrupted by user for tool use]')) continue
           // Fix A: submit() prefixes the model's userText with `[YYYY-MM-DD HH:MM] `; that
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
@@ -468,11 +473,12 @@ export class SessionManager {
       const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
       // Carry the message's image attachments (route/description; no base64) so the client can render
       // an image thumbnail row. Structurally identical to protocol's MessageAttachment → assign directly.
-      out.push({ role, parts, checkpointId, ledgerIndex: i, attachments })
+      out.push({ id, role, parts, interrupt: interrupt || undefined, checkpointId, ledgerIndex: i, attachments })
       // Emit each folded steer as its own "↪ 插话" bubble after the carrier message. Driven by the
       // structural `steer` field — a message that merely CONTAINS the marker text (e.g. a Read of
-      // steer.ts) has no such field and is left untouched.
-      for (const s of steer ?? []) out.push({ role: 'user', parts: [{ kind: 'text', text: s }], steer: true })
+      // steer.ts) has no such field and is left untouched. Give each bubble a stable id derived from
+      // the carrier message's id (they have no ledger id of their own).
+      ;(steer ?? []).forEach((s, n) => out.push({ id: `${id}#steer${n}`, role: 'user', parts: [{ kind: 'text', text: s }], steer: true }))
     })
     return out
   }
@@ -528,13 +534,13 @@ export class SessionManager {
    * consumeSteer's filter and drainSteerAsFollowUp) — reusing submit's existing attachment
    * handling instead of duplicating it here.
    */
-  steer(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[]): void {
+  steer(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[], opts?: { messageId?: string }): void {
     const trimmed = text.trim()
     const hasAttachments = (images?.length ?? 0) > 0 || (pastedTexts?.length ?? 0) > 0 || (files?.length ?? 0) > 0
     // An empty text-only interjection is a no-op — but an attachments-only one still has something
     // to deliver, so only bail when there's neither text nor attachments.
     if (trimmed === '' && !hasAttachments) return
-    this.steerQueue.push({ text: trimmed, echoed: false, images, pastedTexts, files })
+    this.steerQueue.push({ text: trimmed, echoed: false, messageId: opts?.messageId, images, pastedTexts, files })
   }
 
   /** Cheap liveness check — true while a turn is running. Lets callers avoid a full getState()
@@ -810,6 +816,7 @@ export class SessionManager {
   ): Promise<string> {
     const request: Message[] = [{
       role: 'user',
+      id: genMsgId(),
       content: [
         { type: 'image', source: { type: 'base64', mediaType, data } },
         { type: 'text', text: `${IMAGE_PROMPT}\n\n用户的问题：${question}` },
@@ -834,7 +841,7 @@ export class SessionManager {
    * (tool output forwarded RAW — no truncation/spill; that is the frontend's job),
    * then emit usage/context, and always emit turn-end in finally.
    */
-  async submit(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[], opts?: { isResend?: boolean; echo?: boolean }): Promise<void> {
+  async submit(text: string, images?: UploadedImageRef[], pastedTexts?: PastedTextInput[], files?: UploadedFileRef[], opts?: { isResend?: boolean; echo?: boolean; messageId?: string }): Promise<void> {
     // Reject EXTERNAL concurrent submits while a turn runs. An isResend call is a
     // RECURSIVE re-entry from inside submit (failover resend) and must be allowed.
     if (this.isThinking && !opts?.isResend) {
@@ -845,7 +852,7 @@ export class SessionManager {
     this.emit({ type: 'turn-start', isResend: !!opts?.isResend })
     // A steer that raced past turn-end is delivered as a normal turn (ws layer), but the client took
     // the steer path and rendered no bubble — echo it so its transient "queued" preview resolves.
-    if (opts?.echo) this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts, files) })
+    if (opts?.echo) this.emit({ type: 'user-echo', text, messageId: opts?.messageId ?? genMsgId(), attachments: echoAttachments(images, pastedTexts, files) })
 
     // Publish the abort controller SYNCHRONOUSLY, before any await below, so the Stop button works
     // during the pre-send / background-compaction waits too (interrupt() checks this.abort).
@@ -1004,6 +1011,7 @@ export class SessionManager {
         client: this.client,
         registry: this.registry,
         userText: applyUserStamp(text),
+        userMessageId: opts?.messageId,
         userAttachments,
         expandAttachments: expandFn,
         config: { model: this.client.getModel(), max_tokens: this.maxTokens, system: systemWithRuntime },
@@ -1036,7 +1044,7 @@ export class SessionManager {
           // Folded into a tool_result: echo it now (after the tool cards the client just received)
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
           // optimistically mid-stream where it would split the reply.
-          this.emit({ type: 'user-echo', text: combined, steer: true })
+          this.emit({ type: 'user-echo', text: combined, steer: true, messageId: foldable[0]?.messageId ?? genMsgId() })
           return combined
         },
         canUseTool: this.canUseTool,
@@ -1128,7 +1136,12 @@ export class SessionManager {
       if (hash) {
         const label = text.replace(/\s+/g, ' ').trim().slice(0, 80)
         this.checkpoints.push({ messageIndex: checkpointIndex, hash, at: trackAt, label })
-        this.emit({ type: 'checkpoint-recorded', id: hash, messageIndex: checkpointIndex, label })
+        // The checkpoint anchors before this turn's user message (checkpointIndex == its ledger
+        // index — see Fix B in projectMessages), so read the message's id back off the ledger rather
+        // than trusting opts?.messageId, which is absent whenever the client didn't supply one
+        // (runAgent then mints its own id via genMsgId() and that's what actually landed in the ledger).
+        const anchorMessageId = this.conversation.getMessages()[checkpointIndex]?.id ?? genMsgId()
+        this.emit({ type: 'checkpoint-recorded', id: hash, messageIndex: checkpointIndex, anchorMessageId, label })
       }
 
       // Failover: the for-await has ended (client returned), so it is safe to swap
@@ -1213,6 +1226,11 @@ export class SessionManager {
     if (this.steerQueue.length === 0) return
     const items = this.steerQueue.splice(0)
     const unechoed = items.filter((s) => !s.echoed)
+    // The drained batch is delivered as ONE follow-up ledger message (below), so it needs ONE
+    // stable id — shared by the optimistic echo (if any) and the eventual submit() so the live
+    // bubble and the persisted message agree. Prefer an unechoed item's client-supplied id (it's
+    // the one actually rendering a NEW bubble here); fall back to any item's id, else mint one.
+    const messageId = unechoed[0]?.messageId ?? items[0]?.messageId ?? genMsgId()
     if (unechoed.length > 0) {
       // Carry the interjection's attachments on the echo so the follow-up bubble shows its chip/thumbnail
       // live (not just after a reload); filter empty text so an attachment-only interjection doesn't
@@ -1221,7 +1239,7 @@ export class SessionManager {
       const echoImages = unechoed.flatMap((s) => s.images ?? [])
       const echoPasted = unechoed.flatMap((s) => s.pastedTexts ?? [])
       const echoFiles = unechoed.flatMap((s) => s.files ?? [])
-      this.emit({ type: 'user-echo', text: echoText, attachments: echoAttachments(echoImages, echoPasted, echoFiles) })
+      this.emit({ type: 'user-echo', text: echoText, messageId, attachments: echoAttachments(echoImages, echoPasted, echoFiles) })
     }
     // Merge any attachments carried by the drained items onto this follow-up submit — reuses
     // submit's existing image/pastedText/file handling instead of duplicating it here.
@@ -1229,7 +1247,7 @@ export class SessionManager {
     const images = items.flatMap((s) => s.images ?? [])
     const pastedTexts = items.flatMap((s) => s.pastedTexts ?? [])
     const files = items.flatMap((s) => s.files ?? [])
-    await this.submit(text, orUndef(images), orUndef(pastedTexts), orUndef(files))
+    await this.submit(text, orUndef(images), orUndef(pastedTexts), orUndef(files), { messageId })
   }
 
   /**
@@ -1336,12 +1354,15 @@ export class SessionManager {
     )
     // Nothing to retry only when there is neither text NOR any attachment.
     if (text.trim() === '' && !images && !pastedTexts && !filesR) return
+    // Keep the retried message's identity: it's the SAME logical user turn being re-attempted,
+    // just re-anchored on a clean checkpoint — so reuse userMsg.id rather than minting a fresh one.
+    const messageId = userMsg.id
     await this.revert(cp.hash)   // rolls files back + truncates the ledger to before this turn
     // The revert snapshot dropped the question; submit re-adds it to the ledger but emits no
     // "user message" event, so clients wouldn't show it until a reconnect. Echo it now (with its
     // attachments) so the re-submitted question reappears immediately (mirrors send()'s optimistic add).
-    this.emit({ type: 'user-echo', text, attachments: echoAttachments(images, pastedTexts, filesR) })
-    await this.submit(text, images, pastedTexts, filesR)      // fresh attempt from the clean checkpoint
+    this.emit({ type: 'user-echo', text, messageId, attachments: echoAttachments(images, pastedTexts, filesR) })
+    await this.submit(text, images, pastedTexts, filesR, { messageId })      // fresh attempt from the clean checkpoint
   }
 
   /**
@@ -1375,7 +1396,7 @@ export class SessionManager {
       this.emit({ type: 'memory-notice', text: 'Memory index near capacity; consolidating in background…' })
       let text = ''
       for await (const e of this.client.sendMessages(
-        [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        [{ role: 'user', id: genMsgId(), content: [{ type: 'text', text: prompt }] }],
         { model: this.client.getModel(), max_tokens: Math.min(this.maxTokens, 2000) },
       )) {
         if (e.type === 'text-delta') text += e.text

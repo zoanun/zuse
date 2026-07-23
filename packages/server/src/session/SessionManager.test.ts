@@ -126,9 +126,10 @@ describe('SessionManager skeleton', () => {
 describe('SessionManager snapshot projection', () => {
   it('projects the conversation into SnapshotMessages and exposes checkpoints', () => {
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: 'hello' }] })
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'hello' }] })
     conversation.append({
       role: 'assistant',
+      id: 'm2',
       content: [
         { type: 'text', text: 'running it' },
         { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
@@ -136,6 +137,7 @@ describe('SessionManager snapshot projection', () => {
     })
     conversation.append({
       role: 'user',
+      id: 'm3',
       content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'file.txt', is_error: false }],
     })
 
@@ -154,8 +156,9 @@ describe('SessionManager snapshot projection', () => {
 
     const s = mgr.getState()
     expect(s.messages).toEqual([
-      { role: 'user', parts: [{ kind: 'text', text: 'hello' }], ledgerIndex: 0 },
+      { id: 'm1', role: 'user', parts: [{ kind: 'text', text: 'hello' }], ledgerIndex: 0 },
       {
+        id: 'm2',
         role: 'assistant',
         parts: [
           { kind: 'text', text: 'running it' },
@@ -163,7 +166,7 @@ describe('SessionManager snapshot projection', () => {
         ],
         ledgerIndex: 1,
       },
-      { role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }], ledgerIndex: 2 },
+      { id: 'm3', role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }], ledgerIndex: 2 },
     ])
     // No turn has run, so no checkpoints recorded yet.
     expect(s.checkpoints).toEqual([])
@@ -172,8 +175,8 @@ describe('SessionManager snapshot projection', () => {
 
   it('strips the injected timestamp prefix from user text but not assistant text', () => {
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: '[2026-06-26 12:34] hello' }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'text', text: '[2026-06-26 12:34] not a real prefix' }] })
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: '[2026-06-26 12:34] hello' }] })
+    conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'text', text: '[2026-06-26 12:34] not a real prefix' }] })
 
     const { client } = fakeClient([])
     const mgr = new SessionManager({
@@ -197,8 +200,8 @@ describe('SessionManager snapshot projection', () => {
 
   it('attaches checkpointId to the message at the matching ledger index, undefined otherwise', () => {
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: 'first turn' }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'text', text: 'reply' }] })
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'first turn' }] })
+    conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'text', text: 'reply' }] })
 
     const { client } = fakeClient([])
     const mgr = new SessionManager({
@@ -229,11 +232,12 @@ describe('SessionManager snapshot projection', () => {
 
   it('a message with a structural steer field → strips the fold from the card + emits a 插话 bubble', () => {
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: 'do it' }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'do it' }] })
+    conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
     // Carrier tool_result message: steer folded into content AND recorded in the structural field.
     conversation.append({
       role: 'user',
+      id: 'm3',
       steer: ['also do X'],
       content: [{ type: 'tool_result', tool_use_id: 't1', content: 'raw output' + steerFoldSuffix('also do X'), is_error: false }],
     })
@@ -251,10 +255,11 @@ describe('SessionManager snapshot projection', () => {
     // must NOT be mis-parsed. Identification is structural (the steer field), never by content.
     const leaked = 'file contents: ' + steerFoldSuffix('not a real steer') + ' more'
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: 'read steer.ts' }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] })
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'read steer.ts' }] })
+    conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }] })
     conversation.append({ // NOTE: no `steer` field — this is real content, not a steer.
       role: 'user',
+      id: 'm3',
       content: [{ type: 'tool_result', tool_use_id: 't1', content: leaked, is_error: false }],
     })
 
@@ -266,10 +271,10 @@ describe('SessionManager snapshot projection', () => {
 
   it('sets ledgerIndex on projected messages so search-jump survives spliced steer bubbles', () => {
     const conversation = new Conversation()
-    conversation.append({ role: 'user', content: [{ type: 'text', text: 'q' }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
-    conversation.append({ role: 'user', steer: ['mid'], content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' + steerFoldSuffix('mid'), is_error: false }] })
-    conversation.append({ role: 'assistant', content: [{ type: 'text', text: 'after' }] }) // ledger index 3
+    conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'q' }] })
+    conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
+    conversation.append({ role: 'user', id: 'm3', steer: ['mid'], content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' + steerFoldSuffix('mid'), is_error: false }] })
+    conversation.append({ role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'after' }] }) // ledger index 3
 
     const s = buildMgr(conversation).getState()
     // The steer bubble is spliced in, so the array is longer than the ledger — but the assistant
@@ -277,6 +282,40 @@ describe('SessionManager snapshot projection', () => {
     const afterMsg = s.messages.find((m) => m.parts.some((p) => p.kind === 'text' && p.text === 'after'))!
     expect(afterMsg.ledgerIndex).toBe(3)
     expect(s.messages.find((m) => m.steer)!.ledgerIndex).toBeUndefined() // spliced bubble carries none
+  })
+})
+
+describe('SessionManager stable message id', () => {
+  it('submit 把前端 messageId 落进账本', async () => {
+    const { client } = fakeClient([[
+      { type: 'message-start', id: 'm1', model: 'fake-model' },
+      { type: 'text-delta', text: 'ok' },
+      { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } },
+    ]])
+    const mgr = makeManagerFromClient(client)
+    await mgr.submit('q', undefined, undefined, undefined, { messageId: 'msg_u1' })
+    expect(mgr.getConversation().getMessages()[0]!.id).toBe('msg_u1')
+  })
+
+  it('projectMessages: 每条带非空 id；interrupt 消息置 flag 且 parts 不含标记文本', async () => {
+    // Stop MID-STREAM (content already flowed) so finalizeInterruptedTurn has something to
+    // commit: the turn is preserved (not discarded), ending in an interrupt-marker user message.
+    const { client, release } = midStreamGatedClient()
+    const mgr = makeManagerFromClient(client)
+    const p = mgr.submit('go') // streams 'partial answer', then holds at the gate
+    expect(mgr.interrupt()).toBe(true) // Stop mid-stream
+    release()
+    await p
+
+    const msgs = mgr.getState().messages
+    expect(msgs.length).toBeGreaterThan(0)
+    for (const m of msgs) expect(m.id).toBeTruthy() // every projected message carries a non-empty id
+
+    const interrupted = msgs.find((m) => m.interrupt)!
+    expect(interrupted).toBeTruthy()
+    expect(interrupted.interrupt).toBe(true)
+    // The raw ledger marker text is model-facing scaffolding, not display content — must be omitted.
+    expect(interrupted.parts.some((p) => p.kind === 'text' && p.text === '[Request interrupted by user]')).toBe(false)
   })
 })
 
@@ -1002,8 +1041,8 @@ describe('SessionManager auto-compaction', () => {
     // (keepTurns=2) returns a non-null cut index > 0.
     const seed: Message[] = []
     for (let n = 0; n < 4; n++) {
-      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
-      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+      seed.push({ role: 'user', id: `u${n}`, content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', id: `a${n}`, content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
     }
     const conversation = Conversation.fromJSON({
       version: 1,
@@ -1075,8 +1114,8 @@ describe('SessionManager auto-compaction', () => {
   it('compactNow() compacts on demand regardless of the context threshold (web /compact)', async () => {
     const seed: Message[] = []
     for (let n = 0; n < 4; n++) {
-      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
-      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+      seed.push({ role: 'user', id: `u${n}`, content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', id: `a${n}`, content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
     }
     const conversation = Conversation.fromJSON({
       version: 1, messages: seed, totalUsage: { input_tokens: 0, output_tokens: 0 },
@@ -1115,8 +1154,8 @@ describe('SessionManager Stop during auto-compaction', () => {
   const seed = () => {
     const s: Message[] = []
     for (let n = 0; n < 4; n++) {
-      s.push({ role: 'user', content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
-      s.push({ role: 'assistant', content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
+      s.push({ role: 'user', id: `u${n}`, content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
+      s.push({ role: 'assistant', id: `a${n}`, content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
     }
     return Conversation.fromJSON({ version: 1, messages: s, totalUsage: { input_tokens: 0, output_tokens: 0 } })
   }
@@ -1246,8 +1285,8 @@ describe('SessionManager compaction failover', () => {
   const seed = () => {
     const s: Message[] = []
     for (let n = 0; n < 4; n++) {
-      s.push({ role: 'user', content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
-      s.push({ role: 'assistant', content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
+      s.push({ role: 'user', id: `u${n}`, content: [{ type: 'text', text: `user ${n} ${'x'.repeat(200)}` }] })
+      s.push({ role: 'assistant', id: `a${n}`, content: [{ type: 'text', text: `asst ${n} ${'y'.repeat(200)}` }] })
     }
     return Conversation.fromJSON({ version: 1, messages: s, totalUsage: { input_tokens: 0, output_tokens: 0 } })
   }
@@ -1317,10 +1356,10 @@ describe('SessionManager compaction failover', () => {
     const conv = Conversation.fromJSON({
       version: 1,
       messages: [
-        { role: 'user', content: [{ type: 'text', text: 'q1' }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
-        { role: 'user', content: [{ type: 'text', text: 'q2' }] },
-        { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+        { role: 'user', id: 'm1', content: [{ type: 'text', text: 'q1' }] },
+        { role: 'assistant', id: 'm2', content: [{ type: 'text', text: 'a1' }] },
+        { role: 'user', id: 'm3', content: [{ type: 'text', text: 'q2' }] },
+        { role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'a2' }] },
       ],
       totalUsage: { input_tokens: 0, output_tokens: 0 },
     })
@@ -1468,10 +1507,10 @@ describe('SessionManager checkpoints + revert', () => {
     // last role:'user' message would land there (no checkpoint → silent no-op). retry must use
     // the last checkpoint, which anchors the real question at index 0.
     const seeded = Conversation.fromJSON({ version: 1, messages: [
-      { role: 'user', content: [{ type: 'text', text: '[2026-06-27 10:00] the real question' }] },
-      { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
-      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'tool output' }] },
-      { role: 'assistant', content: [{ type: 'text', text: 'the answer' }] },
+      { role: 'user', id: 'm1', content: [{ type: 'text', text: '[2026-06-27 10:00] the real question' }] },
+      { role: 'assistant', id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+      { role: 'user', id: 'm3', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'tool output' }] },
+      { role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'the answer' }] },
     ], totalUsage: new Conversation().totalUsage })
     const { client } = fakeClient([[
       { type: 'message-start', id: 'm', model: 'fake-model' },
@@ -1562,8 +1601,8 @@ describe('SessionManager memory flush in compact()', () => {
   it('invokes the Memory tool save for each MEMORY candidate the summary yields', async () => {
     const seed: Message[] = []
     for (let n = 0; n < 4; n++) {
-      seed.push({ role: 'user', content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
-      seed.push({ role: 'assistant', content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
+      seed.push({ role: 'user', id: `u${n}`, content: [{ type: 'text', text: `user message ${n} ${'x'.repeat(200)}` }] })
+      seed.push({ role: 'assistant', id: `a${n}`, content: [{ type: 'text', text: `assistant reply ${n} ${'y'.repeat(200)}` }] })
     }
     const conversation = Conversation.fromJSON({
       version: 1,
@@ -1885,7 +1924,7 @@ describe('SessionManager persistence accessors', () => {
   it('getConversation() returns the seeded conversation with its messages', () => {
     const conversation = Conversation.fromJSON({
       version: 1,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello from seed' }] }],
+      messages: [{ role: 'user', id: 'm1', content: [{ type: 'text', text: 'hello from seed' }] }],
       totalUsage: { input_tokens: 0, output_tokens: 0 },
     })
     const { client } = fakeClient([])
@@ -2122,7 +2161,7 @@ describe('SessionManager image routing (I2)', () => {
     // and the regex removed, projectMessages must surface such text verbatim (only the stamp strips).
     const trailing = 'see attached\n\n<uploaded-images>\n1. x.png：foo\n</uploaded-images>'
     const conv = new Conversation()
-    conv.append({ role: 'user', content: [{ type: 'text', text: trailing }] })
+    conv.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: trailing }] })
     const { client } = fakeClient([])
     const mgr = new SessionManager({
       sessionId: 's2', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
