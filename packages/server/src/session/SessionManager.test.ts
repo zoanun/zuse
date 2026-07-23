@@ -1033,6 +1033,37 @@ describe('SessionManager failover', () => {
     expect(backupUsage).toMatchObject({ input_tokens: 7, output_tokens: 3 })
     expect(mgr.getState().isThinking).toBe(false)
   })
+
+  it('failover resend keeps the client-supplied messageId on the committed user message', async () => {
+    const settings = {
+      failoverMode: 'auto',
+      providers: { p: { protocol: 'anthropic', apiKey: 'test-key', models: ['primary', 'backup'] } },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+    const primary: ModelClient = {
+      getModel: () => 'primary',
+      async *sendMessages() { yield { type: 'error', message: 'quota exceeded', category: 'quota' } },
+    }
+    const backup: ModelClient = {
+      getModel: () => 'backup',
+      async *sendMessages() {
+        yield { type: 'message-start', id: 'm1', model: 'backup' }
+        yield { type: 'text-delta', text: 'ok' }
+        yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+      },
+    }
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(), settings,
+      systemPrompt: 'SYS', permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup,
+    })
+    await mgr.submit('hi', undefined, undefined, undefined, { messageId: 'msg_front_end' })
+    // The user message committed by the RESENT turn must keep the front-end-minted id (not a fresh
+    // genMsgId), so the turn's checkpoint anchor matches the client's optimistic bubble.
+    const userMsg = mgr.getConversation().getMessages().find((m) => m.role === 'user')
+    expect(userMsg!.id).toBe('msg_front_end')
+  })
 })
 
 describe('SessionManager auto-compaction', () => {

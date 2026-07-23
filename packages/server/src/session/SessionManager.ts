@@ -1166,7 +1166,11 @@ export class SessionManager {
           // resolveVision on the NEW model, so a vision↔non-vision swap re-routes correctly.
           this.abort = null
           resent = true
-          await this.submit(text, images, pastedTexts, files, { isResend: true })
+          // Thread the ORIGINAL messageId through the resend: the failed attempt committed nothing,
+          // so the resent user message must keep the front-end-minted id (approach B) — otherwise it
+          // lands in the ledger under a fresh genMsgId, and the turn's checkpoint anchorMessageId no
+          // longer matches the client's live optimistic bubble (its per-message revert can't attach).
+          await this.submit(text, images, pastedTexts, files, { isResend: true, messageId: opts?.messageId })
         } else {
           // dialog mode / auth / no available next model: hand off to client model picker.
           const reasonText = cat === 'auth' ? 'API key invalid' : cat === 'quota' ? 'quota exhausted' : 'model unavailable'
