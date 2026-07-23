@@ -17,8 +17,12 @@ export type SnapshotPart =
 
 /** 快照消息（用于检查点时间轴恢复）。 */
 export interface SnapshotMessage {
+  /** 稳定账本消息 id（前端 keying / 滚动 / 搜索跳转 / checkpoint 关联的唯一键）。 */
+  id: string
   role: 'user' | 'assistant'
   parts: SnapshotPart[]
+  /** 中断标记消息：前端据此渲染成系统提示（非用户气泡），标记文本 part 已在投影时略去。 */
+  interrupt?: boolean
   /** 若本条用户消息开启了某次 turn，则带上该 turn 检查点的 hash（供前端渲染逐条 revert）。 */
   checkpointId?: string
   /** 回合中插话（steer）气泡：服务端据账本消息的结构化 steer 字段还原出的用户原话，前端渲染 "↪ 插话"。 */
@@ -272,7 +276,7 @@ export type SessionEvent =
   // in effect (new on success, unchanged old on a failed rebuild) so the client's optimistic Header
   // value is corrected. Distinct from the reducer's local `kind:'model-changed'` optimistic action.
   | { type: 'model-changed'; model: string; providerId: string }
-  | { type: 'checkpoint-recorded'; id: string; messageIndex: number; label: string }
+  | { type: 'checkpoint-recorded'; id: string; messageIndex: number; anchorMessageId: string; label: string }
   | { type: 'memory-notice'; text: string }
   | { type: 'todos-update'; todos: TodoItemLite[] }
   | { type: 'cwd-change'; cwd: string }
@@ -281,7 +285,7 @@ export type SessionEvent =
   | { type: 'aborted' }
   | { type: 'model-select-needed'; reason: string }
   | { type: 'reverted'; checkpointId: string }
-  | { type: 'user-echo'; text: string; steer?: boolean; attachments?: MessageAttachment[] }
+  | { type: 'user-echo'; text: string; messageId: string; steer?: boolean; attachments?: MessageAttachment[] }
   | { type: 'title-changed'; title: string }
   // 用户在"啥都还没生成"时中断：账本不留痕，改让 web 把这段原始输入退回输入框供编辑（CC rewind）。
   | { type: 'restore-input'; text: string }
@@ -306,9 +310,9 @@ export interface SessionSnapshot {
 
 /** 上行 client → server。 */
 export type ClientMessage =
-  | { type: 'send'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
+  | { type: 'send'; text: string; messageId: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
   | { type: 'interrupt' }
-  | { type: 'steer'; text: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
+  | { type: 'steer'; text: string; messageId: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
@@ -331,6 +335,8 @@ export interface SearchSnippet {
 
 /** 一条消息级命中。 */
 export interface SearchHit {
+  /** 命中消息的稳定 id（跳转按此定位，避免 msgIndex 序号漂移）。 */
+  id: string
   msgIndex: number
   role: 'user' | 'assistant'
   snippet: SearchSnippet
