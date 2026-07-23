@@ -144,8 +144,8 @@ interface PendingToolUse {
 }
 
 /** 用户中断标记（对齐 CC）：作为 user 消息写进账本，下一轮模型可见。 */
-const INTERRUPT_MARKER = '[Request interrupted by user]'
-const INTERRUPT_MARKER_TOOL_USE = '[Request interrupted by user for tool use]'
+export const INTERRUPT_MARKER = '[Request interrupted by user]'
+export const INTERRUPT_MARKER_TOOL_USE = '[Request interrupted by user for tool use]'
 const INTERRUPTED_TOOL_RESULT = '[Tool interrupted by user]'
 
 /** 原子提交本回合暂存的消息（clean 路径与中断收尾共用）。 */
@@ -245,7 +245,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // Re-read each turn so dynamically registered tools (e.g. via McpSearch)
     // become visible to the model on the next turn.
     const toolDefs = registry.getDefinitions(settings.tools)
-    let assistantMsgId = genMsgId()
+    const assistantMsgId = genMsgId()
     if (signal.aborted) {
       yield { type: 'warning', message: 'Interrupted.' }
       if (staged.length > 1) finalizeInterruptedTurn(conversation, staged, turnUsage, { text: '', toolUses: [] }, assistantMsgId)
