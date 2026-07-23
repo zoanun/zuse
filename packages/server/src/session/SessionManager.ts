@@ -441,13 +441,18 @@ export class SessionManager {
   private projectMessages(): SnapshotMessage[] {
     const out: SnapshotMessage[] = []
     this.conversation.getMessages().forEach(({ id, role, content, steer, attachments, interrupt }, i) => {
+      // A message is an interrupt marker if it carries the structural flag (new messages) OR its
+      // content is exactly a marker text (legacy: markers committed before the flag existed — this
+      // keeps historical sessions rendering as a system notice instead of leaking the raw marker text
+      // now that the web side is flag-only). The text-content match is a bounded migration bridge.
+      const isInterrupt = interrupt === true || content.some((b) => b.type === 'text' && (b.text === INTERRUPT_MARKER || b.text === INTERRUPT_MARKER_TOOL_USE))
       const parts: SnapshotPart[] = []
       for (const block of content) {
         if (block.type === 'text') {
           // Interrupt-marker text is model-facing ledger scaffolding (staged so the model sees the
           // turn was cut short), not display content — the SnapshotMessage's `interrupt` flag already
           // tells the client to render this as a system notice, so omit the raw marker text as a part.
-          if (interrupt && (block.text === INTERRUPT_MARKER || block.text === INTERRUPT_MARKER_TOOL_USE)) continue
+          if (isInterrupt && (block.text === INTERRUPT_MARKER || block.text === INTERRUPT_MARKER_TOOL_USE)) continue
           // Fix A: submit() prefixes the model's userText with `[YYYY-MM-DD HH:MM] `; that
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
@@ -475,7 +480,7 @@ export class SessionManager {
       const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
       // Carry the message's image attachments (route/description; no base64) so the client can render
       // an image thumbnail row. Structurally identical to protocol's MessageAttachment → assign directly.
-      out.push({ id, role, parts, interrupt: interrupt || undefined, checkpointId, ledgerIndex: i, attachments })
+      out.push({ id, role, parts, interrupt: isInterrupt || undefined, checkpointId, ledgerIndex: i, attachments })
       // Emit each folded steer as its own "↪ 插话" bubble after the carrier message. Driven by the
       // structural `steer` field — a message that merely CONTAINS the marker text (e.g. a Read of
       // steer.ts) has no such field and is left untouched. Give each bubble a stable id derived from

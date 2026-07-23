@@ -317,6 +317,26 @@ describe('SessionManager stable message id', () => {
     // The raw ledger marker text is model-facing scaffolding, not display content — must be omitted.
     expect(interrupted.parts.some((p) => p.kind === 'text' && p.text === '[Request interrupted by user]')).toBe(false)
   })
+
+  it('projectMessages: LEGACY interrupt marker (no flag, committed before it existed) still flagged + text omitted', () => {
+    // A pre-flag session: the marker is a plain user message whose content is exactly the marker text,
+    // with NO `interrupt` field. Since the web is now flag-only, projection must recognise it by
+    // content so historical sessions don't leak the raw '[Request interrupted by user]' text.
+    const conversation = new Conversation()
+    conversation.append({ role: 'user', id: 'u-old', content: [{ type: 'text', text: 'hi' }] })
+    conversation.append({ role: 'assistant', id: 'a-old', content: [{ type: 'text', text: 'half' }] })
+    conversation.append({ role: 'user', id: 'm-old-marker', content: [{ type: 'text', text: '[Request interrupted by user]' }] })
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
+      settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: fakeSnapshotStore(), conversation,
+    })
+    const msgs = mgr.getState().messages
+    const marker = msgs.find((m) => m.id === 'm-old-marker')!
+    expect(marker.interrupt).toBe(true) // recognised by content despite no flag
+    expect(marker.parts.some((p) => p.kind === 'text' && p.text === '[Request interrupted by user]')).toBe(false)
+  })
 })
 
 describe('SessionManager permissions', () => {
