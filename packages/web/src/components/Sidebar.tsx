@@ -13,7 +13,7 @@ interface Props {
   onSwitch: (id: string) => void
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
-  onJump: (sessionId: string, msgIndex: number) => void
+  onJump: (sessionId: string, msgId: string) => void
 }
 
 function titleOf(s: SessionMeta): string {
@@ -172,9 +172,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
                     <>
                       {r.hits.map((h) => (
                         <button
-                          key={r.session.id + ':' + h.msgIndex}
+                          key={r.session.id + ':' + h.id}
                           className="search-hit"
-                          onClick={() => onJump(r.session.id, h.msgIndex)}
+                          onClick={() => onJump(r.session.id, h.id)}
                         >
                           <span className="hit-role">{h.role === 'user' ? '你' : 'zuse'}</span>
                           <span className="hit-snippet">

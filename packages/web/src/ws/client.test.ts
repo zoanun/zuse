@@ -44,8 +44,8 @@ describe('createWsClient', () => {
     let ws!: FakeWS
     const client = createWsClient({ url: 'ws://x/ws', onMessage: () => {}, onStatus: () => {}, makeSocket: (u) => { ws = new FakeWS(u); return ws as unknown as WebSocket } })
     client.connect(); ws.onopen!()
-    client.send({ type: 'send', text: 'hi' })
-    expect(JSON.parse(ws.sent[0]!)).toEqual({ type: 'send', text: 'hi' })
+    client.send({ type: 'send', text: 'hi', messageId: 'm1' })
+    expect(JSON.parse(ws.sent[0]!)).toEqual({ type: 'send', text: 'hi', messageId: 'm1' })
   })
 
   it('reports status on open/close', () => {
@@ -92,7 +92,7 @@ describe('createWsClient', () => {
     const client = createWsClient({ url: 'ws://x/ws', onMessage: () => {}, onStatus: () => {}, makeSocket: (u) => { ws = new FakeWS(u); return ws as unknown as WebSocket } })
     client.connect()
     ws.readyState = 0 // CONNECTING
-    client.send({ type: 'send', text: 'hi' })
+    client.send({ type: 'send', text: 'hi', messageId: 'm1' })
     expect(ws.sent).toHaveLength(0)
   })
 })

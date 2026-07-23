@@ -1,8 +1,5 @@
 import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart, MessageAttachment } from '@zuse/protocol'
-import { isTurnOpener, type AppState, type Connection, type Part } from './types.js'
-
-// 与 packages/core/src/agent.ts 的中断标记保持一致（web 不能 value-import core，故本地复刻）。
-const INTERRUPT_MARKERS = ['[Request interrupted by user]', '[Request interrupted by user for tool use]']
+import type { AppState, Connection, Part } from './types.js'
 
 export const initialState: AppState = {
   messages: [], todos: [], pendingPermissions: [], pendingSteers: [],
@@ -62,13 +59,13 @@ function mapPart(p: SnapshotPart): Part {
 }
 
 function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
-  // Id by LEDGER index, not array position: the projection can splice extra steer bubbles, so
-  // array index != ledger index. History-search jumps to 'h'+ledgerIndex, so real messages must
-  // keep that id (steer bubbles, never search targets, get a collision-free 'hs'+i id).
-  const mapped = s.messages.map((m, i) => ({
-    id: m.steer ? 'hs' + i : 'h' + (m.ledgerIndex ?? i),
+  // The server now hands us a stable ledger id per message (and a derived id for steer bubbles,
+  // e.g. `${carrierId}#steer${n}`) — use it directly as the id for keying / scroll / search-jump /
+  // checkpoint association, instead of re-deriving one from array position or ledgerIndex.
+  const mapped = s.messages.map((m) => ({
+    id: m.id,
     role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId, steer: m.steer,
-    attachments: m.attachments,
+    attachments: m.attachments, interrupt: m.interrupt,
   }))
   return {
     ...state,
@@ -96,6 +93,9 @@ type Hist = {
   // only set for role:'system' — mirrors Message.noticeKind so a folded-in interrupt marker
   // (see foldToolResults) renders as the same low-key notice as 'aborted'/'reverted'.
   noticeKind?: 'info' | 'warn' | 'error' | 'summary' | 'compacting' | 'help'
+  // Mirrors SnapshotMessage.interrupt — consumed (and stripped) by foldToolResults, which emits the
+  // system notice; never present on a message once it leaves that function.
+  interrupt?: boolean
 }
 
 /**
@@ -105,6 +105,11 @@ type Hist = {
  * into the preceding assistant message — matching the live shape, where tool-use and
  * tool-result land in the same assistant message and render as a paired card. Any real text
  * in the user message is kept as its own bubble.
+ *
+ * A message flagged `interrupt` (server-side cancel marker; its marker text part is already
+ * omitted from `parts` by the projection) is ledger housekeeping, not user content — render it as
+ * a low-key system notice instead of a user bubble. It may still carry a tool-result (when the
+ * cancel landed mid-tool-call), which folds into the preceding assistant same as any other.
  */
 function foldToolResults(msgs: Hist[]): Hist[] {
   const out: Hist[] = []
@@ -115,16 +120,10 @@ function foldToolResults(msgs: Hist[]): Hist[] {
       const prev = out[out.length - 1]
       if (toolResults.length && prev && prev.role === 'assistant') prev.parts = [...prev.parts, ...toolResults]
       else if (toolResults.length) out.push({ ...m, role: 'assistant', parts: toolResults, checkpointId: undefined })
+      if (m.interrupt) out.push({ id: m.id, role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
       // Keep the user bubble only if it has real (non-tool-result) content; an empty turn
       // (tool-result carrier, or a message of only unknown blocks) would render as a blank pill.
-      // A cancel-preserving interrupt marker (standalone, or riding alongside a tool_result when the
-      // cancel landed mid-tool-call) is ledger housekeeping, not user content — surface it as a
-      // low-key system notice instead of a user bubble, and strip it out of any real remaining text.
-      if (rest.length) {
-        const realRest = rest.filter((p) => !(p.kind === 'text' && INTERRUPT_MARKERS.includes(p.text)))
-        if (realRest.length !== rest.length) out.push({ id: 'sys-int-' + out.length, role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
-        if (realRest.length) out.push({ ...m, parts: realRest })
-      }
+      if (rest.length) out.push({ ...m, parts: rest })
     } else {
       out.push(m)
     }
@@ -167,23 +166,11 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // on snapshot re-projection, so the live indicator and the post-refresh one read identically.
     case 'aborted': return withNotice({ ...state, messages: dropCompactionStart(state.messages), thinking: false, pendingSteers: [] }, '已被用户中断', 'info')
     case 'checkpoint-recorded': {
-      // Attach the checkpoint id to the most recent turn opener (real user message) that lacks one
-      // — one checkpoint per turn, in order → that turn's opener. Prefer a real opener over a
-      // mid-turn steer bubble so the 回退 button anchors the turn's start, not an interjection.
+      // The server names the exact message this checkpoint anchors on (the turn's own ledger id,
+      // stable across steer bubbles / retries) — attach by id instead of scanning back through
+      // local state guessing which bubble is the turn's opener.
       const msgs = state.messages.slice()
-      let idx = -1
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (isTurnOpener(msgs[i]!) && !msgs[i]!.checkpointId) { idx = i; break }
-      }
-      // Fallback (#5): a folded-steer-then-Stop re-run has NO opener bubble live — its echo was
-      // suppressed because it was already shown as a "↪ 插话" bubble. Anchor on the most recent user
-      // bubble lacking a checkpoint (that steer bubble) so the re-run's reply still gets a 回退
-      // button, matching what a reload (which renders the re-run as a normal opener) shows.
-      if (idx === -1) {
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i]!.role === 'user' && !msgs[i]!.checkpointId) { idx = i; break }
-        }
-      }
+      const idx = msgs.findIndex((m) => m.id === e.anchorMessageId)
       if (idx >= 0) msgs[idx] = { ...msgs[idx]!, checkpointId: e.id }
       return { ...state, messages: msgs }
     }
@@ -200,7 +187,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
       const wrapped = '\n' + e.text + '\n'
       return {
         ...state,
-        messages: [...state.messages, { id: 'ue' + state.messages.length, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer, attachments: e.attachments }],
+        messages: [...state.messages, { id: e.messageId, role: 'user', parts: [{ kind: 'text', text: e.text }], steer: e.steer, attachments: e.attachments }],
         pendingSteers: state.pendingSteers.filter((p) => !wrapped.includes('\n' + p.text + '\n')),
       }
     }

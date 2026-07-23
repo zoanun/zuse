@@ -24,8 +24,8 @@ interface Store {
   /** Rename a session's title and refresh the list. */
   rename: (id: string, title: string) => Promise<void>
   /** Jump to a message in a session: switch session (if needed) and mark the scroll target. */
-  searchJump: (sessionId: string, msgIndex: number) => void
-  /** DOM id ('h'+index) of the message MessageList should scroll to, or null. */
+  searchJump: (sessionId: string, msgId: string) => void
+  /** Stable message id (matches Message.id / the 'msg-'+id DOM anchor) MessageList should scroll to, or null. */
   pendingScrollTo: string | null
   /** Clear the pending scroll target (called by MessageList after scrolling). */
   clearScrollTo: () => void
@@ -150,13 +150,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Keep the recovery closure (bound once in the mount effect) pointed at the current newSession.
   newSessionRef.current = newSession
 
-  /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgIndex ↔ 快照消息 id 'h'+i。
-   *  同会话不 attachTo:重连会 reset+重拉快照,把一次性 flash 冲掉(且当前会话消息已在)。
-   *  代价:自上次快照后实时追加、尚未随快照重编号的消息,其 DOM id 非 'h'+i,跳转会静默失效——
-   *  切走再回来(或刷新)后即可跳转。要彻底修需服务端在实时事件里带账本索引,另议。 */
-  const searchJump = (sessionId: string, msgIndex: number): void => {
+  /** 跳到某会话的某条消息:切会话(若需要)并标记滚动目标。msgId 即搜索命中(SearchHit.id)携带的
+   *  稳定账本消息 id,与快照 SnapshotMessage.id / MessageList 的 'msg-'+id DOM 锚点同源,不再依赖
+   *  会漂移的数组下标。同会话不 attachTo:重连会 reset+重拉快照,把一次性 flash 冲掉(且当前会话
+   *  消息已在)。 */
+  const searchJump = (sessionId: string, msgId: string): void => {
     if (sessionId !== currentSessionId) attachTo(sessionId) // clears pendingScrollTo…
-    setPendingScrollTo('h' + msgIndex)                      // …so set it AFTER (batched → wins)
+    setPendingScrollTo(msgId)                               // …so set it AFTER (batched → wins)
   }
 
   const switchSession = async (id: string): Promise<void> => {

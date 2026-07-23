@@ -28,14 +28,14 @@ describe('reduce', () => {
     expect(s.modelProviderId).toBe('openai')
   })
 
-  it('user-echo appends the re-submitted question as a user message (retry)', () => {
-    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: 'do it again' }) })
-    expect(s.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'do it again' }] }])
+  it('user-echo appends the re-submitted question as a user message keyed by e.messageId (retry)', () => {
+    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: 'do it again', messageId: 'u1' }) })
+    expect(s.messages).toEqual([{ id: 'u1', role: 'user', parts: [{ kind: 'text', text: 'do it again' }] }])
   })
 
   it('user-echo carries attachments onto the echoed message (mid-turn interjection / retry live view)', () => {
     const atts = [{ id: 'pa', name: '粘贴文本 #1', mediaType: 'text/plain', route: 'pasted' as const, text: '日志' }]
-    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: '看这个', attachments: atts }) })
+    const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'user-echo', text: '看这个', messageId: 'u1', attachments: atts }) })
     expect(s.messages[s.messages.length - 1]!.attachments).toEqual(atts)
   })
 
@@ -111,8 +111,8 @@ describe('reduce', () => {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 2,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
-        { role: 'assistant', parts: [
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
+        { id: 'h1', role: 'assistant', parts: [
           { kind: 'text', text: 'hi' },
           { kind: 'tool-use', id: 't1', name: 'Bash', input: { command: 'ls' } },
         ] },
@@ -148,7 +148,7 @@ describe('reduce', () => {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'what is this' }], attachments: [
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'what is this' }], attachments: [
           { id: 'img1', name: 'a.png', mediaType: 'image/png', route: 'parsed', description: 'a red square' },
         ] },
       ],
@@ -164,7 +164,7 @@ describe('reduce', () => {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'hello' }], checkpointId: 'cpA' },
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'hello' }], checkpointId: 'cpA' },
       ],
       checkpoints: [{ id: 'cpA', label: 'after hello' }],
     } } })
@@ -176,10 +176,10 @@ describe('reduce', () => {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'do it' }] },
-        { role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'Read', input: { file_path: 'a.md' } }] },
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'do it' }] },
+        { id: 'h1', role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'Read', input: { file_path: 'a.md' } }] },
         // API ledger carries the tool result as a role:'user' message — must NOT be a bubble
-        { role: 'user', parts: [{ kind: 'tool-result', id: 't1', name: '', output: 'contents', isError: false }] },
+        { id: 'h2', role: 'user', parts: [{ kind: 'tool-result', id: 't1', name: '', output: 'contents', isError: false }] },
       ],
       checkpoints: [],
     } } })
@@ -197,86 +197,89 @@ describe('reduce', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 1,
-      messages: [{ role: 'user', parts: [] }],
+      messages: [{ id: 'h0', role: 'user', parts: [] }],
       checkpoints: [],
     } } })
     expect(s.messages).toHaveLength(0)
   })
 
-  it('applySnapshot renders a bare interrupt marker as a system notice, not a user bubble', () => {
+  it('applySnapshot renders a bare interrupt-flagged message as a system notice, not a user bubble', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'q' }] },
-        { role: 'assistant', parts: [{ kind: 'text', text: 'half' }] },
-        { role: 'user', parts: [{ kind: 'text', text: '[Request interrupted by user]' }] },
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+        { id: 'h1', role: 'assistant', parts: [{ kind: 'text', text: 'half' }] },
+        // Server already omits the marker text from parts; only the `interrupt` flag survives.
+        { id: 'h2', role: 'user', parts: [], interrupt: true },
       ],
       checkpoints: [],
     } } })
     const marker = s.messages.find((m) => m.role === 'system' && m.parts.some((p) => p.kind === 'text' && p.text === '已被用户中断'))
     expect(marker).toBeDefined()
     expect(marker!.noticeKind).toBe('info')
-    expect(s.messages.some((m) => m.role === 'user' && m.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted by user]')))).toBe(false)
+    expect(s.messages.some((m) => m.role === 'user' && m.id === 'h2')).toBe(false)
   })
 
-  it('applySnapshot: tool-in-flight interrupt marker becomes a notice, not part of the tool card or a user bubble', () => {
+  it('applySnapshot: tool-in-flight interrupt flag becomes a notice, folding the tool-result into the assistant card', () => {
     const s = reduce(initialState, { kind: 'server', msg: { type: 'snapshot', snapshot: {
       sessionId: 'default', isThinking: false, model: 'claude', modelProviderId: 'default', cwd: '/x',
       totalUsage: undefined, contextTokens: 10, contextWindow: 1000, todos: [], pendingPermissions: [], messageCount: 3,
       messages: [
-        { role: 'user', parts: [{ kind: 'text', text: 'q' }] },
-        { role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'echo', input: {} }] },
-        { role: 'user', parts: [
+        { id: 'h0', role: 'user', parts: [{ kind: 'text', text: 'q' }] },
+        { id: 'h1', role: 'assistant', parts: [{ kind: 'tool-use', id: 't1', name: 'echo', input: {} }] },
+        // Marker text already omitted server-side; the tool-result rides alongside the flag.
+        { id: 'h2', role: 'user', parts: [
           { kind: 'tool-result', id: 't1', name: 'echo', output: '[Tool interrupted by user]', isError: true },
-          { kind: 'text', text: '[Request interrupted by user for tool use]' },
-        ] },
+        ], interrupt: true },
       ],
       checkpoints: [],
     } } })
     expect(s.messages.some((m) => m.role === 'system' && m.parts.some((p) => p.kind === 'text' && p.text === '已被用户中断'))).toBe(true)
-    expect(s.messages.some((m) => m.role === 'user' && m.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted')))).toBe(false)
+    expect(s.messages.some((m) => m.role === 'user' && m.id === 'h2')).toBe(false)
     const toolMsg = s.messages.find((m) => m.parts.some((p) => p.kind === 'tool-result'))!
-    expect(toolMsg.parts.some((p) => p.kind === 'text' && p.text.includes('[Request interrupted'))).toBe(false)
+    expect(toolMsg.role).toBe('assistant')
+    expect(toolMsg.parts.some((p) => p.kind === 'text')).toBe(false)
   })
 
-  it('checkpoint-recorded attaches e.id to the last user message lacking a checkpointId', () => {
+  it('checkpoint-recorded attaches e.id to the message named by e.anchorMessageId', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'first' },
-      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 'turn 1' }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, anchorMessageId: 'u1', label: 'turn 1' }) },
       { kind: 'user-send', id: 'u2', text: 'second' },
-      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 2, label: 'turn 2' }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 2, anchorMessageId: 'u2', label: 'turn 2' }) },
     ])
     const users = s.messages.filter((m) => m.role === 'user')
     expect(users[0]!.checkpointId).toBe('cp1')
     expect(users[1]!.checkpointId).toBe('cp2')
   })
 
-  it('checkpoint-recorded skips a mid-turn steer bubble and anchors the real turn opener', () => {
+  it('checkpoint-recorded anchors by id, so an unrelated user bubble (e.g. a mid-turn steer) is never mistaken for the target', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'the question' },
-      // Interjection sent while the reply streamed — role:'user' too, but must NOT catch the checkpoint.
+      // Interjection sent while the reply streamed — role:'user' too, but the event names 'u1' as
+      // the anchor, so this steer bubble must NOT catch the checkpoint even though it's also 'user'.
       { kind: 'user-send', id: 's1', text: 'also do X', steer: true },
-      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 'turn 1' }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, anchorMessageId: 'u1', label: 'turn 1' }) },
     ])
     const byId = (id: string) => s.messages.find((m) => m.id === id)!
-    expect(byId('u1').checkpointId).toBe('cp1')       // the real opener gets the revert anchor
+    expect(byId('u1').checkpointId).toBe('cp1')       // the named opener gets the revert anchor
     expect(byId('s1').checkpointId).toBeUndefined()   // the steer bubble does not
   })
 
-  it('checkpoint-recorded falls back to the steer bubble when a re-run has no opener (#5)', () => {
+  it('checkpoint-recorded anchors on a folded steer bubble whose id the server reuses as the next turn\'s opener id', () => {
     const s = run([
       { kind: 'user-send', id: 'u1', text: 'the question' },
-      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, label: 't1' }) }, // u1 → cp1
-      // A folded steer echoed as a "↪ 插话" bubble; then Stop → the re-run turn delivers it WITHOUT an
-      // opener echo (it was already shown), so its checkpoint has only this steer bubble to anchor on.
-      { kind: 'server', msg: ev({ type: 'user-echo', text: 'actually use path Y', steer: true }) },
-      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 1, label: 't2' }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp1', messageIndex: 0, anchorMessageId: 'u1', label: 't1' }) }, // u1 → cp1
+      // A folded steer echoed as a "↪ 插话" bubble under its own stable id; then Stop → the re-run
+      // turn is anchored on THAT id (the server reuses it as the re-run's ledger message id), not a
+      // fresh one — so the checkpoint-recorded event names it directly, no heuristic needed.
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'actually use path Y', messageId: 's1', steer: true }) },
+      { kind: 'server', msg: ev({ type: 'checkpoint-recorded', id: 'cp2', messageIndex: 1, anchorMessageId: 's1', label: 't2' }) },
     ])
     const byId = (id: string) => s.messages.find((m) => m.id === id)!
     expect(byId('u1').checkpointId).toBe('cp1')                 // the original opener is untouched
-    const steerBubble = s.messages.find((m) => m.steer)!
-    expect(steerBubble.checkpointId).toBe('cp2')                // re-run's revert anchors on the steer bubble
+    expect(byId('s1').checkpointId).toBe('cp2')                 // re-run's revert anchors on the steer bubble's id
   })
 
   it('cwd-change updates state.cwd live (header + files panel follow without a reload)', () => {
@@ -325,16 +328,16 @@ describe('pending steer previews (transient, client-only)', () => {
     expect(queued.messages).toEqual([]) // NOT a real message yet
 
     // Server echoes it at its real delivery point → the preview clears and a real bubble appears.
-    const shown = reduce(queued, { kind: 'server', msg: ev({ type: 'user-echo', text: 'change direction', steer: true }) })
+    const shown = reduce(queued, { kind: 'server', msg: ev({ type: 'user-echo', text: 'change direction', messageId: 'ps1', steer: true }) })
     expect(shown.pendingSteers).toEqual([])
-    expect(shown.messages).toEqual([{ id: 'ue0', role: 'user', parts: [{ kind: 'text', text: 'change direction' }], steer: true }])
+    expect(shown.messages).toEqual([{ id: 'ps1', role: 'user', parts: [{ kind: 'text', text: 'change direction' }], steer: true }])
   })
 
   it('a combined echo (join of several queued steers) clears every matching preview', () => {
     const s = run([
       { kind: 'steer-queued', id: 'ps1', text: 'A' },
       { kind: 'steer-queued', id: 'ps2', text: 'B' },
-      { kind: 'server', msg: ev({ type: 'user-echo', text: 'A\nB', steer: true }) },
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'A\nB', messageId: 'ps2', steer: true }) },
     ])
     expect(s.pendingSteers).toEqual([])
   })
@@ -343,7 +346,7 @@ describe('pending steer previews (transient, client-only)', () => {
     const s = run([
       { kind: 'steer-queued', id: 'ps1', text: 'first' },
       { kind: 'steer-queued', id: 'ps2', text: 'line one\nline two' }, // steer with its own newline
-      { kind: 'server', msg: ev({ type: 'user-echo', text: 'first\nline one\nline two', steer: true }) },
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'first\nline one\nline two', messageId: 'ps2', steer: true }) },
     ])
     expect(s.pendingSteers).toEqual([]) // both clear (segment-boundary match, not split-on-'\n')
   })
@@ -351,7 +354,7 @@ describe('pending steer previews (transient, client-only)', () => {
   it('a non-matching user-echo leaves an unrelated preview pinned', () => {
     const s = run([
       { kind: 'steer-queued', id: 'ps1', text: 'still queued' },
-      { kind: 'server', msg: ev({ type: 'user-echo', text: 'a different steer' }) },
+      { kind: 'server', msg: ev({ type: 'user-echo', text: 'a different steer', messageId: 'ps9' }) },
     ])
     expect(s.pendingSteers).toEqual([{ id: 'ps1', text: 'still queued' }])
   })

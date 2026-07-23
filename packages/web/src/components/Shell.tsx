@@ -130,13 +130,17 @@ export function Shell() {
     if (state.thinking) {
       // Mid-turn interjection: attachments ride along on the steer frame; the server queues them and
       // delivers as a follow-up turn (submit handles images/pastedTexts). The optimistic ↪插话 preview
-      // carries the attachments for immediate feedback.
-      dispatch({ kind: 'steer-queued', id: nextId('ps'), text, attachments })
-      send({ type: 'steer', text, images, pastedTexts, files })
+      // carries the attachments for immediate feedback. Generate the id ONCE and use it for both the
+      // wire message and the optimistic dispatch, so the server's later user-echo (same messageId)
+      // and this preview describe the same logical message.
+      const id = nextId('ps')
+      dispatch({ kind: 'steer-queued', id, text, attachments })
+      send({ type: 'steer', text, messageId: id, images, pastedTexts, files })
       return
     }
-    dispatch({ kind: 'user-send', id: nextId('u'), text, attachments })
-    send({ type: 'send', text, images, pastedTexts, files })
+    const id = nextId('u')
+    dispatch({ kind: 'user-send', id, text, attachments })
+    send({ type: 'send', text, messageId: id, images, pastedTexts, files })
   }
   // Model switch from the Header picker. Temporary switch takes effect on this session immediately
   // (WS 'switch-model' — the server rebuilds its client but emits no event, so we optimistically
@@ -246,7 +250,7 @@ export function Shell() {
           onSwitch={(id) => { setShareSel(null); void switchSession(id); setMenuOpen(false) }}
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
-          onJump={(id, idx) => { searchJump(id, idx); setMenuOpen(false) }}
+          onJump={(id, msgId) => { searchJump(id, msgId); setMenuOpen(false) }}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} dirPickerRef={dirPickerRef} />

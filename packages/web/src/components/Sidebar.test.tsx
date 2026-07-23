@@ -9,7 +9,7 @@ vi.mock('../state/session.js', async (orig) => ({
   searchSessions: vi.fn(async () => [
     {
       session: { id: 's1', title: '会话一', cwd: '/work', updatedAt: '2026-06-30T10:00:00Z' },
-      hits: [{ msgIndex: 2, role: 'user', snippet: { pre: '前', match: 'needle', post: '后' } }],
+      hits: [{ id: 'h2', msgIndex: 2, role: 'user', snippet: { pre: '前', match: 'needle', post: '后' } }],
       hitCount: 1,
     },
   ]),
@@ -148,12 +148,12 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
   })
 
-  it('clicking a hit calls onJump(sessionId, msgIndex)', async () => {
+  it('clicking a hit calls onJump(sessionId, hit.id) — the stable message id, not the array index', async () => {
     const props = renderSidebar()
     fireEvent.change(screen.getByPlaceholderText(/搜索/), { target: { value: 'needle' } })
     const hit = await screen.findByText('needle')
     fireEvent.click(hit)
-    expect(props.onJump).toHaveBeenCalledWith('s1', 2)
+    expect(props.onJump).toHaveBeenCalledWith('s1', 'h2')
   })
 
   it('clearing the search box restores the session list', async () => {
