@@ -39,6 +39,17 @@ const StoreCtx = createContext<Store | null>(null)
 let seq = 0
 export function nextId(prefix: string): string { return prefix + '-' + (++seq) }
 
+/**
+ * Collision-resistant id for a PERSISTENT ledger message (approach B: the client mints the user
+ * message id and it becomes Message.id). Must not use a load-scoped counter (resets on reload →
+ * collides with the session's earlier messages). Prefers crypto.randomUUID but falls back for
+ * NON-secure contexts (e.g. remote access over a plain-http LAN IP, where randomUUID is undefined).
+ */
+export function newMessageId(prefix: string): string {
+  const uuid = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  return `${prefix}-${uuid}`
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reduce, initialState)
   const clientRef = useRef<WsClient | null>(null)

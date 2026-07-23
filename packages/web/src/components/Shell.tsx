@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PermissionVerdict, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
-import { useStore } from '../state/store.js'
+import { useStore, newMessageId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar, type SidebarHandle } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
@@ -134,15 +134,15 @@ export function Shell() {
       // wire message and the optimistic dispatch, so the server's later user-echo (same messageId)
       // and this preview describe the same logical message.
       // Collision-resistant id: this becomes the PERSISTENT ledger Message.id (approach B), used as
-      // React key, DOM anchor, and checkpoint-anchor lookup — a load-scoped counter (nextId) would
-      // reset on page reload and collide with the session's earlier messages. crypto.randomUUID is
-      // available here (127.0.0.1 is a secure context).
-      const id = `ps-${crypto.randomUUID()}`
+      // React key, DOM anchor, and checkpoint-anchor lookup — a load-scoped counter would reset on
+      // reload and collide with the session's earlier messages. newMessageId falls back gracefully
+      // in non-secure contexts (remote http LAN access) where crypto.randomUUID is unavailable.
+      const id = newMessageId('ps')
       dispatch({ kind: 'steer-queued', id, text, attachments })
       send({ type: 'steer', text, messageId: id, images, pastedTexts, files })
       return
     }
-    const id = `u-${crypto.randomUUID()}`
+    const id = newMessageId('u')
     dispatch({ kind: 'user-send', id, text, attachments })
     send({ type: 'send', text, messageId: id, images, pastedTexts, files })
   }
