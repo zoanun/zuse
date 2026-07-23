@@ -30,6 +30,8 @@ import {
   generateSessionTitle,
   steerFoldSuffix,
   genMsgId,
+  INTERRUPT_MARKER,
+  INTERRUPT_MARKER_TOOL_USE,
   type ModelClient,
   type Message,
   type MessageAttachment,
@@ -445,7 +447,7 @@ export class SessionManager {
           // Interrupt-marker text is model-facing ledger scaffolding (staged so the model sees the
           // turn was cut short), not display content — the SnapshotMessage's `interrupt` flag already
           // tells the client to render this as a system notice, so omit the raw marker text as a part.
-          if (interrupt && (block.text === '[Request interrupted by user]' || block.text === '[Request interrupted by user for tool use]')) continue
+          if (interrupt && (block.text === INTERRUPT_MARKER || block.text === INTERRUPT_MARKER_TOOL_USE)) continue
           // Fix A: submit() prefixes the model's userText with `[YYYY-MM-DD HH:MM] `; that
           // prefix lives in the committed ledger, so restoring user messages from the snapshot
           // would surface it (the live path renders raw text). Strip exactly that one leading
@@ -1281,6 +1283,17 @@ export class SessionManager {
   }
 
   /**
+   * Resolve a checkpoint's ledger truncation index: prefer the stable anchorMessageId (survives
+   * index drift from compaction/revert), fall back to the stored messageIndex for legacy
+   * checkpoints persisted before anchorMessageId existed. (Message.id is always a non-empty
+   * string, so findIndex on an absent anchorMessageId simply returns -1 → fallback.)
+   */
+  private resolveCheckpointIndex(cp: SessionCheckpoint, msgs: Message[]): number {
+    const byId = msgs.findIndex((m) => m.id === cp.anchorMessageId)
+    return byId >= 0 ? byId : cp.messageIndex
+  }
+
+  /**
    * Revert to a checkpoint (Phase 12, /revert): roll the workspace back FIRST, then
    * truncate the ledger — if restore() throws, the ledger must stay intact (files did
    * not roll back, so neither can history). Drops checkpoints at/after the revert point
@@ -1303,8 +1316,7 @@ export class SessionManager {
     // reset ledger positions in ways this checkpoint didn't observe) while the anchor message's id
     // is stable. Legacy checkpoints (persisted before anchorMessageId existed) have no id: fall
     // back to the stored index.
-    const byId = cp.anchorMessageId ? msgs.findIndex((m) => m.id === cp.anchorMessageId) : -1
-    const cut = byId >= 0 ? byId : cp.messageIndex
+    const cut = this.resolveCheckpointIndex(cp, msgs)
     this.conversation = Conversation.fromJSON({
       version: 1,
       messages: msgs.slice(0, cut),
@@ -1342,7 +1354,7 @@ export class SessionManager {
     // Resolve by id first (stable across index drift), fall back to the stored index for legacy
     // checkpoints persisted before anchorMessageId existed.
     const msgs = this.conversation.getMessages()
-    const userMsg = (cp.anchorMessageId ? msgs.find((m) => m.id === cp.anchorMessageId) : undefined) ?? msgs[cp.messageIndex]
+    const userMsg = msgs[this.resolveCheckpointIndex(cp, msgs)]
     if (!userMsg || userMsg.role !== 'user') return
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
     const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))
