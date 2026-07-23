@@ -1135,12 +1135,12 @@ export class SessionManager {
       const hash = await trackPromise
       if (hash) {
         const label = text.replace(/\s+/g, ' ').trim().slice(0, 80)
-        this.checkpoints.push({ messageIndex: checkpointIndex, hash, at: trackAt, label })
         // The checkpoint anchors before this turn's user message (checkpointIndex == its ledger
         // index — see Fix B in projectMessages), so read the message's id back off the ledger rather
         // than trusting opts?.messageId, which is absent whenever the client didn't supply one
         // (runAgent then mints its own id via genMsgId() and that's what actually landed in the ledger).
         const anchorMessageId = this.conversation.getMessages()[checkpointIndex]?.id ?? genMsgId()
+        this.checkpoints.push({ messageIndex: checkpointIndex, hash, at: trackAt, label, anchorMessageId })
         this.emit({ type: 'checkpoint-recorded', id: hash, messageIndex: checkpointIndex, anchorMessageId, label })
       }
 
@@ -1298,18 +1298,25 @@ export class SessionManager {
     if (!cp) return
     await this.snapshotStore.restore(cp.hash)
     const conv = this.conversation
+    const msgs = conv.getMessages()
+    // Resolve the truncation point by id first — messageIndex can drift (e.g. compaction folds
+    // reset ledger positions in ways this checkpoint didn't observe) while the anchor message's id
+    // is stable. Legacy checkpoints (persisted before anchorMessageId existed) have no id: fall
+    // back to the stored index.
+    const byId = cp.anchorMessageId ? msgs.findIndex((m) => m.id === cp.anchorMessageId) : -1
+    const cut = byId >= 0 ? byId : cp.messageIndex
     this.conversation = Conversation.fromJSON({
       version: 1,
-      messages: conv.getMessages().slice(0, cp.messageIndex),
+      messages: msgs.slice(0, cut),
       // Cost ledger, not window ledger: money already spent does not un-spend on revert.
       totalUsage: conv.totalUsage,
     })
     // Checkpoints at/after the revert point are invalidated (incl. same-index error-turn ones).
-    this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cp.messageIndex)
+    this.checkpoints = this.checkpoints.filter((c) => c.messageIndex < cut)
     // Feature B: if the revert truncated to before the compaction boundary, the stored summary/cut
     // no longer describe the (now-shorter) ledger — drop it so the next turn's view is the full
     // remaining ledger (which re-compacts if still too large).
-    if (this.compaction && cp.messageIndex <= this.compaction.cutIndex) this.compaction = null
+    if (this.compaction && cut <= this.compaction.cutIndex) this.compaction = null
     this.contextTokens = undefined
     this.emit({ type: 'context-update', contextTokens: undefined, contextWindow: this.ctxWindow() })
     // Notify clients a revert happened so they can re-sync (wsServer re-pushes a fresh
@@ -1332,7 +1339,10 @@ export class SessionManager {
     // would land on a tool result (which has no checkpoint) and silently no-op.
     const cp = this.checkpoints[this.checkpoints.length - 1]
     if (!cp) return
-    const userMsg = this.conversation.getMessages()[cp.messageIndex]
+    // Resolve by id first (stable across index drift), fall back to the stored index for legacy
+    // checkpoints persisted before anchorMessageId existed.
+    const msgs = this.conversation.getMessages()
+    const userMsg = (cp.anchorMessageId ? msgs.find((m) => m.id === cp.anchorMessageId) : undefined) ?? msgs[cp.messageIndex]
     if (!userMsg || userMsg.role !== 'user') return
     // Recover the original prompt: join text blocks, strip submit()'s `[YYYY-MM-DD HH:MM] ` prefix.
     const text = stripUserStamp(userMsg.content.map((b) => (b.type === 'text' ? b.text : '')).join(''))

@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ToolRegistry } from '@zuse/core'
@@ -259,6 +260,46 @@ describe('SessionService', () => {
     const after = await loadSession(dir, id)
     expect(after?.title).toBe('Pinned name')
     expect(after?.titleManual).toBe(true)
+  })
+
+  it('加载无 id 的旧会话存档 → 每条消息得确定性 id，二次加载不变', async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const id = '20260626-120000-bbbb'
+    // Hand-write a LEGACY record on disk: messages have no `id` field at all, as real
+    // pre-feature session files do. loadSession() is schema-free (plain JSON.parse + cast),
+    // so writing raw JSON here (instead of going through saveSession/SessionRecord, whose TS
+    // type now requires Message.id) faithfully simulates an actual legacy file.
+    const legacyRec = {
+      version: 1,
+      id,
+      title: 'Legacy chat',
+      cwd: '/work',
+      createdAt: '2026-06-26T12:00:00.000Z',
+      updatedAt: '2026-06-26T12:00:00.000Z',
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      ],
+      totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      checkpoints: [],
+    }
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, `${id}.json`), JSON.stringify(legacyRec, null, 2), 'utf8')
+
+    // Load through the real restore path (SessionService.getOrLoad → createSession →
+    // Conversation.fromJSON, which backfills legacy ids deterministically by index).
+    const svc1 = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const mgr1 = (await svc1.getOrLoad(id))!
+    const ids1 = mgr1.getConversation().getMessages().map((m) => m.id)
+    expect(ids1).toEqual(['msg_legacy_0', 'msg_legacy_1'])
+    expect(ids1.every((x) => typeof x === 'string' && x.length > 0)).toBe(true)
+
+    // A second, independent load (fresh service, so getOrLoad actually re-reads disk instead of
+    // hitting the registry) must backfill the SAME ids — deterministic by ledger index, not random.
+    const svc2 = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const mgr2 = (await svc2.getOrLoad(id))!
+    const ids2 = mgr2.getConversation().getMessages().map((m) => m.id)
+    expect(ids2).toEqual(ids1)
   })
 
   it('delete() does not resurrect: a trailing in-flight persist cannot rewrite the file', async () => {

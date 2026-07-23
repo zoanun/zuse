@@ -1530,6 +1530,43 @@ describe('SessionManager checkpoints + revert', () => {
     expect(restored).toEqual(['cp0'])
     expect(mgr.getState().messages[0]!.parts[0]).toMatchObject({ kind: 'text', text: 'the real question' })
   })
+
+  it('revert 按 anchorMessageId 定位截断（id 优先于漂移的 index）', async () => {
+    // Two committed turns: seed a conversation where the checkpoint anchoring the SECOND turn
+    // carries a deliberately STALE messageIndex (0, as if it had drifted from its true position),
+    // but a correct anchorMessageId pointing at m3. revert must truncate to before m3 (index 2,
+    // keeping m1+m2) — not to the stale index 0.
+    const seeded = Conversation.fromJSON({ version: 1, messages: [
+      { role: 'user', id: 'm1', content: [{ type: 'text', text: 'first turn' }] },
+      { role: 'assistant', id: 'm2', content: [{ type: 'text', text: 'first answer' }] },
+      { role: 'user', id: 'm3', content: [{ type: 'text', text: 'second turn' }] },
+      { role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'second answer' }] },
+    ], totalUsage: new Conversation().totalUsage })
+    const restored: string[] = []
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
+      settings: makeSettings(), systemPrompt: 'SYS',
+      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      snapshotStore: { track: async () => 'cp-new', restore: async (h) => { restored.push(h) } },
+      conversation: seeded,
+      checkpoints: [
+        // Stale: real anchor is m3 (index 2), but messageIndex here is wrong (0).
+        { messageIndex: 0, hash: 'cp-stale', at: '2026-06-27T10:00:00.000Z', label: 'second turn', anchorMessageId: 'm3' },
+      ],
+    })
+    const reverted: string[] = []
+    mgr.subscribe((e) => { if (e.type === 'reverted') reverted.push(e.checkpointId) })
+
+    await mgr.revert('cp-stale')
+
+    expect(reverted).toEqual(['cp-stale'])
+    expect(restored).toEqual(['cp-stale'])
+    // Truncated to before m3 (index 2) — id-resolved cut, not the stale index-0 cut which would
+    // have wiped the ledger to empty.
+    expect(mgr.getState().messageCount).toBe(2)
+    expect(mgr.getState().messages[0]!.parts[0]).toMatchObject({ kind: 'text', text: 'first turn' })
+    expect(mgr.getState().messages[1]!.parts[0]).toMatchObject({ kind: 'text', text: 'first answer' })
+  })
 })
 
 describe('SessionManager switchModel', () => {

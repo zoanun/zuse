@@ -39,4 +39,10 @@ export interface SessionCheckpoint {
   at: string
   /** First ~80 chars of the user's message, for display. */
   label: string
+  /**
+   * Id of the user message this checkpoint anchors before. Optional so legacy persisted
+   * checkpoints (recorded before this field existed) still deserialize; revert/retry fall
+   * back to messageIndex when it's absent.
+   */
+  anchorMessageId?: string
 }
