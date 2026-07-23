@@ -14,7 +14,7 @@ function fakeUpload(map: Record<string, { data: string; mediaType: string }>): U
   } as unknown as UploadService
 }
 
-const textMsg = (text: string): Message => ({ role: 'user', content: [{ type: 'text', text }] })
+const textMsg = (text: string): Message => ({ role: 'user', id: 'm1', content: [{ type: 'text', text }] })
 
 describe('makeExpandAttachments (I2)', () => {
   it("expands a route:'direct' attachment into an image block prepended to content", async () => {

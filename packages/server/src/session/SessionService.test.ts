@@ -390,7 +390,7 @@ describe('SessionService — small-model title', () => {
     await saveSession(dir, {
       version: 1, id, title: '已生成的标题', titleGenerated: true, cwd: '/work',
       createdAt: '2026-06-26T13:00:00.000Z', updatedAt: '2026-06-26T13:00:00.000Z',
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      messages: [{ role: 'user', id: 'm1', content: [{ type: 'text', text: 'hi' }] }],
       totalUsage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
       checkpoints: [],
     })

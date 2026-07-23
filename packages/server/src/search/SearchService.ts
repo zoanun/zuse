@@ -3,7 +3,7 @@ import type { SearchHit, SearchSnippet, SessionSearchResult } from '@zuse/protoc
 import { stripUserStamp } from '../session/userStamp.js'
 import { scanSessionDir, byUpdatedAtDesc, type ScanEntry } from '../session/sessionStore.js'
 
-interface ProseDoc { msgIndex: number; role: 'user' | 'assistant'; text: string }
+interface ProseDoc { msgIndex: number; id: string; role: 'user' | 'assistant'; text: string }
 type SessionLite = SessionSearchResult['session']
 /** One session's searchable payload: its list metadata + the extracted prose docs. */
 interface ProseEntry { meta: SessionLite; docs: ProseDoc[] }
@@ -24,7 +24,7 @@ function extractProse(messages: Message[]): ProseDoc[] {
     // and scanSessionDir's per-file catch would then drop the WHOLE session from search results.
     const text = (m.content ?? []).filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('')
     const clean = m.role === 'user' ? stripUserStamp(text) : text
-    if (clean.trim() !== '') docs.push({ msgIndex: i, role: m.role, text: clean })
+    if (clean.trim() !== '') docs.push({ msgIndex: i, id: m.id, role: m.role, text: clean })
   })
   return docs
 }
@@ -82,7 +82,7 @@ export class SearchService {
       for (const d of entry.docs) {
         const m = re.exec(d.text)
         if (m === null) continue
-        all.push({ msgIndex: d.msgIndex, role: d.role, snippet: makeSnippet(d.text, m.index, m[0].length) })
+        all.push({ msgIndex: d.msgIndex, id: d.id, role: d.role, snippet: makeSnippet(d.text, m.index, m[0].length) })
       }
       if (all.length === 0) continue
       // Keep the LAST `cap` hits (most recent by message order), dropping older ones; hitCount

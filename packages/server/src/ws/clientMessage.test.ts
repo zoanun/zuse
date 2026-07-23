@@ -33,7 +33,15 @@ describe('applyClientMessage', () => {
     const mgr = fakeMgr()
     const err = vi.fn()
     applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi' }), err)
-    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined, undefined, undefined)
+    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined, undefined, undefined, { messageId: undefined })
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('forwards the client-supplied messageId from a send frame to submit', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi', messageId: 'msg_u1' }), err)
+    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined, undefined, undefined, { messageId: 'msg_u1' })
     expect(err).not.toHaveBeenCalled()
   })
 
@@ -42,7 +50,7 @@ describe('applyClientMessage', () => {
     const err = vi.fn()
     const images = [{ id: 'a', name: 'x.png', mediaType: 'image/png' }]
     applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi', images }), err)
-    expect(mgr.submit).toHaveBeenCalledWith('hi', images, undefined, undefined)
+    expect(mgr.submit).toHaveBeenCalledWith('hi', images, undefined, undefined, { messageId: undefined })
     expect(err).not.toHaveBeenCalled()
   })
 
@@ -51,7 +59,7 @@ describe('applyClientMessage', () => {
     const err = vi.fn()
     const files = [{ id: 'f1', name: 'a.pdf', mediaType: 'application/pdf' }]
     applyClientMessage(mgr, JSON.stringify({ type: 'send', text: 'hi', files }), err)
-    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined, undefined, files)
+    expect(mgr.submit).toHaveBeenCalledWith('hi', undefined, undefined, files, { messageId: undefined })
   })
 
   it('dispatches interrupt / steer / permission-reply / switch-model', () => {
@@ -63,7 +71,7 @@ describe('applyClientMessage', () => {
     applyClientMessage(mgr, JSON.stringify({ type: 'permission-reply', id: 'p1', verdict: 'allow' }), err)
     applyClientMessage(mgr, JSON.stringify({ type: 'switch-model', providerId: 'anthropic', model: 'x' }), err)
     expect(mgr.interrupt).toHaveBeenCalled()
-    expect(mgr.steer).toHaveBeenCalledWith('go', undefined, undefined, undefined)
+    expect(mgr.steer).toHaveBeenCalledWith('go', undefined, undefined, undefined, { messageId: undefined })
     expect(mgr.resolvePermission).toHaveBeenCalledWith('p1', 'allow')
     expect(mgr.switchModel).toHaveBeenCalledWith('anthropic', 'x')
     expect(err).not.toHaveBeenCalled()
@@ -77,7 +85,7 @@ describe('applyClientMessage', () => {
     const err = vi.fn()
     applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: 'go' }), err)
     expect(mgr.steer).not.toHaveBeenCalled()
-    expect(mgr.submit).toHaveBeenCalledWith('go', undefined, undefined, undefined, { echo: true })
+    expect(mgr.submit).toHaveBeenCalledWith('go', undefined, undefined, undefined, { echo: true, messageId: undefined })
     expect(err).not.toHaveBeenCalled()
   })
 
@@ -89,7 +97,7 @@ describe('applyClientMessage', () => {
     const images = [{ id: 'i1', name: 'a.png', mediaType: 'image/png' }]
     const pastedTexts = [{ id: 'pa', text: '日志' }]
     applyClientMessage(mgr, JSON.stringify({ type: 'steer', text: '', images, pastedTexts }), err)
-    expect(mgr.submit).toHaveBeenCalledWith('', images, pastedTexts, undefined, { echo: true })
+    expect(mgr.submit).toHaveBeenCalledWith('', images, pastedTexts, undefined, { echo: true, messageId: undefined })
     expect(err).not.toHaveBeenCalled()
   })
 

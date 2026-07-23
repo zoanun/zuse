@@ -43,8 +43,8 @@ function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
     createdAt: '2026-06-25T10:00:00.000Z',
     updatedAt: '2026-06-25T10:01:00.000Z',
     messages: [
-      { role: 'user', content: [{ type: 'text', text: 'Hello' }] },
-      { role: 'assistant', content: [{ type: 'text', text: 'Hi!' }] },
+      { role: 'user', id: 'm1', content: [{ type: 'text', text: 'Hello' }] },
+      { role: 'assistant', id: 'm2', content: [{ type: 'text', text: 'Hi!' }] },
     ],
     totalUsage: {
       input_tokens: 10,
