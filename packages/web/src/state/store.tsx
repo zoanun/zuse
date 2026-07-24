@@ -33,6 +33,10 @@ interface Store {
   pendingRestoreInput: string | null
   /** Clear the pending restore-input target (called by Shell after handing it to the Composer). */
   clearRestoreInput: () => void
+  /** 主区视图：'chat'（默认聊天）或 'cron'（定时任务面板）。 */
+  mainView: 'chat' | 'cron'
+  /** 切主区视图。切到 chat 由点会话/新会话触发；切到 cron 由侧边栏入口触发。 */
+  setMainView: (v: 'chat' | 'cron') => void
 }
 const StoreCtx = createContext<Store | null>(null)
 
@@ -61,6 +65,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Empty-interrupt cancel: server emits restore-input with the text that was in flight, so the
   // Composer can put it back for editing. Independent of reducer state, mirroring pendingScrollTo.
   const [pendingRestoreInput, setPendingRestoreInput] = useState<string | null>(null)
+  // 主区视图：默认聊天；侧边栏"⏰ 定时任务"入口切到 'cron'。独立于 reducer state，
+  // 与 pendingScrollTo 同款——attachTo（点会话/新会话）里重置回 'chat'。
+  const [mainView, setMainView] = useState<'chat' | 'cron'>('chat')
   // Keep the latest sessions list + current id reachable from the (once-bound) WS
   // onMessage closure without re-creating the client.
   const sessionsRef = useRef<SessionMeta[]>([])
@@ -148,6 +155,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // message at that stale index. searchJump re-sets it AFTER calling attachTo (same batched
     // event → the re-set wins), so a genuine jump still scrolls.
     setPendingScrollTo(null)
+    setMainView('chat') // 点会话/新会话/搜索跳转都回到聊天主区（离开 cron 面板）
     setSessionId(id)
     clientRef.current?.reconnect(wsUrl(id))
     dispatch({ kind: 'reset' })
@@ -201,7 +209,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     : sessions
 
   return (
-    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null), pendingRestoreInput, clearRestoreInput: () => setPendingRestoreInput(null) }}>
+    <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null), pendingRestoreInput, clearRestoreInput: () => setPendingRestoreInput(null), mainView, setMainView }}>
       {children}
     </StoreCtx.Provider>
   )
