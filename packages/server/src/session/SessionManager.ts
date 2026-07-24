@@ -480,7 +480,7 @@ export class SessionManager {
       const checkpointId = this.checkpoints.find((c) => c.messageIndex === i)?.hash
       // Carry the message's image attachments (route/description; no base64) so the client can render
       // an image thumbnail row. Structurally identical to protocol's MessageAttachment → assign directly.
-      out.push({ id, role, parts, interrupt: isInterrupt || undefined, checkpointId, ledgerIndex: i, attachments })
+      out.push({ id, role, parts, interrupt: isInterrupt || undefined, checkpointId, attachments })
       // Emit each folded steer as its own "↪ 插话" bubble after the carrier message. Driven by the
       // structural `steer` field — a message that merely CONTAINS the marker text (e.g. a Read of
       // steer.ts) has no such field and is left untouched. Give each bubble a stable id derived from

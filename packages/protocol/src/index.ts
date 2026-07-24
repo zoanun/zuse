@@ -27,9 +27,6 @@ export interface SnapshotMessage {
   checkpointId?: string
   /** 回合中插话（steer）气泡：服务端据账本消息的结构化 steer 字段还原出的用户原话，前端渲染 "↪ 插话"。 */
   steer?: boolean
-  /** 该快照消息对应的账本索引。投影可能插入额外的 steer 气泡，使快照数组下标 != 账本下标；
-   *  历史搜索跳转按此字段而非数组位置定位，避免 steer 之后的命中错位。 */
-  ledgerIndex?: number
   /** 附着在本条消息上的附件（图片或粘贴文本）（快照投影用；不含 base64）。 */
   attachments?: MessageAttachment[]
 }

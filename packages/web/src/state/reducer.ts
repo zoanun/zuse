@@ -61,7 +61,7 @@ function mapPart(p: SnapshotPart): Part {
 function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   // The server now hands us a stable ledger id per message (and a derived id for steer bubbles,
   // e.g. `${carrierId}#steer${n}`) — use it directly as the id for keying / scroll / search-jump /
-  // checkpoint association, instead of re-deriving one from array position or ledgerIndex.
+  // checkpoint association, instead of re-deriving one from array position.
   const mapped = s.messages.map((m) => ({
     id: m.id,
     role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId, steer: m.steer,

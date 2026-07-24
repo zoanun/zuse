@@ -156,7 +156,7 @@ describe('SessionManager snapshot projection', () => {
 
     const s = mgr.getState()
     expect(s.messages).toEqual([
-      { id: 'm1', role: 'user', parts: [{ kind: 'text', text: 'hello' }], ledgerIndex: 0 },
+      { id: 'm1', role: 'user', parts: [{ kind: 'text', text: 'hello' }] },
       {
         id: 'm2',
         role: 'assistant',
@@ -164,9 +164,8 @@ describe('SessionManager snapshot projection', () => {
           { kind: 'text', text: 'running it' },
           { kind: 'tool-use', id: 'tu1', name: 'Bash', input: { command: 'ls' } },
         ],
-        ledgerIndex: 1,
       },
-      { id: 'm3', role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }], ledgerIndex: 2 },
+      { id: 'm3', role: 'user', parts: [{ kind: 'tool-result', id: 'tu1', name: '', output: 'file.txt', isError: false }] },
     ])
     // No turn has run, so no checkpoints recorded yet.
     expect(s.checkpoints).toEqual([])
@@ -269,19 +268,21 @@ describe('SessionManager snapshot projection', () => {
     expect(trPart.output).toBe(leaked)                            // content NOT truncated/altered
   })
 
-  it('sets ledgerIndex on projected messages so search-jump survives spliced steer bubbles', () => {
+  it('keeps a stable ledger id on the real message after a spliced steer bubble (search-jump anchor)', () => {
     const conversation = new Conversation()
     conversation.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: 'q' }] })
     conversation.append({ role: 'assistant', id: 'm2', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] })
     conversation.append({ role: 'user', id: 'm3', steer: ['mid'], content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' + steerFoldSuffix('mid'), is_error: false }] })
-    conversation.append({ role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'after' }] }) // ledger index 3
+    conversation.append({ role: 'assistant', id: 'm4', content: [{ type: 'text', text: 'after' }] })
 
     const s = buildMgr(conversation).getState()
-    // The steer bubble is spliced in, so the array is longer than the ledger — but the assistant
-    // AFTER it still reports ledgerIndex 3 (not shifted), keeping 'h3' aligned for search-jump.
+    // A steer bubble is spliced in, so the snapshot array is longer than the ledger. Search-jump now
+    // anchors on the stable ledger id (not array position), so the assistant AFTER the bubble must
+    // still report its own id 'm4', and the spliced bubble must carry a derived `#steer` id that
+    // can't collide with a real ledger id.
     const afterMsg = s.messages.find((m) => m.parts.some((p) => p.kind === 'text' && p.text === 'after'))!
-    expect(afterMsg.ledgerIndex).toBe(3)
-    expect(s.messages.find((m) => m.steer)!.ledgerIndex).toBeUndefined() // spliced bubble carries none
+    expect(afterMsg.id).toBe('m4')
+    expect(s.messages.find((m) => m.steer)!.id).toBe('m3#steer0') // derived from the carrier's id
   })
 })
 
