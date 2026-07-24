@@ -51,7 +51,9 @@ export class CronScheduler {
   private schedule(task: CronTask): void {
     if (!isValidCron(task.cron)) return // 非法表达式：跳过调度（CronService 建时已 400 挡住，这是兜底）
     // 不传 timezone → 本机时区；protect:true → 同任务上次未跑完则跳过本次（不堆叠并发）。
-    const job = new Cron(task.cron, { protect: true }, () => { void this.fire(task) })
+    // 回调必须 RETURN fire() 的 promise：croner 的 protect 靠 await 回调返回的 promise 判断
+    // 「上次是否还在跑」；返回 void 会让每次触发看似瞬时完成、protect 失效。fire() 绝不 reject。
+    const job = new Cron(task.cron, { protect: true }, () => this.fire(task))
     this.jobs.set(task.id, job)
   }
 
@@ -61,22 +63,28 @@ export class CronScheduler {
     return d ? d.toISOString() : null
   }
 
-  /** 到点（或手动"立即执行"）：开全新 cron 会话跑一轮、记 run。绝不抛（吞错记 failed）。 */
+  /**
+   * 到点（或手动"立即执行"）：开全新 cron 会话跑一轮、记 run。**绝不 reject**——croner 的 protect
+   * 会 await 这个 promise，一旦 reject 会冒泄到 croner；且本方法是「吞错记 failed」的唯一记录点。
+   * 故 create/首条 appendRun 也在 try 内：create 失败同样记一条 failed（sessionId 为空）。
+   */
   async fire(task: CronTask): Promise<void> {
     const runId = newSessionId()
     const startedAt = new Date().toISOString()
-    const { id: sessionId } = await this.sessions.create({ cwd: task.cwd, permissionMode: task.permissionMode, kind: 'cron' })
-    const base: CronRun = { id: runId, taskId: task.id, startedAt, status: 'running', sessionId }
-    await appendRun(this.dir, base)
+    let sessionId = ''
+    const base = (): Omit<CronRun, 'status'> => ({ id: runId, taskId: task.id, startedAt, sessionId })
     try {
+      sessionId = (await this.sessions.create({ cwd: task.cwd, permissionMode: task.permissionMode, kind: 'cron' })).id
+      await appendRun(this.dir, { ...base(), status: 'running' })
       const mgr = await this.sessions.getOrLoad(sessionId)
       if (!mgr) throw new Error('cron session vanished after create')
       await mgr.submit(task.prompt)
-      await appendRun(this.dir, { ...base, status: 'success', finishedAt: new Date().toISOString(), summary: summarize(mgr.getState()) })
+      await appendRun(this.dir, { ...base(), status: 'success', finishedAt: new Date().toISOString(), summary: summarize(mgr.getState()) })
     } catch (err) {
-      await appendRun(this.dir, { ...base, status: 'failed', finishedAt: new Date().toISOString(), error: err instanceof Error ? err.message : String(err) })
+      // 记 failed 也可能抛（磁盘错）——用 catch 兜住，保证 fire 永不 reject。
+      await appendRun(this.dir, { ...base(), status: 'failed', finishedAt: new Date().toISOString(), error: err instanceof Error ? err.message : String(err) }).catch(() => {})
     } finally {
-      this.sessions.release(sessionId)
+      if (sessionId) this.sessions.release(sessionId)
     }
   }
 

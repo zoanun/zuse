@@ -57,6 +57,19 @@ describe('CronScheduler.fire', () => {
     expect(runs[0]!.error).toContain('boom')
     expect(sessions.release).toHaveBeenCalledWith('sess-1')
   })
+  it('create failure: never rejects, records failed, does not release (no session)', async () => {
+    // create() throwing must NOT reject fire() (croner awaits it via protect) and must still
+    // record a failed run — the create/first-appendRun are inside the try (code-review finding).
+    const sessions = { create: vi.fn(async () => { throw new Error('create boom') }), getOrLoad: vi.fn(), release: vi.fn() } as any
+    const sch = new CronScheduler({ dir, sessions })
+    await expect(sch.fire(task())).resolves.toBeUndefined()
+    const runs = await loadRuns(dir, 't1')
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.status).toBe('failed')
+    expect(runs[0]!.error).toContain('create boom')
+    expect(sessions.getOrLoad).not.toHaveBeenCalled()
+    expect(sessions.release).not.toHaveBeenCalled()
+  })
 })
 
 describe('CronScheduler schedule lifecycle', () => {

@@ -84,7 +84,7 @@ export class CronService {
     const run = (await loadRuns(this.deps.dir, taskId)).find((r) => r.id === runId)
     if (!run) return null
     let messages: CronRunDetail['messages'] = []
-    if (this.deps.sessions) {
+    if (this.deps.sessions && run.sessionId) {
       const mgr = await this.deps.sessions.getOrLoad(run.sessionId)
       if (mgr) { messages = mgr.getState().messages as CronRunDetail['messages']; this.deps.sessions.release(run.sessionId) }
     }
