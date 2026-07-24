@@ -14,6 +14,8 @@ interface Props {
   onDelete: (id: string) => void
   onRename: (id: string, title: string) => void
   onJump: (sessionId: string, msgId: string) => void
+  /** 打开定时任务面板（主区切到 cron 视图）。可选：未提供则不渲染入口。 */
+  onOpenCron?: () => void
 }
 
 function titleOf(s: SessionMeta): string {
@@ -99,7 +101,7 @@ function SessionRow({ s, active, onSwitch, onDelete, onRename }: {
 }
 
 export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
-  { sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump }, ref,
+  { sessions, currentSessionId, onNewChat, onSwitch, onDelete, onRename, onJump, onOpenCron }, ref,
 ) {
   const [query, setQuery] = useState('')
   const dq = useDebounced(query.trim(), 200)
@@ -129,6 +131,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
     <aside className="sidebar">
       <div className="brand"><span className="mark">Z</span> zuse</div>
       <button className="side-btn" onClick={onNewChat}>＋&nbsp; 新对话</button>
+      {onOpenCron ? <button className="side-btn cron-entry" onClick={onOpenCron} title="定时任务">⏰&nbsp; 定时任务</button> : null}
       <div className="search-box">
         <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />

@@ -12,6 +12,7 @@ import { PermissionCard } from './PermissionCard.js'
 import { Composer, type ComposerHandle, imageFilesFrom, otherFilesFrom } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
+import { CronPanel } from './CronPanel.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { persistModel } from '../state/manageApi.js'
@@ -40,7 +41,7 @@ function turnIdsOf(msgs: ReadonlyArray<Msg>, id: string): string[] {
 const EMPTY_HISTORY: string[] = []
 
 export function Shell() {
-  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo, pendingRestoreInput, clearRestoreInput } = useStore()
+  const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo, pendingRestoreInput, clearRestoreInput, mainView, setMainView } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
@@ -255,9 +256,11 @@ export function Shell() {
           onDelete={(id) => { void removeSession(id) }}
           onRename={(id, title) => { void rename(id, title) }}
           onJump={(id, msgId) => { searchJump(id, msgId); setMenuOpen(false) }}
+          onOpenCron={() => { setShareSel(null); setMainView('cron'); setMenuOpen(false) }}
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} dirPickerRef={dirPickerRef} />
+        {mainView === 'cron' ? <main className="chat"><CronPanel /></main> : (
         <main className="chat">
           {shareSel ? (
             <div className="share-bar">
@@ -311,6 +314,7 @@ export function Shell() {
             onRunCommand={onRunCommand}
           />
         </main>
+        )}
       </div>
       <ManageDrawer
         open={drawerOpen}
