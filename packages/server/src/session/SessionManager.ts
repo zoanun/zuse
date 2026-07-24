@@ -84,6 +84,8 @@ export interface SessionManagerOptions {
   settings: ResolvedSettings
   systemPrompt: string
   permissionPolicy: PermissionPolicy
+  /** 会话类别标记：'cron' = 定时任务跑出的会话（从普通列表过滤）。缺省 = 普通会话。 */
+  kind?: 'cron'
   snapshotStore: SnapshotStore
   conversation?: Conversation
   /** Pre-seed checkpoint anchors (e.g. restored from persistence, or for tests). Defaults to []. */
@@ -166,6 +168,8 @@ export class SessionManager {
   private readonly settings: ResolvedSettings
   private systemPrompt: string
   private policy: PermissionPolicy
+  /** 会话类别（'cron' 或 undefined）。SessionService.persist 据此写入 SessionRecord.kind。 */
+  private readonly kind?: 'cron'
   private readonly snapshotStore: SnapshotStore
   private readonly createdAt: string
   private readonly maxTokens: number
@@ -239,6 +243,7 @@ export class SessionManager {
     this.settings = opts.settings
     this.systemPrompt = opts.systemPrompt
     this.policy = opts.permissionPolicy
+    this.kind = opts.kind
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
     this.checkpoints = opts.checkpoints ?? []
@@ -368,6 +373,11 @@ export class SessionManager {
 
   getCreatedAt(): string {
     return this.createdAt
+  }
+
+  /** 会话类别（'cron' 或 undefined）。SessionService.persist 据此写入 SessionRecord.kind。 */
+  getKind(): 'cron' | undefined {
+    return this.kind
   }
 
   getModelId(): string {
