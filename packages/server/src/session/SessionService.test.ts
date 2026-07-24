@@ -49,6 +49,8 @@ function fakeCreateSessionFactory(scriptsById: Record<string, StreamEvent[][]> =
       settings: makeSettings(),
       systemPrompt: 'SYS',
       permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      // Forward kind so create({kind:'cron'}) is observable via getKind() in tests.
+      kind: opts.kind,
       snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
       conversation: opts.conversation,
       checkpoints: opts.checkpoints,
@@ -300,6 +302,19 @@ describe('SessionService', () => {
     const mgr2 = (await svc2.getOrLoad(id))!
     const ids2 = mgr2.getConversation().getMessages().map((m) => m.id)
     expect(ids2).toEqual(ids1)
+  })
+
+  it("create({kind:'cron'}) persists kind and release() drops the live manager but keeps the file", async () => {
+    const dir = join(tempDir(), 'web-sessions')
+    const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
+
+    const { id } = await svc.create({ cwd: '/tmp', permissionMode: 'bypassPermissions', kind: 'cron' })
+    const mgr = await svc.getOrLoad(id)
+    expect(mgr!.getKind()).toBe('cron')
+
+    // release() must exist and not throw; it drops the live manager without deleting any file.
+    expect(typeof svc.release).toBe('function')
+    expect(() => svc.release(id)).not.toThrow()
   })
 
   it('delete() does not resurrect: a trailing in-flight persist cannot rewrite the file', async () => {

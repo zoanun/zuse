@@ -102,6 +102,7 @@ export class SessionService {
       // Feature B: restore compaction state so the next turn's LLM view is rebuilt correctly.
       compaction: rec.compaction,
       createdAt: rec.createdAt,
+      kind: rec.kind,
       // A restored session has already passed its "first message" moment (or was
       // manually titled) → don't auto-generate a title again on its next message.
       titleAlreadySet: rec.messages.length > 0 || !!rec.titleManual || !!rec.titleGenerated,
@@ -127,12 +128,14 @@ export class SessionService {
    * the registry (reachable by id over WS) but stays absent from list() until the first turn-end
    * autosave, once it has real content. An explicit `title` is remembered as an initial title.
    */
-  async create(opts?: { cwd?: string; title?: string }): Promise<{ id: string }> {
+  async create(opts?: { cwd?: string; title?: string; permissionMode?: import('@zuse/core').PermissionMode; kind?: 'cron' }): Promise<{ id: string }> {
     const id = newSessionId()
     const cwd = opts?.cwd ?? this.cwd
     const mgr = this.createSession({
       sessionId: id,
       cwd,
+      permissionMode: opts?.permissionMode,
+      kind: opts?.kind,
       registerExtraTools: this.registerExtraTools,
       imageClient: this.imageClient,
       imageModel: this.imageModel,
@@ -186,6 +189,17 @@ export class SessionService {
     this.manualTitles.delete(id)
     this.generatedTitles.delete(id)
     await deleteSession(this.dir, id)
+  }
+
+  /**
+   * 释放一个 live 会话：停 autosave + 从 registry 移除，但**保留**磁盘文件（区别于 delete）。
+   * cron 每次 fire 跑完调用它，避免每次触发都往 registry 永久堆一个 SessionManager。
+   * 之后 getOrLoad(id) 仍能从盘重建（drill-down 回看）。
+   */
+  release(id: string): void {
+    this.unsubs.get(id)?.()
+    this.unsubs.delete(id)
+    this.registry.remove(id)
   }
 
   /**
@@ -288,6 +302,7 @@ export class SessionService {
         checkpoints: mgr.getCheckpoints(),
         // Feature B: persist compaction state so the full ledger + view survive a restart.
         compaction: mgr.getCompaction() ?? undefined,
+        kind: mgr.getKind(),
       }
       // Re-check after building the record: if delete() tombstoned this id while
       // we were synchronously assembling rec, bail before the write so we don't
