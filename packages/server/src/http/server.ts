@@ -31,6 +31,7 @@ export interface RequestHandlerDeps {
   usage: UsageService
   file: FileService
   mcp: McpService
+  cron: import('../cron/CronService.js').CronService
   upload: UploadService
   /** Persist the default model spec (bare name for flat-default, else `providerId/model`) to
    *  project settings. Injected so tests can assert the computed spec without touching disk. */
@@ -301,6 +302,60 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Missing or empty title' } })
       }
       return runIdScoped(res, () => deps.service.rename(id, title))
+    }
+
+    // GET /api/cron — list tasks (+nextRun)
+    if (method === 'GET' && path === '/api/cron') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, await deps.cron.list())
+    }
+    // POST /api/cron — create
+    if (method === 'POST' && path === '/api/cron') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: import('@zuse/protocol').CronTaskInput
+      try { body = (await readJsonBody(req)) as typeof body } catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid body' } }) }
+      try { return sendJson(res, 200, await deps.cron.create(body)) }
+      catch (e) { return sendJson(res, 400, { error: { code: 'bad_request', message: e instanceof Error ? e.message : String(e) } }) }
+    }
+    // POST /api/cron/<id>/run — fire now (before the PATCH/DELETE prefix routes)
+    if (method === 'POST' && path.startsWith('/api/cron/') && path.endsWith('/run')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/cron/'.length, -'/run'.length))
+      try { await deps.cron.runNow(id); return sendJson(res, 200, { ok: true }) }
+      catch (e) { return sendJson(res, 400, { error: { code: 'bad_request', message: e instanceof Error ? e.message : String(e) } }) }
+    }
+    // GET /api/cron/<taskId>/runs — execution history
+    if (method === 'GET' && path.startsWith('/api/cron/') && path.endsWith('/runs')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/cron/'.length, -'/runs'.length))
+      try { return sendJson(res, 200, await deps.cron.listRuns(id)) }
+      catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid id' } }) }
+    }
+    // GET /api/cron/<taskId>/runs/<runId> — run detail (session snapshot)
+    if (method === 'GET' && path.startsWith('/api/cron/') && path.includes('/runs/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const rest = path.slice('/api/cron/'.length)                  // "<taskId>/runs/<runId>"
+      const [taskId, , runId] = rest.split('/')
+      try {
+        const detail = await deps.cron.getRunDetail(decodeURIComponent(taskId ?? ''), decodeURIComponent(runId ?? ''))
+        return detail ? sendJson(res, 200, detail) : sendJson(res, 404, { error: { code: 'not_found', message: 'run not found' } })
+      } catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid id' } }) }
+    }
+    // PATCH /api/cron/<id> — update
+    if (method === 'PATCH' && path.startsWith('/api/cron/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/cron/'.length))
+      let body: Partial<import('@zuse/protocol').CronTaskInput>
+      try { body = (await readJsonBody(req)) as typeof body } catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid body' } }) }
+      try { const t = await deps.cron.update(id, body); return t ? sendJson(res, 200, t) : sendJson(res, 404, { error: { code: 'not_found', message: 'task not found' } }) }
+      catch (e) { return sendJson(res, 400, { error: { code: 'bad_request', message: e instanceof Error ? e.message : String(e) } }) }
+    }
+    // DELETE /api/cron/<id> — delete
+    if (method === 'DELETE' && path.startsWith('/api/cron/')) {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const id = decodeURIComponent(path.slice('/api/cron/'.length))
+      try { await deps.cron.delete(id); return sendJson(res, 200, { ok: true }) }
+      catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid id' } }) }
     }
 
     // GET /api/search — 跨会话全文搜索 (S4, auth-gated). query ?q=&limit=

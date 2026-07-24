@@ -34,10 +34,12 @@ const fakeFile = { list: async () => ({ path: '', root: '/', entries: [] }), rea
 const fakeMcp = { list: () => [] } as unknown as McpService
 // Minimal fake — these tests never hit the /api/uploads routes.
 const fakeUpload = { save: async () => ({ id: 'x' }), load: async () => ({ abs: '', size: 0, mediaType: 'image/png' }) } as unknown as UploadService
+// Minimal fake — these tests never hit the /api/cron routes.
+const fakeCron = { list: async () => [] } as unknown as import('../cron/CronService.js').CronService
 let dir: string, server: Server, base: string
 
 async function start(webDir?: string): Promise<void> {
-  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, upload: fakeUpload, persistModel: () => {}, devPage: true, tokenTtlSec: 3600, webDir }))
+  server = createServer(makeRequestHandler({ auth: fakeAuth, service: fakeService, memory: fakeMemory, search: fakeSearch, persona: fakePersona, skill: fakeSkill, usage: fakeUsage, file: fakeFile, mcp: fakeMcp, cron: fakeCron, upload: fakeUpload, persistModel: () => {}, devPage: true, tokenTtlSec: 3600, webDir }))
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const a = server.address()
   base = 'http://127.0.0.1:' + (typeof a === 'object' && a ? a.port : 0)

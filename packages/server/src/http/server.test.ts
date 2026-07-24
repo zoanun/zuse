@@ -19,6 +19,9 @@ import { UsageService } from '../usage/UsageService.js'
 import { FileService } from '../file/FileService.js'
 import { McpService } from '../mcp/McpService.js'
 import { UploadService } from '../upload/UploadService.js'
+import { CronScheduler } from '../cron/CronScheduler.js'
+import { CronService } from '../cron/CronService.js'
+import { cronDir } from '../cron/cronStore.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
@@ -50,7 +53,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService
+let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService, cronScheduler: CronScheduler, cron: CronService
 // Captures the spec the /api/model handler computed, so tests assert it without writing settings.
 let persistedSpec: string | undefined
 beforeEach(async () => {
@@ -77,12 +80,16 @@ beforeEach(async () => {
   } })
   // Real UploadService over a temp uploads dir so /api/uploads is exercised end-to-end.
   upload = new UploadService(join(dir, 'uploads'))
-  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, upload, persistModel: (spec) => { persistedSpec = spec }, devPage: false, tokenTtlSec: 3600 }))
+  // Real CronService + CronScheduler over a temp cron dir so /api/cron is exercised end-to-end.
+  const cronDataDir = cronDir(dir)
+  cronScheduler = new CronScheduler({ dir: cronDataDir, sessions: service })
+  cron = new CronService({ dir: cronDataDir, scheduler: cronScheduler, defaultCwd: '/work', sessions: service })
+  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload, persistModel: (spec) => { persistedSpec = spec }, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
 })
-afterEach(async () => { await new Promise<void>((r) => srv.close(() => r())); memory.close(); rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => { await new Promise<void>((r) => srv.close(() => r())); cronScheduler.close(); memory.close(); rmSync(dir, { recursive: true, force: true }) })
 
 const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } })
 
@@ -521,6 +528,79 @@ describe('/api/mcp REST', () => {
     await fetch(`${base}/api/mcp/gone`, { method: 'DELETE', headers: { cookie } })
     const list = await (await fetch(`${base}/api/mcp`, { headers: { cookie } })).json() as unknown[]
     expect(list).toHaveLength(0) // driven by configured servers → delete drops the row at once
+  })
+})
+
+describe('/api/cron REST', () => {
+  it('unauthenticated requests → 401', async () => {
+    expect((await fetch(`${base}/api/cron`)).status).toBe(401)
+    expect((await fetch(`${base}/api/cron`, json({ name: 'a', cron: '0 9 * * *', prompt: 'p' }))).status).toBe(401)
+    expect((await fetch(`${base}/api/cron/x/run`, { method: 'POST' })).status).toBe(401)
+    expect((await fetch(`${base}/api/cron/x/runs`)).status).toBe(401)
+  })
+
+  it('create → list shows it (with nextRun) → patch → delete round-trips', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+
+    // empty initially
+    expect(await (await fetch(`${base}/api/cron`, { headers: { cookie } })).json()).toEqual([])
+
+    const created = await fetch(`${base}/api/cron`, { method: 'POST', headers: h, body: JSON.stringify({ name: 'nightly', cron: '0 9 * * *', prompt: 'do it' }) })
+    expect(created.status).toBe(200)
+    const task = await created.json() as { id: string; enabled: boolean; permissionMode: string; cwd: string; nextRun: string | null }
+    expect(task.id).toBeTruthy()
+    expect(task.enabled).toBe(true)
+    expect(task.permissionMode).toBe('bypassPermissions') // default fully-autonomous
+    expect(task.cwd).toBe('/work')
+    expect(task.nextRun).toBeTruthy() // scheduled → croner computed a next run
+
+    const list = await (await fetch(`${base}/api/cron`, { headers: { cookie } })).json() as Array<{ id: string; name: string }>
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ id: task.id, name: 'nightly' })
+
+    const patched = await fetch(`${base}/api/cron/${task.id}`, { method: 'PATCH', headers: h, body: JSON.stringify({ enabled: false }) })
+    expect(patched.status).toBe(200)
+    expect((await patched.json()).enabled).toBe(false)
+
+    const del = await fetch(`${base}/api/cron/${task.id}`, { method: 'DELETE', headers: { cookie } })
+    expect((await del.json()).ok).toBe(true)
+    expect(await (await fetch(`${base}/api/cron`, { headers: { cookie } })).json()).toEqual([])
+  })
+
+  it('create with invalid cron → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/cron`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'x', cron: 'garbage', prompt: 'p' }) })
+    expect(res.status).toBe(400)
+  })
+
+  it('PATCH a missing task → 404', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/cron/nope`, { method: 'PATCH', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false }) })
+    expect(res.status).toBe(404)
+  })
+
+  it('GET /api/cron/<id>/runs → [] for a task with no runs (auth-gated)', async () => {
+    const cookie = await authCookie()
+    const created = await fetch(`${base}/api/cron`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'r', cron: '0 9 * * *', prompt: 'p' }) })
+    const { id } = await created.json() as { id: string }
+    const runs = await fetch(`${base}/api/cron/${id}/runs`, { headers: { cookie } })
+    expect(runs.status).toBe(200)
+    expect(await runs.json()).toEqual([])
+  })
+
+  it('GET /api/cron/<id>/runs/<runId> → 404 for a missing run (auth-gated)', async () => {
+    const cookie = await authCookie()
+    const created = await fetch(`${base}/api/cron`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ name: 'd', cron: '0 9 * * *', prompt: 'p' }) })
+    const { id } = await created.json() as { id: string }
+    const detail = await fetch(`${base}/api/cron/${id}/runs/missing`, { headers: { cookie } })
+    expect(detail.status).toBe(404)
+  })
+
+  it('POST /api/cron/<id>/run on a missing task → 400', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/cron/nope/run`, { method: 'POST', headers: { cookie } })
+    expect(res.status).toBe(400)
   })
 })
 
