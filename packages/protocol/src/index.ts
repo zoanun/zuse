@@ -347,3 +347,50 @@ export interface SessionSearchResult {
   /** 该会话总命中数；可能 > hits.length。 */
   hitCount: number
 }
+
+export type CronPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions'
+export type CronRunStatus = 'running' | 'success' | 'failed'
+
+export interface CronTask {
+  id: string
+  name: string
+  cron: string            // 标准 5 段 cron 表达式
+  prompt: string
+  cwd: string
+  permissionMode: CronPermissionMode
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** 列表项：任务 + 计算出的下次执行时间（croner nextRun，非持久化）。 */
+export interface CronTaskWithNext extends CronTask {
+  nextRun: string | null
+}
+
+/** 建/改任务的请求体（id/时间戳由服务端填）。 */
+export interface CronTaskInput {
+  name: string
+  cron: string
+  prompt: string
+  cwd?: string
+  permissionMode?: CronPermissionMode
+  enabled?: boolean
+}
+
+export interface CronRun {
+  id: string
+  taskId: string
+  startedAt: string
+  finishedAt?: string
+  status: CronRunStatus
+  sessionId: string
+  summary?: string
+  error?: string
+}
+
+/** 某次执行详情：run 记录 + 那次会话的消息投影（复用现有 SnapshotMessage 渲染）。 */
+export interface CronRunDetail {
+  run: CronRun
+  messages: SnapshotMessage[]   // SnapshotMessage 已在本文件定义
+}
