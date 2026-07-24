@@ -6,7 +6,7 @@ import type { ModelClient } from './model-client.js'
 import type { ToolDefinition } from './tool.js'
 import { StreamIdleGuard, resolveStreamIdleMs } from './stream-idle.js'
 import { resolveMaxRetries, isRetryableError, classifyError, retryAfterMs, backoffMs, sleep } from './retry.js'
-import { debugLog } from './debug-log.js'
+import { debugLog, debugEnabled } from './debug-log.js'
 
 // 缓存控制标记：ephemeral 表示"本断点之前的内容写入缓存"。
 const CACHE: Anthropic.CacheControlEphemeral = { type: 'ephemeral' }
@@ -75,6 +75,32 @@ export function buildAnthropicRequest(
 }
 
 /**
+ * 把发往模型的消息压成一行诊断摘要：只留 role、字符数、以及 tool 调用/结果的配对关系，
+ * 不打 system prompt 全文与工具输出全文（那些每轮重复、淹没日志）。
+ * 镜像 openai-client 的同名函数，适配 Anthropic 的 MessageParam 形状。
+ */
+function summarizeMessages(messages: Anthropic.MessageParam[]): unknown[] {
+  return messages.map((m) => {
+    // MessageParam.content 可能是字符串或内容块数组；字符串时直接取长度。
+    if (typeof m.content === 'string') return { role: m.role, chars: m.content.length }
+    let chars = 0
+    const toolUses: string[] = []
+    const toolResults: string[] = []
+    for (const b of m.content) {
+      if (b.type === 'text') chars += b.text.length
+      else if (b.type === 'tool_use') toolUses.push(`${b.name}#${b.id}`)
+      else if (b.type === 'tool_result') toolResults.push(b.tool_use_id)
+    }
+    return {
+      role: m.role,
+      chars,
+      ...(toolUses.length ? { tool_uses: toolUses } : {}),
+      ...(toolResults.length ? { tool_results: toolResults } : {}),
+    }
+  })
+}
+
+/**
  * AnthropicClient —— 用 @anthropic-ai/sdk 实现 ModelClient。
  * 适用于 Anthropic 原生 API 及兼容 Anthropic 协议的端点（DashScope 等）。
  */
@@ -132,9 +158,28 @@ export class AnthropicClient implements ModelClient {
       // 空闲守卫：把用户 Esc 与「流卡死」合并到一个信号传给 SDK，并用 tap 监视数据间隔。
       const guard = new StreamIdleGuard(resolveStreamIdleMs(), signal)
       let emitted = false // 是否已向下游发出过任何事件（发过就绝不重试，避免重复 message-start/文本）。
+      // 仅用于诊断：累计可见文本、思维链长度与工具数，回合结束时汇总落盘
+      //（与 openai-client 的 turn-summary 对齐，用来分辨「模型真返回空」与内容跑进 thinking）。
+      let textLen = 0
+      let reasoningLen = 0
+      let toolCount = 0
+      let stopReason = 'end_turn'
+      let usage: Usage | undefined
       try {
+        // 诊断：记下本次发出去的请求（每个用户回合内可能调用多次，第二次即工具结果回喂）。
+        if (debugEnabled()) {
+          debugLog('anthropic.request', {
+            model: params.model,
+            toolCount: tools?.length ?? 0,
+            hasSystem: !!params.system,
+            messages: summarizeMessages(params.messages),
+          })
+        }
         const client = await this.getClient()
         const stream = client.messages.stream(params, { signal: guard.signal })
+        // 诊断：流已开启。若日志里有 request 却没有这条，说明卡在 stream() 建流之前；
+        // 有这条却没有后续 delta，说明流开启后中途卡死。
+        if (debugEnabled()) debugLog('anthropic.stream-open', { model: params.model })
         for await (const event of guard.tap(stream)) {
           if (event.type === 'message_start') {
             emitted = true
@@ -142,8 +187,14 @@ export class AnthropicClient implements ModelClient {
           } else if (event.type === 'content_block_delta') {
             // text_delta 直接转发；input_json_delta（工具参数流）从 finalMessage 整体读取。
             if (event.delta.type === 'text_delta') {
+              textLen += event.delta.text.length
+              if (debugEnabled()) debugLog('anthropic.delta', { content: event.delta.text })
               emitted = true
               yield { type: 'text-delta', text: event.delta.text }
+            } else if (event.delta.type === 'thinking_delta') {
+              // 思维链增量：不向下游转发，仅累计长度供诊断（内容是否跑进未渲染的 thinking）。
+              reasoningLen += event.delta.thinking.length
+              if (debugEnabled()) debugLog('anthropic.delta', { reasoning: event.delta.thinking })
             }
           } else if (event.type === 'message_delta') {
             // message_delta 会多次到达，stop_reason 仅在最后一个非空——以此为界，拿 finalMessage 统一收尾。
@@ -152,22 +203,30 @@ export class AnthropicClient implements ModelClient {
               // 在 message-stop 之前，先为每个 tool_use 块发事件，Agent 借此收集工具调用。
               for (const block of finalMessage.content) {
                 if (block.type === 'tool_use') {
+                  toolCount++
                   emitted = true
                   yield { type: 'tool-use', id: block.id, name: block.name, input: block.input }
                 }
               }
               // 带上 cache 读写字段，供 TUI 统计展示。
               const u = finalMessage.usage
-              const usage: Usage = {
+              usage = {
                 input_tokens: u.input_tokens,
                 output_tokens: u.output_tokens,
                 cache_read_input_tokens: u.cache_read_input_tokens ?? undefined,
                 cache_creation_input_tokens: u.cache_creation_input_tokens ?? undefined,
               }
+              stopReason = event.delta.stop_reason
               emitted = true
               yield { type: 'message-stop', stop_reason: event.delta.stop_reason, usage }
             }
           }
+        }
+        // 诊断汇总：本回合到底产出了什么。textLen=0 且 toolCount=0 即「空回合」——
+        // 若此时 reasoningLen>0，说明内容跑进了未渲染的 thinking 字段；
+        // 若 reasoningLen 也为 0、stopReason=end_turn，则是端点真返回了空。
+        if (debugEnabled()) {
+          debugLog('anthropic.turn-summary', { stopReason, textLen, reasoningLen, toolCount, usage })
         }
         return // 正常结束
       } catch (err) {
@@ -179,6 +238,15 @@ export class AnthropicClient implements ModelClient {
             : err instanceof Error
               ? err.message
               : 'Unknown error'
+          // 诊断：把异常也记下来，区分「端点报错」「请求挂死（空闲超时）」与「用户中断」。
+          if (debugEnabled()) {
+            debugLog('anthropic.error', {
+              message,
+              timedOut: guard.timedOut,
+              aborted: signal?.aborted ?? false,
+              name: err instanceof Error ? err.name : undefined,
+            })
+          }
           yield { type: 'error', message, ...classifyError(err) }
           return
         }
@@ -187,6 +255,9 @@ export class AnthropicClient implements ModelClient {
 
         // 已经向下游发过事件：流到中途才断，重试会重复 message-start/文本 → 不重试。
         if (emitted) {
+          if (debugEnabled()) {
+            debugLog('anthropic.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
+          }
           yield { type: 'error', message, ...classifyError(err) }
           return
         }
@@ -199,6 +270,9 @@ export class AnthropicClient implements ModelClient {
         }
 
         // 不可重试或重试用尽。
+        if (debugEnabled()) {
+          debugLog('anthropic.error', { message, timedOut: false, aborted: false, name: err instanceof Error ? err.name : undefined })
+        }
         yield { type: 'error', message, ...classifyError(err) }
         return
       } finally {
