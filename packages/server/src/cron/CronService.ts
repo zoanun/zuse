@@ -1,0 +1,93 @@
+import type { CronTask, CronTaskInput, CronTaskWithNext, CronRun, CronRunDetail } from '@zuse/protocol'
+import { newSessionId } from '../session/sessionStore.js'
+import { loadTasks, saveTasks, loadRuns, deleteTaskRuns } from './cronStore.js'
+import { CronScheduler, isValidCron } from './CronScheduler.js'
+
+export interface CronServiceSessions {
+  getOrLoad(id: string): Promise<{ getState(): { messages: unknown[] } } | null>
+  release(id: string): void
+}
+
+export interface CronServiceDeps {
+  dir: string
+  scheduler: CronScheduler
+  defaultCwd: string
+  /** 供 getRunDetail 取会话消息投影（drill-down）。可选：缺省则 detail.messages=[]（测试无需）。 */
+  sessions?: CronServiceSessions
+}
+
+export class CronService {
+  constructor(private readonly deps: CronServiceDeps) {}
+
+  private withNext(t: CronTask): CronTaskWithNext { return { ...t, nextRun: this.deps.scheduler.nextRunOf(t.id) } }
+
+  async list(): Promise<CronTaskWithNext[]> {
+    return (await loadTasks(this.deps.dir)).map((t) => this.withNext(t))
+  }
+
+  async create(input: CronTaskInput): Promise<CronTaskWithNext> {
+    if (!input.name?.trim()) throw new Error('name is required')
+    if (!input.prompt?.trim()) throw new Error('prompt is required')
+    if (!isValidCron(input.cron)) throw new Error(`invalid cron expression: "${input.cron}"`)
+    const now = new Date().toISOString()
+    const task: CronTask = {
+      id: newSessionId(), name: input.name, cron: input.cron, prompt: input.prompt,
+      cwd: input.cwd ?? this.deps.defaultCwd,
+      permissionMode: input.permissionMode ?? 'bypassPermissions',
+      enabled: input.enabled ?? true, createdAt: now, updatedAt: now,
+    }
+    const tasks = await loadTasks(this.deps.dir)
+    tasks.push(task)
+    await saveTasks(this.deps.dir, tasks)
+    this.deps.scheduler.setTasks(tasks)
+    return this.withNext(task)
+  }
+
+  async update(id: string, patch: Partial<CronTaskInput>): Promise<CronTaskWithNext | null> {
+    if (patch.cron !== undefined && !isValidCron(patch.cron)) throw new Error(`invalid cron expression: "${patch.cron}"`)
+    const tasks = await loadTasks(this.deps.dir)
+    const i = tasks.findIndex((t) => t.id === id)
+    if (i < 0) return null
+    const current = tasks[i]!
+    tasks[i] = {
+      ...current,
+      ...(patch.name !== undefined ? { name: patch.name } : {}),
+      ...(patch.cron !== undefined ? { cron: patch.cron } : {}),
+      ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
+      ...(patch.cwd !== undefined ? { cwd: patch.cwd } : {}),
+      ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+      updatedAt: new Date().toISOString(),
+    }
+    await saveTasks(this.deps.dir, tasks)
+    this.deps.scheduler.setTasks(tasks)
+    return this.withNext(tasks[i]!)
+  }
+
+  async delete(id: string): Promise<void> {
+    const tasks = (await loadTasks(this.deps.dir)).filter((t) => t.id !== id)
+    await saveTasks(this.deps.dir, tasks)
+    await deleteTaskRuns(this.deps.dir, id)
+    this.deps.scheduler.setTasks(tasks)
+  }
+
+  async listRuns(taskId: string): Promise<CronRun[]> { return loadRuns(this.deps.dir, taskId) }
+
+  async runNow(id: string): Promise<void> {
+    const task = (await loadTasks(this.deps.dir)).find((t) => t.id === id)
+    if (!task) throw new Error(`no such cron task: ${id}`)
+    await this.deps.scheduler.fire(task)
+  }
+
+  /** 某次执行详情：run + 那次会话的消息投影（复用现有 SnapshotMessage 渲染）。 */
+  async getRunDetail(taskId: string, runId: string): Promise<CronRunDetail | null> {
+    const run = (await loadRuns(this.deps.dir, taskId)).find((r) => r.id === runId)
+    if (!run) return null
+    let messages: CronRunDetail['messages'] = []
+    if (this.deps.sessions) {
+      const mgr = await this.deps.sessions.getOrLoad(run.sessionId)
+      if (mgr) { messages = mgr.getState().messages as CronRunDetail['messages']; this.deps.sessions.release(run.sessionId) }
+    }
+    return { run, messages }
+  }
+}
