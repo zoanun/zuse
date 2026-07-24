@@ -14,6 +14,9 @@ import { UsageService } from './usage/UsageService.js'
 import { FileService } from './file/FileService.js'
 import { McpService } from './mcp/McpService.js'
 import { UploadService } from './upload/UploadService.js'
+import { CronScheduler } from './cron/CronScheduler.js'
+import { CronService } from './cron/CronService.js'
+import { cronDir, loadTasks } from './cron/cronStore.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -187,7 +190,14 @@ export async function startServer(
     reconnectServer: reconnectOneMcp,
   })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  // Cron 定时任务 (C1/C2)：调度器与 WS 平级驱动 SessionService；数据在 ~/.zuse/cron/。
+  const cronDataDir = cronDir(cfg.authDir)
+  const cronScheduler = new CronScheduler({ dir: cronDataDir, sessions: service })
+  try { cronScheduler.setTasks(await loadTasks(cronDataDir)) } // 启动即调度已启用任务；漏触发不补(croner 从现在排)
+  catch (err) { console.warn(`[zuse-server] cron 调度启动失败:${err instanceof Error ? err.message : String(err)}`) }
+  const cronService = new CronService({ dir: cronDataDir, scheduler: cronScheduler, defaultCwd: cfg.cwd, sessions: service })
+
+  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
@@ -200,6 +210,7 @@ export async function startServer(
     close: () => new Promise<void>((resolve) => {
       void mcp?.disconnectAll().catch(() => {})
       void lsp.dispose().catch(() => {})
+      cronScheduler.close()
       httpServer.close(() => resolve())
       ws.closeAll()
       httpServer.closeAllConnections()
