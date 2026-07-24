@@ -44,6 +44,8 @@ export interface SessionRecord {
   checkpoints: SessionCheckpoint[]
   /** Feature B: compaction state, if the session has been compacted. Absent = never compacted. */
   compaction?: CompactionMeta
+  /** 'cron' = 定时任务跑出的会话；listSessions 会过滤掉，不进普通侧边栏。 */
+  kind?: 'cron'
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +196,7 @@ export async function listSessions(dir: string): Promise<SessionMeta[]> {
       typeof r.cwd !== 'string' ||
       !Array.isArray(r.messages)
     ) return null
+    if (r.kind === 'cron') return null // cron-run sessions never show in the normal list
     return { id: r.id, title: r.title, createdAt: r.createdAt, updatedAt: r.updatedAt, cwd: r.cwd, messageCount: r.messages.length }
   })
   metas.sort((a, b) => byUpdatedAtDesc(a.updatedAt, b.updatedAt))

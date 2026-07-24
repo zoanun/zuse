@@ -199,6 +199,24 @@ describe('listSessions', () => {
     const metas = await listSessions(dir)
     expect(metas[0]?.messageCount).toBe(rec.messages.length)
   })
+
+  it("hides kind:'cron' sessions", async () => {
+    const dir = tempDir()
+    const normal = makeRecord({
+      id: newSessionId(new Date('2026-07-24T10:00:00.000Z')),
+      title: 'normal',
+    })
+    const cronRun = makeRecord({
+      id: newSessionId(new Date('2026-07-24T10:00:01.000Z')),
+      title: 'cronrun',
+      kind: 'cron',
+    })
+    await saveSession(dir, normal)
+    await saveSession(dir, cronRun)
+    const titles = (await listSessions(dir)).map((m) => m.title)
+    expect(titles).toContain('normal')
+    expect(titles).not.toContain('cronrun')
+  })
 })
 
 // ---------------------------------------------------------------------------
