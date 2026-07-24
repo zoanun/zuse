@@ -1,4 +1,4 @@
-import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotPart, MessageAttachment } from '@zuse/protocol'
+import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotMessage, SnapshotPart, MessageAttachment } from '@zuse/protocol'
 import type { AppState, Connection, Part } from './types.js'
 
 export const initialState: AppState = {
@@ -58,15 +58,22 @@ function mapPart(p: SnapshotPart): Part {
   return { kind: 'tool-result', id: p.id, name: p.name, output: p.output, isError: p.isError }
 }
 
-function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
-  // The server now hands us a stable ledger id per message (and a derived id for steer bubbles,
-  // e.g. `${carrierId}#steer${n}`) — use it directly as the id for keying / scroll / search-jump /
-  // checkpoint association, instead of re-deriving one from array position.
-  const mapped = s.messages.map((m) => ({
+/**
+ * Project a server `SnapshotMessage[]` into renderable UI messages: map each part, then fold
+ * tool-result carrier `user` messages into the preceding assistant (see foldToolResults). This is
+ * the single source of the projection rule — `applySnapshot` (the live chat stream) and the cron
+ * run-detail view (`CronPanel`) both call it, so their rendering can never drift.
+ * Server hands a stable ledger id per message, so ids come straight through (no array-position derivation).
+ */
+export function projectSnapshotMessages(msgs: SnapshotMessage[]): AppState['messages'] {
+  return foldToolResults(msgs.map((m) => ({
     id: m.id,
     role: m.role, parts: m.parts.map(mapPart), checkpointId: m.checkpointId, steer: m.steer,
     attachments: m.attachments, interrupt: m.interrupt,
-  }))
+  })))
+}
+
+function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
   return {
     ...state,
     model: s.model,
@@ -78,7 +85,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     todos: s.todos,
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
-    messages: foldToolResults(mapped),
+    messages: projectSnapshotMessages(s.messages),
     pendingSteers: [], // a fresh snapshot is authoritative — drop any transient queued-steer previews
   }
 }

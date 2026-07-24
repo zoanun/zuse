@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CronTaskWithNext, CronTaskInput, CronRun, CronRunDetail, CronRunStatus, CronPermissionMode, SnapshotMessage, SnapshotPart } from '@zuse/protocol'
-import type { Message as UiMessage, Part } from '../state/types.js'
+import type { CronTaskWithNext, CronTaskInput, CronRun, CronRunDetail, CronRunStatus, CronPermissionMode } from '@zuse/protocol'
 import { listCronTasks, createCronTask, updateCronTask, deleteCronTask, listCronRuns, runCronNow, getCronRunDetail } from '../state/cronApi.js'
+import { projectSnapshotMessages } from '../state/reducer.js'
 import { MessageList } from './MessageList.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,36 +81,6 @@ function relTime(iso: string | null): string {
   const h = Math.round(min / 60)
   if (h < 24) return `${h} 小时后`
   return `${Math.round(h / 24)} 天后`
-}
-
-function mapPart(p: SnapshotPart): Part {
-  if (p.kind === 'text') return { kind: 'text', text: p.text }
-  if (p.kind === 'tool-use') return { kind: 'tool-use', id: p.id, name: p.name, input: p.input }
-  return { kind: 'tool-result', id: p.id, name: p.name, output: p.output, isError: p.isError }
-}
-
-/**
- * SnapshotMessage[] → 聊天流的 UI Message[]：把 tool-result 载体的 user 消息折进前一条 assistant，
- * 与 reducer.foldToolResults 同款。reducer 的该函数未导出（且 reducer.ts 不在本次改动范围），故按
- * 相同规则本地折叠，让 CronRunDetail 复用 <MessageList> 的渲染结果与聊天一致。
- */
-function snapshotToMessages(msgs: SnapshotMessage[]): UiMessage[] {
-  const out: UiMessage[] = []
-  for (const m of msgs) {
-    const parts = m.parts.map(mapPart)
-    if (m.role === 'user') {
-      const toolResults = parts.filter((p) => p.kind === 'tool-result')
-      const rest = parts.filter((p) => p.kind !== 'tool-result')
-      const prev = out[out.length - 1]
-      if (toolResults.length && prev && prev.role === 'assistant') prev.parts = [...prev.parts, ...toolResults]
-      else if (toolResults.length) out.push({ id: m.id, role: 'assistant', parts: toolResults })
-      if (m.interrupt) out.push({ id: m.id + '#int', role: 'system', parts: [{ kind: 'text', text: '已被用户中断' }], noticeKind: 'info' })
-      if (rest.length) out.push({ id: m.id, role: 'user', parts: rest, checkpointId: m.checkpointId, steer: m.steer, attachments: m.attachments })
-    } else {
-      out.push({ id: m.id, role: 'assistant', parts, checkpointId: m.checkpointId, steer: m.steer, attachments: m.attachments })
-    }
-  }
-  return out
 }
 
 const PERM_OPTS: { value: CronPermissionMode; label: string }[] = [
@@ -396,7 +366,7 @@ function CronRunDetail({ task, runId, onBack }: {
       .then((d) => { setDetail(d); setError(null) })
       .catch((e: unknown) => setError(msgOf(e)))
   }, [task.id, runId])
-  const messages = detail ? snapshotToMessages(detail.messages) : []
+  const messages = detail ? projectSnapshotMessages(detail.messages) : []
   return (
     <>
       <div className="cron-subhead">
