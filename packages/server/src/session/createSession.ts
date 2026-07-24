@@ -13,6 +13,7 @@ import {
   type Conversation,
   type ToolRegistry,
   type Message,
+  type PermissionMode,
 } from '@zuse/core'
 import {
   createDefaultRegistry,
@@ -59,6 +60,14 @@ export interface CreateSessionOpts {
   readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
   /** I2:发送时的直传展开钩子(route==='direct' 的 attachments 读盘展开成 image 块)。由 startServer 提供。 */
   expandAttachments?: (messages: Message[]) => Promise<Message[]>
+  /**
+   * 非交互权限档位（cron 等无人看管会话）。给了即以 { interactive:false, config:{...settings.permissions,
+   * defaultMode: permissionMode } } 建会话：ask→立即 deny(不卡死)，deny 表恒拦(硬底线)，defaultMode
+   * 决定放行面。缺省(undefined) → 交互式 { interactive:true, config: settings.permissions }。
+   */
+  permissionMode?: PermissionMode
+  /** 会话类别标记（透传给 SessionManager；'cron' 会从普通会话列表过滤）。 */
+  kind?: 'cron'
 }
 
 /**
@@ -146,7 +155,10 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     registry,
     settings,
     systemPrompt,
-    permissionPolicy: { interactive: true, config: settings.permissions },
+    permissionPolicy: opts.permissionMode
+      ? { interactive: false, config: { ...settings.permissions, defaultMode: opts.permissionMode } }
+      : { interactive: true, config: settings.permissions },
+    kind: opts.kind,
     snapshotStore,
     providerId: sel.providerId,
     conversation: opts.conversation,
