@@ -13,15 +13,18 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import type { Tool, ToolResult } from '@zuse/core'
+import { BUILTIN_SKILLS } from './builtin-skills.js'
 
 export interface SkillEntry {
   name: string
   /** 触发的全部依据:模型靠它判断「现在该用这个技能」。 */
   description: string
-  /** 技能目录绝对路径(正文里 ${ZUSE_SKILL_DIR} 展开成它)。 */
+  /** 技能目录绝对路径(正文里 ${ZUSE_SKILL_DIR} 展开成它);内置技能无磁盘目录,为 ''。 */
   dir: string
   /** SKILL.md 正文(不含 frontmatter)。 */
   body: string
+  /** true = 编译进产物的内置技能(无磁盘文件:不可编辑、不重读盘、无 Base directory)。 */
+  builtin?: true
 }
 
 /** 技能正文进上下文的截断上限(行边界),与指令文件同级别的窗口护栏。 */
@@ -106,11 +109,15 @@ function scanRoot(root: string, into: Map<string, SkillEntry>): void {
 }
 
 /**
- * 启动时扫描全部技能。覆盖顺序:用户级(最外)→ 项目链外层 → 内层,
+ * 启动时扫描全部技能。覆盖顺序:内置(最低)→ 用户级 → 项目链外层 → 内层,
  * 内层同名整体替换 —— 与 ZUSE.md「内层更具体」同一原则,但技能不叠加。
  */
 export function scanSkills(home: string, cwd: string): SkillEntry[] {
   const map = new Map<string, SkillEntry>()
+  // 内置技能优先级最低:在 ~/.zuse/skills/ 或项目 .zuse/skills/ 下建同名技能即可整体覆盖(逃生舱)。
+  for (const s of BUILTIN_SKILLS) {
+    map.set(s.name, { name: s.name, description: s.description, dir: '', body: s.body, builtin: true })
+  }
   scanRoot(join(home, '.zuse', 'skills'), map)
   for (const dir of ancestorChain(cwd)) {
     scanRoot(join(dir, '.zuse', 'skills'), map)
@@ -156,6 +163,10 @@ ${listing}`,
         const names = skills.map((s) => s.name).join(', ') || '(none)'
         return { output: `Unknown skill: ${name}. Available skills: ${names}.`, isError: true }
       }
+      // 内置技能没有磁盘文件:不重读盘(省一次必失败的 syscall)、不展开 ${ZUSE_SKILL_DIR}、
+      // 不输出 Base directory —— 指向一个不存在的目录会诱导模型去 Read 它。
+      if (skill.builtin) return { output: capAtLineBoundary(skill.body, SKILL_BODY_CAP) }
+
       // 调用时重读盘(M3「查看时重新加载」):面板刚改完正文,哪怕本会话没关,模型这次
       // 加载也拿最新内容。读不到则回退到会话启动时缓存的 body。
       let freshBody = skill.body

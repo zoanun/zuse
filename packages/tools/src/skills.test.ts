@@ -4,7 +4,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Tool, ToolContext } from '@zuse/core'
 import { createFileTracker } from '@zuse/core'
-import { scanSkills, createSkillTool, SKILL_BODY_CAP } from './skills.js'
+import { scanSkills, createSkillTool, SKILL_BODY_CAP, toolModule } from './skills.js'
+import { BUILTIN_SKILLS } from './builtin-skills.js'
+
+/**
+ * 只看本用例自己在沙箱里写的技能。滤掉两类噪音:
+ * ① 内置技能(scanSkills 现在会 seed 它们,而本组用例断言的是磁盘扫描语义);
+ * ② 沙箱外的真实技能 —— tmpdir 在 Windows 上位于 C:\Users\<user>\AppData\... 之下,
+ *    而 scanSkills 会沿 cwd 祖先链扫 <dir>/.zuse/skills,于是真实的 ~/.zuse/skills 会漏进来
+ *    (无此过滤时,本机有任何用户级技能就会让这些用例全红 —— 修复前即如此)。
+ */
+const disk = (skills: ReturnType<typeof scanSkills>) =>
+  skills.filter((s) => !s.builtin && (s.dir.startsWith(home) || s.dir.startsWith(proj)))
 
 let home: string
 let proj: string
@@ -41,13 +52,13 @@ afterEach(() => {
 
 describe('scanSkills(发现与解析)', () => {
   it('无技能目录返回空数组', () => {
-    expect(scanSkills(home, proj)).toEqual([])
+    expect(disk(scanSkills(home, proj))).toEqual([])
   })
 
   it('用户级 + 项目级都发现;frontmatter 解析 name/description', () => {
     writeUserSkill('commit-style', '---\nname: commit-style\ndescription: 提交信息规范\n---\n\n正文 A')
     writeSkill(proj, 'code-review', '---\ndescription: 审查本地改动\n---\n\n正文 B')
-    const skills = scanSkills(home, proj)
+    const skills = disk(scanSkills(home, proj))
     expect(skills.map((s) => s.name).sort()).toEqual(['code-review', 'commit-style'])
     const review = skills.find((s) => s.name === 'code-review')!
     expect(review.description).toBe('审查本地改动')
@@ -56,7 +67,7 @@ describe('scanSkills(发现与解析)', () => {
 
   it('缺 name 取目录名;缺 description 回退正文第一个 # 标题', () => {
     writeUserSkill('fallback-skill', '# 标题即描述\n\n正文')
-    const skills = scanSkills(home, proj)
+    const skills = disk(scanSkills(home, proj))
     expect(skills).toHaveLength(1)
     expect(skills[0]!.name).toBe('fallback-skill')
     expect(skills[0]!.description).toBe('标题即描述')
@@ -64,7 +75,7 @@ describe('scanSkills(发现与解析)', () => {
 
   it('description 与标题都没有的技能跳过(没有触发依据 = 死技能)', () => {
     writeUserSkill('dead-skill', '只有正文没有任何标题')
-    expect(scanSkills(home, proj)).toEqual([])
+    expect(disk(scanSkills(home, proj))).toEqual([])
   })
 
   it('同名技能内层覆盖外层:项目级 > 用户级,包级 > 仓库根', () => {
@@ -73,7 +84,7 @@ describe('scanSkills(发现与解析)', () => {
     writeUserSkill('deploy', '---\ndescription: 用户级部署\n---\nU')
     writeSkill(proj, 'deploy', '---\ndescription: 仓库级部署\n---\nR')
     writeSkill(inner, 'deploy', '---\ndescription: 包级部署\n---\nP')
-    const skills = scanSkills(home, inner)
+    const skills = disk(scanSkills(home, inner))
     expect(skills).toHaveLength(1)
     expect(skills[0]!.description).toBe('包级部署')
   })
@@ -82,7 +93,7 @@ describe('scanSkills(发现与解析)', () => {
     mkdirSync(join(home, '.zuse', 'skills', 'empty-dir'), { recursive: true })
     // frontmatter 起了头没收尾:当无 frontmatter 处理,回退标题。
     writeUserSkill('broken', '---\nname: broken\n\n# 损坏但有标题\n正文')
-    const skills = scanSkills(home, proj)
+    const skills = disk(scanSkills(home, proj))
     expect(skills).toHaveLength(1)
     expect(skills[0]!.description).toBe('损坏但有标题')
   })
@@ -138,5 +149,40 @@ describe('createSkillTool', () => {
     const res = await tool.run({}, ctx())
     expect(res.isError).toBe(true)
     expect(res.output).toContain('name')
+  })
+})
+
+describe('内置技能(BUILTIN_SKILLS)', () => {
+  it('磁盘上没有任何技能时也带上内置技能(builtin:true、dir 为空)', () => {
+    const skills = scanSkills(home, proj)
+    // arrayContaining 而非精确相等:祖先链上可能有本机真实的用户级技能(见 disk 注释)。
+    expect(skills.map((s) => s.name)).toEqual(expect.arrayContaining(BUILTIN_SKILLS.map((s) => s.name)))
+    const cfg = skills.find((s) => s.name === 'zuse-config')!
+    expect(cfg.builtin).toBe(true)
+    expect(cfg.dir).toBe('')
+    expect(cfg.body.length).toBeGreaterThan(200)
+    expect(skills.find((s) => s.name === 'zuse-readme')!.builtin).toBe(true)
+  })
+
+  it('同名用户技能完全覆盖内置(内置优先级最低)', () => {
+    writeUserSkill('zuse-config', '---\ndescription: 我自己的版本\n---\n\nMY BODY')
+    const found = scanSkills(home, proj).filter((s) => s.name === 'zuse-config')
+    expect(found).toHaveLength(1)
+    expect(found[0]!.builtin).toBeUndefined()
+    expect(found[0]!.body).toContain('MY BODY')
+  })
+
+  it('加载内置技能:返回正文、无 Base directory 前缀、不因无磁盘文件报错', async () => {
+    const tool = createSkillTool(scanSkills(home, proj))
+    const res = await tool.run({ name: 'zuse-readme' }, ctx())
+    expect(res.isError).toBeFalsy()
+    expect(res.output).not.toContain('Base directory:')
+    expect(res.output).toContain('packages/core')
+  })
+
+  it('内置技能令 Skill 工具恒注册(磁盘无技能时清单仍非空)', () => {
+    const skills = scanSkills(home, proj)
+    expect(toolModule.enabled?.({ skills } as never)).toBe(true)
+    expect(createSkillTool(skills).description).toContain('zuse-config')
   })
 })

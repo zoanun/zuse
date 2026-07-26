@@ -19,6 +19,7 @@ export {
 export { createSnapshotStore, cwdSlug, type SnapshotStore } from './snapshot.js'
 export { createMemoryTool, applyMemoryConsolidation, type ConsolidationApplyOps } from './memory.js'
 export { scanSkills, createSkillTool, SKILL_BODY_CAP, type SkillEntry } from './skills.js'
+export { BUILTIN_SKILLS, type BuiltinSkill } from './builtin-skills.js'
 export { openEpisodeStore, type EpisodeStore, type EpisodeHit } from './episode-store.js'
 export {
   openMemoryStore,
