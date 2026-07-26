@@ -12,6 +12,7 @@ import type { MemoryService } from '../memory/MemoryService.js'
 import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
 import type { SkillService } from '../skill/SkillService.js'
+import { BuiltinSkillNotEditableError } from '../skill/SkillService.js'
 import type { UsageService } from '../usage/UsageService.js'
 import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } from '../file/FileService.js'
 import { listDirsAt } from '../file/dirNav.js'
@@ -19,7 +20,7 @@ import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
 import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES, FileTooLargeError, FILE_MAX_BYTES } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
-import type { ProjectInfo } from '@zuse/protocol'
+import type { ProjectInfo, SkillItem } from '@zuse/protocol'
 
 export interface RequestHandlerDeps {
   auth: AuthProvider
@@ -561,12 +562,15 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (typeof body?.description === 'string') fields.description = body.description
       if (typeof body?.body === 'string') fields.body = body.body
       if (typeof body?.enabled === 'boolean') fields.enabled = body.enabled
-      let updated: Awaited<ReturnType<typeof deps.skill.update>>
+      let updated: SkillItem | null
       try {
         updated = await deps.skill.update(name, fields)
       } catch (e) {
-        // Rejected edit (e.g. a builtin skill has no file to rewrite) is a client error, not a 500.
-        return sendJson(res, 400, { error: { code: 'bad_request', message: e instanceof Error ? e.message : String(e) } })
+        // ONLY the "builtin has no file to rewrite" rejection is a client error. Everything else
+        // (ENOENT/EACCES/ENOSPC from the SKILL.md rewrite or the disabled-list save) is a real
+        // server fault and must not be dressed up as a 400 — rethrow and let the handler 500 it.
+        if (!(e instanceof BuiltinSkillNotEditableError)) throw e
+        return sendJson(res, 400, { error: { code: 'bad_request', message: e.message } })
       }
       if (!updated) return sendJson(res, 404, { error: { code: 'not_found', message: 'Skill not found' } })
       return sendJson(res, 200, updated)

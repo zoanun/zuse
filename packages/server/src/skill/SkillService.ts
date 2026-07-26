@@ -1,6 +1,6 @@
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { scanSkills } from '@zuse/tools'
 import type { SkillItem, SkillsState } from '@zuse/protocol'
 import { loadDisabledSkills, saveDisabledSkills, skillsDisabledFile } from './skillStore.js'
@@ -9,6 +9,18 @@ interface SkillServiceDeps {
   home?: string
   cwd: string
   disabledFile?: string
+}
+
+/**
+ * 内置技能没有磁盘文件,正文/描述不可编辑(要改就在 ~/.zuse/skills/ 建同名技能整体覆盖)。
+ * 具名错误让路由能只把**这一种**失败映射成 400 —— 其余(ENOENT/EACCES/ENOSPC 等真磁盘故障)
+ * 该是 5xx,不该伪装成客户端错误。镜像 FileService 的 FileChangedError/FileExistsError。
+ */
+export class BuiltinSkillNotEditableError extends Error {
+  constructor(name: string) {
+    super(`Cannot edit builtin skill "${name}": create a same-named skill under ~/.zuse/skills/ to override it.`)
+    this.name = 'BuiltinSkillNotEditableError'
+  }
 }
 
 /**
@@ -31,14 +43,13 @@ export class SkillService {
   /** All loaded skills, marked with source (user/project/builtin) and enabled state. */
   async list(): Promise<SkillsState> {
     const disabled = await loadDisabledSkills(this.disabledFile)
-    const userRoot = resolve(join(this.home, '.zuse', 'skills'))
     const skills: SkillItem[] = scanSkills(this.home, this.cwd).map((s) => ({
       name: s.name,
       description: s.description,
       body: s.body,
-      // Builtin skills carry dir:'' and resolve('') is the process cwd — without the explicit
-      // builtin check they'd be mislabeled 'project'.
-      source: s.builtin ? 'builtin' : resolve(s.dir).startsWith(userRoot) ? 'user' : 'project',
+      // scanSkills stamps the source while scanning (it knows: builtin seed / user root / cwd chain),
+      // so nothing here has to re-infer it from path prefixes.
+      source: s.source,
       enabled: !disabled.has(s.name),
     }))
     // Stable, human-friendly order: by name.
@@ -57,16 +68,16 @@ export class SkillService {
     const entry = scanSkills(this.home, this.cwd).find((s) => s.name === name)
     if (!entry) return null
 
+    // One predicate for "this edit touches the SKILL.md file", used by both the builtin guard and
+    // the rewrite below — so a future file-backed field can't be added to one and missed by the other.
+    const editsFile = fields.description !== undefined || fields.body !== undefined
+
     // Builtin skills have no file on disk: description/body are not editable (to change one, create
     // a same-named skill under ~/.zuse/skills/, which overrides the builtin wholesale). `enabled`
     // still toggles — the disabled list is keyed by name, so it applies to builtins too.
-    if (entry.builtin && (fields.description !== undefined || fields.body !== undefined)) {
-      throw new Error(
-        `Cannot edit builtin skill "${name}": create a same-named skill under ~/.zuse/skills/ to override it.`,
-      )
-    }
+    if (entry.source === 'builtin' && editsFile) throw new BuiltinSkillNotEditableError(name)
 
-    if (fields.description !== undefined || fields.body !== undefined) {
+    if (editsFile) {
       await rewriteSkillFile(join(entry.dir, 'SKILL.md'), {
         description: fields.description,
         body: fields.body,
