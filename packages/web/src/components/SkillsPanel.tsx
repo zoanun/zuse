@@ -54,9 +54,9 @@ function SkillRow({ item, onToggleExpand, onEdit, onSetEnabled }: {
       <span className={'skill-src skill-src-' + item.source}>{item.source}</span>
       <span className="mem-actions">
         {/* Builtin skills are compiled into zuse — no SKILL.md to rewrite, so no edit affordance. */}
-        {item.source === 'builtin' ? null : (
+        {item.source !== 'builtin' ? (
           <button className="mem-edit" title="编辑" aria-label="编辑技能" onClick={onEdit}>✎</button>
-        )}
+        ) : null}
       </span>
     </li>
   )
