@@ -380,6 +380,18 @@ describe('/api/skills REST', () => {
     const h = { cookie, 'content-type': 'application/json' }
     expect((await fetch(`${base}/api/skills/nope`, { method: 'PATCH', headers: h, body: JSON.stringify({ description: 'x' }) })).status).toBe(404)
   })
+
+  it('editing a builtin skill → 400; toggling it still → 200', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    const bad = await fetch(`${base}/api/skills/zuse-config`, { method: 'PATCH', headers: h, body: JSON.stringify({ body: 'hacked' }) })
+    expect(bad.status).toBe(400)
+    expect((await bad.json() as { error: { message: string } }).error.message).toMatch(/builtin/i)
+
+    const off = await fetch(`${base}/api/skills/zuse-config`, { method: 'PATCH', headers: h, body: JSON.stringify({ enabled: false }) })
+    expect(off.status).toBe(200)
+    expect((await off.json() as { enabled: boolean; source: string }).enabled).toBe(false)
+  })
 })
 
 describe('/api/usage REST', () => {

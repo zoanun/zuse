@@ -87,4 +87,41 @@ describe('SkillService (M3)', () => {
   it('returns null for an unknown skill name', async () => {
     expect(await svc.update('zz-m3-nope', { description: 'x' })).toBeNull()
   })
+
+  // Builtin skills (compiled into @zuse/tools) are seeded by scanSkills at lowest precedence.
+  describe('builtin skills', () => {
+    it("marks builtin skills source:'builtin' (not project)", async () => {
+      const { skills } = await svc.list()
+      const item = skills.find((s) => s.name === 'zuse-config')!
+      expect(item).toBeDefined()
+      expect(item.source).toBe('builtin')
+      // Regression guard: dir is '' and resolve('') === process.cwd(), which would mislabel it.
+      expect(skills.find((s) => s.name === 'zuse-readme')?.source).toBe('builtin')
+    })
+
+    it('refuses to edit a builtin skill body/description', async () => {
+      await expect(svc.update('zuse-config', { body: 'hacked' })).rejects.toThrow(/builtin/i)
+      await expect(svc.update('zuse-config', { description: 'hacked' })).rejects.toThrow(/builtin/i)
+      // The rejection must mention the override escape hatch.
+      await expect(svc.update('zuse-config', { body: 'hacked' })).rejects.toThrow(/\.zuse[\\/]skills/)
+    })
+
+    it('still allows enabling/disabling a builtin skill', async () => {
+      const off = await svc.update('zuse-config', { enabled: false })
+      expect(off?.enabled).toBe(false)
+      expect(off?.source).toBe('builtin')
+      expect(JSON.parse(readFileSync(disabledFile, 'utf8')).disabled).toContain('zuse-config')
+      const on = await svc.update('zuse-config', { enabled: true })
+      expect(on?.enabled).toBe(true)
+    })
+
+    it('a same-named user skill overrides the builtin and is editable', async () => {
+      writeSkill(home, 'zuse-config', 'mine', 'MY BODY')
+      const svc2 = new SkillService({ home, cwd: proj, disabledFile })
+      const item = (await svc2.list()).skills.find((s) => s.name === 'zuse-config')!
+      expect(item.source).toBe('user')
+      const updated = await svc2.update('zuse-config', { description: 'changed' })
+      expect(updated?.description).toBe('changed')
+    })
+  })
 })

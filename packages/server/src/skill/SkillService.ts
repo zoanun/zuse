@@ -28,7 +28,7 @@ export class SkillService {
     this.disabledFile = deps.disabledFile ?? skillsDisabledFile(this.home)
   }
 
-  /** All loaded skills, marked with source (user/project) and enabled state. */
+  /** All loaded skills, marked with source (user/project/builtin) and enabled state. */
   async list(): Promise<SkillsState> {
     const disabled = await loadDisabledSkills(this.disabledFile)
     const userRoot = resolve(join(this.home, '.zuse', 'skills'))
@@ -36,7 +36,9 @@ export class SkillService {
       name: s.name,
       description: s.description,
       body: s.body,
-      source: resolve(s.dir).startsWith(userRoot) ? 'user' : 'project',
+      // Builtin skills carry dir:'' and resolve('') is the process cwd — without the explicit
+      // builtin check they'd be mislabeled 'project'.
+      source: s.builtin ? 'builtin' : resolve(s.dir).startsWith(userRoot) ? 'user' : 'project',
       enabled: !disabled.has(s.name),
     }))
     // Stable, human-friendly order: by name.
@@ -54,6 +56,15 @@ export class SkillService {
   ): Promise<SkillItem | null> {
     const entry = scanSkills(this.home, this.cwd).find((s) => s.name === name)
     if (!entry) return null
+
+    // Builtin skills have no file on disk: description/body are not editable (to change one, create
+    // a same-named skill under ~/.zuse/skills/, which overrides the builtin wholesale). `enabled`
+    // still toggles — the disabled list is keyed by name, so it applies to builtins too.
+    if (entry.builtin && (fields.description !== undefined || fields.body !== undefined)) {
+      throw new Error(
+        `Cannot edit builtin skill "${name}": create a same-named skill under ~/.zuse/skills/ to override it.`,
+      )
+    }
 
     if (fields.description !== undefined || fields.body !== undefined) {
       await rewriteSkillFile(join(entry.dir, 'SKILL.md'), {

@@ -548,7 +548,8 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       return sendJson(res, 200, await deps.skill.list())
     }
 
-    // PATCH /api/skills/<name> — update {description?, body?, enabled?}; unknown name → 404.
+    // PATCH /api/skills/<name> — update {description?, body?, enabled?}; unknown name → 404;
+    // rejected edit (builtin skill: no file to rewrite) → 400.
     if (method === 'PATCH' && path.startsWith('/api/skills/')) {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       const name = decodeURIComponent(path.slice('/api/skills/'.length))
@@ -560,7 +561,13 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (typeof body?.description === 'string') fields.description = body.description
       if (typeof body?.body === 'string') fields.body = body.body
       if (typeof body?.enabled === 'boolean') fields.enabled = body.enabled
-      const updated = await deps.skill.update(name, fields)
+      let updated: Awaited<ReturnType<typeof deps.skill.update>>
+      try {
+        updated = await deps.skill.update(name, fields)
+      } catch (e) {
+        // Rejected edit (e.g. a builtin skill has no file to rewrite) is a client error, not a 500.
+        return sendJson(res, 400, { error: { code: 'bad_request', message: e instanceof Error ? e.message : String(e) } })
+      }
       if (!updated) return sendJson(res, 404, { error: { code: 'not_found', message: 'Skill not found' } })
       return sendJson(res, 200, updated)
     }

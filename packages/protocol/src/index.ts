@@ -116,8 +116,8 @@ export interface SkillItem {
   name: string
   description: string
   body: string
-  /** user = ~/.zuse/skills; project = a .zuse/skills along the cwd chain. */
-  source: 'user' | 'project'
+  /** user = ~/.zuse/skills; project = a .zuse/skills along the cwd chain; builtin = compiled into zuse. */
+  source: 'user' | 'project' | 'builtin'
   /** false = listed in the panel but excluded from the Skill tool (new sessions). */
   enabled: boolean
 }
