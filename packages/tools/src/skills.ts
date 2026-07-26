@@ -15,6 +15,9 @@ import { join, dirname, resolve } from 'node:path'
 import type { Tool, ToolResult } from '@zuse/core'
 import { BUILTIN_SKILLS } from './builtin-skills.js'
 
+/** 技能来源。builtin = 编译进产物(无磁盘文件);user = ~/.zuse/skills;project = cwd 链上的 .zuse/skills。 */
+export type SkillSource = 'builtin' | 'user' | 'project'
+
 export interface SkillEntry {
   name: string
   /** 触发的全部依据:模型靠它判断「现在该用这个技能」。 */
@@ -23,15 +26,19 @@ export interface SkillEntry {
   dir: string
   /** SKILL.md 正文(不含 frontmatter)。 */
   body: string
-  /** true = 编译进产物的内置技能(无磁盘文件:不可编辑、不重读盘、无 Base directory)。 */
-  builtin?: true
+  /**
+   * 来源。扫描时即确定并原样传下去 —— 消费方(如 SkillService)不必再用
+   * `resolve(dir).startsWith(userRoot)` 这类路径前缀去反推(内置的 dir 为 '',
+   * resolve('') 会得到进程 cwd,那样反推必然误判)。
+   */
+  source: SkillSource
 }
 
 /** 技能正文进上下文的截断上限(行边界),与指令文件同级别的窗口护栏。 */
 export const SKILL_BODY_CAP = 20_000
 
 /** 工具描述清单里单条 description 的展示上限(对齐 CC 的 250,略收紧)。 */
-const LIST_DESC_CAP = 200
+export const LIST_DESC_CAP = 200
 
 /** 行边界截断(与 core instructions 同策略;几行小逻辑,不跨包共享)。 */
 function capAtLineBoundary(text: string, cap: number): string {
@@ -83,7 +90,7 @@ function ancestorChain(cwd: string): string[] {
 }
 
 /** 读一个技能根目录(<root>/<name>/SKILL.md),损坏/缺文件的条目静默跳过。 */
-function scanRoot(root: string, into: Map<string, SkillEntry>): void {
+function scanRoot(root: string, into: Map<string, SkillEntry>, source: 'user' | 'project'): void {
   let entries: string[]
   try {
     entries = readdirSync(root)
@@ -104,7 +111,7 @@ function scanRoot(root: string, into: Map<string, SkillEntry>): void {
     if (!description) continue
     const skillName = fields['name'] ?? name
     // 同名覆盖:调用方按外层→内层的顺序扫,后写入者(内层)胜出。
-    into.set(skillName, { name: skillName, description, dir, body })
+    into.set(skillName, { name: skillName, description, dir, body, source })
   }
 }
 
@@ -115,12 +122,21 @@ function scanRoot(root: string, into: Map<string, SkillEntry>): void {
 export function scanSkills(home: string, cwd: string): SkillEntry[] {
   const map = new Map<string, SkillEntry>()
   // 内置技能优先级最低:在 ~/.zuse/skills/ 或项目 .zuse/skills/ 下建同名技能即可整体覆盖(逃生舱)。
-  for (const s of BUILTIN_SKILLS) {
-    map.set(s.name, { name: s.name, description: s.description, dir: '', body: s.body, builtin: true })
-  }
-  scanRoot(join(home, '.zuse', 'skills'), map)
+  for (const s of BUILTIN_SKILLS) map.set(s.name, { ...s, dir: '', source: 'builtin' })
+  const userRoot = resolve(join(home, '.zuse', 'skills'))
+  // Windows 路径不区分大小写,而 resolve 不做大小写归一:homedir() 与 cwd 的盘符/目录名
+  // 大小写若不一致(如 c:\users\… vs C:\Users\…),直接比较会漏判。
+  const samePath = (a: string, b: string): boolean =>
+    process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+  scanRoot(userRoot, map, 'user')
   for (const dir of ancestorChain(cwd)) {
-    scanRoot(join(dir, '.zuse', 'skills'), map)
+    const root = resolve(join(dir, '.zuse', 'skills'))
+    // 主目录常常就在 cwd 的祖先链上(项目放在 ~ 下),那样 ~/.zuse/skills 会被扫第二遍,
+    // 把刚标好的 'user' 覆写成 'project'。跳过它:既保住来源标记,也省一次重复扫描。
+    // 覆盖优先级不受影响 —— user 根本就该被项目链更内层的同名技能覆盖,而它在两种顺序里
+    // 都排在那些目录之前。
+    if (samePath(root, userRoot)) continue
+    scanRoot(root, map, 'project')
   }
   return [...map.values()]
 }
@@ -163,9 +179,11 @@ ${listing}`,
         const names = skills.map((s) => s.name).join(', ') || '(none)'
         return { output: `Unknown skill: ${name}. Available skills: ${names}.`, isError: true }
       }
-      // 内置技能没有磁盘文件:不重读盘(省一次必失败的 syscall)、不展开 ${ZUSE_SKILL_DIR}、
-      // 不输出 Base directory —— 指向一个不存在的目录会诱导模型去 Read 它。
-      if (skill.builtin) return { output: capAtLineBoundary(skill.body, SKILL_BODY_CAP) }
+      // 内置技能没有磁盘文件:不重读盘、不展开 ${ZUSE_SKILL_DIR}、不输出 Base directory。
+      // 不只是省一次 syscall —— dir 为 '' 时 join('', 'SKILL.md') 是相对路径 'SKILL.md',
+      // readFileSync 会拿它去解析进程 cwd:若 cwd 下恰好有个 SKILL.md,旧路径会把那个
+      // 无关文件当成内置技能正文返回。而 Base directory 指向不存在的目录会诱导模型去 Read 它。
+      if (skill.source === 'builtin') return { output: capAtLineBoundary(skill.body, SKILL_BODY_CAP) }
 
       // 调用时重读盘(M3「查看时重新加载」):面板刚改完正文,哪怕本会话没关,模型这次
       // 加载也拿最新内容。读不到则回退到会话启动时缓存的 body。

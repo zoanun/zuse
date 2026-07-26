@@ -9,22 +9,29 @@
  * 设计见 docs/superpowers/specs/2026-07-26-builtin-skills-design.md。
  */
 
-export interface BuiltinSkill {
-  name: string
-  description: string
-  body: string
-}
+import type { SkillEntry } from './skills.js'
+
+/** 内置技能就是一条没有磁盘目录的 SkillEntry —— 从它派生,新增字段时不会悄悄漏掉内置。
+ *  (type-only import,编译期擦除,与 skills.ts 反向 import 不构成运行时循环。) */
+export type BuiltinSkill = Pick<SkillEntry, 'name' | 'description' | 'body'>
+
+/**
+ * description 会被 createSkillTool 按 LIST_DESC_CAP(200 字符)截断后放进工具清单——
+ * 那是模型判断「该不该加载」的唯一依据。所以两条描述都**控制在 200 字符内**并把触发词
+ * 前置;写超了,尾部的触发词根本到不了模型眼前。用数组 join 而非 `+` 拼接:片段边界不再
+ * 依赖肉眼看不见的行尾空格。
+ */
+const joinWords = (...parts: string[]): string => parts.join(' ')
 
 // ─────────────────────────────────────────────────────────────────────────────
 // zuse-config —— 改 zuse 自身的配置
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ZUSE_CONFIG_DESCRIPTION =
-  "Use when the user wants to CHANGE zuse's own configuration — add or remove an MCP server, " +
-  'add or edit a skill, set up a cron / scheduled task, switch model or provider, adjust permissions, ' +
-  'manage personas, or edit zuse settings files. Tells you where each config lives, its exact format, and — ' +
-  'critically — when a change actually takes effect (file edit vs daemon restart vs new session vs live web panel). ' +
-  'Load this BEFORE editing anything under ~/.zuse/ or a project .zuse/ directory.'
+const ZUSE_CONFIG_DESCRIPTION = joinWords(
+  "Use when changing zuse's OWN config:",
+  'settings, model/provider, permissions, MCP servers, skills, personas, cron tasks.',
+  'Where each lives, its format, when a change takes effect.',
+)
 
 const ZUSE_CONFIG_BODY = `# 修改 zuse 自身的配置
 
@@ -139,11 +146,10 @@ frontmatter **只认 \`name\` 和 \`description\`**；\`description\` 写不好 
 // zuse-readme —— 我是谁 / 我能干啥 / 我怎么搭的
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ZUSE_README_DESCRIPTION =
-  'Use when the user asks about zuse ITSELF — who or what you are, what you can do, how you are built, ' +
-  'your architecture or packages, or how one of your own features works internally ("how does your cron work", ' +
-  '"how do you handle permissions", "你是谁", "你能干什么"). Gives your identity and architecture, and — when ' +
-  'running inside the zuse repo — points you at the authoritative design docs and source instead of guessing.'
+const ZUSE_README_DESCRIPTION = joinWords(
+  'Use when asked about zuse ITSELF — who you are, what you can do, your architecture/packages,',
+  'or how your own features work inside (你是谁 / 你能干什么). Read your own docs, do not guess.',
+)
 
 const ZUSE_README_BODY = `# 我是谁：zuse 自述
 
@@ -190,7 +196,7 @@ agent loop + 完整工具集；多 provider（Anthropic 原生 / OpenAI 协议�
 - 回答自身机制时**带上文件路径**（例如 \`packages/server/src/cron/CronScheduler.ts\`），方便用户核对。
 `
 
-export const BUILTIN_SKILLS: BuiltinSkill[] = [
+export const BUILTIN_SKILLS: readonly BuiltinSkill[] = [
   { name: 'zuse-config', description: ZUSE_CONFIG_DESCRIPTION, body: ZUSE_CONFIG_BODY },
   { name: 'zuse-readme', description: ZUSE_README_DESCRIPTION, body: ZUSE_README_BODY },
 ]

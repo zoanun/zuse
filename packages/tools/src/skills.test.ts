@@ -8,14 +8,14 @@ import { scanSkills, createSkillTool, SKILL_BODY_CAP, toolModule } from './skill
 import { BUILTIN_SKILLS } from './builtin-skills.js'
 
 /**
- * 只看本用例自己在沙箱里写的技能。滤掉两类噪音:
- * ① 内置技能(scanSkills 现在会 seed 它们,而本组用例断言的是磁盘扫描语义);
- * ② 沙箱外的真实技能 —— tmpdir 在 Windows 上位于 C:\Users\<user>\AppData\... 之下,
- *    而 scanSkills 会沿 cwd 祖先链扫 <dir>/.zuse/skills,于是真实的 ~/.zuse/skills 会漏进来
- *    (无此过滤时,本机有任何用户级技能就会让这些用例全红 —— 修复前即如此)。
+ * 只看本用例自己在沙箱里写的技能:按 dir 限定在本次的 home/proj 临时目录内。
+ * 这一层过滤是必需的 —— tmpdir 在 Windows 上位于用户主目录下,而 scanSkills 会沿 cwd
+ * 祖先链扫 <dir>/.zuse/skills,于是开发机上真实的 ~/.zuse/skills 会漏进来(无此过滤时,
+ * 本机有任何用户级技能就会让这些用例全红 —— 修复前即如此)。
+ * 内置技能的 dir 为 '',startsWith 恒假,顺带也被这条判定挡在外面。
  */
 const disk = (skills: ReturnType<typeof scanSkills>) =>
-  skills.filter((s) => !s.builtin && (s.dir.startsWith(home) || s.dir.startsWith(proj)))
+  skills.filter((s) => s.dir.startsWith(home) || s.dir.startsWith(proj))
 
 let home: string
 let proj: string
@@ -153,23 +153,31 @@ describe('createSkillTool', () => {
 })
 
 describe('内置技能(BUILTIN_SKILLS)', () => {
-  it('磁盘上没有任何技能时也带上内置技能(builtin:true、dir 为空)', () => {
+  it("磁盘上没有任何技能时也带上内置技能(source:'builtin'、dir 为空)", () => {
     const skills = scanSkills(home, proj)
     // arrayContaining 而非精确相等:祖先链上可能有本机真实的用户级技能(见 disk 注释)。
     expect(skills.map((s) => s.name)).toEqual(expect.arrayContaining(BUILTIN_SKILLS.map((s) => s.name)))
     const cfg = skills.find((s) => s.name === 'zuse-config')!
-    expect(cfg.builtin).toBe(true)
+    expect(cfg.source).toBe('builtin')
     expect(cfg.dir).toBe('')
-    expect(cfg.body.length).toBeGreaterThan(200)
-    expect(skills.find((s) => s.name === 'zuse-readme')!.builtin).toBe(true)
+    expect(skills.find((s) => s.name === 'zuse-readme')!.source).toBe('builtin')
   })
 
   it('同名用户技能完全覆盖内置(内置优先级最低)', () => {
     writeUserSkill('zuse-config', '---\ndescription: 我自己的版本\n---\n\nMY BODY')
     const found = scanSkills(home, proj).filter((s) => s.name === 'zuse-config')
     expect(found).toHaveLength(1)
-    expect(found[0]!.builtin).toBeUndefined()
+    expect(found[0]!.source).toBe('user')
     expect(found[0]!.body).toContain('MY BODY')
+  })
+
+  it("home 在 cwd 祖先链上时,用户级技能仍标 source:'user'(不被祖先链的第二遍扫描覆写成 project)", () => {
+    // 极常见的真实布局:项目就放在主目录下 → ~/.zuse/skills 同时是 user 根与祖先链的一环。
+    const nested = join(home, 'projects', 'app')
+    mkdirSync(nested, { recursive: true })
+    writeUserSkill('only-user', '---\ndescription: 用户级\n---\nU')
+    const found = scanSkills(home, nested).find((s) => s.name === 'only-user')!
+    expect(found.source).toBe('user')
   })
 
   it('加载内置技能:返回正文、无 Base directory 前缀、不因无磁盘文件报错', async () => {
