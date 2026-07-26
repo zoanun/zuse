@@ -56,4 +56,35 @@ describe('SkillsPanel', () => {
     renderPanel({ skills: [] })
     expect(screen.getByText(/未找到技能/)).toBeInTheDocument()
   })
+
+  describe('builtin skills (compiled in, no file on disk)', () => {
+    const builtin = mk({ name: 'zuse-config', source: 'builtin' })
+
+    it('shows a builtin badge, hides the edit button, keeps the toggle', () => {
+      const props = renderPanel({ skills: [builtin] })
+      const row = screen.getAllByRole('listitem')[0]!
+      expect(within(row).getByText('builtin')).toBeInTheDocument()
+      expect(within(row).getByText('builtin').className).toContain('skill-src-builtin')
+      expect(screen.queryByLabelText('编辑技能')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByLabelText('禁用技能'))
+      expect(props.onUpdate).toHaveBeenCalledWith('zuse-config', { enabled: false })
+    })
+
+    it('still expands to show its description + body', () => {
+      renderPanel({ skills: [builtin] })
+      fireEvent.click(screen.getByText('zuse-config'))
+      expect(screen.getByText('Brainstorm body.')).toBeInTheDocument()
+    })
+
+    it('non-builtin skills keep their edit button', () => {
+      renderPanel({ skills: [builtin, mk({ name: 'brainstorm' })] })
+      expect(screen.getAllByLabelText('编辑技能')).toHaveLength(1)
+    })
+
+    it('the hint explains builtin skills are toggle-only', () => {
+      renderPanel()
+      expect(screen.getByText(/内置技能/)).toBeInTheDocument()
+    })
+  })
 })

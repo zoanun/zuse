@@ -53,7 +53,10 @@ function SkillRow({ item, onToggleExpand, onEdit, onSetEnabled }: {
       <span className="mem-label skill-name" title="点击查看" onClick={onToggleExpand}>{item.name}</span>
       <span className={'skill-src skill-src-' + item.source}>{item.source}</span>
       <span className="mem-actions">
-        <button className="mem-edit" title="编辑" aria-label="编辑技能" onClick={onEdit}>✎</button>
+        {/* Builtin skills are compiled into zuse — no SKILL.md to rewrite, so no edit affordance. */}
+        {item.source === 'builtin' ? null : (
+          <button className="mem-edit" title="编辑" aria-label="编辑技能" onClick={onEdit}>✎</button>
+        )}
       </span>
     </li>
   )
@@ -66,7 +69,7 @@ export function SkillsPanel({ skills, loading, error, onUpdate }: Props) {
   return (
     <div className="mem-panel">
       <div className="mem-toolbar">
-        <div className="persona-hint">编辑技能的描述/正文，或将其关闭。正文修改会在模型下次打开该技能时加载；启用/禁用在新对话中生效。</div>
+        <div className="persona-hint">编辑技能的描述/正文，或将其关闭。正文修改会在模型下次打开该技能时加载；启用/禁用在新对话中生效。内置技能（builtin）随 zuse 编译发布，只能启停、不可编辑——要改就在 ~/.zuse/skills/ 下建同名技能覆盖它。</div>
       </div>
 
       {error ? <div className="mem-error">{error}</div> : null}
