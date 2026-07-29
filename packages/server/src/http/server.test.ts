@@ -26,6 +26,7 @@ import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
 import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
 import { makeRequestHandler, readJsonBody, PayloadTooLargeError } from './server.js'
+import { VoiceService, VoiceNotConfiguredError, UnsupportedAudioTypeError } from '../voice/VoiceService.js'
 
 // A fake createSession that builds a real SessionManager around a fake client —
 // no real settings/model/network. Mirrors SessionService.test.ts.
@@ -53,7 +54,7 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, auth: LocalPasswordAuth, service: SessionService, search: SearchService, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService, cronScheduler: CronScheduler, cron: CronService
+let dir: string, srv: Server, base: string, auth: LocalPasswordAuth, service: SessionService, search: SearchService, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService, cronScheduler: CronScheduler, cron: CronService, voice: VoiceService
 // Captures the spec the /api/model handler computed, so tests assert it without writing settings.
 let persistedSpec: string | undefined
 beforeEach(async () => {
@@ -84,7 +85,10 @@ beforeEach(async () => {
   const cronDataDir = cronDir(dir)
   cronScheduler = new CronScheduler({ dir: cronDataDir, sessions: service })
   cron = new CronService({ dir: cronDataDir, scheduler: cronScheduler, defaultCwd: '/work', sessions: service })
-  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload, persistModel: (spec) => { persistedSpec = spec }, devPage: false, tokenTtlSec: 3600 }))
+  // 语音未配置的 VoiceService(注入空 settings):路由层只验鉴权/校验/错误映射,
+  // happy path 由 VoiceService 单测覆盖 —— 这里绝不联网。
+  voice = new VoiceService({ loadSettings: () => ({ providers: {} } as unknown as ResolvedSettings) })
+  srv = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload, voice, persistModel: (spec) => { persistedSpec = spec }, devPage: false, tokenTtlSec: 3600 }))
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()))
   const addr = srv.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
   base = `http://127.0.0.1:${port}`
@@ -104,7 +108,7 @@ describe('会话 cookie 的 Secure 属性随传输自适应', () => {
   /** 起一个可自定 trustProxy 的临时 handler(复用 beforeEach 已建好的各 service)。 */
   async function withServer(trustProxy: boolean, fn: (base: string) => Promise<void>): Promise<void> {
     const s = createServer(makeRequestHandler({
-      auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload,
+      auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload, voice,
       persistModel: () => {}, devPage: false, tokenTtlSec: 3600, trustProxy,
     }))
     await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()))
@@ -858,6 +862,118 @@ describe('/api/models + /api/model (model switcher)', () => {
     })
     expect(res.status).toBe(400)
     expect(persistedSpec).toBeUndefined()
+  })
+})
+
+describe('/api/voice REST (V1/V2)', () => {
+  /** 起一个换掉 voice 依赖的临时 handler(其余 service 复用 beforeEach 建好的)。 */
+  async function withVoice(fake: Partial<VoiceService>, fn: (base: string, cookie: string) => Promise<void>): Promise<void> {
+    const s = createServer(makeRequestHandler({
+      auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload,
+      voice: fake as VoiceService, persistModel: () => {}, devPage: false, tokenTtlSec: 3600,
+    }))
+    await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()))
+    const addr = s.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
+    const b = `http://127.0.0.1:${port}`
+    await fetch(`${b}/api/auth/setup`, json({ password: 'pw' }))
+    const login = await fetch(`${b}/api/auth/login`, json({ password: 'pw' }))
+    const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+    try { await fn(b, cookie) } finally { await new Promise<void>((r) => s.close(() => r())) }
+  }
+
+  it('未登录 → 401(三条都是)', async () => {
+    expect((await fetch(`${base}/api/voice`)).status).toBe(401)
+    expect((await fetch(`${base}/api/voice/stt`, json({ audio: 'AAAA', mimeType: 'audio/webm' }))).status).toBe(401)
+    expect((await fetch(`${base}/api/voice/tts`, json({ text: 'hi' }))).status).toBe(401)
+  })
+
+  it('GET /api/voice 回能力', async () => {
+    const cookie = await authCookie()
+    const res = await fetch(`${base}/api/voice`, { headers: { cookie } })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ stt: expect.any(Boolean), tts: expect.any(Boolean) })
+  })
+
+  it('未配置时 stt/tts → 400(不是 500)', async () => {
+    const cookie = await authCookie()
+    const r1 = await fetch(`${base}/api/voice/stt`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ audio: 'AAAA', mimeType: 'audio/webm' }) })
+    expect(r1.status).toBe(400)
+    const r2 = await fetch(`${base}/api/voice/tts`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) })
+    expect(r2.status).toBe(400)
+  })
+
+  it('缺字段 → 400', async () => {
+    const cookie = await authCookie()
+    const h = { cookie, 'content-type': 'application/json' }
+    expect((await fetch(`${base}/api/voice/stt`, { method: 'POST', headers: h, body: JSON.stringify({ audio: 'AAAA' }) })).status).toBe(400)
+    expect((await fetch(`${base}/api/voice/tts`, { method: 'POST', headers: h, body: JSON.stringify({ text: '   ' }) })).status).toBe(400)
+  })
+
+  it('未知 mime → 415', async () => {
+    await withVoice({ transcribe: async () => { throw new UnsupportedAudioTypeError('bad mime') } }, async (b, cookie) => {
+      const res = await fetch(`${b}/api/voice/stt`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ audio: 'AAAA', mimeType: 'application/octet-stream' }) })
+      expect(res.status).toBe(415)
+    })
+  })
+
+  it('STT happy path → {text},音频按 base64 解码后原样交给 service', async () => {
+    let seen: { bytes?: Buffer; mime?: string } = {}
+    await withVoice({ transcribe: async (audio: Buffer, mimeType: string) => { seen = { bytes: audio, mime: mimeType }; return '你好世界' } }, async (b, cookie) => {
+      const res = await fetch(`${b}/api/voice/stt`, {
+        method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+        body: JSON.stringify({ audio: Buffer.from('RAWAUDIO').toString('base64'), mimeType: 'audio/webm;codecs=opus' }),
+      })
+      expect(res.status).toBe(200)
+      expect(await res.json()).toEqual({ text: '你好世界' })
+      expect(seen.bytes?.toString('utf8')).toBe('RAWAUDIO')
+      expect(seen.mime).toBe('audio/webm;codecs=opus')
+    })
+  })
+
+  it('TTS happy path → 音频字节 + content-type;截断时置 X-Zuse-Tts-Truncated', async () => {
+    const bytes = Buffer.from('MP3BYTES')
+    await withVoice({ speak: async () => ({ audio: bytes, contentType: 'audio/mpeg', truncated: false }) }, async (b, cookie) => {
+      const res = await fetch(`${b}/api/voice/tts`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toBe('audio/mpeg')
+      expect(res.headers.get('x-zuse-tts-truncated')).toBeNull()
+      expect(Buffer.from(await res.arrayBuffer()).toString('utf8')).toBe('MP3BYTES')
+    })
+    await withVoice({ speak: async () => ({ audio: bytes, contentType: 'audio/mpeg', truncated: true }) }, async (b, cookie) => {
+      const res = await fetch(`${b}/api/voice/tts`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) })
+      expect(res.headers.get('x-zuse-tts-truncated')).toBe('1')
+      await res.arrayBuffer()
+    })
+  })
+
+  it('provider 真故障 → 5xx,不伪装成 4xx', async () => {
+    const boom = async (): Promise<never> => { throw new Error('upstream 503') }
+    await withVoice({ transcribe: boom, speak: boom }, async (b, cookie) => {
+      const h = { cookie, 'content-type': 'application/json' }
+      const r1 = await fetch(`${b}/api/voice/stt`, { method: 'POST', headers: h, body: JSON.stringify({ audio: 'AAAA', mimeType: 'audio/webm' }) })
+      expect(r1.status).toBe(500)
+      const r2 = await fetch(`${b}/api/voice/tts`, { method: 'POST', headers: h, body: JSON.stringify({ text: 'hi' }) })
+      expect(r2.status).toBe(500)
+    })
+  })
+
+  it('未配置错误只在 VoiceService 抛时映射 400 —— 该错误来自 service,不是路由臆断', async () => {
+    await withVoice({ speak: async () => { throw new VoiceNotConfiguredError('no ttsModel') } }, async (b, cookie) => {
+      const res = await fetch(`${b}/api/voice/tts`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'hi' }) })
+      expect(res.status).toBe(400)
+      expect((await res.json() as { error: { code: string } }).error.code).toBe('voice_not_configured')
+    })
+  })
+
+  it('音频体超过 25 MiB → 413(读到一半就拒,不缓完)', async () => {
+    const cookie = await authCookie()
+    const huge = 'A'.repeat(26 * 1024 * 1024)
+    const res = await fetch(`${base}/api/voice/stt`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ audio: huge, mimeType: 'audio/webm' }),
+    })
+    expect(res.status).toBe(413)
+    expect((await res.json() as { error: { code: string } }).error.code).toBe('too_large')
   })
 })
 

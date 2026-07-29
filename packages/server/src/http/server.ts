@@ -19,6 +19,7 @@ import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } 
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
+import { VoiceNotConfiguredError, UnsupportedAudioTypeError } from '../voice/VoiceService.js'
 import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES, FileTooLargeError, FILE_MAX_BYTES } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo, SkillItem } from '@zuse/protocol'
@@ -35,6 +36,7 @@ export interface RequestHandlerDeps {
   mcp: McpService
   cron: import('../cron/CronService.js').CronService
   upload: UploadService
+  voice: import('../voice/VoiceService.js').VoiceService
   /** Persist the default model spec (bare name for flat-default, else `providerId/model`) to
    *  project settings. Injected so tests can assert the computed spec without touching disk. */
   persistModel: (spec: string) => void
@@ -144,6 +146,24 @@ const UPLOAD_BODY_CAP = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 1024 * 1024
 /** Body cap for POST /api/uploads/file: base64 inflates ~4/3 over the raw file, + 1 MiB slack. */
 const FILE_BODY_CAP = Math.ceil(FILE_MAX_BYTES * 4 / 3) + 1024 * 1024
 
+/** Body cap for POST /api/voice/stt (25 MiB) — aligns with the usual whisper-family upload ceiling. */
+const AUDIO_BODY_CAP = 25 * 1024 * 1024
+
+/**
+ * 语音路由的错误映射。只有**用户侧**问题才降级成 4xx:未配置 → 400、mime 不支持 → 415。
+ * 其余(provider 宕机、网络抖动、SDK 内部错)一律原样抛出 → 顶层兜底成 500。把真故障伪装成
+ * 4xx 会让前端「以为是自己传错了」而不重试/不报警 —— 同 PATCH /api/skills 的收窄原则。
+ */
+function sendVoiceError(res: ServerResponse, e: unknown): void {
+  if (e instanceof VoiceNotConfiguredError) {
+    return sendJson(res, 400, { error: { code: 'voice_not_configured', message: e.message } })
+  }
+  if (e instanceof UnsupportedAudioTypeError) {
+    return sendJson(res, 415, { error: { code: 'unsupported_media', message: e.message } })
+  }
+  throw e
+}
+
 export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
   // Per-handler closure so each handler instance starts with a clean backoff
   // counter (avoids cross-test accumulation / single-user simplicity).
@@ -174,7 +194,14 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     })
 
   return (req, res) => {
-    void handle(req, res)
+    // 兜底 500:路由里对「非客户端错误」的 rethrow(如 sendVoiceError / PATCH /api/skills)
+    // 必须落到一个真实的 5xx 响应上 —— 没有这一层的话,一次 rethrow 只会变成 unhandled
+    // rejection,请求就那么挂着直到客户端超时,比返回 500 更难排查。
+    void handle(req, res).catch((err: unknown) => {
+      console.error('[http] unhandled error while serving', req.method, req.url, err)
+      if (res.headersSent) return void res.destroy()   // 头已发出,只能掐断
+      sendJson(res, 500, { error: { code: 'internal', message: err instanceof Error ? err.message : String(err) } })
+    })
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -373,6 +400,50 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       const id = decodeURIComponent(path.slice('/api/cron/'.length))
       try { await deps.cron.delete(id); return sendJson(res, 200, { ok: true }) }
       catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid id' } }) }
+    }
+
+    // -----------------------------------------------------------------------
+    // /api/voice — 语音输入(STT)与朗读(TTS),V1/V2,全部鉴权门禁。
+    // -----------------------------------------------------------------------
+
+    // GET /api/voice — 能力探测(前端据此显隐麦克风/朗读按钮)
+    if (method === 'GET' && path === '/api/voice') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, deps.voice.capabilities())
+    }
+    // POST /api/voice/stt — body {audio:<base64>, mimeType} → {text}
+    if (method === 'POST' && path === '/api/voice/stt') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { audio?: unknown; mimeType?: unknown } | undefined
+      try { body = (await readJsonBody(req, AUDIO_BODY_CAP)) as typeof body } catch (e) {
+        if (e instanceof PayloadTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      if (typeof body?.audio !== 'string' || typeof body.mimeType !== 'string') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'audio(base64) and mimeType required' } })
+      }
+      try { return sendJson(res, 200, { text: await deps.voice.transcribe(Buffer.from(body.audio, 'base64'), body.mimeType) }) }
+      catch (e) { return sendVoiceError(res, e) }
+    }
+    // POST /api/voice/tts — body {text} → 音频字节(截断时带 X-Zuse-Tts-Truncated: 1)
+    if (method === 'POST' && path === '/api/voice/tts') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      let body: { text?: unknown } | undefined
+      try { body = (await readJsonBody(req)) as typeof body } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      if (typeof body?.text !== 'string' || !body.text.trim()) {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'text required' } })
+      }
+      let out: { audio: Buffer; contentType: string; truncated: boolean }
+      try { out = await deps.voice.speak(body.text) }
+      catch (e) { return sendVoiceError(res, e) }
+      res.writeHead(200, {
+        'content-type': out.contentType,
+        'content-length': String(out.audio.length),
+        ...(out.truncated ? { 'x-zuse-tts-truncated': '1' } : {}),
+      })
+      return void res.end(out.audio)
     }
 
     // GET /api/search — 跨会话全文搜索 (S4, auth-gated). query ?q=&limit=

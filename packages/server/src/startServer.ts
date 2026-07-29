@@ -17,6 +17,7 @@ import { UploadService } from './upload/UploadService.js'
 import { CronScheduler } from './cron/CronScheduler.js'
 import { CronService } from './cron/CronService.js'
 import { cronDir, loadTasks } from './cron/cronStore.js'
+import { VoiceService } from './voice/VoiceService.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
@@ -197,7 +198,10 @@ export async function startServer(
   catch (err) { console.warn(`[zuse-server] cron 调度启动失败:${err instanceof Error ? err.message : String(err)}`) }
   const cronService = new CronService({ dir: cronDataDir, scheduler: cronScheduler, defaultCwd: cfg.cwd, sessions: service })
 
-  const handler = makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
+  // 语音 (V1/V2)：无状态,能力由 settings 的 sttModel/ttsModel 现读决定（未配置 → 前端隐藏按钮）。
+  const voice = new VoiceService()
+
+  const handler = makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
   // A2:配了证书对就起 https(WS 随之变 wss —— 同一个 server 的 upgrade 事件)。
   const { server: httpServer, scheme } = createAppServer(handler, { cert: cfg.tlsCert, key: cfg.tlsKey })
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
