@@ -34,7 +34,7 @@ describe('VoiceService.capabilities', () => {
   })
 
   it('配了 openai 协议 provider → true', () => {
-    const svc = new VoiceService({ loadSettings: () => settings({ sttModel: 'sf/m', ttsModel: 'sf/t' }) })
+    const svc = new VoiceService({ loadSettings: () => settings({ sttModel: 'sf/m', ttsModel: 'sf/t', ttsVoice: 'v' }) })
     expect(svc.capabilities()).toEqual({ stt: true, tts: true })
   })
 
@@ -103,16 +103,34 @@ describe('VoiceService.speak', () => {
     expect(arg).toMatchObject({ model: 'cosy', voice: 'nova', input: '你好', response_format: 'mp3' })
   })
 
-  it('未配 ttsVoice → 缺省音色 alloy', async () => {
+  it('配了 ttsModel 但没配 ttsVoice → 视为未配置(不留必然 400 的默认音色)', async () => {
+    // 实测:OpenAI 要 'alloy' 这类裸名,SiliconFlow 要 '<模型>:<音色>',省略则两边都 400。
+    // 任何内置默认值都会在另一边必然失败,所以宁可判为未配置、按钮不出现。
     const f = fakeClient()
     const svc = new VoiceService({ loadSettings: () => settings({ ttsModel: 'sf/cosy' }), makeClient: () => f.client })
-    await svc.speak('hi')
-    expect(f.calls.speech.mock.calls[0]![0].voice).toBe('alloy')
+    expect(svc.capabilities().tts).toBe(false)
+    await expect(svc.speak('hi')).rejects.toThrow(VoiceNotConfiguredError)
+    expect(f.calls.speech).not.toHaveBeenCalled()
+  })
+
+  it('provider 返回 200 但空音频 → 抛错(不把静默当成功交出去)', async () => {
+    // 实测:SiliconFlow CosyVoice2 的部分音色会 200 + 0 字节。
+    const empty = {
+      audio: {
+        transcriptions: { create: async () => 'x' },
+        speech: { create: async () => ({ arrayBuffer: async () => new ArrayBuffer(0) }) },
+      },
+    }
+    const svc = new VoiceService({
+      loadSettings: () => settings({ ttsModel: 'sf/cosy', ttsVoice: 'v' }),
+      makeClient: () => empty as never,
+    })
+    await expect(svc.speak('hi')).rejects.toThrow(/空音频/)
   })
 
   it('超过 4096 字截断并标记', async () => {
     const f = fakeClient()
-    const svc = new VoiceService({ loadSettings: () => settings({ ttsModel: 'sf/cosy' }), makeClient: () => f.client })
+    const svc = new VoiceService({ loadSettings: () => settings({ ttsModel: 'sf/cosy', ttsVoice: 'v' }), makeClient: () => f.client })
     const out = await svc.speak('字'.repeat(5000))
     expect(out.truncated).toBe(true)
     expect(f.calls.speech.mock.calls[0]![0].input.length).toBe(4096)

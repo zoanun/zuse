@@ -70,8 +70,18 @@ const MIME_EXT: Record<string, string> = {
 /** OpenAI /audio/speech 的契约上限。超出截断(念开头仍有用),并向调用方标记。 */
 export const TTS_TEXT_CAP = 4096
 
-/** 未配 settings.ttsVoice 时用的音色。 */
-export const DEFAULT_TTS_VOICE = 'alloy'
+/**
+ * 朗读**必须**显式配 settings.ttsVoice —— 没有跨 provider 通用的默认音色。
+ *
+ * 实测(2026-07-29,SiliconFlow `/audio/speech`):`alloy`(OpenAI 的经典默认)→ 400
+ * `Invalid voice`;裸音色名 `alex` → 400 同样;整个省略 voice → 400
+ * `Voice or reference audio should be set`。只有 `<模型>:<音色>` 形式
+ * (如 `FunAudioLLM/CosyVoice2-0.5B:alex`)才 200。而 OpenAI 官方端点要的又是 `alloy`
+ * 这类裸名 —— 两边格式互不兼容,任何内置默认值都会在另一边必然失败。
+ *
+ * 因此:没配 ttsVoice 就把 tts 判为**未配置**(按钮根本不出现),而不是让用户点下去吃一个 400。
+ */
+const ttsVoiceOf = (settings: { ttsVoice?: string }): string | null => settings.ttsVoice?.trim() || null
 
 /** 解析出的可用目标:openai 协议的 provider + 裸模型名。 */
 interface VoiceTarget {
@@ -112,7 +122,8 @@ export class VoiceService {
     const settings = this.loadSettingsFn()
     return {
       stt: this.resolveTarget(settings, 'stt') !== null,
-      tts: this.resolveTarget(settings, 'tts') !== null,
+      // 没配音色 = 未配置:内置默认音色在多数 provider 上必然 400(见 ttsVoiceOf 注释)。
+      tts: this.resolveTarget(settings, 'tts') !== null && ttsVoiceOf(settings) !== null,
     }
   }
 
@@ -140,16 +151,28 @@ export class VoiceService {
     if (!target) {
       throw new VoiceNotConfiguredError('朗读未配置:请在 settings 里设置 ttsModel(需 openai 协议的 provider)')
     }
+    const voice = ttsVoiceOf(settings)
+    if (!voice) {
+      throw new VoiceNotConfiguredError(
+        '朗读未配置:还需设置 ttsVoice —— 各家音色命名不同(OpenAI 如 "alloy";SiliconFlow 需 "<模型>:<音色>",如 "FunAudioLLM/CosyVoice2-0.5B:alex"),没有可用的通用默认值。',
+      )
+    }
     const truncated = text.length > TTS_TEXT_CAP
     const input = truncated ? text.slice(0, TTS_TEXT_CAP) : text
     const client = this.makeClientFn(target.provider.baseURL, target.provider.apiKey)
     const res = await client.audio.speech.create({
       model: target.model,
-      voice: settings.ttsVoice || DEFAULT_TTS_VOICE,
+      voice,
       input,
       response_format: 'mp3',
     })
-    return { audio: Buffer.from(await res.arrayBuffer()), contentType: 'audio/mpeg', truncated }
+    const audio = Buffer.from(await res.arrayBuffer())
+    // 实测(SiliconFlow CosyVoice2 的部分音色):会返回 HTTP 200 但 body 是 0 字节。
+    // 把这种「成功包装的空音频」原样交出去,前端只会播一段静默、无从排查 —— 当作 provider 故障抛出。
+    if (audio.length === 0) {
+      throw new Error(`朗读失败:provider 返回了空音频(model=${target.model}, voice=${voice}) —— 多半是该音色不可用,换一个 ttsVoice 再试。`)
+    }
+    return { audio, contentType: 'audio/mpeg', truncated }
   }
 
   /**

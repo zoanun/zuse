@@ -18,7 +18,7 @@ zuse 的 Web UI 有两个语音入口，都**默认关着**：
 {
   "sttModel": "siliconflow/FunAudioLLM/SenseVoiceSmall",      // 语音输入（转写）
   "ttsModel": "siliconflow-tts/FunAudioLLM/CosyVoice2-0.5B",  // 朗读
-  "ttsVoice": "alloy"                                          // 可选；缺省 "alloy"
+  "ttsVoice": "FunAudioLLM/CosyVoice2-0.5B:alex"               // 必填！各家格式不同，见下
 }
 ```
 
@@ -57,11 +57,32 @@ zuse 的 Web UI 有两个语音入口，都**默认关着**：
 > provider 会被**当作未配置**处理（按钮消失），并在 daemon 日志里 warn 一条说明原因 ——
 > 静默失败更难查。
 
-### 音色（`ttsVoice`）
+### 实测记录（2026-07-29）
 
-缺省是 OpenAI 的 `alloy`。**不同 provider 的音色命名不一样**：硅基流动的预置音色通常写成
-`<模型名>:<音色>`（例如 `FunAudioLLM/CosyVoice2-0.5B:alex`），具体取值以其官方文档为准。
-如果朗读报「音色不存在」之类的错，八成就是这一项没配对，而不是 zuse 的问题。
+- **语音输入（STT）已实测可用**：用 Windows 系统中文语音合成一段「今天天气很好，适合出门散步。」
+  喂给 `siliconflow/FunAudioLLM/SenseVoiceSmall`，转写结果逐字精确、含标点。
+- **朗读（TTS）的管路已通**（返回真实 mp3），但**中文音质取决于模型/音色**，见下面的排查表。
+
+### 音色（`ttsVoice`）—— 必填，没有通用默认值
+
+**`ttsVoice` 不填，朗读按钮就不会出现**（zuse 把它视为"没配好"）。这不是偷懒，是实测结论：
+各家的音色命名互不兼容，任何内置默认值都会在另一边必然失败。
+
+2026-07-29 实测硅基流动 `/audio/speech`：
+
+| 传的 voice | 结果 |
+|---|---|
+| `alloy`（OpenAI 的经典默认） | 400 `Invalid voice` |
+| `alex`（裸音色名） | 400 `Invalid voice` |
+| 整个省略 | 400 `Voice or reference audio should be set` |
+| `FunAudioLLM/CosyVoice2-0.5B:alex` | **200 ✓** |
+
+所以：
+
+- **硅基流动**：写成 `<模型名>:<音色>`，如 `FunAudioLLM/CosyVoice2-0.5B:alex`
+- **OpenAI 官方端点**：写裸名，如 `alloy` / `nova` / `shimmer`
+
+具体可选音色以各家官方文档为准。与其给一个在多数 provider 上必然报错的默认值，不如让按钮先不出现。
 
 ### 改完配置怎么生效
 
@@ -112,6 +133,8 @@ zuse 的 Web UI 有两个语音入口，都**默认关着**：
 | 转写返回 400 | 服务端认为「未配置」——`sttModel` 拼错或 provider 解析不到 |
 | 转写返回 415 | 浏览器录出的容器格式不在白名单里（webm/mp4/mpeg/wav/ogg/flac） |
 | 转写返回 413 | 音频超过 25 MiB。正常情况下 2 分钟硬停撞不到这里 |
+| 朗读没声音 / 报「空音频」 | 该音色在 provider 侧返回了 200 但 0 字节（实测 CosyVoice2 的 `david` 等音色会这样）。换一个 `ttsVoice` |
+| 朗读出来的中文含混难懂 | 与 zuse 无关，是 TTS 模型/音色的中文效果问题。实测硅基流动 CosyVoice2 的几个预置音色（alex/anna/bella/charles/david/diana）念中文都不理想；可试 `fnlp/MOSS-TTSD-v0.5`，或换用 OpenAI 官方 TTS |
 | 朗读报音色错误 | `ttsVoice` 用了目标 provider 不认的名字，见上面「音色」 |
 
 ---
