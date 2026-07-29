@@ -4,7 +4,7 @@ import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
-import { useVoice } from '../state/store.js'
+import { useVoiceCaps, useSpeaking } from '../state/store.js'
 import { synthesize } from '../state/voiceApi.js'
 import { uploadedImageUrl } from '../state/manageApi.js'
 import { ImageLightbox } from './ImageLightbox.js'
@@ -211,11 +211,12 @@ function CopyButton({ text }: { text: string }) {
  * V2 朗读：把这条回复的正文送去 /api/voice/tts，拿到的 mp3 用 `new Audio(objectURL)` 播。
  * 未配 ttsModel（caps.tts=false）时整个按钮不渲染 —— 与 imageModel 同款「没配就没有」。
  *
- * 只有这个子组件消费 VoiceCtx，Message 本身不消费：Message 是 memo 的，让它订阅一个会随
+ * 只有这个叶子组件消费语音 context，Message 本身不消费：Message 是 memo 的，让它订阅一个会随
  * speakingId 变的 context 会把整条消息列表拖下水。
  */
 function SpeakButton({ id, text }: { id: string; text: string }) {
-  const { caps, speakingId, setSpeakingId } = useVoice()
+  const caps = useVoiceCaps()
+  const { speakingId, setSpeakingId } = useSpeaking()
   const [loading, setLoading] = useState(false)
   const [hint, setHint] = useState('')
   // 当前这条的音频 + 它的 object URL，成对持有 —— 停止/被抢占/卸载时一起收掉，URL 不泄漏。

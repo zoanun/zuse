@@ -5,7 +5,7 @@ import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl, uploadFile } from '../state/manageApi.js'
 import { transcribe } from '../state/voiceApi.js'
-import { useVoice } from '../state/store.js'
+import { useVoiceCaps } from '../state/store.js'
 import { ImageLightbox } from './ImageLightbox.js'
 import { TextLightbox } from './TextLightbox.js'
 
@@ -112,7 +112,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   >(null)
   // V1 语音输入。能力来自 store 的一次性 GET /api/voice 探测；录音器/音轨挂在 ref 上，因为
   // 录音→停止→转写这条链跨了好几次渲染。
-  const { caps } = useVoice()
+  // 只订阅 caps(一页只变一次):订阅整个 voice context 会让每次点朗读都重渲染整个 Composer。
+  const caps = useVoiceCaps()
   const [recording, setRecording] = useState(false)
   const [elapsed, setElapsed] = useState(0)
   const [transcribing, setTranscribing] = useState(false)
@@ -121,8 +122,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // 转写文本插入后光标该落的位置（受控 textarea：只能在 DOM 提交后再设，见下方 useLayoutEffect）。
   const caretRef = useRef<number | null>(null)
   // 转写在若干次渲染之后才回来，闭包里的 `value` 早过期了 —— 插入时读这个 ref 的当下值。
-  const valueRef = useRef(value)
-  valueRef.current = value
 
   useEffect(() => { taRef.current?.focus() }, [])
   useEffect(() => { if (!thinking) taRef.current?.focus() }, [thinking])
@@ -328,7 +327,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   /** 把文本插进当前光标处（有选区则替换选区）：不覆盖已有内容，也绝不自动发送。 */
   function insertAtCursor(text: string) {
     const ta = taRef.current
-    const cur = valueRef.current
+    // 直接读 DOM 节点的 value:它就是受控 textarea 当前已提交的值,与下面的 selectionStart/End
+    // 同源同一时刻,天然一致 —— 比再镜像一份 state 到 ref 少一个真源。
+    const cur = ta?.value ?? ''
     const start = ta?.selectionStart ?? cur.length
     const end = ta?.selectionEnd ?? cur.length
     caretRef.current = start + text.length

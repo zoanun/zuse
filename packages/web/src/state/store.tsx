@@ -227,24 +227,29 @@ export function useStore(): Store {
 // 会让每一次流式增量都把整条消息列表重渲染，memo 直接失效。单独一份、只随 caps/speakingId 变的
 // context 把这件事关在朗读按钮里。
 
-interface VoiceContext {
-  /** 服务端语音能力；null = 尚未探测出来（探测中或失败）→ 两个按钮一律不渲染。 */
-  caps: VoiceCaps | null
+interface SpeakingContext {
   /** 正在朗读的消息 id；null = 没有。同一时刻只播一条。 */
   speakingId: string | null
   /** 声明「我要开始播 id」（抢占：上一条的按钮据此收掉自己的音频并 revoke URL），或传 null 表示停了。 */
   setSpeakingId: (id: string | null) => void
 }
 
-// 缺省值让 useVoice() 在没有 Provider 时也安全（caps=null → 按钮不渲染），组件单测无需包 Provider。
-const VoiceCtx = createContext<VoiceContext>({ caps: null, speakingId: null, setSpeakingId: () => {} })
+/**
+ * 能力与「谁在播」拆成**两个** context，而不是一个：
+ * - caps 一页只变一次（探测落地时），消费它的有 Composer 的麦克风与朗读按钮；
+ * - speakingId 每次点播放/停止都变。
+ * 合成一个的话，点一次朗读就会把订阅了它的 Composer 整个重渲染（输入框、三个附件栏、
+ * 斜杠菜单全部重来）—— 正是拆 context 想避免的事。现在只有朗读按钮这个叶子订阅 speakingId。
+ */
+const VoiceCapsCtx = createContext<VoiceCaps | null>(null)
+const SpeakingCtx = createContext<SpeakingContext>({ speakingId: null, setSpeakingId: () => {} })
 
 /** 探测一次 `GET /api/voice` 并持有 speakingId。挂在 StoreProvider 内层。 */
 export function VoiceProvider({ children }: { children: ReactNode }) {
   const [caps, setCaps] = useState<VoiceCaps | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
-  // 挂载时拉一次就够：能力在 daemon 启动时按 settings 解析，改配置要重启 daemon（与 MCP 同约束）。
-  // 失败保持 null —— 未配置/探测不到时按钮消失，而不是弹错。
+  // 挂载时探测一次即可。服务端**不缓存**（每次调用现读 settings，改配置不必重启 daemon）——
+  // 需要重新探测的只有前端，刷新页面即可。失败保持 null：按钮消失，而不是弹错。
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -255,11 +260,25 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     })()
     return () => { cancelled = true }
   }, [])
-  const value = useMemo<VoiceContext>(() => ({ caps, speakingId, setSpeakingId }), [caps, speakingId])
-  return <VoiceCtx.Provider value={value}>{children}</VoiceCtx.Provider>
+  const speaking = useMemo<SpeakingContext>(() => ({ speakingId, setSpeakingId }), [speakingId])
+  return (
+    <VoiceCapsCtx.Provider value={caps}>
+      <SpeakingCtx.Provider value={speaking}>{children}</SpeakingCtx.Provider>
+    </VoiceCapsCtx.Provider>
+  )
 }
 
-/** 语音能力 + 当前朗读中的消息 id。无 Provider 时返回安全缺省（能力未知 → 按钮不渲染）。 */
-export function useVoice(): VoiceContext {
-  return useContext(VoiceCtx)
+/** 服务端语音能力；null = 未探测出来（探测中或失败）→ 按钮一律不渲染。无 Provider 时也安全。 */
+export function useVoiceCaps(): VoiceCaps | null {
+  return useContext(VoiceCapsCtx)
+}
+
+/** 当前朗读中的消息 id + 抢占入口。只该被朗读按钮这个叶子消费。 */
+export function useSpeaking(): SpeakingContext {
+  return useContext(SpeakingCtx)
+}
+
+/** 能力 + 朗读状态的合成视图（测试探针用；组件请按需只订阅上面两个之一）。 */
+export function useVoice(): { caps: VoiceCaps | null } & SpeakingContext {
+  return { caps: useVoiceCaps(), ...useSpeaking() }
 }
