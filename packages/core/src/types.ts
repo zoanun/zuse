@@ -198,7 +198,8 @@ export interface ResolvedSettings {
   sttModel?: string
   /** 朗读模型(V2):`<providerId>/<model>`,provider 须为 openai 协议;缺省不启用朗读。 */
   ttsModel?: string
-  /** 朗读音色(V2),缺省 'alloy'。 */
+  /** 朗读音色(V2):**必填**(配了 ttsModel 也要配它)。各家命名不兼容、没有通用默认值 ——
+   *  OpenAI 要 'alloy' 这类裸名,SiliconFlow 要 '<模型>:<音色>';未配置 → 朗读能力判为未启用。 */
   ttsVoice?: string
   maxTokens?: number
   baseURL?: string
