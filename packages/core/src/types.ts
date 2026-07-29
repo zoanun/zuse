@@ -194,6 +194,12 @@ export interface ResolvedSettings {
   smallModel?: string
   /** 图片解析模型:`<providerId>/<model>`,仅图片解析回退路径用,缺省不启用。 */
   imageModel?: string
+  /** 语音转写模型(V1):`<providerId>/<model>`,provider 须为 openai 协议;缺省不启用语音输入。 */
+  sttModel?: string
+  /** 朗读模型(V2):`<providerId>/<model>`,provider 须为 openai 协议;缺省不启用朗读。 */
+  ttsModel?: string
+  /** 朗读音色(V2),缺省 'alloy'。 */
+  ttsVoice?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string

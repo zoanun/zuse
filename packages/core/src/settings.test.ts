@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, resolveSttModelSelection, resolveTtsModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -206,6 +206,24 @@ describe('resolveImageModelSelection', () => {
     expect(resolveImageModelSelection(base({ imageModel: 'openai/gpt-4o/vision' }))).toEqual({
       providerId: 'openai',
       model: 'gpt-4o/vision',
+    })
+  })
+})
+
+describe('语音模型解析 (V1/V2)', () => {
+  it('未配置 → null(调用方据此禁用对应能力)', () => {
+    expect(resolveSttModelSelection(base({}))).toBeNull()
+    expect(resolveTtsModelSelection(base({}))).toBeNull()
+  })
+
+  it('按第一个斜杠切分 —— 音频模型名本身常带斜杠', () => {
+    expect(resolveSttModelSelection(base({ sttModel: 'siliconflow/FunAudioLLM/SenseVoiceSmall' }))).toEqual({
+      providerId: 'siliconflow',
+      model: 'FunAudioLLM/SenseVoiceSmall',
+    })
+    expect(resolveTtsModelSelection(base({ ttsModel: 'siliconflow-tts/FunAudioLLM/CosyVoice2-0.5B' }))).toEqual({
+      providerId: 'siliconflow-tts',
+      model: 'FunAudioLLM/CosyVoice2-0.5B',
     })
   })
 })

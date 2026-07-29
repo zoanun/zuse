@@ -88,6 +88,9 @@ interface RawSettings {
   model?: string
   smallModel?: string
   imageModel?: string
+  sttModel?: string
+  ttsModel?: string
+  ttsVoice?: string
   maxTokens?: number
   baseURL?: string
   apiKey?: string
@@ -158,6 +161,9 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
     if (layer.model !== undefined) out.model = layer.model
     if (layer.smallModel !== undefined) out.smallModel = layer.smallModel
     if (layer.imageModel !== undefined) out.imageModel = layer.imageModel
+    if (layer.sttModel !== undefined) out.sttModel = layer.sttModel
+    if (layer.ttsModel !== undefined) out.ttsModel = layer.ttsModel
+    if (layer.ttsVoice !== undefined) out.ttsVoice = layer.ttsVoice
     if (layer.maxTokens !== undefined) out.maxTokens = layer.maxTokens
     if (layer.baseURL !== undefined) out.baseURL = layer.baseURL
     if (layer.apiKey !== undefined) out.apiKey = layer.apiKey
@@ -331,6 +337,21 @@ export function resolveSmallModelSelection(settings: ResolvedSettings): ModelSel
  */
 export function resolveImageModelSelection(settings: ResolvedSettings): ModelSelection | null {
   return splitProviderModel(settings.imageModel)
+}
+
+/**
+ * 解析 settings.sttModel（语音转写模型,V1）。未配置则返回 null（调用方据此禁用语音输入）。
+ * provider 必须是 openai 协议 —— 音频端点是 OpenAI 形状,校验在 VoiceService。
+ */
+export function resolveSttModelSelection(settings: ResolvedSettings): ModelSelection | null {
+  return splitProviderModel(settings.sttModel)
+}
+
+/**
+ * 解析 settings.ttsModel（朗读模型,V2）。未配置则返回 null（调用方据此禁用朗读）。
+ */
+export function resolveTtsModelSelection(settings: ResolvedSettings): ModelSelection | null {
+  return splitProviderModel(settings.ttsModel)
 }
 
 /** key 来源：ZUSE_API_KEY_<ID>（id 大写）优先，其次字面量。 */
