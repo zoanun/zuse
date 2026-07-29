@@ -1,9 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useReducer, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from 'react'
 import type { ClientMessage, SessionMeta } from '@zuse/protocol'
 import { reduce, initialState, type Action } from './reducer.js'
 import type { AppState } from './types.js'
 import { createWsClient, type WsClient } from '../ws/client.js'
 import { getSessionId, setSessionId, createSession, listSessions, deleteSession, renameSession, wsUrl } from './session.js'
+import { getVoiceCaps, type VoiceCaps } from './voiceApi.js'
 
 interface Store {
   state: AppState
@@ -210,7 +211,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return (
     <StoreCtx.Provider value={{ state, send, dispatch, newSession, sessions: displaySessions, currentSessionId, refreshSessions, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo: () => setPendingScrollTo(null), pendingRestoreInput, clearRestoreInput: () => setPendingRestoreInput(null), mainView, setMainView }}>
-      {children}
+      <VoiceProvider>{children}</VoiceProvider>
     </StoreCtx.Provider>
   )
 }
@@ -219,4 +220,46 @@ export function useStore(): Store {
   const s = useContext(StoreCtx)
   if (!s) throw new Error('useStore must be used within StoreProvider')
   return s
+}
+
+// --- 语音（V1 STT / V2 TTS）------------------------------------------------
+// 独立于 StoreCtx 的一个小 context，而不是塞进 Store：Message 是 React.memo 的，消费 StoreCtx
+// 会让每一次流式增量都把整条消息列表重渲染，memo 直接失效。单独一份、只随 caps/speakingId 变的
+// context 把这件事关在朗读按钮里。
+
+interface VoiceContext {
+  /** 服务端语音能力；null = 尚未探测出来（探测中或失败）→ 两个按钮一律不渲染。 */
+  caps: VoiceCaps | null
+  /** 正在朗读的消息 id；null = 没有。同一时刻只播一条。 */
+  speakingId: string | null
+  /** 声明「我要开始播 id」（抢占：上一条的按钮据此收掉自己的音频并 revoke URL），或传 null 表示停了。 */
+  setSpeakingId: (id: string | null) => void
+}
+
+// 缺省值让 useVoice() 在没有 Provider 时也安全（caps=null → 按钮不渲染），组件单测无需包 Provider。
+const VoiceCtx = createContext<VoiceContext>({ caps: null, speakingId: null, setSpeakingId: () => {} })
+
+/** 探测一次 `GET /api/voice` 并持有 speakingId。挂在 StoreProvider 内层。 */
+export function VoiceProvider({ children }: { children: ReactNode }) {
+  const [caps, setCaps] = useState<VoiceCaps | null>(null)
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
+  // 挂载时拉一次就够：能力在 daemon 启动时按 settings 解析，改配置要重启 daemon（与 MCP 同约束）。
+  // 失败保持 null —— 未配置/探测不到时按钮消失，而不是弹错。
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const c = await getVoiceCaps()
+        if (!cancelled) setCaps({ stt: c?.stt === true, tts: c?.tts === true })
+      } catch { /* 保持 null：按钮不渲染 */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+  const value = useMemo<VoiceContext>(() => ({ caps, speakingId, setSpeakingId }), [caps, speakingId])
+  return <VoiceCtx.Provider value={value}>{children}</VoiceCtx.Provider>
+}
+
+/** 语音能力 + 当前朗读中的消息 id。无 Provider 时返回安全缺省（能力未知 → 按钮不渲染）。 */
+export function useVoice(): VoiceContext {
+  return useContext(VoiceCtx)
 }

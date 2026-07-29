@@ -4,6 +4,8 @@ import { pastedLineCount, pastedLabel } from './pasted.js'
 import type { SlashCommand } from './commands.js'
 import { filterCommands } from './commands.js'
 import { uploadImage, uploadedImageUrl, uploadFile } from '../state/manageApi.js'
+import { transcribe } from '../state/voiceApi.js'
+import { useVoice } from '../state/store.js'
 import { ImageLightbox } from './ImageLightbox.js'
 import { TextLightbox } from './TextLightbox.js'
 
@@ -44,6 +46,8 @@ interface PendingFile {
 
 const MAX_IMAGES = 10
 const MAX_BYTES = 25 * 1024 * 1024
+/** 单次录音硬上限（V1）：误按一次也只会产出两分钟音频，撞不到服务端 25 MiB 的 body cap。 */
+const MAX_RECORD_MS = 2 * 60 * 1000
 const FILE_MAX_BYTES = 50 * 1024 * 1024 // matches server FILE_MAX_BYTES
 const PASTE_CHAR_THRESHOLD = 800
 const PASTE_NEWLINE_THRESHOLD = 2
@@ -78,6 +82,11 @@ export function otherFilesFrom(dt: DataTransfer | null | undefined): File[] {
   return filesFrom(dt, (t) => !t.startsWith('image/'))
 }
 
+/** 录音计时的 m:ss 展示。 */
+function formatElapsed(sec: number): string {
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0')
+}
+
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer({ thinking, onSend, onStop, history = [], commands = [], onRunCommand }, ref) {
   const [value, setValue] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -101,6 +110,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [preview, setPreview] = useState<
     { kind: 'image'; src: string; alt: string } | { kind: 'text'; text: string; title: string } | null
   >(null)
+  // V1 语音输入。能力来自 store 的一次性 GET /api/voice 探测；录音器/音轨挂在 ref 上，因为
+  // 录音→停止→转写这条链跨了好几次渲染。
+  const { caps } = useVoice()
+  const [recording, setRecording] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  const [transcribing, setTranscribing] = useState(false)
+  const recRef = useRef<MediaRecorder | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  // 转写文本插入后光标该落的位置（受控 textarea：只能在 DOM 提交后再设，见下方 useLayoutEffect）。
+  const caretRef = useRef<number | null>(null)
+  // 转写在若干次渲染之后才回来，闭包里的 `value` 早过期了 —— 插入时读这个 ref 的当下值。
+  const valueRef = useRef(value)
+  valueRef.current = value
 
   useEffect(() => { taRef.current?.focus() }, [])
   useEffect(() => { if (!thinking) taRef.current?.focus() }, [thinking])
@@ -123,6 +145,30 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (!ta) return
     ta.style.height = 'auto'
     ta.style.height = Math.min(ta.scrollHeight, 168) + 'px'
+  }, [value])
+
+  // 录音中：每秒走一格计时，并挂一个 2 分钟的硬停。硬停走 stopRecording()（即 MediaRecorder.stop()），
+  // 与手动停止是同一条收尾路径（onstop → 转写），不另开一套。
+  useEffect(() => {
+    if (!recording) return
+    const tick = setInterval(() => setElapsed((s) => s + 1), 1000)
+    const hard = setTimeout(() => stopRecording(), MAX_RECORD_MS)
+    return () => { clearInterval(tick); clearTimeout(hard) }
+  }, [recording])
+
+  // 卸载兜底：松开麦克风音轨，别把浏览器的录音指示灯留在亮着的状态。
+  useEffect(() => () => releaseStream(), [])
+
+  // 插入转写文本后把光标放回插入点之后：受控 textarea 的 value 一提交，浏览器会把光标推到末尾，
+  // 所以要在 commit 之后（useLayoutEffect，pre-paint）再设一次，避免闪一下。
+  useLayoutEffect(() => {
+    const pos = caretRef.current
+    if (pos === null) return
+    caretRef.current = null
+    const ta = taRef.current
+    if (!ta) return
+    ta.focus()
+    ta.setSelectionRange(pos, pos)
   }, [value])
 
   // Revoke every outstanding object-URL on unmount so instant-preview blobs don't leak.
@@ -224,6 +270,72 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   function removeFile(key: string) { setFiles((p) => p.filter((it) => it.key !== key)) }
 
+  /** 松开麦克风音轨并丢弃录音器。多次调用安全（停止 / 失败 / 卸载三条路径共用）。 */
+  function releaseStream() {
+    for (const t of streamRef.current?.getTracks() ?? []) t.stop()
+    streamRef.current = null
+    recRef.current = null
+  }
+
+  /** 开录：拿麦克风 → MediaRecorder。任何一步失败（拒权限、无 MediaRecorder）都只是一行红字。 */
+  async function startRecording() {
+    if (recording || transcribing) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const rec = new MediaRecorder(stream)
+      const chunks: Blob[] = []
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data) }
+      rec.onstop = () => {
+        const type = rec.mimeType || 'audio/webm'
+        releaseStream()
+        setRecording(false)
+        const blob = new Blob(chunks, { type })
+        if (blob.size > 0) void runTranscribe(blob)
+      }
+      recRef.current = rec
+      rec.start()
+      setElapsed(0)
+      setRecording(true)
+    } catch {
+      releaseStream()
+      setRecording(false)
+      setAttachError('无法开始录音（麦克风被拒绝或不可用）')
+    }
+  }
+
+  /** 停录。真正的收尾在 onstop 里，所以这里只负责触发它；录音器已经没了就直接清干净。 */
+  function stopRecording() {
+    const rec = recRef.current
+    if (rec && rec.state !== 'inactive') { rec.stop(); return }
+    releaseStream()
+    setRecording(false)
+  }
+
+  /** 录音 Blob → /api/voice/stt → 插入光标处。失败只提示，不丢用户已经打的字。 */
+  async function runTranscribe(blob: Blob) {
+    setTranscribing(true)
+    try {
+      const text = await transcribe(blob)
+      if (text.trim()) insertAtCursor(text)
+    } catch {
+      setAttachError('转写失败，请重试')
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  /** 把文本插进当前光标处（有选区则替换选区）：不覆盖已有内容，也绝不自动发送。 */
+  function insertAtCursor(text: string) {
+    const ta = taRef.current
+    const cur = valueRef.current
+    const start = ta?.selectionStart ?? cur.length
+    const end = ta?.selectionEnd ?? cur.length
+    caretRef.current = start + text.length
+    setValue(cur.slice(0, start) + text + cur.slice(end))
+    setHistIdx(null)
+  }
+
   function onPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = imageFilesFrom(e.clipboardData)
     if (files.length > 0) {
@@ -278,7 +390,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const doneRefs = pending.filter((p) => p.status === 'done' && p.ref).map((p) => p.ref!)
   const uploadingFiles = files.some((f) => f.status === 'uploading')
   const doneFileRefs = files.filter((f) => f.status === 'done' && f.ref).map((f) => f.ref!)
-  const canSend = (value.trim() !== '' || doneRefs.length > 0 || pastes.length > 0 || doneFileRefs.length > 0) && !uploading && !uploadingFiles
+  // 录音中/转写中禁止发送：文本还没落进输入框就发出去，等于把这一段录音扔了。
+  const canSend = (value.trim() !== '' || doneRefs.length > 0 || pastes.length > 0 || doneFileRefs.length > 0) && !uploading && !uploadingFiles && !recording && !transcribing
+  // getUserMedia 在非 secure context 下压根不存在（局域网明文 http 访问就是这样）→ 按钮自动消失，
+  // 不是报错。恢复办法见 docs/remote-access.md（TLS / 隧道）。
+  const canRecord = caps?.stt === true && typeof navigator.mediaDevices?.getUserMedia === 'function'
 
   function clearPending() {
     for (const p of pending) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl)
@@ -429,6 +545,20 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             e.target.value = ''
           }}
         />
+        {canRecord ? (
+          <button
+            type="button"
+            className={'mic-btn' + (recording ? ' recording' : '')}
+            aria-label={recording ? '停止录音' : '语音输入'}
+            title={recording ? '停止录音并转写' : '语音输入 — 录一段，转写后填进输入框'}
+            disabled={transcribing}
+            onClick={() => (recording ? stopRecording() : void startRecording())}
+          >
+            <MicIcon />
+            {recording ? <span className="mic-timer">{formatElapsed(elapsed)}</span> : null}
+            {transcribing ? <span className="mic-timer">转写中…</span> : null}
+          </button>
+        ) : null}
         <textarea
           ref={taRef}
           rows={1}
@@ -479,3 +609,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     </div>
   )
 })
+
+/** 麦克风图标（与 composer 里其它按钮同一套 stroke 线宽）。 */
+function MicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="2" width="6" height="11" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </svg>
+  )
+}

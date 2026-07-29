@@ -1,9 +1,11 @@
-import { memo, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { MessageAttachment } from '@zuse/protocol'
 import type { Message as Msg, Part } from '../state/types.js'
 import { Markdown } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
+import { useVoice } from '../state/store.js'
+import { synthesize } from '../state/voiceApi.js'
 import { uploadedImageUrl } from '../state/manageApi.js'
 import { ImageLightbox } from './ImageLightbox.js'
 import { TextLightbox } from './TextLightbox.js'
@@ -115,6 +117,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
       {!shareMode && md && showActions ? (
         <div className="msg-actions">
           <CopyButton text={md} />
+          <SpeakButton id={msg.id} text={md} />
           {onShare ? (
             <MsgAction className="msg-share" title="分享 — 选择要导出的消息" label="分享" onClick={() => onShare(msg.id)}>
               <ShareIcon />
@@ -201,6 +204,98 @@ function CopyButton({ text }: { text: string }) {
     <MsgAction title="复制回复（markdown）" label="复制回复" onClick={() => copy(text)}>
       {copied ? '✓' : <CopyIcon />}
     </MsgAction>
+  )
+}
+
+/**
+ * V2 朗读：把这条回复的正文送去 /api/voice/tts，拿到的 mp3 用 `new Audio(objectURL)` 播。
+ * 未配 ttsModel（caps.tts=false）时整个按钮不渲染 —— 与 imageModel 同款「没配就没有」。
+ *
+ * 只有这个子组件消费 VoiceCtx，Message 本身不消费：Message 是 memo 的，让它订阅一个会随
+ * speakingId 变的 context 会把整条消息列表拖下水。
+ */
+function SpeakButton({ id, text }: { id: string; text: string }) {
+  const { caps, speakingId, setSpeakingId } = useVoice()
+  const [loading, setLoading] = useState(false)
+  const [hint, setHint] = useState('')
+  // 当前这条的音频 + 它的 object URL，成对持有 —— 停止/被抢占/卸载时一起收掉，URL 不泄漏。
+  const audioRef = useRef<{ el: HTMLAudioElement; url: string } | null>(null)
+  const playing = speakingId === id
+
+  const release = useCallback(() => {
+    const cur = audioRef.current
+    if (!cur) return
+    audioRef.current = null
+    cur.el.onended = null
+    cur.el.pause()
+    URL.revokeObjectURL(cur.url)
+  }, [])
+
+  // 同一时刻只播一条：speakingId 变成别人（或 null）就把自己这条收掉。停止按钮、别的消息抢占、
+  // 播完自然结束，三条路径都归到这一处，不各自 revoke 一遍。
+  useEffect(() => { if (!playing) release() }, [playing, release])
+  // 卸载（切会话 / 列表重建）也要收。
+  useEffect(() => () => release(), [release])
+  // 截断提示是个短暂通知，几秒后自撤（与 Composer 的 attach-error 同款）。
+  useEffect(() => {
+    if (!hint) return
+    const t = setTimeout(() => setHint(''), 4000)
+    return () => clearTimeout(t)
+  }, [hint])
+
+  if (!caps?.tts) return null
+
+  async function toggle() {
+    if (playing) { setSpeakingId(null); return } // release 由上面的 effect 统一做
+    if (loading) return
+    setLoading(true)
+    try {
+      const { blob, truncated } = await synthesize(text)
+      const url = URL.createObjectURL(blob)
+      const el = new Audio(url)
+      el.onended = () => setSpeakingId(null)
+      audioRef.current = { el, url }
+      setSpeakingId(id) // 抢占：上一条的 effect 看到 speakingId 变了就自己收摊
+      setHint(truncated ? '仅朗读前 4096 字' : '')
+      await el.play()
+    } catch {
+      release()
+      setSpeakingId(null)
+      setHint('朗读失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <MsgAction
+        className={'msg-speak' + (playing ? ' speaking' : '')}
+        title={playing ? '停止朗读' : '朗读这条回复'}
+        label={playing ? '停止朗读' : '朗读'}
+        onClick={() => void toggle()}
+      >
+        {playing ? <StopSpeakIcon /> : <SpeakIcon />}
+      </MsgAction>
+      {hint ? <span className="speak-hint">{hint}</span> : null}
+    </>
+  )
+}
+
+function SpeakIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8.5 2.5 5 5.5H2.5v5H5l3.5 3z" />
+      <path d="M11 5.5a3.5 3.5 0 0 1 0 5" />
+    </svg>
+  )
+}
+
+function StopSpeakIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1.5" />
+    </svg>
   )
 }
 

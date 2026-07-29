@@ -315,6 +315,17 @@ button.head:hover .caret { opacity: 1; }
 .attach-spinner { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; animation: attach-spin 0.7s linear infinite; }
 @keyframes attach-spin { to { transform: rotate(360deg); } }
 .attach-error { margin: 0 0 8px; font-size: 12.5px; color: var(--bad); }
+/* V1 麦克风：默认与回形针同款中性圆钮；录音中变红并脉冲，右侧长出一个计时/状态标签。 */
+.mic-btn { height: 36px; min-width: 36px; padding: 0 8px; border-radius: 18px; border: none; background: transparent; color: var(--muted); display: flex; align-items: center; gap: 5px; justify-content: center; flex: none; cursor: pointer; align-self: flex-end; }
+.mic-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.mic-btn:disabled { opacity: 0.55; cursor: default; }
+.mic-btn svg { display: block; }
+.mic-btn.recording { color: var(--bad); background: var(--surface-2); animation: mic-pulse 1.4s ease-in-out infinite; }
+.mic-timer { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+@keyframes mic-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+/* V2 朗读：正在播时常亮(不再依赖 hover)，旁边可能挂一行短暂提示(如 4096 字截断)。 */
+.msg-actions .msg-speak.speaking { opacity: 1; color: var(--accent); }
+.speak-hint { align-self: center; font-size: 11px; color: var(--faint); }
 
 /* Whole-page image drop zone (I2): dragging a file anywhere over the app shows this overlay.
    pointer-events:none so the drag events still reach the .shell handlers underneath (no flicker). */
