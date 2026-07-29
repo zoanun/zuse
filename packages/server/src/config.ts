@@ -14,6 +14,11 @@ export interface ServerConfig {
   cwd: string
   /** 已构建的 web 目录(packages/web/dist);undefined → 回落到 dev page。 */
   webDir?: string
+  /** TLS 证书 / 私钥文件路径(A2)。两者都给才启用 https;只给一半由 bin 报错退出。 */
+  tlsCert?: string
+  tlsKey?: string
+  /** 信任前置代理/隧道的 X-Forwarded-Proto(A2)。默认 false。 */
+  trustProxy?: boolean
 }
 
 export function defaultConfig(): ServerConfig {

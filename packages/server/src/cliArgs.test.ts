@@ -28,4 +28,25 @@ describe('parseArgs', () => {
       setPassword: true,
     })
   })
+
+  // A2 远程访问
+  it('parses --tls-cert / --tls-key / --trust-proxy', () => {
+    expect(parseArgs(['--tls-cert', 'c.pem', '--tls-key', 'k.pem', '--trust-proxy'])).toEqual({
+      setPassword: false,
+      tlsCert: 'c.pem',
+      tlsKey: 'k.pem',
+      trustProxy: true,
+    })
+  })
+
+  it('TLS/代理参数缺省时不出现在结果里(与 port/host 同风格)', () => {
+    const a = parseArgs([])
+    expect(a.tlsCert).toBeUndefined()
+    expect(a.tlsKey).toBeUndefined()
+    expect(a.trustProxy).toBeUndefined()
+  })
+
+  it('只给 --tls-cert 也照常解析(成对校验由 bin 做 fail fast)', () => {
+    expect(parseArgs(['--tls-cert', 'only.pem'])).toEqual({ setPassword: false, tlsCert: 'only.pem' })
+  })
 })
