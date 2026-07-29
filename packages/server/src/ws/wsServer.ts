@@ -1,4 +1,5 @@
 import type * as http from 'node:http'
+import type * as https from 'node:https'
 import type { Duplex } from 'node:stream'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { AuthProvider } from '../auth/authProvider.js'
@@ -26,7 +27,7 @@ function sendJson(ws: WebSocket, msg: ServerMessage): void {
   }
 }
 
-export function attachWsServer(httpServer: http.Server, deps: WsServerDeps): { closeAll(): void } {
+export function attachWsServer(httpServer: http.Server | https.Server, deps: WsServerDeps): { closeAll(): void } {
   const wss = new WebSocketServer({ noServer: true })
 
   httpServer.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {

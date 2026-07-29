@@ -1,4 +1,4 @@
-import { createServer } from 'node:http'
+import { createAppServer } from './http/appServer.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
 import { PasswordStore } from './auth/passwordStore.js'
@@ -197,16 +197,24 @@ export async function startServer(
   catch (err) { console.warn(`[zuse-server] cron 调度启动失败:${err instanceof Error ? err.message : String(err)}`) }
   const cronService = new CronService({ dir: cronDataDir, scheduler: cronScheduler, defaultCwd: cfg.cwd, sessions: service })
 
-  const httpServer = createServer(makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir() }))
+  const handler = makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
+  // A2:配了证书对就起 https(WS 随之变 wss —— 同一个 server 的 upgrade 事件)。
+  const { server: httpServer, scheme } = createAppServer(handler, { cert: cfg.tlsCert, key: cfg.tlsKey })
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
   const port = typeof addr === 'object' && addr ? addr.port : cfg.port
-  if (cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
-    console.warn(`[zuse-server] bound to ${cfg.host}:${port} — plaintext HTTP on a network interface. Use a TLS tunnel (A2) for remote access.`)
+  // A2 启动横幅:按部署形态给对提示,不再对已加密的部署误报「明文」。
+  if (scheme === 'https') {
+    console.log(`[zuse-server] TLS 已启用 — https://${cfg.host}:${port}`)
+  } else if (cfg.trustProxy) {
+    console.log('[zuse-server] 明文监听,信任前置代理的 X-Forwarded-Proto — 请确保只有隧道能连到这个端口')
+  } else if (cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
+    console.warn(`[zuse-server] bound to ${cfg.host}:${port} — plaintext HTTP on a network interface. ` +
+      'Use TLS (--tls-cert/--tls-key) or a tunnel (+ --trust-proxy); see docs/remote-access.md')
   }
   return {
-    url: `http://${cfg.host}:${port}`,
+    url: `${scheme}://${cfg.host}:${port}`,
     close: () => new Promise<void>((resolve) => {
       void mcp?.disconnectAll().catch(() => {})
       void lsp.dispose().catch(() => {})

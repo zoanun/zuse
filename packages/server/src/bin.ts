@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { startServer } from './startServer.js'
 import { defaultConfig } from './config.js'
 import { PasswordStore } from './auth/passwordStore.js'
@@ -45,6 +46,22 @@ async function main(): Promise<void> {
     cwd: process.env.INIT_CWD ?? process.cwd(),
     ...(args.port !== undefined ? { port: args.port } : {}),
     ...(args.host !== undefined ? { host: args.host } : {}),
+    ...(args.tlsCert !== undefined ? { tlsCert: args.tlsCert } : {}),
+    ...(args.tlsKey !== undefined ? { tlsKey: args.tlsKey } : {}),
+    ...(args.trustProxy ? { trustProxy: true } : {}),
+  }
+
+  // A2:TLS 配置 fail fast —— 安全配置绝不静默降级。
+  // 「以为在跑 https、实际是明文」比直接崩掉危险得多,所以宁可退出。
+  if (!!cfg.tlsCert !== !!cfg.tlsKey) {
+    console.error('[zuse-server] --tls-cert 与 --tls-key 必须同时提供')
+    process.exit(1)
+  }
+  for (const p of [cfg.tlsCert, cfg.tlsKey]) {
+    if (p !== undefined && !existsSync(p)) {
+      console.error(`[zuse-server] TLS 文件不存在:${p}`)
+      process.exit(1)
+    }
   }
 
   if (args.setPassword) {
