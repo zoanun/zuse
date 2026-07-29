@@ -965,9 +965,11 @@ describe('/api/voice REST (V1/V2)', () => {
     })
   })
 
-  it('音频体超过 25 MiB → 413(读到一半就拒,不缓完)', async () => {
+  it('音频体超过上限 → 413(读到一半就拒,不缓完)', async () => {
     const cookie = await authCookie()
-    const huge = 'A'.repeat(26 * 1024 * 1024)
+    // 原始音频上限 25 MiB,但走的是 base64-in-JSON,body cap 按 4/3 膨胀 + 1 MiB 余量推导
+    // (与 /api/uploads、/api/uploads/file 同一套推导)。所以要超过的是 ~34.3 MiB 的 body。
+    const huge = 'A'.repeat(36 * 1024 * 1024)
     const res = await fetch(`${base}/api/voice/stt`, {
       method: 'POST', headers: { cookie, 'content-type': 'application/json' },
       body: JSON.stringify({ audio: huge, mimeType: 'audio/webm' }),

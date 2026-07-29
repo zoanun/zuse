@@ -19,7 +19,7 @@ import { FileService, PathOutsideRootError, FileChangedError, FileExistsError } 
 import { listDirsAt } from '../file/dirNav.js'
 import type { McpService } from '../mcp/McpService.js'
 import type { UploadService } from '../upload/UploadService.js'
-import { VoiceNotConfiguredError, UnsupportedAudioTypeError } from '../voice/VoiceService.js'
+import { VoiceNotConfiguredError, UnsupportedAudioTypeError, type VoiceService } from '../voice/VoiceService.js'
 import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFoundError, MAX_UPLOAD_BYTES, FileTooLargeError, FILE_MAX_BYTES } from '../upload/UploadService.js'
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo, SkillItem } from '@zuse/protocol'
@@ -36,7 +36,7 @@ export interface RequestHandlerDeps {
   mcp: McpService
   cron: import('../cron/CronService.js').CronService
   upload: UploadService
-  voice: import('../voice/VoiceService.js').VoiceService
+  voice: VoiceService
   /** Persist the default model spec (bare name for flat-default, else `providerId/model`) to
    *  project settings. Injected so tests can assert the computed spec without touching disk. */
   persistModel: (spec: string) => void
@@ -146,8 +146,11 @@ const UPLOAD_BODY_CAP = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 1024 * 1024
 /** Body cap for POST /api/uploads/file: base64 inflates ~4/3 over the raw file, + 1 MiB slack. */
 const FILE_BODY_CAP = Math.ceil(FILE_MAX_BYTES * 4 / 3) + 1024 * 1024
 
-/** Body cap for POST /api/voice/stt (25 MiB) — aligns with the usual whisper-family upload ceiling. */
-const AUDIO_BODY_CAP = 25 * 1024 * 1024
+/** Raw-audio ceiling for POST /api/voice/stt — aligns with the usual whisper-family upload limit. */
+const AUDIO_MAX_BYTES = 25 * 1024 * 1024
+
+/** Body cap for it: base64 inflates ~4/3 over the raw audio, + 1 MiB slack (same derivation as the two above). */
+const AUDIO_BODY_CAP = Math.ceil(AUDIO_MAX_BYTES * 4 / 3) + 1024 * 1024
 
 /**
  * 语音路由的错误映射。只有**用户侧**问题才降级成 4xx:未配置 → 400、mime 不支持 → 415。
@@ -195,8 +198,10 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
 
   return (req, res) => {
     // 兜底 500:路由里对「非客户端错误」的 rethrow(如 sendVoiceError / PATCH /api/skills)
-    // 必须落到一个真实的 5xx 响应上 —— 没有这一层的话,一次 rethrow 只会变成 unhandled
-    // rejection,请求就那么挂着直到客户端超时,比返回 500 更难排查。
+    // 必须落到一个真实的 5xx 响应上。没有这一层的话,`void handle(...)` 的 rejection 就是一个
+    // unhandled rejection —— Node 默认 --unhandled-rejections=throw,那会**直接把 daemon 打死**
+    // (本仓没有注册 process 级的 unhandledRejection 处理)。所以这不只是「别让请求挂着」,
+    // 而是「别让一个坏请求带走整个进程」。
     void handle(req, res).catch((err: unknown) => {
       console.error('[http] unhandled error while serving', req.method, req.url, err)
       if (res.headersSent) return void res.destroy()   // 头已发出,只能掐断
