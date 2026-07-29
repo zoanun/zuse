@@ -155,6 +155,24 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     return deps.auth.verifyToken(token)
   }
 
+  /**
+   * 会话 cookie 的唯一构造点 —— 下发(登录)与清除(登出)必须用**完全相同**的属性,
+   * 否则部分浏览器认不出是同一枚 cookie、清除会失效。用一个构造器把这条不变量变成
+   * 结构约束,而不是靠两处注释互相提醒。
+   *
+   * `secure` 随实际传输自适应:直连 TLS 或(显式信任的)隧道 → 打 Secure。不能写死 true
+   * —— 本地明文 http 下浏览器会直接丢弃 Secure cookie,登不进去;也不能写死 false
+   * (此前如此)—— 那样放到 TLS 后面时 token 同样没有 Secure 保护。
+   */
+  const sessionCookie = (req: IncomingMessage, value: string, maxAgeSec: number): string =>
+    serializeCookie(SESSION_COOKIE, value, {
+      httpOnly: true,
+      sameSite: 'Lax',
+      path: '/',
+      maxAgeSec,
+      secure: isSecureRequest(req, deps.trustProxy ?? false),
+    })
+
   return (req, res) => {
     void handle(req, res)
   }
@@ -216,19 +234,7 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       await delay(Math.min(consecutiveFailures * 200, 2000))
       if (await deps.auth.verifyCredential(password)) {
         consecutiveFailures = 0
-        res.setHeader(
-          'Set-Cookie',
-          serializeCookie(SESSION_COOKIE, deps.auth.issueToken(), {
-            httpOnly: true,
-            sameSite: 'Lax',
-            maxAgeSec: deps.tokenTtlSec,
-            // 随实际传输自适应:直连 TLS 或(显式信任的)隧道 → 打 Secure。
-            // 不能写死 true —— 本地明文 http 下浏览器会直接丢弃 Secure cookie,登不进去;
-            // 也不能写死 false(此前如此)—— 那样放到 TLS 后面时 token 也没有 Secure 保护。
-            secure: isSecureRequest(req, deps.trustProxy ?? false),
-            path: '/',
-          }),
-        )
+        res.setHeader('Set-Cookie', sessionCookie(req, deps.auth.issueToken(), deps.tokenTtlSec))
         return sendJson(res, 200, { ok: true })
       }
       consecutiveFailures++
@@ -240,15 +246,8 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!isAuthed(req)) {
         return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       }
-      // 清除用的属性要与下发时一致(尤其 Secure/HttpOnly/SameSite/Path),
-      // 否则部分浏览器认不出是同一枚 cookie,清除会失效。
-      res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, '', {
-        maxAgeSec: 0,
-        path: '/',
-        httpOnly: true,
-        sameSite: 'Lax',
-        secure: isSecureRequest(req, deps.trustProxy ?? false),
-      }))
+      // 与下发时同一个构造器 → 属性天然一致(见 sessionCookie 的注释)。
+      res.setHeader('Set-Cookie', sessionCookie(req, '', 0))
       return sendJson(res, 200, { ok: true })
     }
 

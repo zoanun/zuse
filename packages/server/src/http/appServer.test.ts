@@ -86,9 +86,14 @@ describe('createAppServer', () => {
     wss.close()
   })
 
-  it('只给证书或只给私钥 → 退回 http(防御性;bin 已 fail fast)', () => {
+  it('只给证书或只给私钥 → 抛错,绝不静默退回明文', () => {
     const { cert, key } = writeCerts()
-    expect(createAppServer(ok, { cert }).scheme).toBe('http')
-    expect(createAppServer(ok, { key }).scheme).toBe('http')
+    // 「以为在跑 https、其实是明文」是本特性最危险的失败形态:半配置必须炸,不能降级。
+    expect(() => createAppServer(ok, { cert })).toThrow(/成对/)
+    expect(() => createAppServer(ok, { key })).toThrow(/成对/)
+  })
+
+  it('完全没配 TLS → 正常 http(不是半配置,不该抛)', () => {
+    expect(createAppServer(ok, {}).scheme).toBe('http')
   })
 })

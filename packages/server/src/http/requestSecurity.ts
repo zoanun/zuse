@@ -13,7 +13,8 @@ import type { TLSSocket } from 'node:tls'
 export function isSecureRequest(req: IncomingMessage, trustProxy: boolean): boolean {
   if ((req.socket as TLSSocket | undefined)?.encrypted) return true
   if (!trustProxy) return false
-  const raw = req.headers['x-forwarded-proto']
-  const value = Array.isArray(raw) ? raw[0] : raw
-  return value?.split(',')[0]?.trim().toLowerCase() === 'https'
+  // String() 同时吃下三种形态:缺失(→ '')、单值、以及 Node 极少数情况下给出的数组
+  // (数组转字符串本就是逗号拼接,与多跳链同一种解析)。
+  const first = String(req.headers['x-forwarded-proto'] ?? '').split(',')[0]
+  return first?.trim().toLowerCase() === 'https'
 }

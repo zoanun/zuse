@@ -204,9 +204,10 @@ export async function startServer(
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
   const port = typeof addr === 'object' && addr ? addr.port : cfg.port
+  const url = `${scheme}://${cfg.host}:${port}`
   // A2 启动横幅:按部署形态给对提示,不再对已加密的部署误报「明文」。
   if (scheme === 'https') {
-    console.log(`[zuse-server] TLS 已启用 — https://${cfg.host}:${port}`)
+    console.log(`[zuse-server] TLS 已启用 — ${url}`)
   } else if (cfg.trustProxy) {
     console.log('[zuse-server] 明文监听,信任前置代理的 X-Forwarded-Proto — 请确保只有隧道能连到这个端口')
   } else if (cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
@@ -214,7 +215,7 @@ export async function startServer(
       'Use TLS (--tls-cert/--tls-key) or a tunnel (+ --trust-proxy); see docs/remote-access.md')
   }
   return {
-    url: `${scheme}://${cfg.host}:${port}`,
+    url,
     close: () => new Promise<void>((resolve) => {
       void mcp?.disconnectAll().catch(() => {})
       void lsp.dispose().catch(() => {})
