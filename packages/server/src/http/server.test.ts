@@ -53,16 +53,16 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
   })
 }
 
-let dir: string, srv: Server, base: string, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService, cronScheduler: CronScheduler, cron: CronService
+let dir: string, srv: Server, base: string, auth: LocalPasswordAuth, service: SessionService, search: SearchService, memory: MemoryService, persona: PersonaService, skill: SkillService, usage: UsageService, file: FileService, mcp: McpService, upload: UploadService, cronScheduler: CronScheduler, cron: CronService
 // Captures the spec the /api/model handler computed, so tests assert it without writing settings.
 let persistedSpec: string | undefined
 beforeEach(async () => {
   persistedSpec = undefined
   dir = mkdtempSync(join(tmpdir(), 'zuse-auth-'))
-  const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
-  const service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
+  auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
+  service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: '/work', createSession: fakeCreateSession })
   // SearchService over the same web-sessions store the SessionService writes.
-  const search = new SearchService({ dir: join(dir, 'web-sessions') })
+  search = new SearchService({ dir: join(dir, 'web-sessions') })
   // Temp-db MemoryService so memory routes never touch the real ~/.zuse/memory.db.
   memory = new MemoryService({ dbPath: join(dir, 'memory.db') })
   // Temp-file PersonaService so persona routes never touch the real ~/.zuse/personas.json.
@@ -99,6 +99,68 @@ async function authCookie(): Promise<string> {
   const login = await fetch(`${base}/api/auth/login`, json({ password: 'pw' }))
   return (login.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
 }
+
+describe('会话 cookie 的 Secure 属性随传输自适应', () => {
+  /** 起一个可自定 trustProxy 的临时 handler(复用 beforeEach 已建好的各 service)。 */
+  async function withServer(trustProxy: boolean, fn: (base: string) => Promise<void>): Promise<void> {
+    const s = createServer(makeRequestHandler({
+      auth, service, memory, search, persona, skill, usage, file, mcp, cron, upload,
+      persistModel: () => {}, devPage: false, tokenTtlSec: 3600, trustProxy,
+    }))
+    await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()))
+    const addr = s.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
+    try { await fn(`http://127.0.0.1:${port}`) } finally { await new Promise<void>((r) => s.close(() => r())) }
+  }
+
+  /** setup(幂等,已配置则忽略)+ login,可附加请求头。 */
+  async function login(base: string, extraHeaders: Record<string, string> = {}): Promise<Response> {
+    await fetch(`${base}/api/auth/setup`, json({ password: 'pw' }))
+    return fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ password: 'pw' }),
+      headers: { 'content-type': 'application/json', ...extraHeaders },
+    })
+  }
+
+  it('明文 http 登录 → 不带 Secure(否则浏览器会丢弃这枚 cookie,本地开发登不进去)', async () => {
+    await withServer(false, async (base) => {
+      const res = await login(base)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('set-cookie') ?? '').not.toMatch(/Secure/i)
+    })
+  })
+
+  it('trustProxy + X-Forwarded-Proto: https → 带 Secure', async () => {
+    await withServer(true, async (base) => {
+      const res = await login(base, { 'x-forwarded-proto': 'https' })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('set-cookie') ?? '').toMatch(/Secure/i)
+    })
+  })
+
+  it('不信任代理时,伪造 X-Forwarded-Proto 不会让 cookie 变 Secure', async () => {
+    await withServer(false, async (base) => {
+      const res = await login(base, { 'x-forwarded-proto': 'https' })
+      expect(res.headers.get('set-cookie') ?? '').not.toMatch(/Secure/i)
+    })
+  })
+
+  it('logout 的清除 cookie 与下发时属性一致(HttpOnly/SameSite/Secure)', async () => {
+    await withServer(true, async (base) => {
+      const res = await login(base, { 'x-forwarded-proto': 'https' })
+      const cookie = (res.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+      const out = await fetch(`${base}/api/auth/logout`, {
+        method: 'POST',
+        headers: { cookie, 'x-forwarded-proto': 'https' },
+      })
+      expect(out.status).toBe(200)
+      const cleared = out.headers.get('set-cookie') ?? ''
+      expect(cleared).toMatch(/Secure/i)
+      expect(cleared).toMatch(/HttpOnly/i)
+      expect(cleared).toMatch(/SameSite=Lax/i)
+    })
+  })
+})
 
 describe('http server', () => {
   it('GET /healthz → 200 ok', async () => {

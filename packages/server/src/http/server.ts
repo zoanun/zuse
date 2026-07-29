@@ -5,6 +5,7 @@ import { join, normalize, extname, basename } from 'node:path'
 import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
+import { isSecureRequest } from './requestSecurity.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
@@ -40,6 +41,11 @@ export interface RequestHandlerDeps {
   devPage: boolean
   tokenTtlSec: number
   webDir?: string
+  /**
+   * 信任前置代理/隧道的 X-Forwarded-Proto(--trust-proxy)。默认 false ——
+   * 该头可被任意客户端伪造,只有确实跑在 tailscale serve / cloudflared 之类前置后面才该开。
+   */
+  trustProxy?: boolean
 }
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -216,7 +222,10 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
             httpOnly: true,
             sameSite: 'Lax',
             maxAgeSec: deps.tokenTtlSec,
-            secure: false,
+            // 随实际传输自适应:直连 TLS 或(显式信任的)隧道 → 打 Secure。
+            // 不能写死 true —— 本地明文 http 下浏览器会直接丢弃 Secure cookie,登不进去;
+            // 也不能写死 false(此前如此)—— 那样放到 TLS 后面时 token 也没有 Secure 保护。
+            secure: isSecureRequest(req, deps.trustProxy ?? false),
             path: '/',
           }),
         )
@@ -231,7 +240,15 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (!isAuthed(req)) {
         return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
       }
-      res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, '', { maxAgeSec: 0, path: '/' }))
+      // 清除用的属性要与下发时一致(尤其 Secure/HttpOnly/SameSite/Path),
+      // 否则部分浏览器认不出是同一枚 cookie,清除会失效。
+      res.setHeader('Set-Cookie', serializeCookie(SESSION_COOKIE, '', {
+        maxAgeSec: 0,
+        path: '/',
+        httpOnly: true,
+        sameSite: 'Lax',
+        secure: isSecureRequest(req, deps.trustProxy ?? false),
+      }))
       return sendJson(res, 200, { ok: true })
     }
 
