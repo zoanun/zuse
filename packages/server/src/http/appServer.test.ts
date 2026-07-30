@@ -7,7 +7,7 @@ import { get as httpGet } from 'node:http'
 import { WebSocketServer } from 'ws'
 import WebSocket from 'ws'
 import { createAppServer } from './appServer.js'
-import { TEST_CERT_PEM, TEST_KEY_PEM } from '../testCerts.js'
+import { makeTestCerts } from './testCerts.js'
 
 let dir: string | undefined
 let close: (() => Promise<void>) | undefined
@@ -18,13 +18,14 @@ afterEach(async () => {
   if (dir) { rmSync(dir, { recursive: true, force: true }); dir = undefined }
 })
 
-/** 把测试证书落到临时目录,返回两个路径。 */
-function writeCerts(): { cert: string; key: string } {
+/** 现生成一对测试证书并落到临时目录,返回两个路径。 */
+async function writeCerts(): Promise<{ cert: string; key: string }> {
+  const pems = await makeTestCerts()
   dir = mkdtempSync(join(tmpdir(), 'zuse-tls-'))
   const cert = join(dir, 'cert.pem')
   const key = join(dir, 'key.pem')
-  writeFileSync(cert, TEST_CERT_PEM, 'utf8')
-  writeFileSync(key, TEST_KEY_PEM, 'utf8')
+  writeFileSync(cert, pems.cert, 'utf8')
+  writeFileSync(key, pems.key, 'utf8')
   return { cert, key }
 }
 
@@ -54,7 +55,7 @@ describe('createAppServer', () => {
   })
 
   it('给了证书对 → https,可经 TLS 取到响应', async () => {
-    const { cert, key } = writeCerts()
+    const { cert, key } = await writeCerts()
     const app = createAppServer(ok, { cert, key })
     expect(app.scheme).toBe('https')
     const port = await listen(app)
@@ -70,7 +71,7 @@ describe('createAppServer', () => {
   })
 
   it('https 下 WebSocket 能经 wss 升级(WS 挂的是同一个 server)', async () => {
-    const { cert, key } = writeCerts()
+    const { cert, key } = await writeCerts()
     const app = createAppServer(ok, { cert, key })
     const wss = new WebSocketServer({ noServer: true })
     app.server.on('upgrade', (req, socket, head) => {
@@ -86,8 +87,8 @@ describe('createAppServer', () => {
     wss.close()
   })
 
-  it('只给证书或只给私钥 → 抛错,绝不静默退回明文', () => {
-    const { cert, key } = writeCerts()
+  it('只给证书或只给私钥 → 抛错,绝不静默退回明文', async () => {
+    const { cert, key } = await writeCerts()
     // 「以为在跑 https、其实是明文」是本特性最危险的失败形态:半配置必须炸,不能降级。
     expect(() => createAppServer(ok, { cert })).toThrow(/成对/)
     expect(() => createAppServer(ok, { key })).toThrow(/成对/)

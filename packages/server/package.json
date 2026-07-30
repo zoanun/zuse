@@ -45,6 +45,7 @@
     "@types/ws": "^8.5.12",
     "@zuse/core": "workspace:*",
     "@zuse/protocol": "workspace:*",
-    "@zuse/tools": "workspace:*"
+    "@zuse/tools": "workspace:*",
+    "selfsigned": "^5.5.0"
   }
 }
