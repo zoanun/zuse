@@ -143,6 +143,9 @@ export interface UsageSessionStat {
   model: string
   updatedAt: string
   usage: Usage
+  /** 'cron' = 定时任务跑出的会话。用量照常计入(那是真花的钱),但它不在普通侧边栏里,
+   *  不标出来就是一条点不进去的神秘记录 —— 面板据此打徽章。 */
+  kind?: 'cron'
 }
 
 /** Aggregated token usage across all persisted sessions (M5 dashboard). No cost — token-only. */
