@@ -46,6 +46,22 @@ describe('UsagePanel', () => {
     expect(screen.getByText('(未命名)')).toBeInTheDocument() // empty title falls back
   })
 
+  it("badges cron sessions (they burn real tokens but never show in the sidebar)", () => {
+    const withCron: UsageStats = {
+      ...stats,
+      sessions: [
+        stats.sessions[0]!,
+        { id: 'c1', title: '每日巡检', model: 'opus', updatedAt: '2026-07-29T02:00:00Z', usage: { input_tokens: 5000, output_tokens: 0 }, kind: 'cron' },
+      ],
+    }
+    const { container } = render(<UsagePanel stats={withCron} />)
+    const badges = container.querySelectorAll('.usage-kind')
+    expect(badges).toHaveLength(1) // only the cron row is badged
+    expect(badges[0]!.textContent).toBe('定时')
+    // The badge sits on the cron row, not the ordinary chat row above it.
+    expect(badges[0]!.closest('.usage-row')?.textContent).toContain('每日巡检')
+  })
+
   it('shows an empty state when no usage recorded', () => {
     render(<UsagePanel stats={{ total: { input_tokens: 0, output_tokens: 0 }, sessionCount: 0, byModel: [], sessions: [] }} />)
     expect(screen.getByText(/暂无用量记录/)).toBeInTheDocument()

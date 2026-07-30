@@ -449,6 +449,9 @@ button.head:hover .caret { opacity: 1; }
 .usage-row { display: flex; gap: 9px; align-items: baseline; padding: 4px 0; }
 .usage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .usage-sub { flex: none; font: 11px/1.4 var(--mono); color: var(--faint); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 定时任务会话的标记:小号描边胶囊,warn 色区别于普通会话。(与 .skill-src 等徽章各自独立 ——
+   本表已有 4 处近似的徽章规则,哪天抽公共 .badge 时一起收。) */
+.usage-kind { flex: none; font-size: 10.5px; line-height: 1.4; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 0 4px; }
 .usage-tokens { flex: none; font: 12px/1.4 var(--mono); color: var(--muted); }
 /* Files (M7) */
 /* Header row: root path on the left, the create-file button pinned to its far right. */

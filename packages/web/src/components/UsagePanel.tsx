@@ -76,6 +76,7 @@ export function UsagePanel({ stats, loading, error }: Props) {
               {stats.sessions.map((s) => (
                 <li key={s.id} className="usage-row">
                   <span className="usage-name" title={s.title || s.id}>{s.title || '(未命名)'}</span>
+                  {s.kind === 'cron' ? <span className="usage-kind" title="定时任务跑出的会话，在定时任务面板回看">定时</span> : null}
                   <span className="usage-sub" title={s.model}>{s.model}</span>
                   <span className="usage-tokens">{formatTokens(totalTokens(s.usage))}</span>
                 </li>
