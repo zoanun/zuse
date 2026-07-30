@@ -40,7 +40,10 @@ export class UsageService {
       m.sessions += 1
       m.usage = addUsage(m.usage, r.totalUsage)
       byModelMap.set(key, m)
-      sessions.push({ id: r.id, title: r.title, model: key, updatedAt: r.updatedAt, usage: r.totalUsage })
+      sessions.push({
+        id: r.id, title: r.title, model: key, updatedAt: r.updatedAt, usage: r.totalUsage,
+        ...(r.kind ? { kind: r.kind } : {}),
+      })
     }
 
     const byModel: UsageModelStat[] = [...byModelMap.entries()]

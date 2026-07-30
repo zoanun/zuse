@@ -1,7 +1,7 @@
 import type { Message } from '@zuse/core'
 import type { SearchHit, SearchSnippet, SessionSearchResult } from '@zuse/protocol'
 import { stripUserStamp } from '../session/userStamp.js'
-import { scanSessionDir, byUpdatedAtDesc, type ScanEntry } from '../session/sessionStore.js'
+import { scanSessionDir, byUpdatedAtDesc, type ScanEntry, type SessionRecord } from '../session/sessionStore.js'
 
 interface ProseDoc { msgIndex: number; id: string; role: 'user' | 'assistant'; text: string }
 type SessionLite = SessionSearchResult['session']
@@ -31,8 +31,10 @@ function extractProse(messages: Message[]): ProseDoc[] {
 
 /** Build one session's searchable payload from a parsed record, or null to skip a bad record. */
 function buildProseEntry(rec: unknown): ProseEntry | null {
-  const r = rec as { id?: unknown; title?: unknown; cwd?: unknown; updatedAt?: unknown; messages?: unknown }
+  const r = rec as Partial<SessionRecord>
   if (typeof r.id !== 'string' || !Array.isArray(r.messages)) return null
+  // 与 listSessions 同口径:cron 会话有自己的回看入口(定时任务面板),不进普通检索。
+  if (r.kind === 'cron') return null
   return {
     meta: {
       id: r.id,
@@ -40,7 +42,7 @@ function buildProseEntry(rec: unknown): ProseEntry | null {
       cwd: typeof r.cwd === 'string' ? r.cwd : '',
       updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : '',
     },
-    docs: extractProse(r.messages as Message[]),
+    docs: extractProse(r.messages),
   }
 }
 

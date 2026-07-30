@@ -217,6 +217,26 @@ describe('listSessions', () => {
     expect(titles).toContain('normal')
     expect(titles).not.toContain('cronrun')
   })
+
+  it('缓存「跳过」判决:被排除的文件在 mtime 不变时不再重读', async () => {
+    // 被跳过的文件数量只增不减(每跑一次定时任务 +1),若不缓存 null 判决,每次 listSessions
+    // (挂在每个 turn-end 上)都要把它们整份 readFile+JSON.parse 一遍。
+    // 观测手法:先扫一次让 cron 文件的「跳过」判决入缓存,再把同一文件的内容改成**普通会话**
+    // 但把 mtime 复位 —— 判决若真被缓存,它就应该继续不出现;没缓存的话会重读并冒出来。
+    const { utimesSync } = await import('node:fs')
+    const dir = tempDir()
+    const id = newSessionId(new Date('2026-07-30T10:00:00.000Z'))
+    const path = join(dir, `${id}.json`)
+    const fixed = new Date('2020-01-01T00:00:00.000Z')
+
+    await saveSession(dir, makeRecord({ id, title: 'cronrun', kind: 'cron' }))
+    utimesSync(path, fixed, fixed)
+    expect((await listSessions(dir)).map((m) => m.title)).toEqual([]) // 填充「跳过」判决
+
+    await saveSession(dir, makeRecord({ id, title: 'nowNormal' })) // 已不是 cron 了
+    utimesSync(path, fixed, fixed)                                  // 但 mtime 没变
+    expect((await listSessions(dir)).map((m) => m.title)).toEqual([]) // 仍跳过 ⇒ 判决确实被缓存
+  })
 })
 
 // ---------------------------------------------------------------------------

@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SessionRecord } from '../session/sessionStore.js'
 import { SearchService } from './SearchService.js'
 
 let dir: string
 
 /** 写一个最小会话记录文件到 dir。messages 用 [role, text|blocks] 简写。 */
-function writeSession(id: string, updatedAt: string, messages: unknown[], extra: Record<string, unknown> = {}): void {
+function writeSession(id: string, updatedAt: string, messages: unknown[], extra: Partial<SessionRecord> = {}): void {
   const rec = {
     version: 1, id, title: 't-' + id, cwd: '/work', createdAt: updatedAt, updatedAt,
     messages, totalUsage: {}, checkpoints: [], ...extra,
@@ -104,6 +105,16 @@ describe('SearchService', () => {
     writeFileSync(join(dir, 'bad.json'), '{not json', 'utf8')
     const svc = new SearchService({ dir })
     expect(await svc.search('findme')).toHaveLength(1)
+  })
+
+  it("kind:'cron' 的会话不进搜索结果(与 listSessions 的过滤保持一致)", async () => {
+    // cron 跑出来的会话有自己的回看入口(定时任务面板 → 历次执行 → 运行详情)。
+    // 混进历史搜索只会淹没真正的聊天记录 —— 侧边栏已经过滤了它们,搜索必须同口径。
+    writeSession('chat', '2026-07-29T10:00:00Z', [userMsg('每天巡检一次磁盘')])
+    writeSession('cronrun', '2026-07-29T11:00:00Z', [userMsg('每天巡检一次磁盘')], { kind: 'cron' })
+    const svc = new SearchService({ dir })
+    const r = await svc.search('巡检')
+    expect(r.map((x) => x.session.id)).toEqual(['chat'])
   })
 
   it('mtime 不变则复用缓存:改内容但保持 mtime,二次搜索仍返回旧(缓存)结果', async () => {

@@ -44,7 +44,16 @@ export interface SessionRecord {
   checkpoints: SessionCheckpoint[]
   /** Feature B: compaction state, if the session has been compacted. Absent = never compacted. */
   compaction?: CompactionMeta
-  /** 'cron' = 定时任务跑出的会话；listSessions 会过滤掉，不进普通侧边栏。 */
+  /**
+   * 'cron' = 定时任务跑出的会话(不是用户开的聊天)。
+   *
+   * **读这个目录的每个消费者都必须自己决定怎么对待它** —— 没有统一的兜底过滤。现有三个:
+   * - `listSessions`(本文件)      → 排除。cron 不进普通侧边栏。
+   * - `SearchService`             → 排除。cron 有自己的回看入口(定时任务面板)。
+   * - `readSessionUsage`(本文件)  → **计入**,但透传 kind 让 M5 面板打徽章 —— cron 烧的是真 token。
+   *
+   * 加第四个消费者时请一并决定,并更新这份清单。漏掉就是又一次「cron 记录泄漏到用户界面」。
+   */
   kind?: 'cron'
 }
 
@@ -127,8 +136,11 @@ export async function loadSession(dir: string, id: string): Promise<SessionRecor
  */
 const metaCache = new Map<string, ScanEntry<SessionMeta>>()
 
-/** One scanned session file's cached value, keyed by the file's mtime. */
-export interface ScanEntry<T> { mtimeMs: number; value: T }
+/**
+ * One scanned session file's cached verdict, keyed by the file's mtime.
+ * `value: null` = 这个文件本轮被跳过(损坏,或按策略排除),同样要缓存 —— 见 scanSessionDir。
+ */
+export interface ScanEntry<T> { mtimeMs: number; value: T | null }
 
 /**
  * Newest-first order by ISO `updatedAt` (descending). 3-way (returns 0 on equal) so tied sessions
@@ -142,9 +154,15 @@ export function byUpdatedAtDesc(a: string, b: string): number {
  * Scan `dir` for *.json session files with an mtime-keyed cache: a file is re-read + rebuilt via
  * `build` only when its mtime changes; unchanged files return their cached value; files that have
  * vanished are evicted from `cache` so it can't grow without bound. `build` returns null to skip a
- * corrupt/incomplete record. Values come back in directory order — the caller sorts. Returns [] if
- * `dir` does not exist. Shared by listSessions and SearchService so the scan/stat/parse/cache/skip
- * semantics live in exactly one place.
+ * record — either because it's corrupt/incomplete, or because the caller excludes it by policy
+ * (cron 会话)。Values come back in directory order — the caller sorts. Returns [] if `dir` does not
+ * exist. Shared by listSessions and SearchService so the scan/stat/parse/cache/skip semantics live
+ * in exactly one place.
+ *
+ * **null 判决同样入缓存。** 被排除的文件数量只增不减(每跑一次定时任务就多一个 kind:'cron' 的
+ * 会话文件),不缓存就等于每次扫描都把它们整份 readFile + JSON.parse 一遍 —— 而 listSessions 挂在
+ * 每个 turn-end 上。缓存的是**判决本身**(几十字节),不是 payload,所以被排除的会话正文不会驻留
+ * 内存。缓存按 mtime 键控,所以损坏文件一旦被修好(mtime 变了)照样会重新解析。
  */
 export async function scanSessionDir<T>(
   dir: string,
@@ -165,11 +183,13 @@ export async function scanSessionDir<T>(
     try {
       const mtimeMs = (await stat(path)).mtimeMs
       const cached = cache.get(path)
-      if (cached && cached.mtimeMs === mtimeMs) { out.push(cached.value); continue }
+      if (cached && cached.mtimeMs === mtimeMs) {
+        if (cached.value !== null) out.push(cached.value) // null = 上次判定跳过,不必重读
+        continue
+      }
       const value = build(JSON.parse(await readFile(path, 'utf8')), path)
-      if (value === null) continue // corrupt/incomplete — skip
-      cache.set(path, { mtimeMs, value })
-      out.push(value)
+      cache.set(path, { mtimeMs, value }) // 跳过的判决也缓存(见函数注释)
+      if (value !== null) out.push(value)
     } catch {
       continue // corrupt or vanished file — skip
     }
@@ -211,6 +231,8 @@ export interface SessionUsageRow {
   model: string
   updatedAt: string
   totalUsage: Usage
+  /** 'cron' = 定时任务跑出的会话(见 SessionRecord.kind)。用量照常计入,只是要能区分。 */
+  kind?: 'cron'
 }
 
 /** Coerce a possibly-missing/partial persisted usage into a full Usage (missing fields → 0). */
@@ -250,6 +272,7 @@ export async function readSessionUsage(dir: string): Promise<SessionUsageRow[]> 
           model: typeof rec.model === 'string' ? rec.model : '',
           updatedAt: typeof rec.updatedAt === 'string' ? rec.updatedAt : '',
           totalUsage: normalizeUsage(rec.totalUsage),
+          ...(rec.kind === 'cron' ? { kind: 'cron' } : {}), // JSON.parse 的产物,在此校验而非信任
         }
       } catch {
         return null
