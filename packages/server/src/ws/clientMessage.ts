@@ -1,4 +1,5 @@
 import type { SessionManager } from '../session/SessionManager.js'
+import { deliverToSession } from '../session/deliver.js'
 import type { ClientMessage } from '@zuse/protocol'
 
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
@@ -42,11 +43,12 @@ export function applyClientMessage(
       case 'steer':
         if (typeof msg.text !== 'string') { sendError('steer: "text" must be a string'); return }
         // The client sends 'steer' whenever IT believes a turn is running. If the server is already
-        // idle (the steer raced past turn-end), there's no turn to fold into — queuing it would let
-        // it bleed into a later, unrelated turn. Deliver it as a normal turn instead, echoed so the
-        // client's transient "queued" preview resolves into a real message.
-        if (mgr.isBusy()) mgr.steer(msg.text, msg.images, msg.pastedTexts, msg.files, { messageId: msg.messageId })
-        else mgr.submit(msg.text, msg.images, msg.pastedTexts, msg.files, { echo: true, messageId: msg.messageId }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
+        // idle (the steer raced past turn-end), there's no turn to fold into — deliverToSession
+        // routes it as a normal echoed turn instead, so the transient "queued" preview resolves.
+        deliverToSession(mgr, msg.text, {
+          messageId: msg.messageId, images: msg.images, pastedTexts: msg.pastedTexts, files: msg.files,
+          onError: sendError,
+        })
         return
       case 'permission-reply': {
         if (typeof msg.id !== 'string') { sendError('permission-reply: "id" must be a string'); return }
