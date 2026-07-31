@@ -1353,6 +1353,20 @@ export class SessionManager {
   }
 
   /**
+   * 等到会话静默：当前无回合在跑 **且** 无待触发的自唤醒；或越过 deadline。
+   *
+   * cron 用它把 run 记录的定稿推迟到整条唤醒链结束 —— 否则 summary/finishedAt 描述的
+   * 不是这个会话实际做过的事。用轮询而非事件订阅：唤醒到点是一个 setTimeout，没有对应的
+   * 会话事件可订阅，为它新造一个事件类型不值。
+   */
+  async waitUntilQuiescent(deadline: number, pollMs = 250): Promise<void> {
+    while (Date.now() < deadline) {
+      if (!this.isBusy() && !this.hasPendingWakeup()) return
+      await new Promise((r) => setTimeout(r, pollMs))
+    }
+  }
+
+  /**
    * Resolve a checkpoint's ledger truncation index: prefer the stable anchorMessageId (survives
    * index drift from compaction/revert), fall back to the stored messageIndex for legacy
    * checkpoints persisted before anchorMessageId existed. (Message.id is always a non-empty

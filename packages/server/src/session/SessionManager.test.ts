@@ -2563,4 +2563,22 @@ describe('ScheduleWakeup (B2)', () => {
     expect(mgr.scheduleWakeup(3_600_000, '一小时后')).toBe(true)
     mgr.cancelWakeup()
   })
+
+  // 下面两条用真定时器：要验的就是真实的轮询与超时行为，fake timers 会把它验没了。
+  it('waitUntilQuiescent：有待触发唤醒时不返回，唤醒消化完才返回', async () => {
+    const { mgr } = makeManager()
+    vi.spyOn(mgr, 'isBusy').mockReturnValue(false)
+    const pending = vi.spyOn(mgr, 'hasPendingWakeup')
+    pending.mockReturnValueOnce(true).mockReturnValue(false)
+    await mgr.waitUntilQuiescent(Date.now() + 5000, 5)   // 短轮询间隔
+    expect(pending.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('waitUntilQuiescent：越过 deadline 就返回，不会卡死', async () => {
+    const { mgr } = makeManager()
+    vi.spyOn(mgr, 'hasPendingWakeup').mockReturnValue(true)  // 永远不静默
+    const t0 = Date.now()
+    await mgr.waitUntilQuiescent(Date.now() + 60, 5)
+    expect(Date.now() - t0).toBeLessThan(3000)              // 到期即返回
+  })
 })

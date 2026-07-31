@@ -3,12 +3,25 @@ import type { CronTask, CronRun } from '@zuse/protocol'
 import { newSessionId } from '../session/sessionStore.js'
 import { appendRun } from './cronStore.js'
 
+/** cron 从会话管理器上用到的最小面（SessionManager 的子集）。 */
+export interface CronSessionManager {
+  submit(text: string): Promise<void>
+  getState(): { messages: Array<{ role: string; parts: Array<{ kind: string; text?: string }> }> }
+  /** 给本次触发的自唤醒链设上限；到顶后新的 scheduleWakeup 被拒。 */
+  setWakeupDeadline(at: number | null): void
+  /** 等到会话静默（无回合在跑且无待触发唤醒）或越过 deadline。 */
+  waitUntilQuiescent(deadline: number): Promise<void>
+}
+
 /** CronScheduler 只依赖会话创建/驱动的最小接口（驱动源中立，不 import HTTP/WS）。 */
 export interface CronSessions {
   create(opts: { cwd: string; permissionMode: CronTask['permissionMode']; kind: 'cron' }): Promise<{ id: string }>
-  getOrLoad(id: string): Promise<{ submit(text: string): Promise<void>; getState(): { messages: Array<{ role: string; parts: Array<{ kind: string; text?: string }> }> } } | null>
+  getOrLoad(id: string): Promise<CronSessionManager | null>
   release(id: string): void
 }
+
+/** cron 会话的自唤醒链上限：从本次触发起算 1 小时。到顶后拒绝新唤醒并收尾。 */
+const WAKEUP_CHAIN_MS = 60 * 60 * 1000
 
 export interface CronSchedulerDeps {
   dir: string                 // cronDir(authDir)
@@ -78,7 +91,13 @@ export class CronScheduler {
       await appendRun(this.dir, { ...base(), status: 'running' })
       const mgr = await this.sessions.getOrLoad(sessionId)
       if (!mgr) throw new Error('cron session vanished after create')
+      const deadline = Date.now() + WAKEUP_CHAIN_MS
+      mgr.setWakeupDeadline(deadline)
       await mgr.submit(task.prompt)
+      // 模型可能在这一轮里安排了自唤醒。等整条链静默再定稿 —— 否则 summary/finishedAt
+      // 描述的不是这个会话实际做过的事。croner 的 protect 会 await fire()，所以
+      // 「链还在跑」自然延伸成「这次执行还没结束」，下一次到点不会重入。
+      await mgr.waitUntilQuiescent(deadline)
       await appendRun(this.dir, { ...base(), status: 'success', finishedAt: new Date().toISOString(), summary: summarize(mgr.getState()) })
     } catch (err) {
       // 记 failed 也可能抛（磁盘错）——用 catch 兜住，保证 fire 永不 reject。
