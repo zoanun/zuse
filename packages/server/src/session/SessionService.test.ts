@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readdirSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -470,5 +470,46 @@ describe('SessionService — small-model title', () => {
     const rec = await loadSession(dir, id)
     expect(rec?.titleGenerated).toBeFalsy()
     expect(rec?.title).toBe('hello world first line')   // deterministic deriveTitle fallback
+  })
+
+})
+
+// ---------------------------------------------------------------------------
+// 会话离开 registry 时必须取消待触发的自唤醒（B2）
+// ---------------------------------------------------------------------------
+
+describe('SessionService — 自唤醒生命周期', () => {
+  it('release() 取消待触发的自唤醒 —— 会话已离开 registry，那一轮的产出无处可去', async () => {
+    const svc = new SessionService({ dir: tempDir(), cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const { id } = await svc.create({})
+    const mgr = (await svc.getOrLoad(id))!
+    const cancel = vi.spyOn(mgr, 'cancelWakeup')
+    svc.release(id)
+    expect(cancel).toHaveBeenCalled()
+  })
+
+  it('delete() 同样取消 —— 会话文件都删了', async () => {
+    const svc = new SessionService({ dir: tempDir(), cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const { id } = await svc.create({})
+    const mgr = (await svc.getOrLoad(id))!
+    const cancel = vi.spyOn(mgr, 'cancelWakeup')
+    await svc.delete(id)
+    expect(cancel).toHaveBeenCalled()
+  })
+
+  it('release() 之后待触发的唤醒确实不再触发（不只是调了 cancel）', async () => {
+    const svc = new SessionService({ dir: tempDir(), cwd: '/work', createSession: fakeCreateSessionFactory() })
+    const { id } = await svc.create({})
+    const mgr = (await svc.getOrLoad(id))!
+    // 假定时器：断言失败时也不会漏一个 5s 的真实定时器出去。
+    vi.useFakeTimers()
+    try {
+      mgr.scheduleWakeup(5000, '幽灵')
+      expect(mgr.hasPendingWakeup()).toBe(true)   // 前提成立，否则后面那条断言没有意义
+      svc.release(id)
+      expect(mgr.hasPendingWakeup()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

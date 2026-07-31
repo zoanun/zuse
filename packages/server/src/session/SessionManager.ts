@@ -1333,7 +1333,10 @@ export class SessionManager {
     return true
   }
 
-  /** 取消待触发的唤醒。reset()/release()/delete() 调用。 */
+  /**
+   * 取消待触发的唤醒。调用点：本类的 reset()（开新对话）与 scheduleWakeup()（新的顶掉旧的），
+   * 以及 SessionService 的 release()/delete()（会话离开 registry，那一轮的产出已无处可去）。
+   */
   cancelWakeup(): void {
     if (this.wakeupTimer) clearTimeout(this.wakeupTimer)
     this.wakeupTimer = null
