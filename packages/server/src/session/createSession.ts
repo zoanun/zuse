@@ -125,7 +125,6 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
   // 注：会话级工具（Agent 子代理 + TodoWrite）由 SessionManager 构造时经能力清单
   // （SESSION_CAPABILITY_TOOLS）统一注册 —— 它们需反向访问 manager 的 live client（failover
   // 会热替换）/权限流/sessionAllow/todo 汇聚点，放在 manager 内构造最自然。
-  // ScheduleWakeup（B2）仍未接 —— 它需要把唤醒消息注入会话的回调，建议并入 C1 cron 一起做。
 
   // Prompt sections = the read-only file layers (SYSTEM.md/ZUSE.md/MEMORY.md), plus the active
   // persona (M2) layered on top as one more `## section`. Persona switching takes effect on

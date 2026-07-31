@@ -12,14 +12,15 @@ function fakeCtx(over: Partial<SessionCapabilityContext> = {}): SessionCapabilit
     sessionAllow: [],
     canUseTool: async () => ({ behavior: 'allow' }) as never,
     setTodos: () => {},
+    scheduleWakeup: () => true,
     ...over,
   }
 }
 
 describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
-  it('产出 Agent 与 TodoWrite 两个工具，名字正确、顺序 Agent 在前', () => {
+  it('产出 Agent / TodoWrite / ScheduleWakeup 三个工具，名字正确、顺序 Agent 在前', () => {
     const tools = SESSION_CAPABILITY_TOOLS.map((make) => make(fakeCtx()))
-    expect(tools.map((t) => t.name)).toEqual(['Agent', 'TodoWrite'])
+    expect(tools.map((t) => t.name)).toEqual(['Agent', 'TodoWrite', 'ScheduleWakeup'])
   })
 
   it('TodoWrite.onUpdate 透传到 ctx.setTodos', async () => {
@@ -28,5 +29,20 @@ describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
     const todoTool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'TodoWrite')!
     await todoTool.run({ todos: [{ content: 'do x', status: 'pending' }] }, {} as never)
     expect(got).toEqual([{ content: 'do x', status: 'pending' }])
+  })
+
+  it('ScheduleWakeup.onSchedule 透传到 ctx.scheduleWakeup(秒 → 毫秒)', async () => {
+    const calls: Array<[number, string]> = []
+    const ctx = fakeCtx({ scheduleWakeup: (ms, msg) => { calls.push([ms, msg]); return true } })
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'ScheduleWakeup')!
+    const r = await tool.run({ delaySeconds: 30, message: '看 CI' }, {} as never)
+    expect(calls).toEqual([[30_000, '看 CI']])
+    expect(r.isError).toBeFalsy()
+  })
+
+  it('被 deadline 拒绝时如实抛错（core 的 runOneTool 会转成 isError 回喂模型，不会打断回合）', async () => {
+    const ctx = fakeCtx({ scheduleWakeup: () => false })
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'ScheduleWakeup')!
+    await expect(tool.run({ delaySeconds: 30, message: 'x' }, {} as never)).rejects.toThrow(/额度|上限/)
   })
 })

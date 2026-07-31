@@ -272,7 +272,7 @@ export class SessionManager {
       this.totalUsage = usage
     }
 
-    // Register session-scoped tools (Agent, TodoWrite) from the capability list. They wire here,
+    // Register session-scoped tools (Agent, TodoWrite, ScheduleWakeup) from the capability list. They wire here,
     // not in createSession, because they need manager-private state — the live client, the
     // permission flow, the shared sessionAllow, the todo sink (see SessionCapabilityContext for
     // per-field semantics). The `registry.get(name)` guard keeps this idempotent (a re-used
@@ -285,6 +285,7 @@ export class SessionManager {
       sessionAllow: this.sessionAllow,
       canUseTool: this.canUseTool,
       setTodos: (todos) => this.setTodos(todos),
+      scheduleWakeup: (delayMs, message) => this.scheduleWakeup(delayMs, message),
     }
     for (const make of SESSION_CAPABILITY_TOOLS) {
       const tool = make(capabilityCtx)
