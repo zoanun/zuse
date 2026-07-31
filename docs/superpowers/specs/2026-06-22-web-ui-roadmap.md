@@ -139,7 +139,7 @@ F3 地基为快速跑通基础聊天，**故意只在服务端注册了工具子
 | # | 工具 | 状态 | 说明 / 解锁的能力 | 依赖 |
 |---|------|------|------|------|
 | **B1** | Agent（子代理） | ✅ 已接（2026-06-26） | 在 `SessionManager` 构造里注册，闭包复用 live client（failover 热替换）/权限流/`sessionAllow`。`onBackground` 暂未接 → 后台子代理目前同步 `await`（仍能跑，只是不真后台）；真后台完成通知需先有"消息注入接口" | F2 |
-| **B2** | ScheduleWakeup | 待接 | 定时唤醒；需一个把唤醒消息注入会话的回调（类似 TUI 的 `sendMessage`）。与 C1（cron 引擎）天然同源，建议并入 C1 一起设计 | F2,(C1) |
+| **B2** | ScheduleWakeup | ✅ 已接（2026-07-31） | 工具本体 Phase 16 就有（为 TUI 写的），本次只做接线：能力清单（R2）加第三项 `scheduleWakeup`，**不为 cron 会话开特例**；定时器归 `SessionManager` 持有（取消时机全在生命周期事件上：`reset()`/`release()`/`delete()`）；到点投递复用抽出的 `deliverToSession`（忙→steer 折进当前回合，闲→submit 带 echo），与 ws 上行同一条规则不再各写一遍。cron 侧 `fire()` 改为等唤醒链静默再定稿 run 记录（否则 summary/finishedAt 描述的不是会话实际做过的事），链**封顶 1 小时**、到顶拒绝新唤醒并如实告知模型。**不持久化**（daemon 重启即失效——排程归 cron 管）。前端零改动 | F2,C1 |
 | **B3** | Lsp / LspInstall | ✅ 已接（2026-06-29） | daemon 启动时建一个 `LspManager`（语言服务器进程池，构造不 spawn，首次用才起进程），经通用 `registerExtraTools(registry)` 接缝把 `Lsp`+`LspInstall` 注册进每个会话；`close()` 时 `dispose()` 关掉所有 language server | F2 |
 | **B4** | MCP 工具（`mcp__*`）+ McpSearch | ✅ 已接（2026-06-27） | daemon 启动时 `McpManager.connectAll(settings.mcpServers)` 连一次,经通用 `registerExtraTools(registry)` 接缝把工具注册进每个会话的 registry,`close()` 时 `disconnectAll`。createSession/SessionService 加 `registerExtraTools` 透传。**解锁 M4**。配 `settings.mcpServers` 后重启即生效 | F2 |
 
