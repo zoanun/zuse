@@ -66,6 +66,15 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 16384
 const IMAGE_DESCRIPTION_MAX_TOKENS = 1024
 
 /**
+ * waitUntilQuiescent 的轮询间隔:从 250ms 起步、每轮 ×1.5 退避到 5s 封顶。
+ * 定长 250ms 在「模型排了个半小时后的唤醒」这种常态下要空转 7200 次 —— 那些轮询的结果
+ * 提前就知道是 false。退避把 1 小时内的唤醒次数从 ~14400 降到 ~726，代价是静默判定最多晚
+ * 5 秒(只影响 run 记录的 finishedAt 与 croner protect 的释放时刻，都无所谓)。
+ */
+const QUIESCENCE_POLL_MIN_MS = 250
+const QUIESCENCE_POLL_MAX_MS = 5000
+
+/**
  * Prompt sent to the auxiliary image model (parsed fallback): ask it to describe an image objectively
  * and completely so the non-vision main model can answer the user's question from the description.
  */
@@ -611,7 +620,11 @@ export class SessionManager {
     this.contextTokens = undefined
     this.checkpoints = []
     this.steerQueue.length = 0
-    this.cancelWakeup() // 否则旧会话的唤醒会打到这个全新的空会话上
+    // 唤醒的定时器与额度都要清：定时器不清，旧会话的唤醒会打到这个全新的空会话上；
+    // 额度不清，被人接管并「新对话」的 cron 会话会永久留着一个早已过期的 deadline，
+    // 此后每次 scheduleWakeup 都返回 false（真正的封顶兜底是 fire() 的 finally→release）。
+    this.cancelWakeup()
+    this.wakeupDeadline = null
     this.sessionAllow.length = 0
     this.badModels.clear()
     this.ineffectiveCompaction = 0
@@ -1342,7 +1355,7 @@ export class SessionManager {
     this.wakeupTimer = null
   }
 
-  /** 有唤醒待触发？cron 判定会话是否静默时用。 */
+  /** 有唤醒待触发？—— waitUntilQuiescent 的静默判据之一（cron 够不着它，只看 waitUntilQuiescent）。 */
   hasPendingWakeup(): boolean {
     return this.wakeupTimer !== null
   }
@@ -1359,10 +1372,12 @@ export class SessionManager {
    * 不是这个会话实际做过的事。用轮询而非事件订阅：唤醒到点是一个 setTimeout，没有对应的
    * 会话事件可订阅，为它新造一个事件类型不值。
    */
-  async waitUntilQuiescent(deadline: number, pollMs = 250): Promise<void> {
+  async waitUntilQuiescent(deadline: number): Promise<void> {
+    let wait = QUIESCENCE_POLL_MIN_MS
     while (Date.now() < deadline) {
       if (!this.isBusy() && !this.hasPendingWakeup()) return
-      await new Promise((r) => setTimeout(r, pollMs))
+      await new Promise((r) => setTimeout(r, wait))
+      wait = Math.min(wait * 1.5, QUIESCENCE_POLL_MAX_MS)
     }
   }
 

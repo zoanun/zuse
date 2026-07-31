@@ -2564,13 +2564,24 @@ describe('ScheduleWakeup (B2)', () => {
     mgr.cancelWakeup()
   })
 
+  it('reset() 连唤醒额度一起清 —— 否则被接管的 cron 会话会永久排不上唤醒', () => {
+    // cron 会话被人在 Web UI 里接管并「新对话」后，那个早已过期的 deadline 若留着，
+    // 此后每次 scheduleWakeup 都返回 false，而这已经是一个普通聊天会话了。
+    const { mgr } = makeManager()
+    mgr.setWakeupDeadline(Date.now() + 1000)
+    expect(mgr.scheduleWakeup(5000, '超额')).toBe(false)
+    mgr.reset()
+    expect(mgr.scheduleWakeup(5000, '接管后应当排得上')).toBe(true)
+    mgr.cancelWakeup()
+  })
+
   // 下面两条用真定时器：要验的就是真实的轮询与超时行为，fake timers 会把它验没了。
   it('waitUntilQuiescent：有待触发唤醒时不返回，唤醒消化完才返回', async () => {
     const { mgr } = makeManager()
     vi.spyOn(mgr, 'isBusy').mockReturnValue(false)
     const pending = vi.spyOn(mgr, 'hasPendingWakeup')
     pending.mockReturnValueOnce(true).mockReturnValue(false)
-    await mgr.waitUntilQuiescent(Date.now() + 5000, 5)   // 短轮询间隔
+    await mgr.waitUntilQuiescent(Date.now() + 5000)
     expect(pending.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
@@ -2578,7 +2589,7 @@ describe('ScheduleWakeup (B2)', () => {
     const { mgr } = makeManager()
     vi.spyOn(mgr, 'hasPendingWakeup').mockReturnValue(true)  // 永远不静默
     const t0 = Date.now()
-    await mgr.waitUntilQuiescent(Date.now() + 60, 5)
+    await mgr.waitUntilQuiescent(Date.now() + 60)
     expect(Date.now() - t0).toBeLessThan(3000)              // 到期即返回
   })
 })
