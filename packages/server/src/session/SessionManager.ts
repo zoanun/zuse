@@ -57,6 +57,7 @@ import { SESSION_CAPABILITY_TOOLS, type SessionCapabilityContext } from './sessi
 import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
+import { deliverToSession } from './deliver.js'
 
 /** Default output token cap for a turn, used when no maxTokens option is provided. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384
@@ -214,6 +215,10 @@ export class SessionManager {
   private ineffectiveCompaction = 0
   private totalUsage: Usage | undefined = undefined
   private isThinking = false
+  /** 待触发的自唤醒定时器（ScheduleWakeup，B2）。同时至多一个。 */
+  private wakeupTimer: ReturnType<typeof setTimeout> | null = null
+  /** 唤醒链的截止时刻（epoch ms）。null = 不限 —— 普通聊天会话即为 null，cron 会话由 fire() 设。 */
+  private wakeupDeadline: number | null = null
   // Bumped by reset() ("new chat"). A running turn captures it at start and checks it before its
   // post-turn tail (idle-drain). If reset() ran mid-turn the epoch differs, so the tail bails
   // instead of re-populating the freshly-cleared state.
@@ -605,6 +610,7 @@ export class SessionManager {
     this.contextTokens = undefined
     this.checkpoints = []
     this.steerQueue.length = 0
+    this.cancelWakeup() // 否则旧会话的唤醒会打到这个全新的空会话上
     this.sessionAllow.length = 0
     this.badModels.clear()
     this.ineffectiveCompaction = 0
@@ -1299,6 +1305,47 @@ export class SessionManager {
   setTodos(todos: TodoItemLite[]): void {
     this.todos = todos
     this.emit({ type: 'todos-update', todos })
+  }
+
+  /**
+   * 安排一次自唤醒：delayMs 后把 message 投进本会话并驱动一轮。
+   *
+   * 定时器归 manager 而不是工具闭包：取消的时机全落在会话的生命周期事件上
+   * （reset() 开新对话、release()、delete()），闭包够不着那些点，一旦漏取消，
+   * 旧会话的唤醒会打到一个已经换了内容甚至已经销毁的会话上。
+   *
+   * **同时只保留一个** —— 新的顶掉旧的（沿用 ScheduleWakeup 工具的既有语义）。
+   * 返回 false = 被 deadline 拒绝（cron 唤醒链额度用完）；调用方要把这件事回给模型，不能静默吞掉。
+   */
+  scheduleWakeup(delayMs: number, message: string): boolean {
+    if (this.wakeupDeadline !== null && Date.now() + delayMs > this.wakeupDeadline) return false
+    this.cancelWakeup()
+    this.wakeupTimer = setTimeout(() => {
+      this.wakeupTimer = null
+      // 前缀沿用 TUI：一眼能看出这轮不是人发的。
+      deliverToSession(this, `⏰ 定时唤醒: ${message}`, {
+        onError: (m) => this.emit({ type: 'warning', message: `定时唤醒投递失败:${m}` }),
+      })
+    }, delayMs)
+    // daemon 不该因为一个待触发的唤醒而无法退出。
+    this.wakeupTimer.unref?.()
+    return true
+  }
+
+  /** 取消待触发的唤醒。reset()/release()/delete() 调用。 */
+  cancelWakeup(): void {
+    if (this.wakeupTimer) clearTimeout(this.wakeupTimer)
+    this.wakeupTimer = null
+  }
+
+  /** 有唤醒待触发？cron 判定会话是否静默时用。 */
+  hasPendingWakeup(): boolean {
+    return this.wakeupTimer !== null
+  }
+
+  /** 给本会话的唤醒链设截止时刻（cron 用）。null = 不限。 */
+  setWakeupDeadline(at: number | null): void {
+    this.wakeupDeadline = at
   }
 
   /**

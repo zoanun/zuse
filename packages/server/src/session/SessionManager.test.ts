@@ -2498,3 +2498,69 @@ describe('会话能力工具注册 —— 名称占用', () => {
     }
   })
 })
+
+describe('ScheduleWakeup (B2)', () => {
+  it('到点把消息投进会话并驱动一轮', async () => {
+    vi.useFakeTimers()
+    const { mgr } = makeManager()
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    expect(mgr.scheduleWakeup(5000, '看看 CI')).toBe(true)
+    expect(mgr.hasPendingWakeup()).toBe(true)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(submit).toHaveBeenCalledWith('⏰ 定时唤醒: 看看 CI', undefined, undefined, undefined, expect.objectContaining({ echo: true }))
+    expect(mgr.hasPendingWakeup()).toBe(false)   // 触发后自动清空
+    vi.useRealTimers()
+  })
+
+  it('同时只保留一个:新的顶掉旧的,旧的不再触发', async () => {
+    vi.useFakeTimers()
+    const { mgr } = makeManager()
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    mgr.scheduleWakeup(5000, '旧')
+    mgr.scheduleWakeup(9000, '新')
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(submit.mock.calls[0]![0]).toContain('新')
+    vi.useRealTimers()
+  })
+
+  it('reset()(新对话)取消待触发的唤醒 —— 否则旧会话的唤醒会打到全新的空会话上', async () => {
+    vi.useFakeTimers()
+    const { mgr } = makeManager()
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    mgr.scheduleWakeup(5000, '幽灵')
+    mgr.reset()
+    expect(mgr.hasPendingWakeup()).toBe(false)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(submit).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('忙碌时走 steer 而不是 submit(submit 在回合进行中会抛错)', async () => {
+    vi.useFakeTimers()
+    const { mgr } = makeManager()
+    vi.spyOn(mgr, 'isBusy').mockReturnValue(true)
+    const steer = vi.spyOn(mgr, 'steer')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    mgr.scheduleWakeup(1000, '插一句')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(steer).toHaveBeenCalled()
+    expect(submit).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('越过 deadline 的安排被拒(cron 唤醒链的额度用完)', () => {
+    const { mgr } = makeManager()
+    mgr.setWakeupDeadline(Date.now() + 1000)
+    expect(mgr.scheduleWakeup(5000, '超额')).toBe(false)  // 1000ms 后到期，排不下 5000ms
+    expect(mgr.hasPendingWakeup()).toBe(false)
+    expect(mgr.scheduleWakeup(500, '来得及')).toBe(true)
+    mgr.cancelWakeup()
+  })
+
+  it('无 deadline(普通聊天会话)不设上限', () => {
+    const { mgr } = makeManager()
+    expect(mgr.scheduleWakeup(3_600_000, '一小时后')).toBe(true)
+    mgr.cancelWakeup()
+  })
+})
