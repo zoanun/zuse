@@ -1,4 +1,5 @@
 import type { SessionManager } from './SessionManager.js'
+import type { UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 
 /** deliverToSession 驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type DeliverTarget = Pick<SessionManager, 'isBusy' | 'steer' | 'submit'>
@@ -19,9 +20,9 @@ export function deliverToSession(
   text: string,
   opts?: {
     messageId?: string
-    images?: Parameters<SessionManager['submit']>[1]
-    pastedTexts?: Parameters<SessionManager['submit']>[2]
-    files?: Parameters<SessionManager['submit']>[3]
+    images?: UploadedImageRef[]
+    pastedTexts?: PastedTextInput[]
+    files?: UploadedFileRef[]
     onError?: (message: string) => void
   },
 ): void {

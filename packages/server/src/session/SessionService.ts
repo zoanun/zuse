@@ -178,13 +178,9 @@ export class SessionService {
 
   /** Drop the live manager AND the on-disk record. */
   async delete(id: string): Promise<void> {
-    // 会话即将离开 registry：待触发的自唤醒必须一起取消。否则它到点会驱动一整轮
-    // 既不落盘（autosave 已退订）也送不到任何客户端（无订阅者）的回合。
-    this.registry.get(id)?.cancelWakeup()
-    // Stop autosave first so no turn-end fired after this can re-persist the file.
-    this.unsubs.get(id)?.()
-    this.unsubs.delete(id)
-    this.registry.remove(id)
+    // delete = release（让会话离开内存）+ 删盘。复用 release() 而非再抄一遍那几步：
+    // 「会话离开 registry 时要清理什么」将来加第二项时，只该改一个地方。
+    this.release(id)
     // Tombstone the id: any persist already awaiting saveSession() early-returns
     // before the write, closing the in-flight-persist resurrection race.
     this.tombstones.add(id)
@@ -202,7 +198,9 @@ export class SessionService {
   release(id: string): void {
     // 会话即将离开 registry：待触发的自唤醒必须一起取消。否则它到点会驱动一整轮
     // 既不落盘（autosave 已退订）也送不到任何客户端（无订阅者）的回合。
+    // 这也是内存上的承重点：定时器闭包捕获着整个 manager，clearTimeout 之后才可回收。
     this.registry.get(id)?.cancelWakeup()
+    // Stop autosave first so no turn-end fired after this can re-persist the file.
     this.unsubs.get(id)?.()
     this.unsubs.delete(id)
     this.registry.remove(id)

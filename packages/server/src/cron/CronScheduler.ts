@@ -34,7 +34,7 @@ export function isValidCron(expr: string): boolean {
 }
 
 /** 取某会话末条 assistant 文本，截断到 ~200 字，作执行结果摘要。 */
-function summarize(state: { messages: Array<{ role: string; parts: Array<{ kind: string; text?: string }> }> }): string {
+function summarize(state: ReturnType<CronSessionManager['getState']>): string {
   for (let i = state.messages.length - 1; i >= 0; i--) {
     const m = state.messages[i]
     if (!m || m.role !== 'assistant') continue

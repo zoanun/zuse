@@ -35,6 +35,8 @@ export function applyClientMessage(
     switch (msg.type) {
       case 'send':
         if (typeof msg.text !== 'string') { sendError('send: "text" must be a string'); return }
+        // 刻意不走 deliverToSession(与下面的 'steer' 相反):'send' 意味着客户端认为会话空闲，
+        // 此时若真在跑，报错才是本文件顶部写明的契约；用 deliverToSession 会把它静默折进当前回合。
         mgr.submit(msg.text, msg.images, msg.pastedTexts, msg.files, { messageId: msg.messageId }).catch((err) => sendError(err instanceof Error ? err.message : String(err)))
         return
       case 'interrupt':
