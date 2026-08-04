@@ -32,9 +32,9 @@ export interface SessionCapabilityContext {
    */
   scheduleWakeup: (delayMs: number, message: string) => boolean
   /**
-   * 登记一个后台 Agent（B1），返回完成回调。超并发上限时 throw。
-   * 与 scheduleWakeup 同形：暴露的是「登记」而非「投递」——到点怎么投（忙则 steer /
-   * 闲则 submit）是 SessionManager 的内部细节。
+   * 登记一个后台 Agent（B1），返回「子代理跑完时调用」的结果回调。超并发上限时 throw。
+   * 与 scheduleWakeup 同形：暴露的是「登记」而非「投递」，投递路由（忙则 steer / 闲则
+   * submit）是 SessionManager 的内部细节。触发时机不同——唤醒是到点，这个是子代理跑完。
    */
   startBackgroundAgent: (description: string) => (result: string) => void
 }
@@ -44,9 +44,18 @@ export interface SessionCapabilityContext {
  * 加会话级工具 = 往这里加一项（并按需给 SessionCapabilityContext 加字段）。
  */
 export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => Tool> = [
-  // ctx 是能力面，字段名按会话侧的含义取；这里显式映射到 AgentToolDeps 的对应字段。
-  // （ctx 的其余字段正好覆盖 AgentToolDeps 所需；多出来的 setTodos/scheduleWakeup 被忽略。）
-  (ctx) => createAgentTool({ ...ctx, onBackground: ctx.startBackgroundAgent }),
+  // 逐字段构造 AgentToolDeps，不用 `{ ...ctx, onBackground }`：spread 会绕过 TS 的多余属性检查，
+  // 于是把能力面某个字段改名（如 sessionAllow）时，AgentToolDeps 上的同名可选字段会**静默**变成
+  // undefined —— 不报类型错、不红任何测试，症状却是「子代理突然没有 session allow 了」这种最难查的形态。
+  (ctx) => createAgentTool({
+    registry: ctx.registry,
+    getClient: ctx.getClient,
+    getSystemPrompt: ctx.getSystemPrompt,
+    settings: ctx.settings,
+    sessionAllow: ctx.sessionAllow,
+    canUseTool: ctx.canUseTool,
+    onBackground: ctx.startBackgroundAgent,   // 能力面叫「登记后台 Agent」，工具侧叫 onBackground
+  }),
   (ctx) => createTodoWriteTool({ onUpdate: ctx.setTodos }),
   // ScheduleWakeup（B2）。**不为 cron 会话开特例** —— 按会话类型加 if 等于把特例贴回共享机制，
   // 正是这张清单要消灭的东西；cron 的差异由 CronScheduler 用 deadline 表达。

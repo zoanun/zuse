@@ -9,7 +9,7 @@ export interface CronSessionManager {
   getState(): { messages: Array<{ role: string; parts: Array<{ kind: string; text?: string }> }> }
   /** 给本次触发的自唤醒链设上限；到顶后新的 scheduleWakeup 被拒。 */
   setWakeupDeadline(at: number | null): void
-  /** 等到会话静默（无回合在跑且无待触发唤醒）或越过 deadline。 */
+  /** 等到会话静默（无回合在跑，且无待投递：自唤醒、在飞的后台 Agent）或越过 deadline。 */
   waitUntilQuiescent(deadline: number): Promise<void>
 }
 
