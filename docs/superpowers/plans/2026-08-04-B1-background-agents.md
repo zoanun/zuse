@@ -768,17 +768,33 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 pnpm --filter @zuse/tools exec tsc --noEmit
 pnpm --filter @zuse/tui exec tsc --noEmit
-pnpm --filter @zuse/server exec tsc --noEmit
+pnpm --filter @zouyj/zuse-server exec tsc --noEmit
 ```
 
-三条都要 EXIT 0。
+**server 的包名是 `@zouyj/zuse-server`，不是 `@zuse/server`。** 写错包名时 pnpm 打印
+`No projects matched the filters` 却 **EXIT 0** —— 一个会让门禁变成空跑的假绿。已实测确认。
+
+判定标准（不是「三条都 EXIT 0」）：
+
+- `@zuse/tools`：必须 0 error。
+- `@zouyj/zuse-server`：必须 0 error。
+- `@zuse/tui`：**master 上本来就有 3 条既存类型错**（`commands/registry.test.ts:269,270`
+  的 `SkillEntry.source` 缺失，`hooks/useConversation.ts:466` 的 `Message.id` 缺失——后者是
+  直接调 `client.sendMessages` 的内联字面量，不经 `Conversation.append`，**不是运行时 bug**）。
+  判据是**错误条数不增加、且新增的错误里没有 onBackground 相关的**，不是 EXIT 0。
+  用 `... 2>&1 | grep -cE "error TS"` 数条数，与 master 对照。
 
 - [ ] **Step 2: 受影响套件**
 
 ```
-pnpm exec vitest run packages/server/src/session packages/server/src/cron
-pnpm --filter @zuse/tools exec vitest run src/agent-tool.test.ts
+npx vitest run packages/server/src/session packages/server/src/cron
+npx vitest run packages/tools/src/agent-tool.test.ts
 ```
+
+**从仓库根跑，路径写全。** 根 `vitest.config.ts` 的 `include` glob 是相对仓库根的
+（`packages/*/src/**/*.test.ts`），所以 `pnpm --filter <pkg> exec vitest run src/xxx.test.ts`
+会报 "No test files found"。另：`packages/tui/package.json` **没有 `test` 脚本**，
+`pnpm --filter @zuse/tui test` 跑不起来，用 `npx vitest run packages/tui`。均已实测。
 
 记录通过/失败条数。既存的环境性失败（`packages/tools/src/bash.test.ts` 的 spawned-shell PATH、`SessionService.test.ts`/`wsServer.test.ts` 的高负载 flake）可以如实标注并excuse，但**必须先切到 master 跑同一条对照**才能下「既存」的结论。
 
