@@ -212,9 +212,27 @@ startBackgroundAgent(description: string): (result: string) => void {
 
 每条行为测试都要能通过**变异检验**：把实现改回旧行为，测试必须变红。B2 那轮的教训 —— 只断言「某方法被调用过」的测试是假保障。
 
+## 8.1 已知遗留：子代理面板的状态永远停在「运行中」
+
+实测（真 daemon）：后台子代理完成后，侧栏「子代理」面板仍显示 `1 运行中 · 0 / 1`。
+
+原因在 `packages/web/src/components/AgentsPanel.tsx` 的 `isBackgroundAck()` —— 它从面板初版
+（`a769927`）就存在，注释写明「`launched in background` 的 ack 算作仍在运行」，是**预写**的。
+本特性之前 server 从不走后台分支，这段代码永远碰不到；现在碰到了，而没有任何机制能把状态翻成
+`done`：完成通知是一条**用户消息**，不是那个 tool-use id 的 tool-result。
+
+**本次不修**，因为正确的修法需要一个协议层决定：给 `onBackground` 传 tool-use id、服务端完成时
+额外 emit 一个带 id 的事件、web 据此翻状态 —— 横跨 tools/protocol/server/web 四个包，是另一个
+spec 的体量。按 description 文本匹配是廉价替代，但 **description 不唯一**，而「description 不唯一」
+正是 §4 里服务端设计用 token 而不用名字的原因，不该在前端把这个错误重新引入一遍。
+
+主对话里的 `🔔 后台 Agent "…" 完成:` 气泡已经把「完成了」说清楚，面板只是辅助视图，
+所以这个遗留不阻塞本特性。
+
 ## 9. 非目标
 
 - 不做后台子代理的真中止（§5）
+- 不修子代理面板的状态（§8.1，另开 spec）
 - 不做后台子代理的持久化：daemon 重启即失效，与 B2 唤醒一致（排程归 cron 管）
 - 不动前端：投递走既有 `deliverToSession`，Web 看到的就是一条普通用户气泡/插话，无需新组件
 - 不动 `SUB_AGENT_MAX_TURNS`、不动子代理的权限/worktree 逻辑
