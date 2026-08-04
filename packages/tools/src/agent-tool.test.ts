@@ -531,7 +531,7 @@ describe('createAgentTool', () => {
       getClient: () => client,
       settings: PERMISSIVE,
       getSystemPrompt: () => 'sys',
-      onBackground: (desc, result) => { bgResult = { desc, result } },
+      onBackground: (desc) => (result) => { bgResult = { desc, result } },
     })
 
     const result = await tool.run(
@@ -544,5 +544,86 @@ describe('createAgentTool', () => {
 
     await new Promise((r) => setTimeout(r, 50))
     expect(bgResult).toEqual({ desc: 'background test', result: 'bg-done' })
+  })
+
+  it('后台模式：onBackground 在启动时（而非完成时）被调用', async () => {
+    let startedWith: string | null = null
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'bg-done' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const tool = createAgentTool({
+      registry: new ToolRegistry(),
+      getClient: () => client,
+      settings: PERMISSIVE,
+      getSystemPrompt: () => 'sys',
+      onBackground: (desc) => { startedWith = desc; return () => {} },
+    })
+
+    await tool.run(
+      { prompt: 'bg task', description: 'start probe', runInBackground: true },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    // run() 一返回就该已经登记 —— 不 sleep，正是这条用例的意义（旧签名下这里必然是 null）。
+    expect(startedWith).toBe('start probe')
+  })
+
+  it('后台模式：启动钩子 throw（并发上限）→ run 抛出，子代理不被放出去', async () => {
+    let launched = false
+    const client = fakeClient([
+      [
+        { type: 'text-delta', text: 'should not run' },
+        { type: 'message-stop', stop_reason: 'end_turn', usage: USAGE },
+      ],
+    ])
+
+    const tool = createAgentTool({
+      registry: new ToolRegistry(),
+      getClient: () => client,
+      settings: PERMISSIVE,
+      // 探针放在 getSystemPrompt 而不是 getClient：getClient 是「构建 child client」的
+      // 前置步骤，前台/后台两条路径都会先跑，早于后台分支，探不到「有没有放出去」。
+      // getSystemPrompt 是 executeSubAgent try 内第一条受测试控制的语句，
+      // 只要 executeSubAgent 被调用过就必然触发 —— 正是这条用例要否定的事。
+      getSystemPrompt: () => { launched = true; return 'sys' },
+      onBackground: () => { throw new Error('额度用完') },
+    })
+
+    await expect(
+      tool.run(
+        { prompt: 'bg task', description: 'over cap', runInBackground: true },
+        { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+      ),
+    ).rejects.toThrow('额度用完')
+
+    await new Promise((r) => setTimeout(r, 30))
+    expect(launched).toBe(false)
+  })
+
+  it('后台模式：子代理失败 → 结果回调收到失败文本', async () => {
+    let got: string | null = null
+
+    const tool = createAgentTool({
+      registry: new ToolRegistry(),
+      getClient: () => fakeClient([]),
+      settings: PERMISSIVE,
+      // 失败注入点：getSystemPrompt 在 executeSubAgent 的 try 内被调用
+      // （`const sysPrompt = deps.getSystemPrompt() + SUB_AGENT_SUFFIX`），
+      // 抛出后被 catch 清理 worktree 再原样 rethrow → 后台 promise reject。
+      getSystemPrompt: () => { throw new Error('boom') },
+      onBackground: () => (result) => { got = result },
+    })
+
+    await tool.run(
+      { prompt: 'bg task', description: 'fail probe', runInBackground: true },
+      { cwd: '.', signal: new AbortController().signal, tracker: { markRead() {}, getFingerprint: () => undefined } },
+    )
+
+    await new Promise((r) => setTimeout(r, 50))
+    expect(got).toBe('(sub-agent background execution failed)')
   })
 })

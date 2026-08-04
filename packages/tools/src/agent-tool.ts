@@ -15,8 +15,16 @@ export interface AgentToolDeps {
   getSystemPrompt: () => string
   sessionAllow?: string[]
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
-  /** 后台 Agent 完成后的通知回调。传入 description + 结果文本。 */
-  onBackground?: (description: string, result: string) => void
+  /**
+   * 后台 Agent **启动时**触发，返回「完成时调用」的结果回调。
+   *
+   * 之所以是「启动时给回调」而不是「完成时给结果」：调用方需要知道有 Agent 在飞
+   * （会话静默判据、生命周期作废），而只有启动钩子能提供这个信息；两个并列的钩子
+   * 则无法把启动与完成对应起来（description 不唯一，同名子代理无法区分）。
+   *
+   * 可以 throw 来拒绝启动（如并发上限）——core 的 runOneTool 会转成 isError 回喂模型。
+   */
+  onBackground?: (description: string) => (result: string) => void
 }
 
 export function createAgentTool(deps: AgentToolDeps): Tool {
@@ -227,9 +235,11 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       }
 
       if (runInBackground === true && deps.onBackground) {
-        executeSubAgent().then(
-          (result) => deps.onBackground!(label, result),
-          () => deps.onBackground!(label, '(sub-agent background execution failed)'),
+        // 启动钩子先跑：它可能 throw（并发上限），此时不该已经把子代理放出去。
+        const finish = deps.onBackground(label)
+        void executeSubAgent().then(
+          (result) => finish(result),
+          () => finish('(sub-agent background execution failed)'),
         )
         return { output: `Sub-agent "${label}" launched in background. You will be notified when it finishes.` }
       }
