@@ -83,12 +83,25 @@ type InjectionKind = 'wakeup' | 'background'
 /**
  * 待投递：将来会往本会话推一条消息的东西（自唤醒 B2、在飞的后台 Agent B1）。
  * 从会话的视角这两者是同一件事，所以合成一张表而不是每类一个字段 ——
- * 静默判据（hasPendingInjection）与生命周期作废（cancelAllInjections）各只有一处，
+ * 静默判据（hasPendingInjection）与生命周期作废（cancelInjections）各只有一处，
  * 加第三种待投递时不可能漏掉其中之一。
+ *
+ * **投递协议**：摘登记与投递必须在同一个同步块内完成，中间不得有 await。
+ * waitUntilQuiescent 是轮询（每次检查之间必有 await），因此观测不到「已摘登记但回合
+ * 尚未开始」的假静默窗口；submit() 的 `isThinking = true` 也是同步的（submit 开头、
+ * 第一个 await 之前），接得上。投递前先看 delete() 的返回值：登记已不在表中 = 这条
+ * 待投递已被作废，产出无处可去，直接丢弃。
  */
 interface PendingInjection {
   kind: InjectionKind
-  /** 生命周期作废时调用。wakeup = clearTimeout；background 刻意为空。 */
+  /**
+   * 作废时调用，用于释放这类待投递自己的资源。wakeup = clearTimeout；
+   * background 为空函数 —— 按设计只丢弃投递、不中止在飞的子代理（它自带 10 轮上限），
+   * 而「离开这张表」本身已经由 cancelInjections 统一做掉了。
+   *
+   * 刻意**必填**而不是可选：加第三种待投递的人必须正面回答「作废它意味着什么」，
+   * 可选会让这个问题被静默跳过。
+   */
   cancel: () => void
 }
 
@@ -602,6 +615,17 @@ export class SessionManager {
 
   /** Abort the in-flight turn, if any. Returns true if a turn was aborted. */
   interrupt(): boolean {
+    // 在飞的后台 Agent 跑在**本回合的** signal 上（runAgent 把回合 signal 放进 ToolContext，
+    // Agent 工具原样传给子代理），所以 abort 就是把它们一起打断了 —— 它们的产出确实无处可去。
+    //
+    // 必须显式作废，不能指望回调自己识别：core 把 abort 转成 error 事件后 **return 而不是 throw**
+    // （agent.ts 的 `if (errored) … return`），于是 executeSubAgent() 是 **resolve** 的，
+    // 完成回调走的是成功分支。不摘登记的话，用户按下停止 → 会话已闲 → submit() → 平白起一整轮
+    // 新的模型回合，把整个上下文重发一遍。用户按那个键正是为了别再花钱。
+    //
+    // 只作废 background：待触发的自唤醒是个定时器，与本回合的 signal 无关，
+    // 停止当前回合不该顺手取消它。
+    this.cancelInjections('background')
     if (this.abort) {
       this.abort.abort()
       return true
@@ -1358,7 +1382,7 @@ export class SessionManager {
     // 从 packages/tools（TUI 与 server 共用）一路传出来，而子代理自带 10 轮上限，不值。
     this.pendingInjections.set(token, { kind: 'background', cancel: () => {} })
     return (result: string) => {
-      // 先摘登记再投递，同 scheduleWakeup 的到点回调（那里写了为什么这样安全）。
+      // 先摘登记再投递：见 PendingInjection 的「投递协议」。
       if (!this.pendingInjections.delete(token)) return  // 已被作废：产出无处可去
       deliverToSession(this, `🔔 后台 Agent "${description}" 完成:\n${result}`, {
         onError: (m) => this.emit({ type: 'warning', message: `后台 Agent 通知投递失败:${m}` }),
@@ -1381,10 +1405,8 @@ export class SessionManager {
     this.cancelWakeup()
     const token = Symbol('wakeup')
     const timer = setTimeout(() => {
-      // 先摘登记再投递：两件事在同一个同步块内完成，中间没有 await，所以
-      // waitUntilQuiescent（轮询，每次检查之间必有 await）观测不到「已摘登记
-      // 但回合尚未开始」的假静默窗口 —— submit() 的 isThinking = true 也是同步的
-      // （本文件 submit 开头，第一个 await 之前），接得上。
+      // 先摘登记再投递：见 PendingInjection 的「投递协议」。这里不看 delete() 的返回值 ——
+      // 已被作废意味着 clearTimeout 已经跑过，本回调压根不会执行。
       this.pendingInjections.delete(token)
       // 前缀沿用 TUI：一眼能看出这轮不是人发的。
       deliverToSession(this, `⏰ 定时唤醒: ${message}`, {
@@ -1398,15 +1420,23 @@ export class SessionManager {
   }
 
   /**
+   * 作废待投递：给定 kind 则只作废该类，省略则全部。**所有作废都从这里走**，
+   * 这样「哪些事件会让待投递失效」是一份可穷举的清单，而不是散在各处的 delete。
+   */
+  private cancelInjections(kind?: InjectionKind): void {
+    for (const [token, inj] of this.pendingInjections) {
+      if (kind !== undefined && inj.kind !== kind) continue
+      inj.cancel()
+      this.pendingInjections.delete(token)
+    }
+  }
+
+  /**
    * 仅作废自唤醒。唯一调用点是 scheduleWakeup 的「新的顶掉旧的」—— 它只该顶掉唤醒，
    * 不该顺手清掉在飞的后台 Agent 登记。会话生命周期上的作废走 cancelAllInjections()。
    */
   cancelWakeup(): void {
-    for (const [token, inj] of this.pendingInjections) {
-      if (inj.kind !== 'wakeup') continue
-      inj.cancel()
-      this.pendingInjections.delete(token)
-    }
+    this.cancelInjections('wakeup')
   }
 
   /**
@@ -1414,8 +1444,7 @@ export class SessionManager {
    * release()/delete()（会话离开 registry —— 那些产出既不落盘也送不到任何客户端）。
    */
   cancelAllInjections(): void {
-    for (const inj of this.pendingInjections.values()) inj.cancel()
-    this.pendingInjections.clear()
+    this.cancelInjections()
   }
 
   /** 有任何待投递？—— waitUntilQuiescent 的静默判据之一。 */

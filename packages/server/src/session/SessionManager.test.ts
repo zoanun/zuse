@@ -2669,6 +2669,31 @@ describe('后台 Agent（B1）', () => {
     expect(mgr.hasPendingInjection()).toBe(true)
   })
 
+  // 用户按停止：在飞的子代理跑在**本回合的** signal 上，已被一起打断。但 core 把 abort 转成
+  // error 事件后是 return 而不是 throw，所以完成回调走的是**成功**分支 —— 不摘登记的话，
+  // 停止会平白起一整轮新回合把整个上下文重发一遍。用户按那个键正是为了别再花钱。
+  it('interrupt()（用户按停止）作废在飞的后台登记，不许平白起新回合', () => {
+    const { mgr } = makeManager()
+    const finish = mgr.startBackgroundAgent('活儿')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    const steer = vi.spyOn(mgr, 'steer').mockImplementation(() => {})
+
+    mgr.interrupt()
+    finish('(sub-agent produced no text output)')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(steer).not.toHaveBeenCalled()
+    expect(mgr.hasPendingInjection()).toBe(false)   // 名额也一并释放
+  })
+
+  it('interrupt() 不碰待触发的自唤醒（它是定时器，与本回合的 signal 无关）', () => {
+    const { mgr } = makeManager()
+    mgr.scheduleWakeup(60_000, '很久以后')
+    mgr.interrupt()
+    expect(mgr.hasPendingWakeup()).toBe(true)
+    mgr.cancelAllInjections()
+  })
+
   it('并发上限：第 6 个 throw，且消息带上限数字', () => {
     const { mgr } = makeManager()
     for (let i = 0; i < 5; i++) mgr.startBackgroundAgent(`活儿${i}`)
