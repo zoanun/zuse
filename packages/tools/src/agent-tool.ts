@@ -237,10 +237,11 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       if (runInBackground === true && deps.onBackground) {
         // 启动钩子先跑：它可能 throw（并发上限），此时不该已经把子代理放出去。
         const finish = deps.onBackground(label)
-        void executeSubAgent().then(
-          (result) => finish(result),
-          () => finish('(sub-agent background execution failed)'),
-        )
+        // 用 then 的双参而非 .then(finish).catch(…)：后者会把 finish 自己抛出的错也接住，
+        // 从而第二次调用一个约定「只调一次」的回调。这里只该处理 executeSubAgent 的失败。
+        void executeSubAgent().then(finish, () => finish('(sub-agent background execution failed)'))
+        // 这句文案是跨包契约：packages/web 的 AgentsPanel.tsx 用 /launched in background/i
+        // 判定「子代理仍在跑」。改动此处需同步那边，否则面板状态会无声翻转。
         return { output: `Sub-agent "${label}" launched in background. You will be notified when it finishes.` }
       }
 
