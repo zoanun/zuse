@@ -2576,20 +2576,29 @@ describe('ScheduleWakeup (B2)', () => {
   })
 
   // 下面两条用真定时器：要验的就是真实的轮询与超时行为，fake timers 会把它验没了。
-  it('waitUntilQuiescent：有待触发唤醒时不返回，唤醒消化完才返回', async () => {
+  // 用真的 scheduleWakeup 驱动而不是 spy 内部谓词：静默判据将来还会长出第三种待投递，
+  // 钉在某个具体谓词上的 spy 会在判据泛化时静默失效（甚至变成空过），而不是变红。
+  it('waitUntilQuiescent：有待投递时不返回，投递落地后才返回', async () => {
     const { mgr } = makeManager()
-    vi.spyOn(mgr, 'isBusy').mockReturnValue(false)
-    const pending = vi.spyOn(mgr, 'hasPendingWakeup')
-    pending.mockReturnValueOnce(true).mockReturnValue(false)
-    await mgr.waitUntilQuiescent(Date.now() + 5000)
-    expect(pending.mock.calls.length).toBeGreaterThanOrEqual(2)
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    mgr.scheduleWakeup(600, '醒')
+
+    let settled = false
+    const p = mgr.waitUntilQuiescent(Date.now() + 5000).then(() => { settled = true })
+
+    await new Promise((r) => setTimeout(r, 300))
+    expect(settled).toBe(false)   // 唤醒还没到点 —— 不许判静默
+
+    await p
+    expect(settled).toBe(true)
   })
 
   it('waitUntilQuiescent：越过 deadline 就返回，不会卡死', async () => {
     const { mgr } = makeManager()
-    vi.spyOn(mgr, 'hasPendingWakeup').mockReturnValue(true)  // 永远不静默
+    mgr.scheduleWakeup(60_000, '很久以后')   // 真排一个等不到的唤醒
     const t0 = Date.now()
     await mgr.waitUntilQuiescent(Date.now() + 60)
-    expect(Date.now() - t0).toBeLessThan(3000)              // 到期即返回
+    expect(Date.now() - t0).toBeLessThan(3000)   // 到期即返回
+    mgr.cancelAllInjections()                    // 别把定时器留给下一条用例
   })
 })

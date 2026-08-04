@@ -74,6 +74,24 @@ const IMAGE_DESCRIPTION_MAX_TOKENS = 1024
 const QUIESCENCE_POLL_MIN_MS = 250
 const QUIESCENCE_POLL_MAX_MS = 5000
 
+/** 同一会话最多同时在飞的后台 Agent 数。超限时启动钩子 throw，如实回喂模型。 */
+const MAX_BACKGROUND_AGENTS = 5
+
+/** 待投递的种类。 */
+type InjectionKind = 'wakeup' | 'background'
+
+/**
+ * 待投递：将来会往本会话推一条消息的东西（自唤醒 B2、在飞的后台 Agent B1）。
+ * 从会话的视角这两者是同一件事，所以合成一张表而不是每类一个字段 ——
+ * 静默判据（hasPendingInjection）与生命周期作废（cancelAllInjections）各只有一处，
+ * 加第三种待投递时不可能漏掉其中之一。
+ */
+interface PendingInjection {
+  kind: InjectionKind
+  /** 生命周期作废时调用。wakeup = clearTimeout；background 刻意为空。 */
+  cancel: () => void
+}
+
 /**
  * Prompt sent to the auxiliary image model (parsed fallback): ask it to describe an image objectively
  * and completely so the non-vision main model can answer the user's question from the description.
@@ -224,8 +242,8 @@ export class SessionManager {
   private ineffectiveCompaction = 0
   private totalUsage: Usage | undefined = undefined
   private isThinking = false
-  /** 待触发的自唤醒定时器（ScheduleWakeup，B2）。同时至多一个。 */
-  private wakeupTimer: ReturnType<typeof setTimeout> | null = null
+  /** 待投递注册表（自唤醒 + 在飞的后台 Agent）。见 PendingInjection 的注释。 */
+  private pendingInjections = new Map<symbol, PendingInjection>()
   /** 唤醒链的截止时刻（epoch ms）。null = 不限 —— 普通聊天会话即为 null，cron 会话由 fire() 设。 */
   private wakeupDeadline: number | null = null
   // Bumped by reset() ("new chat"). A running turn captures it at start and checks it before its
@@ -620,10 +638,10 @@ export class SessionManager {
     this.contextTokens = undefined
     this.checkpoints = []
     this.steerQueue.length = 0
-    // 唤醒的定时器与额度都要清：定时器不清，旧会话的唤醒会打到这个全新的空会话上；
+    // 待投递与唤醒额度都要清：待投递不清，旧会话的自唤醒/后台 Agent 产出会打到这个全新的空会话上；
     // 额度不清，被人接管并「新对话」的 cron 会话会永久留着一个早已过期的 deadline，
     // 此后每次 scheduleWakeup 都返回 false（真正的封顶兜底是 fire() 的 finally→release）。
-    this.cancelWakeup()
+    this.cancelAllInjections()
     this.wakeupDeadline = null
     this.sessionAllow.length = 0
     this.badModels.clear()
@@ -1334,30 +1352,59 @@ export class SessionManager {
   scheduleWakeup(delayMs: number, message: string): boolean {
     if (this.wakeupDeadline !== null && Date.now() + delayMs > this.wakeupDeadline) return false
     this.cancelWakeup()
-    this.wakeupTimer = setTimeout(() => {
-      this.wakeupTimer = null
+    const token = Symbol('wakeup')
+    const timer = setTimeout(() => {
+      // 先摘登记再投递：两件事在同一个同步块内完成，中间没有 await，所以
+      // waitUntilQuiescent（轮询，每次检查之间必有 await）观测不到「已摘登记
+      // 但回合尚未开始」的假静默窗口 —— submit() 的 isThinking = true 也是同步的
+      // （本文件 submit 开头，第一个 await 之前），接得上。
+      this.pendingInjections.delete(token)
       // 前缀沿用 TUI：一眼能看出这轮不是人发的。
       deliverToSession(this, `⏰ 定时唤醒: ${message}`, {
         onError: (m) => this.emit({ type: 'warning', message: `定时唤醒投递失败:${m}` }),
       })
     }, delayMs)
     // daemon 不该因为一个待触发的唤醒而无法退出。
-    this.wakeupTimer.unref?.()
+    timer.unref?.()
+    this.pendingInjections.set(token, { kind: 'wakeup', cancel: () => clearTimeout(timer) })
     return true
   }
 
   /**
-   * 取消待触发的唤醒。调用点：本类的 reset()（开新对话）与 scheduleWakeup()（新的顶掉旧的），
-   * 以及 SessionService 的 release()/delete()（会话离开 registry，那一轮的产出已无处可去）。
+   * 仅作废自唤醒。唯一调用点是 scheduleWakeup 的「新的顶掉旧的」—— 它只该顶掉唤醒，
+   * 不该顺手清掉在飞的后台 Agent 登记。会话生命周期上的作废走 cancelAllInjections()。
    */
   cancelWakeup(): void {
-    if (this.wakeupTimer) clearTimeout(this.wakeupTimer)
-    this.wakeupTimer = null
+    for (const [token, inj] of this.pendingInjections) {
+      if (inj.kind !== 'wakeup') continue
+      inj.cancel()
+      this.pendingInjections.delete(token)
+    }
   }
 
-  /** 有唤醒待触发？—— waitUntilQuiescent 的静默判据之一（cron 够不着它，只看 waitUntilQuiescent）。 */
+  /**
+   * 作废**所有**待投递。调用点：本类的 reset()（开新对话）与 SessionService 的
+   * release()/delete()（会话离开 registry —— 那些产出既不落盘也送不到任何客户端）。
+   */
+  cancelAllInjections(): void {
+    for (const inj of this.pendingInjections.values()) inj.cancel()
+    this.pendingInjections.clear()
+  }
+
+  /** 有任何待投递？—— waitUntilQuiescent 的静默判据之一。 */
+  hasPendingInjection(): boolean {
+    return this.pendingInjections.size > 0
+  }
+
+  private countInjections(kind: InjectionKind): number {
+    let n = 0
+    for (const inj of this.pendingInjections.values()) if (inj.kind === kind) n++
+    return n
+  }
+
+  /** 有自唤醒待触发？（单槽语义的观测点；静默判据用 hasPendingInjection。） */
   hasPendingWakeup(): boolean {
-    return this.wakeupTimer !== null
+    return this.countInjections('wakeup') > 0
   }
 
   /** 给本会话的唤醒链设截止时刻（cron 用）。null = 不限。 */
@@ -1366,7 +1413,7 @@ export class SessionManager {
   }
 
   /**
-   * 等到会话静默：当前无回合在跑 **且** 无待触发的自唤醒；或越过 deadline。
+   * 等到会话静默：当前无回合在跑 **且** 无待投递（自唤醒、在飞的后台 Agent）；或越过 deadline。
    *
    * cron 用它把 run 记录的定稿推迟到整条唤醒链结束 —— 否则 summary/finishedAt 描述的
    * 不是这个会话实际做过的事。用轮询而非事件订阅：唤醒到点是一个 setTimeout，没有对应的
@@ -1375,7 +1422,7 @@ export class SessionManager {
   async waitUntilQuiescent(deadline: number): Promise<void> {
     let wait = QUIESCENCE_POLL_MIN_MS
     while (Date.now() < deadline) {
-      if (!this.isBusy() && !this.hasPendingWakeup()) return
+      if (!this.isBusy() && !this.hasPendingInjection()) return
       await new Promise((r) => setTimeout(r, wait))
       wait = Math.min(wait * 1.5, QUIESCENCE_POLL_MAX_MS)
     }
