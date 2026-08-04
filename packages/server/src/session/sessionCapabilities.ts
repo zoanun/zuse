@@ -31,6 +31,12 @@ export interface SessionCapabilityContext {
    * 暴露的是「安排」而非「投递」：到点怎么投（忙则 steer / 闲则 submit）是 SessionManager 的内部细节。
    */
   scheduleWakeup: (delayMs: number, message: string) => boolean
+  /**
+   * 登记一个后台 Agent（B1），返回完成回调。超并发上限时 throw。
+   * 与 scheduleWakeup 同形：暴露的是「登记」而非「投递」——到点怎么投（忙则 steer /
+   * 闲则 submit）是 SessionManager 的内部细节。
+   */
+  startBackgroundAgent: (description: string) => (result: string) => void
 }
 
 /**
@@ -38,8 +44,9 @@ export interface SessionCapabilityContext {
  * 加会话级工具 = 往这里加一项（并按需给 SessionCapabilityContext 加字段）。
  */
 export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => Tool> = [
-  // ctx supplies exactly AgentToolDeps' fields (plus setTodos, which createAgentTool ignores).
-  (ctx) => createAgentTool(ctx),
+  // ctx 是能力面，字段名按会话侧的含义取；这里显式映射到 AgentToolDeps 的对应字段。
+  // （ctx 的其余字段正好覆盖 AgentToolDeps 所需；多出来的 setTodos/scheduleWakeup 被忽略。）
+  (ctx) => createAgentTool({ ...ctx, onBackground: ctx.startBackgroundAgent }),
   (ctx) => createTodoWriteTool({ onUpdate: ctx.setTodos }),
   // ScheduleWakeup（B2）。**不为 cron 会话开特例** —— 按会话类型加 if 等于把特例贴回共享机制，
   // 正是这张清单要消灭的东西；cron 的差异由 CronScheduler 用 deadline 表达。

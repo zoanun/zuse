@@ -13,6 +13,7 @@ function fakeCtx(over: Partial<SessionCapabilityContext> = {}): SessionCapabilit
     canUseTool: async () => ({ behavior: 'allow' }) as never,
     setTodos: () => {},
     scheduleWakeup: () => true,
+    startBackgroundAgent: () => () => {},
     ...over,
   }
 }

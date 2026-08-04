@@ -2602,3 +2602,103 @@ describe('ScheduleWakeup (B2)', () => {
     mgr.cancelAllInjections()                    // 别把定时器留给下一条用例
   })
 })
+
+describe('后台 Agent（B1）', () => {
+  it('完成回调在空闲时驱动一轮（submit + echo）', async () => {
+    const { mgr } = makeManager()
+    const finish = mgr.startBackgroundAgent('查资料')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+
+    finish('结果文本')
+
+    expect(submit).toHaveBeenCalledTimes(1)
+    expect(submit.mock.calls[0]![0]).toContain('🔔 后台 Agent "查资料" 完成')
+    expect(submit.mock.calls[0]![0]).toContain('结果文本')
+  })
+
+  it('完成回调在忙碌时折进当前回合（steer）', () => {
+    const { mgr } = makeManager()
+    vi.spyOn(mgr, 'isBusy').mockReturnValue(true)
+    const steer = vi.spyOn(mgr, 'steer').mockImplementation(() => {})
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+
+    mgr.startBackgroundAgent('查资料')('结果文本')
+
+    expect(steer).toHaveBeenCalledTimes(1)
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('登记期间 hasPendingInjection 为 true，完成后为 false', () => {
+    const { mgr } = makeManager()
+    expect(mgr.hasPendingInjection()).toBe(false)
+    const finish = mgr.startBackgroundAgent('活儿')
+    expect(mgr.hasPendingInjection()).toBe(true)
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    finish('done')
+    expect(mgr.hasPendingInjection()).toBe(false)
+  })
+
+  it('reset() 之后完成回调不投递（口子 1：/clear 不该收到旧会话的产出）', () => {
+    const { mgr } = makeManager()
+    const finish = mgr.startBackgroundAgent('活儿')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    const steer = vi.spyOn(mgr, 'steer').mockImplementation(() => {})
+
+    mgr.reset()
+    finish('本该被丢弃的结果')
+
+    expect(submit).not.toHaveBeenCalled()
+    expect(steer).not.toHaveBeenCalled()
+  })
+
+  it('cancelAllInjections() 之后完成回调不投递（口子 2：release/delete）', () => {
+    const { mgr } = makeManager()
+    const finish = mgr.startBackgroundAgent('活儿')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+
+    mgr.cancelAllInjections()
+    finish('本该被丢弃的结果')
+
+    expect(submit).not.toHaveBeenCalled()
+  })
+
+  it('cancelWakeup() 不误伤后台登记（单槽语义只管唤醒）', () => {
+    const { mgr } = makeManager()
+    mgr.startBackgroundAgent('活儿')
+    mgr.cancelWakeup()
+    expect(mgr.hasPendingInjection()).toBe(true)
+  })
+
+  it('并发上限：第 6 个 throw，且消息带上限数字', () => {
+    const { mgr } = makeManager()
+    for (let i = 0; i < 5; i++) mgr.startBackgroundAgent(`活儿${i}`)
+    expect(() => mgr.startBackgroundAgent('第六个')).toThrow(/5/)
+  })
+
+  it('完成一个后腾出名额（上限是「在飞数」而非「累计数」）', () => {
+    const { mgr } = makeManager()
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    const first = mgr.startBackgroundAgent('活儿0')
+    for (let i = 1; i < 5; i++) mgr.startBackgroundAgent(`活儿${i}`)
+    expect(() => mgr.startBackgroundAgent('第六个')).toThrow()
+
+    first('done')                                    // 腾出一个名额
+    expect(() => mgr.startBackgroundAgent('补位')).not.toThrow()
+  })
+
+  it('waitUntilQuiescent：只有后台登记（无回合、无唤醒）时也不返回', async () => {
+    const { mgr } = makeManager()
+    const finish = mgr.startBackgroundAgent('活儿')
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+
+    let settled = false
+    const p = mgr.waitUntilQuiescent(Date.now() + 5000).then(() => { settled = true })
+
+    await new Promise((r) => setTimeout(r, 400))
+    expect(settled).toBe(false)   // 后台还在飞 —— 不许判静默
+
+    finish('done')
+    await p
+    expect(settled).toBe(true)
+  })
+})

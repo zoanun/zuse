@@ -313,6 +313,7 @@ export class SessionManager {
       canUseTool: this.canUseTool,
       setTodos: (todos) => this.setTodos(todos),
       scheduleWakeup: (delayMs, message) => this.scheduleWakeup(delayMs, message),
+      startBackgroundAgent: (description) => this.startBackgroundAgent(description),
     }
     for (const make of SESSION_CAPABILITY_TOOLS) {
       const tool = make(capabilityCtx)
@@ -1337,6 +1338,32 @@ export class SessionManager {
   setTodos(todos: TodoItemLite[]): void {
     this.todos = todos
     this.emit({ type: 'todos-update', todos })
+  }
+
+  /**
+   * 登记一个后台 Agent（B1），返回「完成时调用」的结果回调。
+   *
+   * 登记的意义有二：让会话静默判据（waitUntilQuiescent → cron 定稿 run 记录）看得见
+   * 它在飞；以及让生命周期作废（reset/release/delete）能丢掉它的产出。
+   *
+   * 超并发上限时 **throw** —— 调用方（Agent 工具的后台分支）会把它冒给 core 的
+   * runOneTool，转成 isError 回喂模型，与 B2 唤醒链到顶时同一套路数：如实告知，不静默吞。
+   */
+  startBackgroundAgent(description: string): (result: string) => void {
+    if (this.countInjections('background') >= MAX_BACKGROUND_AGENTS) {
+      throw new Error(`本会话已有 ${MAX_BACKGROUND_AGENTS} 个后台 Agent 在跑，等一个完成再派新的。`)
+    }
+    const token = Symbol('background')
+    // cancel 刻意为空：按设计只丢弃投递、不中止在飞的子代理 —— 真中止要把可取消句柄
+    // 从 packages/tools（TUI 与 server 共用）一路传出来，而子代理自带 10 轮上限，不值。
+    this.pendingInjections.set(token, { kind: 'background', cancel: () => {} })
+    return (result: string) => {
+      // 先摘登记再投递，同 scheduleWakeup 的到点回调（那里写了为什么这样安全）。
+      if (!this.pendingInjections.delete(token)) return  // 已被作废：产出无处可去
+      deliverToSession(this, `🔔 后台 Agent "${description}" 完成:\n${result}`, {
+        onError: (m) => this.emit({ type: 'warning', message: `后台 Agent 通知投递失败:${m}` }),
+      })
+    }
   }
 
   /**
