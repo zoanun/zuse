@@ -27,7 +27,7 @@
  * 详见 docs/superpowers/specs/2026-06-06-zuse-shell-snapshot-design.md。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, statSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -127,6 +127,57 @@ export function snapshotBuilderScript(opts: SnapshotScriptOptions): string {
   return [...head, ...body, ...tail].join('\n')
 }
 
+/** 快照文件名：早期是 `snapshot-<pid>.sh`，现在是 `snapshot-<label>-<pid>.sh`，两种都认。 */
+const SNAPSHOT_NAME_RE = /^snapshot-(?:bash-|zsh-)?(\d+)\.sh$/
+
+/**
+ * 那个 PID 还活着吗？无从判断时一律当作「活着」——宁可多留一个 96KB 的文件，
+ * 也不能删掉某个进程正在 source 的快照。
+ */
+export function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return true
+  try {
+    process.kill(pid, 0)   // 信号 0 = 只探测存在性，不真发信号
+    return true
+  } catch (err) {
+    // ESRCH = 查无此进程（可以删）；EPERM = 进程在、只是不归我们管（留着）。
+    return (err as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+/**
+ * 清掉死进程留下的快照。
+ *
+ * 文件名带 PID，而快照只在**那个进程存活期间**被 source（见 ensureShellSnapshot 的进程级
+ * 记忆化）——进程一退出，那份 ~96KB 的文件就是垃圾。此前从不清理，实测本机累到 278 个 / 18MB。
+ *
+ * 判据是 PID 存活而非文件年龄：长跑的 daemon 会持有一份很老的快照，按年龄删会把它正在
+ * 用的文件删掉。PID 被系统回收给别的进程只会让我们保守地多留一个文件，不会误删。
+ *
+ * best-effort：任何一步失败都直接放弃，绝不让清理影响 Bash 工具本身。
+ */
+export function sweepDeadSnapshots(dir: string, keep?: string): number {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return 0
+  }
+  let removed = 0
+  for (const name of names) {
+    const m = SNAPSHOT_NAME_RE.exec(name)
+    if (!m) continue
+    const full = path.join(dir, name)
+    if (keep && path.resolve(full) === path.resolve(keep)) continue
+    if (isPidAlive(Number(m[1]))) continue
+    try {
+      unlinkSync(full)
+      removed++
+    } catch { /* 别人在用 / 权限不足 —— 跳过 */ }
+  }
+  return removed
+}
+
 /** 记忆化的进程级快照构建结果（首次构建后复用同一 Promise）。 */
 let cached: Promise<string | null> | undefined
 
@@ -154,6 +205,9 @@ function buildSnapshot(shell: string | true, label: string): Promise<string | nu
       const dir = path.join(homedir(), '.zuse', 'shell-snapshots')
       mkdirSync(dir, { recursive: true })
       const fileRaw = path.join(dir, `snapshot-${label}-${process.pid}.sh`)
+      // 顺手清掉死进程的旧快照。挂在这里而不是另起一个定时器：本函数每进程只跑一次
+      // （ensureShellSnapshot 记忆化），恰好是「一个新进程开始用快照」的时刻，天然的扫除点。
+      sweepDeadSnapshots(dir, fileRaw)
       const snapshotFile = toPosixPath(fileRaw)
       const configRaw = configFileFor(label)
       const script = snapshotBuilderScript({
