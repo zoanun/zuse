@@ -229,10 +229,22 @@ spec 的体量。按 description 文本匹配是廉价替代，但 **description
 主对话里的 `🔔 后台 Agent "…" 完成:` 气泡已经把「完成了」说清楚，面板只是辅助视图，
 所以这个遗留不阻塞本特性。
 
+## 8.2 已知遗留：TUI 没有对应机制
+
+「待投递」这个抽象其实是**会话级**概念，但它住在 `packages/server`。TUI 侧
+（`packages/tui/src/hooks/useConversation.ts`）仍是单槽 `wakeupTimerRef` + 一个不登记的
+后台通知回调，而它的 `clear()`（/clear 开新对话）**不碰** `wakeupTimerRef` —— 也就是说
+§2 的口子 1 在 TUI 上原样存在：/clear 之后旧对话的 `⏰ 定时唤醒` 会打进新对话。
+
+本分支只改 server。**不要把本特性理解为「两个 surface 都修好了」。** 彻底的做法是把
+`PendingInjection` 表连同 `hasPendingInjection`/`cancelInjections` 下沉到 `packages/core`
+（挨着 `Conversation`），`SessionManager` 与 `useConversation` 各自接线 —— 那是另一个 spec。
+
 ## 9. 非目标
 
 - 不做后台子代理的真中止（§5）
 - 不修子代理面板的状态（§8.1，另开 spec）
+- 不同步 TUI（§8.2，另开 spec）
 - 不做后台子代理的持久化：daemon 重启即失效，与 B2 唤醒一致（排程归 cron 管）
 - 不动前端：投递走既有 `deliverToSession`，Web 看到的就是一条普通用户气泡/插话，无需新组件
 - 不动 `SUB_AGENT_MAX_TURNS`、不动子代理的权限/worktree 逻辑
