@@ -479,22 +479,33 @@ describe('SessionService — small-model title', () => {
 // ---------------------------------------------------------------------------
 
 describe('SessionService — 自唤醒生命周期', () => {
-  it('release() 取消待触发的自唤醒 —— 会话已离开 registry，那一轮的产出无处可去', async () => {
+  // 下面两条断言的是**效果**（产出确实没投出去），不是「某个取消方法被调用过」。
+  // 后者是钉在具体实现名上的白盒 spy：待投递机制从 cancelWakeup 泛化到
+  // cancelAllInjections 时，那种写法只会静默失效或误红，而不会说出真正要说的话。
+  it('release() 作废全部待投递 —— 会话已离开 registry，那些产出无处可去', async () => {
     const svc = new SessionService({ dir: tempDir(), cwd: '/work', createSession: fakeCreateSessionFactory() })
     const { id } = await svc.create({})
     const mgr = (await svc.getOrLoad(id))!
-    const cancel = vi.spyOn(mgr, 'cancelWakeup')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    const finish = mgr.startBackgroundAgent('活儿')
+
     svc.release(id)
-    expect(cancel).toHaveBeenCalled()
+    finish('本该被丢弃的结果')
+
+    expect(submit).not.toHaveBeenCalled()
   })
 
-  it('delete() 同样取消 —— 会话文件都删了', async () => {
+  it('delete() 同样作废 —— 会话文件都删了', async () => {
     const svc = new SessionService({ dir: tempDir(), cwd: '/work', createSession: fakeCreateSessionFactory() })
     const { id } = await svc.create({})
     const mgr = (await svc.getOrLoad(id))!
-    const cancel = vi.spyOn(mgr, 'cancelWakeup')
+    const submit = vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    const finish = mgr.startBackgroundAgent('活儿')
+
     await svc.delete(id)
-    expect(cancel).toHaveBeenCalled()
+    finish('本该被丢弃的结果')
+
+    expect(submit).not.toHaveBeenCalled()
   })
 
   it('release() 之后待触发的唤醒确实不再触发（不只是调了 cancel）', async () => {

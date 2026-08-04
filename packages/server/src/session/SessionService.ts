@@ -196,10 +196,11 @@ export class SessionService {
    * 之后 getOrLoad(id) 仍能从盘重建（drill-down 回看）。
    */
   release(id: string): void {
-    // 会话即将离开 registry：待触发的自唤醒必须一起取消。否则它到点会驱动一整轮
-    // 既不落盘（autosave 已退订）也送不到任何客户端（无订阅者）的回合。
+    // 会话即将离开 registry：所有待投递（自唤醒、在飞的后台 Agent）必须一起作废。
+    // 否则它们到点会驱动一整轮既不落盘（autosave 已退订）也送不到任何客户端
+    // （无订阅者）的回合。
     // 这也是内存上的承重点：定时器闭包捕获着整个 manager，clearTimeout 之后才可回收。
-    this.registry.get(id)?.cancelWakeup()
+    this.registry.get(id)?.cancelAllInjections()
     // Stop autosave first so no turn-end fired after this can re-persist the file.
     this.unsubs.get(id)?.()
     this.unsubs.delete(id)
