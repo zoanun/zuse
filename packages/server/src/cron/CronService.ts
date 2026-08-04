@@ -6,6 +6,8 @@ import { CronScheduler, isValidCron } from './CronScheduler.js'
 export interface CronServiceSessions {
   getOrLoad(id: string): Promise<{ getState(): { messages: unknown[] } } | null>
   release(id: string): void
+  /** 该 id 是否已在内存中（用于只读路径判断「是不是我捞进来的」）。 */
+  isLive(id: string): boolean
 }
 
 export interface CronServiceDeps {
@@ -85,8 +87,16 @@ export class CronService {
     if (!run) return null
     let messages: CronRunDetail['messages'] = []
     if (this.deps.sessions && run.sessionId) {
+      // 「我捞的我才放」：release() 是生命周期终点（作废全部待投递 + 退订 autosave + 逐出
+      // registry），不是「用完归还」。而这条是**纯读**路径 —— 若这次执行还在跑（fire() 正
+      // 阻塞在 waitUntilQuiescent 上），会话此刻就是 live 的，无条件 release 等于用户点开
+      // 「运行详情」就把它掐了：整条唤醒链没了，在飞的后台 Agent 产出也全丢。
+      const wasLive = this.deps.sessions.isLive(run.sessionId)
       const mgr = await this.deps.sessions.getOrLoad(run.sessionId)
-      if (mgr) { messages = mgr.getState().messages as CronRunDetail['messages']; this.deps.sessions.release(run.sessionId) }
+      if (mgr) {
+        messages = mgr.getState().messages as CronRunDetail['messages']
+        if (!wasLive) this.deps.sessions.release(run.sessionId)
+      }
     }
     return { run, messages }
   }

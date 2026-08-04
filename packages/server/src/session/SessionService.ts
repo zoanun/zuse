@@ -190,16 +190,26 @@ export class SessionService {
     await deleteSession(this.dir, id)
   }
 
+  /** 该 id 此刻是否已在 registry 里（live）。只读路径用它判断「这个会话是不是我捞进来的」。 */
+  isLive(id: string): boolean {
+    return this.registry.get(id) !== undefined
+  }
+
   /**
    * 释放一个 live 会话：停 autosave + 从 registry 移除，但**保留**磁盘文件（区别于 delete）。
    * cron 每次 fire 跑完调用它，避免每次触发都往 registry 永久堆一个 SessionManager。
    * 之后 getOrLoad(id) 仍能从盘重建（drill-down 回看）。
+   *
+   * **这是会话的生命周期终点，不是「用完归还」**：它会作废全部待投递。只读路径若对一个
+   * 本来就 live 的会话调它，等于把别人正在用的会话拆了 —— 先用 isLive() 判断（见 CronService）。
    */
   release(id: string): void {
     // 会话即将离开 registry：所有待投递（自唤醒、在飞的后台 Agent）必须一起作废。
     // 否则它们到点会驱动一整轮既不落盘（autosave 已退订）也送不到任何客户端
     // （无订阅者）的回合。
-    // 这也是内存上的承重点：定时器闭包捕获着整个 manager，clearTimeout 之后才可回收。
+    // 内存上只对唤醒是承重点：定时器闭包捕获着整个 manager，clearTimeout 之后才可回收。
+    // 在飞的后台 Agent 不同 —— 作废只是丢掉它的产出，manager 仍被子代理那侧的 deps 闭包
+    // 吊着，直到它自己跑完（自带 10 轮上限）。别指望这一句能把内存放掉。
     this.registry.get(id)?.cancelAllInjections()
     // Stop autosave first so no turn-end fired after this can re-persist the file.
     this.unsubs.get(id)?.()
