@@ -2,22 +2,31 @@
 :root {
   --sans: "DengXian", "等线", -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
   --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
+  /* 正文栏宽。对话是一列长文本，铺满宽屏会让每行走太远、眼睛找不到下一行的开头 ——
+     Claude / ChatGPT 都把正文限在 45rem 上下并居中，这里取同一量级。 */
+  --col: 46rem;
 }
+/* 正文栏的左右留白：窄屏退化成固定 20px，宽屏把多出来的宽度对半分掉。
+   写成 padding 而不是给内层套一个定宽容器 —— 滚动条仍在窗口边缘，不会跟着内容内缩。 */
+.gutter { padding-inline: max(20px, calc((100% - var(--col)) / 2)); }
+
+/* 明暗两套底色都刻意低饱和、近白/近黑：界面本身不该有颜色，颜色留给内容和唯一的强调色。
+   （旧配色是 #E8E3D8 那种偏黄的米色，配冷紫强调显脏。） */
 :root[data-theme="light"] {
-  --ground: #E8E3D8; --surface: #FFFFFF; --surface-2: #F3F1EA; --user-bubble: #EEEBE3;
-  --line: #E0DBD0; --text: #2A2824; --muted: #6E6A61; --faint: #A29D90;
+  --ground: #F7F6F3; --surface: #FFFFFF; --surface-2: #F1F0EC; --user-bubble: #F1F0EC;
+  --line: #E9E7E2; --text: #232220; --muted: #6E6B65; --faint: #A5A19A;
   --accent: #6B57E0; --accent-2: #8B7BF0;
-  --accent-soft: rgba(107,87,224,0.10); --accent-border: rgba(107,87,224,0.28); --accent-glow: rgba(107,87,224,0.28);
-  --on-accent: #FFFFFF; --shadow: rgba(40,38,34,0.10); --header-bg: rgba(255,255,255,0.82);
-  --good: #1F9D63; --warn: #B0791C; --bad: #D8453B;
+  --accent-soft: rgba(107,87,224,0.09); --accent-border: rgba(107,87,224,0.24); --accent-glow: rgba(107,87,224,0.22);
+  --on-accent: #FFFFFF; --shadow: rgba(30,29,26,0.06); --header-bg: rgba(255,255,255,0.86);
+  --good: #1F9D63; --warn: #A97C24; --bad: #D8453B;
 }
 :root[data-theme="dark"] {
-  --ground: #161513; --surface: #232220; --surface-2: #2D2B27; --user-bubble: #343230;
-  --line: #393631; --text: #ECEAE4; --muted: #A39E94; --faint: #6E6A61;
+  --ground: #191918; --surface: #212120; --surface-2: #2B2A28; --user-bubble: #2E2D2A;
+  --line: #33322E; --text: #ECEAE5; --muted: #A29E96; --faint: #6F6B64;
   --accent: #9A8CFF; --accent-2: #B7A0FF;
-  --accent-soft: rgba(154,140,255,0.14); --accent-border: rgba(154,140,255,0.34); --accent-glow: rgba(154,140,255,0.38);
-  --on-accent: #1A1726; --shadow: rgba(0,0,0,0.40); --header-bg: rgba(35,34,32,0.82);
-  --good: #5BD0A0; --warn: #E5B567; --bad: #F0827A;
+  --accent-soft: rgba(154,140,255,0.13); --accent-border: rgba(154,140,255,0.30); --accent-glow: rgba(154,140,255,0.30);
+  --on-accent: #1A1726; --shadow: rgba(0,0,0,0.35); --header-bg: rgba(33,33,32,0.86);
+  --good: #5BD0A0; --warn: #D8AC63; --bad: #F0827A;
 }
 html, body, #root { height: 100%; }
 body { font-family: var(--sans); color: var(--text); background: var(--ground); -webkit-font-smoothing: antialiased; }
@@ -26,17 +35,17 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .sidebar { width: 256px; flex: none; display: flex; flex-direction: column; gap: 14px; padding: 18px 14px; border-right: 1px solid var(--line); background: var(--ground); }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 650; }
 .mark { width: 24px; height: 24px; border-radius: 7px; flex: none; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-style: italic; font-size: 14px; box-shadow: 0 0 14px var(--accent-glow); }
-.eyebrow { font: 600 9px/1 var(--mono); letter-spacing: 0.22em; color: var(--faint); text-transform: uppercase; padding: 4px 7px; border: 1px solid var(--line); border-radius: 6px; }
-.side-btn { display: flex; align-items: center; gap: 9px; width: 100%; justify-content: flex-start; background: transparent; border: 1px solid var(--line); color: var(--text); font-weight: 600; font-size: 13.5px; letter-spacing: 0.05em; padding: 10px 13px; border-radius: 12px; cursor: pointer; }
+.eyebrow { font: 600 9px/1 var(--mono); letter-spacing: 0.22em; color: var(--faint); text-transform: uppercase; padding: 4px 2px; border: 0; }
+.side-btn { display: flex; align-items: center; gap: 9px; width: 100%; justify-content: flex-start; background: transparent; border: 1px solid transparent; color: var(--text); font-weight: 600; font-size: 13.5px; letter-spacing: 0.05em; padding: 10px 13px; border-radius: 12px; cursor: pointer; }
 .side-btn:hover { background: var(--surface-2); }
 .side-note { font-size: 12px; color: var(--faint); line-height: 1.55; padding: 0 2px; }
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .session-list { list-style: none; display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
 .session-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px; cursor: pointer; color: var(--muted); }
 .session-item:hover { background: var(--surface-2); color: var(--text); }
-.session-item.active { background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--text); }
+.session-item.active { background: var(--surface-2); border: 1px solid transparent; color: var(--text); font-weight: 600; }
 .session-title { flex: 1; min-width: 0; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; background: transparent; color: var(--faint); font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; opacity: 0.5; transition: opacity .15s, color .15s, background .15s; }
+.session-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; background: transparent; color: var(--faint); font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s, background .15s; }
 .session-item:hover .session-del, .session-del:focus-visible { opacity: 1; }
 .session-del:hover { color: var(--bad); background: var(--surface-2); }
 .session-confirm { display: flex; gap: 4px; flex: none; }
@@ -55,15 +64,17 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .ckpt-btn { padding: 4px 9px; font-size: 12px; border-radius: 8px; flex: none; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.main-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 18px; border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(8px); }
-.mh-left { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
+.main-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--header-bg); backdrop-filter: blur(8px); }
+.mh-left { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
 .mh-brand { display: none; }
-.chip { display: inline-flex; align-items: center; font: 500 11px/1 var(--mono); color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px; white-space: nowrap; }
+/* Header 里的状态项从「四个描边胶囊」降成纯文字：它们是常驻的次要信息，
+   给每项都套一个框会让顶栏比对话本身还抢眼。仅保留连接状态的小圆点作为唯一色彩。 */
+.chip { display: inline-flex; align-items: center; font: 500 11.5px/1 var(--mono); color: var(--faint); background: none; border: 0; border-radius: 0; padding: 4px 2px; white-space: nowrap; }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; background: var(--faint); }
-.chip.live .dot { background: var(--good); box-shadow: 0 0 7px var(--good); }
+.chip.live .dot { background: var(--good); }
 .chip.warn .dot { background: var(--warn); }
 .chip.down .dot { background: var(--bad); }
-.icon-btn { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 999px; width: 30px; height: 30px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+.icon-btn { background: transparent; border: 0; color: var(--faint); border-radius: 8px; width: 30px; height: 30px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .menu-btn { display: none; }
 .backdrop { display: none; }
@@ -82,15 +93,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg-error { color: var(--bad); font-size: 12.5px; margin-top: 12px; min-height: 1em; }
 
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.stream { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 14px; width: 100%; padding: 30px 7% 26px; }
-/* A user turn starts a new exchange — give it extra separation above the tight 14px
-   baseline (so assistant→assistant, incl. consecutive tool-call turns, stays compact
-   while user turns still read as a fresh turn). */
-.msg-anchor:has(.msg.you) { margin-top: 12px; }
+.stream {
+  flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 18px; width: 100%;
+  padding-block: 36px 28px;
+  padding-inline: max(20px, calc((100% - var(--col)) / 2));
+}
+/* A user turn starts a new exchange — give it extra separation above the 18px baseline
+   (so assistant→assistant, incl. consecutive tool-call turns, stays compact while user
+   turns still read as a fresh turn). 去框化之后分组全靠这个间距，故比原先更大。 */
+.msg-anchor:has(.msg.you) { margin-top: 26px; }
 .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 .msg.agent { align-self: stretch; max-width: 100%; }
 .msg.you { align-self: flex-end; max-width: 80%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; opacity: 0.5; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
+.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
 .msg.you:hover .msg-revert, .msg-revert:focus-visible { opacity: 1; }
 .msg-revert:hover { color: var(--text); background: var(--surface-2); }
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; }
@@ -117,7 +133,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .share-go { background: var(--accent); color: #fff; border-color: var(--accent); }
 .share-go:disabled { opacity: 0.5; cursor: default; }
 .share-cancel { background: transparent; color: var(--text); }
-.msg.you .bubble { background: var(--user-bubble); border-radius: 16px; padding: 7px 14px; font-size: 15px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.msg.you .bubble { background: var(--user-bubble); border-radius: 18px; padding: 10px 16px; font-size: 15.5px; line-height: 1.65; color: var(--text); white-space: pre-wrap; word-break: break-word; }
 /* Image attachments on a user bubble: a wrap grid of thumbnails, each with a route badge and
    (for parsed images) a collapsible "what the model saw" description. Sits above the text. */
 .msg-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
@@ -145,14 +161,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 /* Transient "queued steer" previews pinned just above the composer: immediate feedback for a mid-turn
    send, before the server echoes it into the transcript at its real position. Dimmed + indented so it
    reads as pending/queued, not a committed message. Clears when the server echoes it (or on abort). */
-/* 7% side inset matches .stream / .composer-wrap so previews line up with the chat content column
+/* 与 .stream / .composer-wrap 同一条正文栏内边距，预览才和对话正文对齐
    (not hugging the window edge); the inner 4px matches .msg-row so the tag aligns with message text. */
-.pending-steers { display: flex; flex-direction: column; gap: 4px; padding: 6px 7% 12px; }
+.pending-steers { display: flex; flex-direction: column; gap: 4px; padding-block: 6px 12px; padding-inline: max(20px, calc((100% - var(--col)) / 2)); }
 .pending-steer { display: flex; align-items: baseline; gap: 8px; padding-left: 4px; opacity: 0.65; }
 .pending-steer-tag { flex: none; font-size: 11px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
 .pending-steer-text { font-size: 14px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
 .pending-steer-attach { font-size: 12px; color: var(--muted, var(--fg)); margin-left: 6px; }
-.text { font-size: 15px; line-height: 1.72; word-break: break-word; color: var(--text); }
+.text { font-size: 15.5px; line-height: 1.75; word-break: break-word; color: var(--text); }
 .text h1, .text h2, .text h3, .text h4 { line-height: 1.3; margin: 16px 0 8px; font-weight: 650; }
 .text h1 { font-size: 1.4em; } .text h2 { font-size: 1.22em; } .text h3 { font-size: 1.08em; }
 .text p { margin: 9px 0; }
@@ -190,40 +206,43 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .hljs-number, .hljs-literal { color: var(--warn); }
 .hljs-comment { color: var(--faint); font-style: italic; }
 
-.tool { align-self: stretch; max-width: 100%; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; font-family: var(--mono); font-size: 12.5px; }
+/* 去框化：工具调用不再是卡片，而是「左侧一条细竖线 + 缩进」的从属块 —— 层次靠缩进与
+   字重表达，不靠边框。满屏卡片会让每个工具调用都抢主文本的注意力，而它们多数时候只是过程。 */
+.tool { align-self: stretch; max-width: 100%; background: none; border: 0; border-left: 2px solid var(--line); border-radius: 0; padding: 1px 0 1px 14px; font-family: var(--mono); font-size: 13px; }
 /* Tool cards get a uniform 14px gap from adjacent content WITHIN a message; cross-message
    gap comes from .stream's 14px gap. (The old `.tool { margin: 14px 0 }` stacked on top of
    the stream gap, so two tools in separate messages had ~54px while two in one message had 14px.) */
-.text-wrap > * + .tool, .text-wrap > .tool + * { margin-top: 14px; }
-.tool .head { color: var(--accent); font-weight: 600; }
-/* Negative margins make the button fill the whole card (eating .tool's padding), so the
-   entire row is the click target — not just the text line. padding restores the inset. */
-button.head { display: block; box-sizing: border-box; width: calc(100% + 26px); margin: -11px -13px; padding: 11px 13px; background: none; border: 0; border-radius: 12px; font-family: inherit; font-size: inherit; text-align: left; cursor: pointer; transition: background .12s; }
-.tool.open button.head { margin-bottom: 4px; border-radius: 12px 12px 0 0; }   /* leave room for the body below */
-button.head:hover { background: var(--surface); }
-.tool .caret { display: inline-block; width: 1.1em; margin-right: 1px; opacity: 0.55; font-weight: 400; }
-button.head:hover .caret { opacity: 1; }
+.text-wrap > * + .tool, .text-wrap > .tool + * { margin-top: 10px; }
+/* 工具名不再上强调色：一屏十几个工具调用全是紫的，强调色就不强调了。
+   它们是过程信息，默认取 muted，hover 才提到正文色。 */
+.tool .head { color: var(--muted); font-weight: 600; }
+button.head { display: block; box-sizing: border-box; width: 100%; margin: 0; padding: 2px 0; background: none; border: 0; border-radius: 6px; font-family: inherit; font-size: inherit; text-align: left; cursor: pointer; transition: color .12s; }
+button.head:hover { background: none; color: var(--text); }
+button.head:hover .head, button.head:hover .tool-file { color: var(--text); }
+.tool .caret { display: inline-block; width: 1.1em; margin-right: 1px; opacity: 0.45; font-weight: 400; }
+button.head:hover .caret { opacity: 0.9; }
 .tool-err { margin-left: 8px; color: var(--bad); font-weight: 700; }
-/* Full-width top divider separating the body from the collapse footer; label stays right. */
-.tool-collapse { display: block; width: calc(100% + 26px); margin: 9px -13px 0; padding: 9px 13px 0; background: none; border: 0; border-top: 1px solid var(--line); color: var(--muted); font: inherit; font-size: 11px; text-align: right; cursor: pointer; }
+.tool-collapse { display: block; width: 100%; margin: 6px 0 0; padding: 0; background: none; border: 0; color: var(--faint); font: inherit; font-size: 11px; text-align: right; cursor: pointer; }
 .tool-collapse:hover { color: var(--text); }
-.tool .args { color: var(--muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
-.tool .result { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+.tool .args { color: var(--muted); margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+.tool .result { margin-top: 7px; padding-top: 0; border-top: 0; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
 .tool .result.err { color: var(--bad); }
 .tool-file { color: var(--muted); font-weight: 400; margin-left: 8px; }
-.tool-tag { margin-left: 8px; padding: 1px 7px; font: 600 10px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--accent); background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 6px; vertical-align: 1px; }
-.edit-diff { margin: 7px 0 0; padding: 8px 0; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+.tool-tag { margin-left: 8px; padding: 1px 7px; font: 600 10px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--faint); background: var(--surface-2); border: 0; border-radius: 6px; vertical-align: 1px; }
+.edit-diff { margin: 7px 0 0; padding: 8px 0; background: var(--surface-2); border: 0; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
 .edit-diff .dl { display: flex; padding: 0 10px; white-space: pre; }
 .edit-diff .dl-sign { flex: none; width: 1.2em; opacity: 0.7; user-select: none; }
 .edit-diff .dl-text { flex: 1; }
 .edit-diff .dl.add { background: rgba(31,157,99,0.16); color: var(--good); }
 .edit-diff .dl.del { background: rgba(216,69,59,0.15); color: var(--bad); }
 .edit-diff .dl.ctx { color: var(--muted); }
-.write-body, .bash-cmd { margin: 7px 0 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.write-body, .bash-cmd { margin: 7px 0 0; padding: 8px 11px; background: var(--surface-2); border: 0; border-radius: 8px; overflow-x: auto; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .bash-cmd { font-family: var(--mono); }
 .bash-cmd::before { content: '$ '; color: var(--good); user-select: none; }
-.note { align-self: center; font: 500 12px/1.45 var(--mono); color: var(--faint); text-align: center; }
-.note.warn { color: var(--warn); } .note.bad { color: var(--bad); } .note.live { color: var(--accent); }
+/* 系统旁白（故障切换、已中断、压缩提示…）：这类信息重要性最低但出现频率最高，
+   居中 + 彩色 = 一屏最扎眼的东西。降成极小的灰字，warn/bad 只在色相上留一点线索。 */
+.note { align-self: center; font: 500 11.5px/1.5 var(--mono); color: var(--faint); text-align: center; opacity: 0.85; }
+.note.warn { color: var(--muted); } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
 /* Compaction summary: a collapsible card (collapsed by default, like a tool/think block). The
    body is the dimmed italic left-aligned summary; the head toggles it. */
 .note.summary { align-self: stretch; text-align: left; margin: 2px 0; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
@@ -248,16 +267,16 @@ button.head:hover .caret { opacity: 1; }
 .thinking .dots i:nth-child(2) { animation-delay: 0.16s; } .thinking .dots i:nth-child(3) { animation-delay: 0.32s; }
 @keyframes bob { 0%, 80%, 100% { transform: translateY(0); opacity: 0.45; } 40% { transform: translateY(-4px); opacity: 1; } }
 
-.perm-wrap { padding: 0 7%; }
+.perm-wrap { padding-inline: max(20px, calc((100% - var(--col)) / 2)); }
 .perm { background: var(--surface); border: 1px solid var(--accent-border); border-radius: 14px; padding: 14px; box-shadow: 0 0 0 3px var(--accent-soft); margin-bottom: 14px; }
 .perm .q { font-size: 14px; font-weight: 650; margin-bottom: 5px; }
 .perm .spec { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-word; margin-bottom: 13px; }
 .perm .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .perm .actions button { padding: 8px 16px; font-size: 13px; }
 
-.todos { margin: 0 7% 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; max-height: 36vh; overflow-y: auto; }
-.todos .th { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 9px; display: flex; justify-content: space-between; }
-.todos .ti { display: flex; gap: 9px; align-items: center; font-size: 14px; line-height: 1.5; margin: 5px 0; color: var(--text); }
+.todos { margin-inline: max(20px, calc((100% - var(--col)) / 2)); margin-bottom: 10px; background: none; border: 0; border-left: 2px solid var(--line); border-radius: 0; padding: 2px 0 2px 14px; max-height: 36vh; overflow-y: auto; }
+.todos .th { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 7px; display: flex; gap: 10px; justify-content: flex-start; }
+.todos .ti { display: flex; gap: 9px; align-items: center; font-size: 13.5px; line-height: 1.5; margin: 4px 0; color: var(--text); }
 .todos .ti .cbx { margin-top: 1px; }
 .todos .ti.todo { color: var(--muted); }
 .todos .ti.doing { font-weight: 650; }
@@ -272,8 +291,8 @@ button.head:hover .caret { opacity: 1; }
 .ag-mark.ag-run { width: 9px; height: 9px; border-radius: 50%; background: var(--accent, var(--good)); animation: ag-pulse 1.1s infinite ease-in-out; }
 @keyframes ag-pulse { 0%, 100% { opacity: 0.35; transform: scale(0.85); } 50% { opacity: 1; transform: scale(1); } }
 
-.composer-wrap { width: 100%; padding: 0 7% 18px; }
-/* Slash-command autocomplete menu, pinned above the composer (same 7% inset as chat content). */
+.composer-wrap { width: 100%; padding-block: 0 20px; padding-inline: max(20px, calc((100% - var(--col)) / 2)); }
+/* Slash-command autocomplete menu, pinned above the composer (随 composer-wrap 的正文栏内边距)。 */
 .slash-menu { list-style: none; margin: 0 0 8px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 4px 18px var(--shadow); max-height: 260px; overflow-y: auto; }
 .slash-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 9px; cursor: pointer; }
 .slash-item.active, .slash-item:hover { background: var(--surface-2); }
@@ -287,9 +306,9 @@ button.head:hover .caret { opacity: 1; }
 .stop-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; border: none; display: flex; align-items: center; justify-content: center; flex: none; background: var(--text); color: var(--surface); transition: transform .08s ease, opacity .15s ease; }
 .stop-btn:hover { opacity: 0.85; }
 .stop-btn:active { transform: scale(0.92); }
-.composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 7px 7px 7px 17px; box-shadow: 0 2px 14px var(--shadow); }
+.composer { display: flex; align-items: flex-end; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 26px; padding: 8px 8px 8px 18px; box-shadow: 0 1px 3px var(--shadow); }
 .composer:focus-within { border-color: var(--accent-border); box-shadow: 0 2px 14px var(--shadow), 0 0 0 3px var(--accent-soft); }
-.composer textarea { flex: 1; resize: none; border: none; background: transparent; padding: 9px 0; min-height: 24px; max-height: 168px; line-height: 1.5; font-size: 15px; }
+.composer textarea { flex: 1; resize: none; border: none; background: transparent; padding: 9px 0; min-height: 24px; max-height: 168px; line-height: 1.6; font-size: 15.5px; }
 .composer textarea:focus { box-shadow: none; }
 .send-btn { width: 36px; height: 36px; border-radius: 50%; padding: 0; font-size: 17px; display: flex; align-items: center; justify-content: center; flex: none; }
 .composer .ghost { align-self: center; padding: 8px 13px; border-radius: 16px; }
@@ -298,7 +317,7 @@ button.head:hover .caret { opacity: 1; }
 .attach-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .attach-btn:disabled { opacity: 0.4; cursor: default; }
 .attach-btn svg { display: block; }
-/* Staged-image tray, pinned just above the composer (same 7% inset via composer-wrap). */
+/* Staged-image tray, pinned just above the composer (随 composer-wrap 的正文栏内边距)。 */
 .attach-tray { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 8px; }
 .attach-thumb { position: relative; width: 60px; height: 60px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); flex: none; }
 .attach-thumb-btn { display: block; width: 100%; height: 100%; padding: 0; border: none; background: none; cursor: pointer; }
@@ -421,8 +440,8 @@ button.head:hover .caret { opacity: 1; }
 .dirpick-actions { display: flex; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .dirpick-ok { flex: 1; }
 /* Model switcher (Header): a clickable chip that opens a provider-grouped picker popover. */
-.chip-btn { cursor: pointer; color: var(--text); }
-.chip-btn:hover { border-color: var(--accent-border); color: var(--accent); }
+.chip-btn { cursor: pointer; color: var(--muted); }
+.chip-btn:hover { color: var(--text); background: var(--surface-2); border-radius: 7px; }
 /* Fixed anchor (portaled to body) positioned from the chip's rect; the popover sits inside it. */
 .model-pop-anchor { position: fixed; z-index: 51; }
 .model-pop { width: 300px; max-width: 92vw; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 32px var(--shadow); padding: 10px; }
