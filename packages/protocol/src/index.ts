@@ -279,6 +279,8 @@ export type SessionEvent =
   | { type: 'checkpoint-recorded'; id: string; messageIndex: number; anchorMessageId: string; label: string }
   | { type: 'memory-notice'; text: string }
   | { type: 'todos-update'; todos: TodoItemLite[] }
+  /** 在飞的后台 Agent 集合变了（派出 / 完成 / 被作废）。与 todos-update 同形：整份覆盖。 */
+  | { type: 'background-agents'; labels: string[] }
   | { type: 'cwd-change'; cwd: string }
   | { type: 'warning'; message: string }
   | { type: 'error'; message: string; category?: string }
@@ -302,6 +304,15 @@ export interface SessionSnapshot {
   contextTokens: number | undefined
   contextWindow: number | undefined
   todos: TodoItemLite[]
+  /**
+   * 在飞的后台 Agent 的展示名（B1）。
+   *
+   * 由服务端的待投递表直接给出，**不是**从会话历史里推断的。前端曾靠「Agent 的 tool-result
+   * 是不是那句 launched-in-background ack」来猜它是否还在跑 —— 那个判据永远等不到翻面：
+   * 完成通知是一条普通用户消息、不是该 tool-use 的结果；而被停止取消掉的那些，连通知都不会有。
+   * 于是面板会永久卡在「1 运行中」，且因为它源自已落盘的历史，刷新也去不掉。
+   */
+  backgroundAgents: string[]
   pendingPermissions: PendingPermissionLite[]
   messageCount: number
   messages: SnapshotMessage[]
