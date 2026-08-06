@@ -20,16 +20,21 @@ import { fakeClient, fakeSnapshotStore } from './testFakes.js'
  *
  * 轮询命中即返回，所以超时给足也不花时间。
  *
- * **interval 别调太小**（这条是实测踩出来的）：一开始用 5ms，结果全量跑时这两个 helper
- * 稳定超时 —— 每秒 200 次异步文件读，在已经饱和的机器上把 IO 队列占住，**反而饿死了它
- * 自己要等的那个后台写盘**。改成 50ms 后连跑三次全绿。轮询太密比太疏更危险，因为它把
- * "等待"变成了"竞争"。
+ * **interval 别调太小**（这条是实测踩出来的，调了两轮）：
+ * - 5ms：全量跑时两个 helper **稳定**超时。每秒 200 次异步文件读把 IO 队列占住，
+ *   **反而饿死了它自己要等的那个后台写盘**。
+ * - 50ms：好很多，但全量跑仍偶发超时。
+ * - 100ms + 18s 上限：最终值。
+ *
+ * 判据是实测的：这个文件**单独跑连过 5 次**、全量并行才闪 —— 说明不是产品竞态，
+ * 是负载下轮询与被等待的写盘在同一个 worker 里抢时间片。轮询太密比太疏更危险，
+ * 因为它把"等待"变成了"竞争"。上限受 vitest 的 testTimeout（20s）约束，故取 18s。
  */
 async function persisted(dir: string, id: string): Promise<void> {
   await vi.waitFor(async () => {
     const rec = await loadSession(dir, id)
     expect(rec).toBeTruthy()
-  }, { timeout: 10_000, interval: 50 })
+  }, { timeout: 18_000, interval: 100 })
 }
 
 /**
@@ -44,7 +49,7 @@ async function titled(dir: string, id: string): Promise<void> {
   await vi.waitFor(async () => {
     const rec = await loadSession(dir, id)
     expect(rec?.titleGenerated).toBe(true)
-  }, { timeout: 10_000, interval: 50 })
+  }, { timeout: 18_000, interval: 100 })
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +462,7 @@ describe('SessionService — small-model title', () => {
     mgr.subscribe((e) => { if (e.type === 'title-changed') titles.push(e.title) })
     await mgr.submit('hello there')
     // 等的是事件到达，不是落盘 —— 用事件本身做条件，别拿落盘当代理信号。
-    await vi.waitFor(() => expect(titles).toEqual(['事件标题']), { timeout: 10_000, interval: 50 })
+    await vi.waitFor(() => expect(titles).toEqual(['事件标题']), { timeout: 18_000, interval: 100 })
 
     expect(titles).toEqual(['事件标题'])
   })
