@@ -25,12 +25,16 @@ describe('collectAgents', () => {
     expect(agents.find((a) => a.id === 'a2')!.status).toBe('failed')
   })
 
-  it('treats a "launched in background" ack as still running', () => {
+  // 这条曾经断言 ack 算「仍在运行」—— 那正是让面板永久卡在「1 运行中」的原因：
+  // 后台子代理的完成通知是一条普通用户消息、不是该 tool-use 的结果，所以这个状态
+  // 永远等不到翻面；被停止取消掉的那些连通知都不会有。而它源自已落盘的历史，刷新也去不掉。
+  // 现在 ack = 工具已返回（done），在飞与否由服务端的待投递表说了算。
+  it("后台派发不进前台表（它的在飞状态由服务端给，混进来会重复显示）", () => {
     const agents = collectAgents([msg([
-      agentUse('a1', 'bg task'),
+      { kind: 'tool-use', id: 'a1', name: 'Agent', input: { description: 'bg task', prompt: 'p', runInBackground: true } },
       toolResult('a1', 'Sub-agent "bg task" launched in background. You will be notified when it finishes.'),
     ])])
-    expect(agents[0]!.status).toBe('doing')
+    expect(agents).toEqual([])
   })
 
   it('pairs result by id even when batched (use, use, result, result)', () => {
@@ -101,5 +105,33 @@ describe('AgentsPanel', () => {
     // a returned agent gets the green check; a waiting one the pulsing run dot
     expect(container.querySelector('.ti.ag.done .ag-mark.ag-done')).not.toBeNull()
     expect(container.querySelector('.ti.ag.doing .ag-mark.ag-run')).not.toBeNull()
+  })
+})
+
+/**
+ * 后台子代理的在飞状态来自服务端（AppState.backgroundAgents ← SessionSnapshot），
+ * 不从消息历史推断。这一组钉的就是这个数据源 —— 用户报过一个「面板永久显示 1 运行中、
+ * 刷新也去不掉」的会话，成因正是拿历史里的 ack 当在飞。
+ */
+describe('AgentsPanel —— 后台子代理来自服务端', () => {
+  const ackMsg = msg([
+    { kind: 'tool-use', id: 'a1', name: 'Agent', input: { description: '慢活', prompt: 'p', runInBackground: true } },
+    toolResult('a1', 'Sub-agent "慢活" launched in background. You will be notified when it finishes.'),
+  ])
+
+  it('服务端说还在跑 → 显示它', () => {
+    render(<AgentsPanel messages={[ackMsg]} backgroundAgents={['慢活']} />)
+    expect(screen.getByText('慢活')).toBeInTheDocument()
+    expect(screen.getByText(/1 运行中/)).toBeInTheDocument()
+  })
+
+  it('服务端说没有在飞的 → 面板整个消失（哪怕历史里那条 ack 还在）', () => {
+    const { container } = render(<AgentsPanel messages={[ackMsg]} backgroundAgents={[]} />)
+    expect(container.firstChild).toBeNull()
+  })
+
+  it('省略该 prop 时按「没有在飞的」处理，不会凭历史臆造一个运行中', () => {
+    const { container } = render(<AgentsPanel messages={[ackMsg]} />)
+    expect(container.firstChild).toBeNull()
   })
 })

@@ -290,7 +290,7 @@ export function Shell() {
             </div>
           ) : null}
           <TodosPanel todos={state.todos} />
-          <AgentsPanel messages={state.messages} />
+          <AgentsPanel messages={state.messages} backgroundAgents={state.backgroundAgents} />
           {state.pendingSteers.length > 0 ? (
             <div className="pending-steers">
               {state.pendingSteers.map((p) => (

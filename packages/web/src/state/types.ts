@@ -37,6 +37,8 @@ export type Connection = 'connecting' | 'live' | 'down'
 export interface AppState {
   messages: Message[]
   todos: TodoItemLite[]
+  /** 在飞的后台 Agent 展示名。服务端待投递表的投影 —— 不从消息历史推断（见 SessionSnapshot.backgroundAgents）。 */
+  backgroundAgents: string[]
   pendingPermissions: PendingPermissionLite[]
   // Mid-turn steers the user just sent, shown as a transient preview pinned at the bottom (NOT real
   // messages — never persisted). Each clears when the server echoes it at its real delivery point

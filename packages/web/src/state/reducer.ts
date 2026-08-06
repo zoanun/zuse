@@ -2,7 +2,7 @@ import type { ServerMessage, SessionEvent, SessionSnapshot, SnapshotMessage, Sna
 import type { AppState, Connection, Part } from './types.js'
 
 export const initialState: AppState = {
-  messages: [], todos: [], pendingPermissions: [], pendingSteers: [],
+  messages: [], todos: [], backgroundAgents: [], pendingPermissions: [], pendingSteers: [],
   thinking: false, connection: 'connecting',
 }
 
@@ -83,6 +83,7 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     contextWindow: s.contextWindow,
     totalUsage: s.totalUsage,
     todos: s.todos,
+    backgroundAgents: s.backgroundAgents ?? [],
     pendingPermissions: s.pendingPermissions,
     thinking: s.isThinking,
     messages: projectSnapshotMessages(s.messages),
@@ -150,6 +151,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'usage-update': return { ...state, totalUsage: e.totalUsage }
     case 'context-update': return { ...state, contextTokens: e.contextTokens, contextWindow: e.contextWindow }
     case 'todos-update': return { ...state, todos: e.todos }
+    case 'background-agents': return { ...state, backgroundAgents: e.labels }
     case 'permission-request': return { ...state, pendingPermissions: [...state.pendingPermissions, { id: e.id, req: e.req }] }
     case 'permission-resolved': return { ...state, pendingPermissions: state.pendingPermissions.filter((p) => p.id !== e.id) }
     case 'failover': return withNotice({ ...state, model: e.toModel }, '故障切换：' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
