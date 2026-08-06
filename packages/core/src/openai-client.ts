@@ -352,3 +352,9 @@ export class OpenAIClient implements ModelClient {
     }
   }
 }
+
+/** R4 自注册：本协议的模块声明。约束同 anthropicProviderModule。 */
+export const openaiProviderModule = {
+  protocol: 'openai',
+  make: (provider, model) => new OpenAIClient(provider, model),
+} satisfies import('./provider-module.js').ProviderModule

@@ -281,3 +281,12 @@ export class AnthropicClient implements ModelClient {
     }
   }
 }
+
+/**
+ * R4 自注册：本协议的模块声明。make 是闭包（不直接持类引用），避免模块求值期踩 class 的 TDZ。
+ * 导出名带 anthropic 前缀是必须的 —— core/index.ts 用 `export *`，同名会撞 TS2308。
+ */
+export const anthropicProviderModule = {
+  protocol: 'anthropic',
+  make: (provider, model) => new AnthropicClient(provider, model),
+} satisfies import('./provider-module.js').ProviderModule

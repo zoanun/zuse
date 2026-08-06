@@ -1,7 +1,7 @@
 import type { Message, StreamEvent, ModelConfig, ProviderConfig } from './types.js'
 import type { ToolDefinition } from './tool.js'
-import { AnthropicClient } from './anthropic-client.js'
-import { OpenAIClient } from './openai-client.js'
+import type { ProviderModule } from './provider-module.js'
+import { BUILTIN_PROVIDER_MODULES } from './builtin-providers.js'
 
 /**
  * ModelClient 接口 —— 与具体厂商无关的发送消息 API。
@@ -28,16 +28,38 @@ export interface ModelClient {
   getModel(): string
 }
 
-/** 按 provider 协议选具体实现。clients 仅 type-only 依赖本文件，无运行时环。 */
-export function createModelClient(provider: ProviderConfig, model: string): ModelClient {
-  switch (provider.protocol) {
-    case 'anthropic':
-      return new AnthropicClient(provider, model)
-    case 'openai':
-      return new OpenAIClient(provider, model)
-    default: {
-      const _exhaustive: never = provider.protocol
-      throw new Error(`Unknown provider protocol: ${String(_exhaustive)}`)
-    }
+/**
+ * 由模块数组建协议索引。协议名重复 = 编程错误，直接抛，不静默让后者覆盖前者
+ * （否则「加了个协议但没生效」会变成哑谜）。
+ *
+ * 独立导出（而非藏在下面的建表语句里）是为了让「重复即抛」这条能被单测直接钉住 ——
+ * 若只在模块顶层建表，抛错发生在 ESM 求值期，测试没法优雅断言。
+ */
+export function buildProviderIndex(modules: ProviderModule[]): Map<string, ProviderModule> {
+  const index = new Map<string, ProviderModule>()
+  for (const m of modules) {
+    if (index.has(m.protocol)) throw new Error(`Duplicate provider protocol: ${m.protocol}`)
+    index.set(m.protocol, m)
   }
+  return index
+}
+
+const INDEX = buildProviderIndex(BUILTIN_PROVIDER_MODULES)
+
+/**
+ * 按 provider 协议选具体实现。clients 仅 type-only 依赖本文件，无运行时环。
+ *
+ * 本函数**不得**出现任何具体协议名 —— 加协议只该动 builtin-providers.ts。
+ * provider-registry.test.ts 用 vi.mock 换掉内置表后断言 'anthropic' 必须抛，
+ * 正是为了钉死这一点：残留任何 anthropic/openai 兜底分支都会让那条测试红
+ * （已做变异测试验证）。
+ */
+export function createModelClient(provider: ProviderConfig, model: string): ModelClient {
+  const mod = INDEX.get(provider.protocol)
+  if (!mod) {
+    throw new Error(
+      `Unknown provider protocol "${provider.protocol}". Known protocols: ${[...INDEX.keys()].join(', ')}`,
+    )
+  }
+  return mod.make(provider, model)
 }

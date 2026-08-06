@@ -111,8 +111,15 @@ export interface PermissionsConfig {
   deny: string[]
 }
 
-/** provider 的 wire 协议。 */
-export type ProviderProtocol = 'anthropic' | 'openai'
+/**
+ * provider 的 wire 协议。
+ *
+ * R4 起是开放的 string，不再是闭合联合：协议由 builtin-providers.ts 的数组决定，
+ * 加协议不必回来改这里。放宽的代价已知且已接受 —— settings.ts 对 protocol 本就是
+ * 无校验透传（外部输入从来没被联合保护过），但**内部字面量**从此失去 typo 保护。
+ * 未知协议在 createModelClient 查表失败时抛错，错误信息会列出全部已知协议。
+ */
+export type ProviderProtocol = string
 
 /** models 数组的对象形条目:窗口等属性与 provider 缺省不同的模型用它声明。 */
 export interface ModelEntryObject {
