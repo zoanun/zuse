@@ -94,6 +94,8 @@ type InjectionKind = 'wakeup' | 'background'
  */
 interface PendingInjection {
   kind: InjectionKind
+  /** 展示名（background 用：面板要显示是哪个子代理在跑）。wakeup 不需要。 */
+  label?: string
   /**
    * 作废时调用，用于释放这类待投递自己的资源。wakeup = clearTimeout；
    * background 为空函数 —— 按设计只丢弃投递、不中止在飞的子代理（它自带 10 轮上限），
@@ -481,6 +483,7 @@ export class SessionManager {
       contextTokens: this.contextTokens,
       contextWindow: this.ctxWindow(),
       todos: this.todos,
+      backgroundAgents: this.backgroundAgentLabels(),
       pendingPermissions,
       messageCount: this.conversation.length,
       messages: this.projectMessages(),
@@ -1380,10 +1383,14 @@ export class SessionManager {
     const token = Symbol('background')
     // cancel 刻意为空：按设计只丢弃投递、不中止在飞的子代理 —— 真中止要把可取消句柄
     // 从 packages/tools（TUI 与 server 共用）一路传出来，而子代理自带 10 轮上限，不值。
-    this.pendingInjections.set(token, { kind: 'background', cancel: () => {} })
+    this.pendingInjections.set(token, { kind: 'background', cancel: () => {}, label: description })
+    this.emitBackgroundAgents()
     return (result: string) => {
       // 先摘登记再投递：见 PendingInjection 的「投递协议」。
       if (!this.pendingInjections.delete(token)) return  // 已被作废：产出无处可去
+      // 广播必须在投递**之前**：deliverToSession 可能同步起一整轮回合，
+      // 那之后再报「少了一个」会晚于回合内的一串事件，前端面板看着像慢了半拍。
+      this.emitBackgroundAgents()
       deliverToSession(this, `🔔 后台 Agent "${description}" 完成:\n${result}`, {
         onError: (m) => this.emit({ type: 'warning', message: `后台 Agent 通知投递失败:${m}` }),
       })
@@ -1424,11 +1431,28 @@ export class SessionManager {
    * 这样「哪些事件会让待投递失效」是一份可穷举的清单，而不是散在各处的 delete。
    */
   private cancelInjections(kind?: InjectionKind): void {
+    let droppedBackground = false
     for (const [token, inj] of this.pendingInjections) {
       if (kind !== undefined && inj.kind !== kind) continue
       inj.cancel()
       this.pendingInjections.delete(token)
+      if (inj.kind === 'background') droppedBackground = true
     }
+    if (droppedBackground) this.emitBackgroundAgents()
+  }
+
+  /** 在飞的后台 Agent 展示名。前端面板的**唯一**真相源（见 SessionSnapshot.backgroundAgents）。 */
+  backgroundAgentLabels(): string[] {
+    const out: string[] = []
+    for (const inj of this.pendingInjections.values()) {
+      if (inj.kind === 'background') out.push(inj.label ?? 'sub-agent')
+    }
+    return out
+  }
+
+  /** 集合变了就整份广播（与 todos-update 同形）。 */
+  private emitBackgroundAgents(): void {
+    this.emit({ type: 'background-agents', labels: this.backgroundAgentLabels() })
   }
 
   /**

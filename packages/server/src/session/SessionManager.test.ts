@@ -2686,6 +2686,41 @@ describe('后台 Agent（B1）', () => {
     expect(mgr.hasPendingInjection()).toBe(false)   // 名额也一并释放
   })
 
+  // 前端面板曾靠翻会话历史猜「后台子代理还在不在跑」，那个判据永远等不到翻面，
+  // 于是面板永久卡在「1 运行中」且刷新也去不掉。现在由服务端直接报，这几条钉的是那个数据源。
+  it('getState().backgroundAgents 反映此刻在飞的后台 Agent', () => {
+    const { mgr } = makeManager()
+    expect(mgr.getState().backgroundAgents).toEqual([])
+
+    const finish = mgr.startBackgroundAgent('慢活')
+    expect(mgr.getState().backgroundAgents).toEqual(['慢活'])
+
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    finish('done')
+    expect(mgr.getState().backgroundAgents).toEqual([])
+  })
+
+  it('被停止取消后 backgroundAgents 也清空（这条正是「卡死面板」的现场）', () => {
+    const { mgr } = makeManager()
+    mgr.startBackgroundAgent('慢活')
+    expect(mgr.getState().backgroundAgents).toEqual(['慢活'])
+
+    mgr.interrupt()
+    expect(mgr.getState().backgroundAgents).toEqual([])
+  })
+
+  it('集合变动会广播 background-agents 事件（派出 / 完成各一次）', () => {
+    const { mgr } = makeManager()
+    const seen: string[][] = []
+    mgr.subscribe((e) => { if (e.type === 'background-agents') seen.push(e.labels) })
+
+    const finish = mgr.startBackgroundAgent('慢活')
+    vi.spyOn(mgr, 'submit').mockResolvedValue(undefined)
+    finish('done')
+
+    expect(seen).toEqual([['慢活'], []])
+  })
+
   it('interrupt() 不碰待触发的自唤醒（它是定时器，与本回合的 signal 无关）', () => {
     const { mgr } = makeManager()
     mgr.scheduleWakeup(60_000, '很久以后')
