@@ -8,6 +8,7 @@ import { computeLineDiff, formatDiffText, EDIT_DIFF_CAP } from '../components/ed
 import { writeToolOutputFile } from '../toolOutputFile.js'
 import {
   Conversation,
+  genMsgId,
   runAgent,
   createFileTracker,
   createClientFromSettings,
@@ -463,7 +464,7 @@ export function useConversation({
       notify('🧠 记忆索引接近满容,后台巩固中…')
       let text = ''
       for await (const e of client.sendMessages(
-        [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        [{ role: 'user', id: genMsgId(), content: [{ type: 'text', text: prompt }] }],
         { model: client.getModel(), max_tokens: Math.min(maxTokens, 2000) },
       )) {
         if (e.type === 'text-delta') text += e.text

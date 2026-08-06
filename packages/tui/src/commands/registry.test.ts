@@ -266,8 +266,8 @@ describe('/skills', () => {
 
   it('列出技能名与描述(截断),并提示触发方式', () => {
     const skills: SkillEntry[] = [
-      { name: 'code-review', description: '审查本地改动', dir: 'E:\\x', body: '' },
-      { name: 'deploy', description: 'd'.repeat(100), dir: 'E:\\y', body: '' },
+      { name: 'code-review', description: '审查本地改动', dir: 'E:\\x', body: '', source: 'user' },
+      { name: 'deploy', description: 'd'.repeat(100), dir: 'E:\\y', body: '', source: 'user' },
     ]
     const { printed } = runCommand('skills', '', { skills })
     const out = printed.join('\n')
