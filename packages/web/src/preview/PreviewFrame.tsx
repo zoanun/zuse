@@ -102,6 +102,17 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
   // guest 是独立 document，不会继承 <html data-theme>，主题要显式下发（设计 §6.5）。
   useEffect(() => { send({ type: 'theme', theme }) }, [theme, send])
 
+  // srcdoc 变了 = 换了一个新 document，就绪状态必须重置。
+  //
+  // **不能挂在 iframe 的 onLoad 上**（踩过）：guest 的 preamble 在文档**解析期间**就
+  // 发出 ready，那早于 load 事件。挂 onLoad 会把已经到达的 ready 重置掉，之后 eval
+  // 被永远缓存在 pendingRef 里 —— 现象是预览框出来了但里面永远空白，且无任何报错。
+  // 放在 effect 里则顺序确定：commit 同一批同步执行，必然早于 guest 脚本所在的下一个任务。
+  useEffect(() => {
+    readyRef.current = false
+    pendingRef.current = null
+  }, [srcdoc])
+
   return (
     <div className="preview">
       <div className="preview-bar">
@@ -115,7 +126,6 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
         sandbox={SANDBOX_TOKENS}
         srcDoc={srcdoc}
         style={{ height }}
-        onLoad={() => { readyRef.current = false }}
       />
       <ConsolePanel entries={entries} onClear={() => setEntries([])} />
     </div>
