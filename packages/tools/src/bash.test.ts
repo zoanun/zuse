@@ -89,7 +89,10 @@ describe('BashTool', () => {
     expect(result.output).toMatch(/timed out/i)
     // 错误回传契约(Phase 8):告诉模型 timeout 是它自己可调的入参。
     expect(result.output).toContain('timeout parameter')
-  })
+    // 20s 是**测试自身**的墙钟上限，与被测的 200ms 工具超时无关：本例要真起 git-bash +
+    // node 再杀掉整个进程组，全量并行跑时这套机械开销会超过 vitest 默认的 5s。
+    // （此前它总在 5s 内结束，是因为 node 压根没跑起来 —— 以错误的理由通过。）
+  }, 20_000)
 
   it('keeps head and tail of oversized output and spills the full output to disk', async () => {
     // 输出整形(Phase 9):>30k 的输出应保留首尾、中段省略,完整输出落盘可供 Read/Grep。

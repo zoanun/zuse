@@ -31,6 +31,17 @@ import { LspManager, createLspTool, createLspInstallTool } from '@zuse/tools'
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
   session?: SessionManager
+  /**
+   * 启动时是否连接 settings.mcpServers 里的 MCP server。缺省 true（真实 daemon 的行为）。
+   *
+   * 测试必须传 false。此前不可关：`await reconnectMcp()` 在启动路径上无条件跑，于是每个
+   * 调 startServer 的单测都要去连**开发者本机真实配置的** MCP server —— 实测 startServer
+   * 因此耗时 4.1s（两个 `npx -y <pkg>` 冷启动 + 网络），撞上 vitest 默认的 5000ms 超时线，
+   * 造成 wsServer.test.ts 整片随机红。单测不该读开发者的个人配置，更不该依赖 npm registry 可达。
+   *
+   * 注意这只关**启动时的首次连接**；M4 面板的运行时重连端点不受影响。
+   */
+  connectMcp?: boolean
 }
 
 function defaultWebDir(): string {
@@ -88,7 +99,8 @@ export async function startServer(
       await m.disconnectAll().catch(() => {})
     }
   }
-  await reconnectMcp()
+  // 只跳过启动时的首次连接；上面 reconnectMcp 本体不变，M4 面板的运行时重连照常可用。
+  if (deps.connectMcp !== false) await reconnectMcp()
 
   // Reconnect a SINGLE server (per-row ↻ in the panel). Removed-from-settings → just disconnect.
   const reconnectOneMcp = async (name: string): Promise<void> => {

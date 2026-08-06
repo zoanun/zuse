@@ -178,33 +178,59 @@ describe('AnthropicClient.sendMessages —— 瞬时错误自动重试', () => {
   })
 })
 
-describe('AnthropicClient (live, skipped without key)', () => {
+/**
+ * Live 测试：**会真的打网络、花真钱**，因此默认不跑，须显式 `ZUSE_LIVE_TESTS=1` 才启用。
+ *
+ * 这里原先有两个缺陷，都不是小事：
+ * 1. 名字叫 "skipped without key"，但守卫查的是 **provider 协议**，压根没查 key。于是只要
+ *    默认 provider 恰好是 anthropic 协议（哪怕它是第三方兼容端点），就会发出真实付费请求 ——
+ *    本机实测收到 403「Free quota exhausted」，一条单测因为账户余额而红。
+ * 2. bail 的方式是 `if (!client) return`，位置在 it 体内 —— vitest 会把它记成**通过**。
+ *    也就是说"跳过"时报绿。静默通过的测试比红的更有害：它让人以为这块有覆盖。
+ *
+ * 现在：默认整个 describe 被 skipIf 跳过（报告里如实显示为 skipped）；启用后若配置不适用，
+ * 用 ctx.skip() 真跳过，而不是伪装成通过。
+ *
+ * 需要说明的是这块不跑并不留下覆盖空洞 —— 上面用假 SDK 的 describe 已经覆盖了
+ * 重试、错误归类、流式事件这些真正的契约。
+ */
+const LIVE = process.env.ZUSE_LIVE_TESTS === '1'
+
+describe.skipIf(!LIVE)('AnthropicClient (live —— 需 ZUSE_LIVE_TESTS=1；会真打 API 计费)', () => {
   let client: AnthropicClient | undefined
+  let skipReason: string | undefined
   const settings = loadSettings()
   const sel = resolveModelSelection(settings)
 
   beforeAll(() => {
     try {
       const provider = getProviderConfig(settings, sel.providerId)
-      // 仅当默认 provider 走 anthropic 协议时才跑 live 测试；默认是 openai 协议
-      // 的 provider（如 deepseek）时跳过——否则把 Anthropic 请求发到 OpenAI 端点必然失败。
+      // 把 Anthropic 请求发到 OpenAI 端点必然失败，这种配置下不该跑而不是让它红。
       if (provider.protocol !== 'anthropic') {
-        console.log(`Skipping live AnthropicClient tests — default provider "${sel.providerId}" is not anthropic protocol`)
+        skipReason = `默认 provider "${sel.providerId}" 不是 anthropic 协议`
         return
       }
       client = new AnthropicClient(provider, sel.model)
-    } catch {
-      console.log('Skipping live AnthropicClient tests — no API key')
+    } catch (e) {
+      skipReason = `取不到 provider 配置（多半是缺 key）：${e instanceof Error ? e.message : String(e)}`
     }
   })
 
-  it('returns model name', () => {
-    if (!client) return
+  // ctx.skip() 在 vitest 2.1.9 不收参数，原因走 console —— 但它是**真 skip**，
+  // 报告里显示为 skipped 而不是伪装成 passed，这才是关键。
+  it('returns model name', (ctx) => {
+    if (!client) {
+      console.log(`跳过 live 测试：${skipReason}`)
+      return ctx.skip()
+    }
     expect(client.getModel()).toBeTruthy()
   })
 
-  it('streams and tracks usage', async () => {
-    if (!client) return
+  it('streams and tracks usage', async (ctx) => {
+    if (!client) {
+      console.log(`跳过 live 测试：${skipReason}`)
+      return ctx.skip()
+    }
     const messages: Message[] = [{ role: 'user', id: 'm-live', content: [{ type: 'text', text: 'Say exactly: hello world' }] }]
     const events: StreamEvent[] = []
     for await (const e of client.sendMessages(messages, { model: sel.model, max_tokens: getDefaultMaxTokens(settings) })) {

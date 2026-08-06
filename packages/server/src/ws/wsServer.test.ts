@@ -31,7 +31,10 @@ async function makeServer(scripts: StreamEvent[][] = []) {
   const session = createSession({ sessionId: DEFAULT_SESSION_ID, cwd: dir, client, snapshotStore: fakeSnapshotStore() })
   const server = await startServer(
     { host: '127.0.0.1', port: 0, authDir: dir, tokenTtlSec: 3600, cwd: dir },
-    { session },
+    // connectMcp:false —— 不连开发者本机真实配置的 MCP server。带上它时 startServer 实测
+    // 要 4.1s（两个 `npx -y <pkg>` 冷启动 + 网络），撞 vitest 默认 5000ms 超时线，导致本文件
+    // 整片随机红。单测不该读个人配置、更不该依赖 npm registry 可达。
+    { session, connectMcp: false },
   )
   servers.push(server)
   const json = (b: unknown) => ({ method: 'POST', body: JSON.stringify(b), headers: { 'content-type': 'application/json' } })

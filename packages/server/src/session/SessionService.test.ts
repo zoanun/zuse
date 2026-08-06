@@ -429,8 +429,15 @@ describe('SessionService — small-model title', () => {
     const { id } = await svc.create()
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('first message')
-    await new Promise((r) => setTimeout(r, 40))
-    expect((await loadSession(dir, id))?.titleGenerated).toBe(true)
+    // 标题生成是后台异步写盘。原先固定 sleep(40) 在满载并行下不够用（本文件单跑必过、
+    // 全量跑偶发红），改轮询：命中即返回，所以超时给足也不花时间 —— 2s 实测在 130 个
+    // 测试文件并行、worker 被饿死时仍会超，故给到 10s。
+    //
+    // 注：本文件另有 12 处 `setTimeout(20~40)` 等后台写盘，同属这一类隐患，只是暂未
+    // 观察到它们闪。没有一并重构 —— 每处等的条件不同，投机性改写反而容易改错。
+    await vi.waitFor(async () => {
+      expect((await loadSession(dir, id))?.titleGenerated).toBe(true)
+    }, { timeout: 10_000, interval: 10 })
 
     await svc.rename(id, '手动命名')
     const rec = await loadSession(dir, id)
