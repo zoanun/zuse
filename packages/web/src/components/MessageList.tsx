@@ -46,6 +46,13 @@ export function MessageList({
   if (!thinking && !shareMode) {
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i]!.role === 'assistant') { lastAssistantId = messages[i]!.id; break }
   }
+  // 流式中的那条 = thinking 为真时的最后一条 assistant 消息。代码预览的「运行」按钮据此
+  // 禁用：`CodeBlock` 自己无法判断围栏是否已闭合（未闭合的围栏渲染出的 <pre> 结构完全相同），
+  // 没有这个信号，模型刚吐出半个组件时按钮就可点了。
+  let streamingId: string | undefined
+  if (thinking && !shareMode) {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i]!.role === 'assistant') { streamingId = messages[i]!.id; break }
+  }
   // A turn is a run of consecutive assistant messages (tool-result user turns are folded away by
   // foldToolResults). Show the copy/share footer only on each turn's LAST assistant message — the
   // one whose next message isn't another assistant — so the model's between-tool prose doesn't
@@ -84,6 +91,7 @@ export function MessageList({
             onRetry={m.id === lastAssistantId ? onRetry : undefined}
             shareMode={shareMode}
             showActions={turnFinalIds.has(m.id)}
+            streaming={m.id === streamingId}
           />
         )
         if (shareMode) {

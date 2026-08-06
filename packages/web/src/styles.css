@@ -195,9 +195,33 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .text pre code { background: none; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
 .code-wrap { position: relative; margin: 10px 0; }
 .code-wrap pre { margin: 0; }
-.code-copy { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s, color .15s, border-color .15s; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 6px; cursor: pointer; z-index: 1; }
-.code-wrap:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
-.code-copy:hover { color: var(--text); border-color: var(--accent); }
+/* 「运行」与「复制」并排悬浮在代码块右上角。运行按钮在流式输出期间禁用（见 CodeBlock）。 */
+.code-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 1; }
+.code-copy, .code-run { opacity: 0; transition: opacity .15s, color .15s, border-color .15s; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.code-wrap:hover .code-copy, .code-copy:focus-visible,
+.code-wrap:hover .code-run, .code-run:focus-visible { opacity: 1; }
+.code-copy:hover, .code-run:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.code-run { color: var(--accent); border-color: var(--accent-border); }
+.code-run:disabled { cursor: default; opacity: .45; }
+/* 预览已展开时按钮常驻，否则鼠标一移开就找不到「停止」了。 */
+.code-wrap:has(.preview) .code-run { opacity: 1; }
+
+/* 预览区：就地展开在代码块下方，不进抽屉 —— 要能和代码对照着看。 */
+.preview { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.preview-kind { text-transform: uppercase; letter-spacing: .04em; }
+.preview-close { background: none; border: none; color: var(--muted); font-size: 12px; padding: 2px 6px; cursor: pointer; }
+.preview-close:hover { color: var(--text); }
+.preview-frame { display: block; width: 100%; border: 0; background: #fff; }
+:root[data-theme="dark"] .preview-frame { background: #212120; }
+.preview-console { border-top: 1px solid var(--line); max-height: 220px; overflow: auto; }
+.preview-console-bar { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; font-size: 11px; color: var(--muted); position: sticky; top: 0; background: var(--surface); }
+.preview-console-bar button { background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; }
+.preview-console-list { list-style: none; margin: 0; padding: 0 10px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+.preview-console-list li { padding: 2px 0; white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--line); }
+.pc-error { color: var(--bad, #c0392b); }
+.pc-warn { color: var(--warn, #b8860b); }
+.pc-tag { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font-size: 10px; }
 .text table { border-collapse: collapse; margin: 10px 0; font-size: 13.5px; display: block; overflow-x: auto; }
 .text th, .text td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .text th { background: var(--surface-2); font-weight: 650; }

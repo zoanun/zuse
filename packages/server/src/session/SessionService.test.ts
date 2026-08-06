@@ -11,6 +11,42 @@ import type { CreateSessionOpts } from './createSession.js'
 import { loadSession, saveSession, type SessionRecord } from './sessionStore.js'
 import { fakeClient, fakeSnapshotStore } from './testFakes.js'
 
+/**
+ * 等后台 autosave 真的落盘。
+ *
+ * 取代原先散落各处的 `setTimeout(20~40)`：那些在本文件单跑时永远够，但全量并行跑时
+ * worker 被饿死，20ms 的定时器可能实际睡 50ms+ —— 实测会让本文件随机红（每次红的还不是
+ * 同一条，所以很容易被当成"偶发"忽略）。
+ *
+ * 轮询命中即返回，所以超时给足也不花时间。
+ *
+ * **interval 别调太小**（这条是实测踩出来的）：一开始用 5ms，结果全量跑时这两个 helper
+ * 稳定超时 —— 每秒 200 次异步文件读，在已经饱和的机器上把 IO 队列占住，**反而饿死了它
+ * 自己要等的那个后台写盘**。改成 50ms 后连跑三次全绿。轮询太密比太疏更危险，因为它把
+ * "等待"变成了"竞争"。
+ */
+async function persisted(dir: string, id: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const rec = await loadSession(dir, id)
+    expect(rec).toBeTruthy()
+  }, { timeout: 10_000, interval: 50 })
+}
+
+/**
+ * 等标题生成也落盘。
+ *
+ * **不能**用 `persisted` 代替：标题是**后于**记录写盘的（先 autosave 记录，小模型生成标题
+ * 后再写一次），`persisted` 在第一次写盘就返回，断言标题必然扑空。
+ * 原先的 `sleep(20/40)` 碰巧把两段都盖住了 —— 这类"碰巧对"正是固定 sleep 最坑的地方：
+ * 换成轮询时若不区分条件，就会把一个偶发失败变成稳定失败。
+ */
+async function titled(dir: string, id: string): Promise<void> {
+  await vi.waitFor(async () => {
+    const rec = await loadSession(dir, id)
+    expect(rec?.titleGenerated).toBe(true)
+  }, { timeout: 10_000, interval: 50 })
+}
+
 // ---------------------------------------------------------------------------
 // Temp dirs
 // ---------------------------------------------------------------------------
@@ -98,7 +134,7 @@ describe('SessionService', () => {
     // (was kept as a manual title — not derived from the message) and the cwd was honored.
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('a message that would otherwise become the title')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
     const list = await svc.list()
     expect(list[0]!.title).toBe('My session')
     expect(list[0]!.cwd).toBe('/custom')
@@ -132,7 +168,7 @@ describe('SessionService', () => {
     const { id } = await svc1.create()
     const mgr1 = (await svc1.getOrLoad(id))!
     await mgr1.submit('remember this')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
 
     // Fresh service over the same dir → must load from disk.
     const svc2 = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
@@ -150,7 +186,7 @@ describe('SessionService', () => {
     // Give it content so it actually persists to disk.
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('content so the session persists')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
     expect(existsSync(join(dir, `${id}.json`))).toBe(true)
 
     await svc.delete(id)
@@ -170,7 +206,7 @@ describe('SessionService', () => {
 
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('first user message here')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
 
     // The first turn-end is the first time it hits disk.
     const list = await svc.list()
@@ -198,7 +234,7 @@ describe('SessionService', () => {
     // A later turn-end autosave must NOT clobber the manual title with deriveTitle.
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('a user message that would otherwise become the title')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
 
     rec = await loadSession(dir, id)
     expect(rec?.title).toBe('My renamed session')
@@ -215,7 +251,7 @@ describe('SessionService', () => {
     // Drive a turn so the session is actually written to disk (create no longer persists empties).
     const mgrA = (await svcA.getOrLoad(id))!
     await mgrA.submit('content so the record exists on disk')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
 
     const svcB = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
     // Not loaded into svcB's registry — rename must hit the disk path.
@@ -257,7 +293,7 @@ describe('SessionService', () => {
     const mgr = (await svc.getOrLoad(id))!
     // Drive a turn → autosave fires; manual title must survive (seeded from titleManual).
     await mgr.submit('this would be the derived title')
-    await new Promise((r) => setTimeout(r, 20))
+    await persisted(dir, id)
 
     const after = await loadSession(dir, id)
     expect(after?.title).toBe('Pinned name')
@@ -330,6 +366,8 @@ describe('SessionService', () => {
     await svc.delete(id)
     await turn
     // Let any trailing persist attempt run.
+    // 这处**不能**换成轮询：下面断言的是文件**不存在**，而轮询没法等一件不会发生的事。
+    // 固定 sleep 在这里是正确工具（它的失败模式是漏报，不是误报）。
     await new Promise((r) => setTimeout(r, 30))
 
     expect(existsSync(join(dir, `${id}.json`))).toBe(false)
@@ -390,7 +428,7 @@ describe('SessionService — small-model title', () => {
     const { id } = await svc.create()
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('一段很啰嗦很长的第一句用户消息，本不该直接当标题')
-    await new Promise((r) => setTimeout(r, 40))
+    await titled(dir, id)
 
     const rec = await loadSession(dir, id)
     expect(rec?.title).toBe('精简标题')          // generated title won over deriveTitle
@@ -400,8 +438,10 @@ describe('SessionService — small-model title', () => {
     expect(calls[id]).toBe(1)
 
     // A second message must NOT regenerate the title.
+    // 这里是**否定断言**（"不该再生成"），没有可等的正向信号 —— 轮询在这种情况下会
+    // 立刻返回、等于没等，反而让断言失去牙齿。固定 sleep 在此是正确工具。
     await mgr.submit('第二句')
-    await new Promise((r) => setTimeout(r, 40))
+    await new Promise((r) => setTimeout(r, 50))
     expect(calls[id]).toBe(1)
     expect((await loadSession(dir, id))?.title).toBe('精简标题')
   })
@@ -416,7 +456,8 @@ describe('SessionService — small-model title', () => {
     const titles: string[] = []
     mgr.subscribe((e) => { if (e.type === 'title-changed') titles.push(e.title) })
     await mgr.submit('hello there')
-    await new Promise((r) => setTimeout(r, 40))
+    // 等的是事件到达，不是落盘 —— 用事件本身做条件，别拿落盘当代理信号。
+    await vi.waitFor(() => expect(titles).toEqual(['事件标题']), { timeout: 10_000, interval: 50 })
 
     expect(titles).toEqual(['事件标题'])
   })
@@ -429,15 +470,7 @@ describe('SessionService — small-model title', () => {
     const { id } = await svc.create()
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('first message')
-    // 标题生成是后台异步写盘。原先固定 sleep(40) 在满载并行下不够用（本文件单跑必过、
-    // 全量跑偶发红），改轮询：命中即返回，所以超时给足也不花时间 —— 2s 实测在 130 个
-    // 测试文件并行、worker 被饿死时仍会超，故给到 10s。
-    //
-    // 注：本文件另有 12 处 `setTimeout(20~40)` 等后台写盘，同属这一类隐患，只是暂未
-    // 观察到它们闪。没有一并重构 —— 每处等的条件不同，投机性改写反而容易改错。
-    await vi.waitFor(async () => {
-      expect((await loadSession(dir, id))?.titleGenerated).toBe(true)
-    }, { timeout: 10_000, interval: 10 })
+    await titled(dir, id)
 
     await svc.rename(id, '手动命名')
     const rec = await loadSession(dir, id)
@@ -460,7 +493,7 @@ describe('SessionService — small-model title', () => {
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactoryWithTitle('不该出现', calls) })
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('another message')
-    await new Promise((r) => setTimeout(r, 40))
+    await persisted(dir, id)
 
     expect(calls[id] ?? 0).toBe(0)                 // never asked the model again
     expect((await loadSession(dir, id))?.title).toBe('已生成的标题')
@@ -472,7 +505,7 @@ describe('SessionService — small-model title', () => {
     const { id } = await svc.create()
     const mgr = (await svc.getOrLoad(id))!
     await mgr.submit('hello world first line')
-    await new Promise((r) => setTimeout(r, 40))
+    await persisted(dir, id)
 
     const rec = await loadSession(dir, id)
     expect(rec?.titleGenerated).toBeFalsy()

@@ -41,12 +41,15 @@ export function isSelectableRow(m: Msg): boolean {
 // memo: while streaming, the store re-renders on every delta but only the last
 // message's identity changes — memo lets the unchanged messages skip re-rendering
 // (and re-parsing their markdown). Relies on a stable `onRevert`/`onShare` (see Shell).
-export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, shareMode, showActions = true }: {
+export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, shareMode, showActions = true, streaming = false }: {
   msg: Msg
   onRevert?: (checkpointId: string) => void
   onShare?: (id: string) => void
   onRetry?: () => void          // only supplied for the latest assistant reply
   shareMode?: boolean
+  /** 本条消息是否仍在流式吐字。往下传给 Markdown → CodeBlock，用来禁用代码预览的运行按钮
+   *  —— CodeBlock 自己无法判断代码围栏是否已闭合（未闭合的围栏渲染结构完全相同）。 */
+  streaming?: boolean
   // Whether to render the copy/share/retry footer. MessageList sets this only for a turn's FINAL
   // assistant message, so intermediate replies (model text between tool calls) don't each get a
   // footer mid-turn. Default true keeps standalone use unchanged.
@@ -113,7 +116,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     <div className="msg agent">
       {/* Share mode renders the exact prose export keeps (replyMarkdown) — not a parts filter,
           which would diverge (e.g. leave <think> blocks the export drops). */}
-      <div className="text-wrap">{shareMode ? <Markdown text={md} /> : renderParts(msg.parts)}</div>
+      <div className="text-wrap">{shareMode ? <Markdown text={md} /> : renderParts(msg.parts, streaming)}</div>
       {!shareMode && md && showActions ? (
         <div className="msg-actions">
           <CopyButton text={md} />
@@ -392,19 +395,19 @@ function ThinkBlock({ text }: { text: string }) {
 }
 
 /** Render an assistant text part, folding any `<think>` reasoning into collapsible blocks. */
-function AssistantText({ text }: { text: string }) {
+function AssistantText({ text, streaming }: { text: string; streaming: boolean }) {
   // splitThink fast-returns a single plain segment when there are no tags, so the common
   // (no-think) case is just one <Markdown> — no extra branch needed here.
   return (
     <>
       {splitThink(text).map((s, j) => (s.think
         ? <ThinkBlock key={j} text={s.text} />
-        : (s.text.trim() ? <Markdown key={j} text={s.text} /> : null)))}
+        : (s.text.trim() ? <Markdown key={j} text={s.text} streaming={streaming} /> : null)))}
     </>
   )
 }
 
-function renderParts(parts: Part[]) {
+function renderParts(parts: Part[], streaming: boolean) {
   const out: ReactNode[] = []
   // Pair a tool-use with its result BY ID, not by adjacency: the model often batches several
   // calls (all tool_use, then all tool_result), so a use and its result aren't neighbours.
@@ -412,7 +415,7 @@ function renderParts(parts: Part[]) {
   for (const p of parts) if (p.kind === 'tool-result') resultById.set(p.id, p)
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!
-    if (p.kind === 'text') out.push(<AssistantText key={i} text={p.text} />)
+    if (p.kind === 'text') out.push(<AssistantText key={i} text={p.text} streaming={streaming} />)
     else if (p.kind === 'tool-use') {
       if (p.name === 'TodoWrite') continue            // suppressed — shown in the TodosPanel instead
       out.push(<ToolCall key={i} use={p} result={resultById.get(p.id)} />)

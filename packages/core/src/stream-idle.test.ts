@@ -21,11 +21,17 @@ describe('StreamIdleGuard', () => {
   })
 
   it('tap 每收到一个数据块就重置计时：持续有数据的慢流不会误判超时', async () => {
-    // 阈值 40ms，但每 15ms 来一个块（共 5 个，跨度 ~75ms > 40ms）：块间间隔始终 < 阈值，不应中断。
-    const g = new StreamIdleGuard(40)
+    // 阈值 150ms，每 20ms 来一个块（共 10 个，跨度 ~200ms > 150ms）：
+    // 块间间隔始终 < 阈值，不应中断。
+    //
+    // 余量是刻意拉开的（7.5 倍，原先只有 2.7 倍）：全量并行跑时 worker 被饿死，
+    // 一次 20ms 的 setTimeout 可能实际睡 50ms+。原参数下这会越过阈值造成误判 —— 实测
+    // 全量跑时约 1/4 概率红。测试意图（总跨度必须大于阈值，才能证明计时器真的被重置了）
+    // 靠加块数保住，不是靠缩短阈值。
+    const g = new StreamIdleGuard(150)
     const got: number[] = []
-    for await (const n of g.tap(ticking(5, 15))) got.push(n)
-    expect(got).toEqual([0, 1, 2, 3, 4])
+    for await (const n of g.tap(ticking(10, 20))) got.push(n)
+    expect(got).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
     expect(g.signal.aborted).toBe(false)
     expect(g.timedOut).toBe(false)
     g.dispose()
