@@ -37,7 +37,8 @@
     "rehype-highlight": "^7.0.1",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
-    "sucrase": "3.35.1"
+    "sucrase": "3.35.1",
+    "vue": "~3.5.41"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

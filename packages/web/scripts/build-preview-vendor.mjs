@@ -64,8 +64,9 @@ const VENDOR = [
   { out: 'react.js', mode: 'shim', exportName: 'react', pkg: 'react' },
   { out: 'react-jsx-runtime.js', mode: 'shim', exportName: 'jsxRuntime', pkg: 'react/jsx-runtime' },
   { out: 'react-dom-client.js', mode: 'shim', exportName: 'reactDomClient', pkg: 'react-dom/client' },
-  // PR2 追加（形状已支持，不改流程）：
-  // { out: 'vue.js', mode: 'copy', from: 'vue/dist/vue.runtime.esm-browser.prod.js' },
+  // Vue 与 React 形状不同（这正是流程要做成清单驱动的原因）：它发布了现成的浏览器
+  // ESM 产物，直接拷即可，不必 bundle、也没有 CJS 具名导出那一堆问题。
+  { out: 'vue.js', mode: 'copy', from: 'vue/dist/vue.runtime.esm-browser.prod.js' },
 ]
 
 await mkdir(outDir, { recursive: true })

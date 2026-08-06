@@ -12,7 +12,12 @@ describe('import map', () => {
   })
 
   it('是封闭表：未知包能被认出来', () => {
-    expect(unknownPackages(['react', 'lodash', 'vue'])).toEqual(['lodash', 'vue'])
+    expect(unknownPackages(['react', 'vue', 'lodash', 'axios'])).toEqual(['lodash', 'axios'])
+  })
+
+  // vue 在 PR2 才进表。写一条独立断言，免得将来有人为了「精简」把它删了。
+  it('vue 在表内（PR2 起 Vue SFC 预览依赖它）', () => {
+    expect(PREVIEW_IMPORT_MAP['vue']).toBeTruthy()
   })
 
   it('产出合法 JSON', () => {

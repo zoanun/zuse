@@ -9,6 +9,10 @@ export const PREVIEW_IMPORT_MAP: Readonly<Record<string, string>> = Object.freez
   'react-dom': '/preview-vendor/react-dom-client.js',
   'react-dom/client': '/preview-vendor/react-dom-client.js',
   'react/jsx-runtime': '/preview-vendor/react-jsx-runtime.js',
+  // runtime-only 构建：SFC 走 inlineTemplate 预编译，guest 不需要模板编译器。
+  // 实测比全量构建省 ~21 KB gzip（41 vs 62）。代价是模型偶尔写 `{ template: '...' }`
+  // 字符串选项的组件会挂 —— 但那在 SFC 语境下极罕见，且挂时报的是明确的运行时错误。
+  vue: '/preview-vendor/vue.js',
 })
 
 export function importMapJson(): string {

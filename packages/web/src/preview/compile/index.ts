@@ -15,9 +15,15 @@ export async function compile(spec: PreviewSpec): Promise<CompileResult> {
   }
 
   if (spec.kind === 'vue') {
-    // PR2 接。此处明确报未支持，而不是让它掉进 transformScript 被当成普通 JS
-    // 静默产出一段跑不起来的东西。
-    return { js: '', styles: [], errors: ['Vue SFC 预览尚未接入（A1 PR2）'] }
+    // 懒加载：compiler-sfc 是 374 KB（gzip），大多数会话根本用不到预览，
+    // 更不用说 Vue 预览 —— 不该让首屏背它。
+    const { compileVue } = await import('./vue.js')
+    const r = await compileVue(spec.code)
+    if (r.errors.length > 0) return r
+    const unknownVue = unknownPackages(scanBareImports(r.js))
+    return unknownVue.length > 0
+      ? { ...r, errors: unknownVue.map((p) => `预览环境里没有 "${p}" 这个包，只能用 react / react-dom / vue`) }
+      : r
   }
 
   const errors: string[] = []

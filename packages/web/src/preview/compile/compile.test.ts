@@ -74,12 +74,12 @@ describe('compile', () => {
     expect(r.errors[0]).toContain('编译失败')
   })
 
-  // PR1 不支持 Vue。必须显式报未支持 —— 若掉进 transformScript 当普通 JS 处理，
-  // 会静默产出一段跑不起来的东西，用户只看到白屏。
-  it('vue 在 PR1 明确报未接入，不静默产出坏东西', async () => {
-    const r = await compile({ kind: 'vue', code: '<template><b/></template>' })
-    expect(r.js).toBe('')
-    expect(r.errors.join()).toContain('尚未接入')
+  // PR2 起 vue 走专门的 SFC 管线（详细断言在 vue.test.ts）。这里只钉住派发本身：
+  // 它**绝不能**掉进 transformScript 被当成普通 JS —— 那会静默产出一段跑不起来的东西。
+  it('vue 走专门的 SFC 管线，不掉进普通 JS 通道', async () => {
+    const r = await compile({ kind: 'vue', code: '<template><b>hi</b></template>' })
+    expect(r.errors).toEqual([])
+    expect(r.js).toContain("mount('#app')")
   })
 
   it('html 不进编译器', async () => {
