@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" width="44" height="44">
+  <!--
+    Zuse 标签页图标：TUI 启动横幅的像素 Z（packages/tui/src/components/Banner.tsx 的 Z_LOGO，
+    9 列 × 7 行块字符）搬到 web 的紫色渐变底块上 —— 形状跟 TUI 认同一个标志，配色跟 web 的
+    调色板（styles.css 的 --accent / --accent-2）一致。
+
+    每个块字符 = 4px。Z 占 36×28，四周留 4px（左右）/ 8px（上下）居中。
+    对角线自右上向左下逐行左移 4px，与 Z_LOGO 逐行对齐，不是随手画的斜线。
+  -->
+  <defs>
+    <!-- 对应 CSS 的 linear-gradient(135deg, ...)：左上 → 右下 -->
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6B57E0"/>
+      <stop offset="1" stop-color="#8B7BF0"/>
+    </linearGradient>
+  </defs>
+  <rect width="44" height="44" rx="10" fill="url(#g)"/>
+  <g fill="#FFFFFF">
+    <rect x="4"  y="8"  width="36" height="4"/>
+    <rect x="28" y="12" width="8"  height="4"/>
+    <rect x="24" y="16" width="8"  height="4"/>
+    <rect x="20" y="20" width="8"  height="4"/>
+    <rect x="16" y="24" width="8"  height="4"/>
+    <rect x="12" y="28" width="8"  height="4"/>
+    <rect x="4"  y="32" width="36" height="4"/>
+  </g>
+</svg>
