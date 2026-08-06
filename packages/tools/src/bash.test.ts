@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { BashTool, getShellLabel, primeShellSnapshot, redecodeOemIfMojibake } from './bash.js'
+import { BashTool, buildChildEnv, getShellLabel, primeShellSnapshot, redecodeOemIfMojibake } from './bash.js'
 import { createFileTracker, type ToolContext } from '@zuse/core'
 
 function makeCtx(signal?: AbortSignal): ToolContext {
@@ -20,6 +20,46 @@ const cwdPersists = getShellLabel() === 'bash' || getShellLabel() === 'sh'
 // 用 `node -e` 写命令，跨 shell（cmd.exe / bash）都可移植 —— spawn({shell:true})
 // 在 Windows 上走 cmd.exe，echo/sleep 行为不一致，node 是唯一稳的公分母。
 describe('BashTool', () => {
+  // 真实 bug 的回归锁：Volta 的 node/npm/pnpm/npx shim 在启动子进程时会塞一个递归
+  // 守卫 _VOLTA_TOOL_RECURSION=1。BashTool 此前把父进程环境**原样**透传给子 shell，
+  // 于是这个守卫一路继承进去 —— 在那个状态下 Volta 的 node shim 不再解析钉住的版本，
+  // 转而去找「系统 node」，在 Windows 上经 cmd.exe 查不到，报「'node' 不是内部或外部命令」。
+  //
+  // 后果不是「测试挂了」而是：凡是经 pnpm dev / npx / Volta 全局安装启动的 zuse，
+  // 它自己的 Bash 工具就跑不了 node/npm/npx —— agent 用不了最常见的一类命令。
+  //
+  // 注意断言方式：**不能**用 `node -e` 去读这个变量来验证它被摘掉了 —— node 自身就是经
+  // Volta shim 启动的，shim 会给它的子进程重新塞上这个标记（那正是该变量的用途）。
+  // 所以分两条测：逻辑层直接测 buildChildEnv（与机器无关、确定性），
+  // 结果层测「父进程带着守卫时 node 仍能跑」（在 Volta 机器上才真正有区分度）。
+  it('buildChildEnv 摘掉包管理器的递归守卫', () => {
+    const prev = process.env._VOLTA_TOOL_RECURSION
+    process.env._VOLTA_TOOL_RECURSION = '1'
+    try {
+      const env = buildChildEnv(null)
+      expect(env).toBeDefined()
+      expect('_VOLTA_TOOL_RECURSION' in env!).toBe(false)
+      // 其余变量必须原样保留 —— 只摘这一个，不做无证据的大扫除。
+      expect(env!.PATH ?? env!.Path).toBe(process.env.PATH ?? process.env.Path)
+    } finally {
+      if (prev === undefined) delete process.env._VOLTA_TOOL_RECURSION
+      else process.env._VOLTA_TOOL_RECURSION = prev
+    }
+  })
+
+  it('父进程带着递归守卫时，子 shell 里 node 仍然能跑', async () => {
+    const prev = process.env._VOLTA_TOOL_RECURSION
+    process.env._VOLTA_TOOL_RECURSION = '1'
+    try {
+      const result = await BashTool.run({ command: `node -e "console.log('ok-under-guard')"` }, makeCtx())
+      expect(result.isError).toBeFalsy()
+      expect(result.output).toContain('ok-under-guard')
+    } finally {
+      if (prev === undefined) delete process.env._VOLTA_TOOL_RECURSION
+      else process.env._VOLTA_TOOL_RECURSION = prev
+    }
+  })
+
   it('runs a command and returns its output', async () => {
     const result = await BashTool.run({ command: `node -e "console.log('hello-bash')"` }, makeCtx())
     expect(result.isError).toBeFalsy()
