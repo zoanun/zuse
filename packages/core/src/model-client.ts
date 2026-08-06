@@ -32,8 +32,9 @@ export interface ModelClient {
  * 由模块数组建协议索引。协议名重复 = 编程错误，直接抛，不静默让后者覆盖前者
  * （否则「加了个协议但没生效」会变成哑谜）。
  *
- * 独立导出（而非藏在下面的建表语句里）是为了让「重复即抛」这条能被单测直接钉住 ——
- * 若只在模块顶层建表，抛错发生在 ESM 求值期，测试没法优雅断言。
+ * 抽成独立导出是为了让「重复即抛」这条规则**可被单测直接钉住**（传一张自造的重复表进来断言）。
+ * 注意它并没有消除模块求值期抛错：下面的顶层建表若撞上重复协议，照样在 ESM 求值期炸 ——
+ * 那是有意的 fail-fast，不是遗漏。
  */
 export function buildProviderIndex(modules: ProviderModule[]): Map<string, ProviderModule> {
   const index = new Map<string, ProviderModule>()

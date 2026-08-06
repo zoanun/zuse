@@ -36,7 +36,12 @@
 
 **必须承认的代价**（初稿漏了，评审指出）：
 
-1. **内部字面量失去 typo 保护**。`settings.ts:385`、`:405` 手写的 `'anthropic'` 字面量，以及各包测试 fixture 里的 `protocol: 'openai'`，放宽后拼错不再被编译器拦。量小（2 处生产代码），但确实存在。
+1. **内部字面量失去 typo 保护**，分两类（初稿只说了赋值那类，实现评审 F1 补上了比较那类）：
+   - **赋值**（TS2820）：`settings.ts:385`、`:405` 手写的 `'anthropic'`，以及各包测试 fixture 里的 `protocol: 'openai'`。
+   - **比较**（TS2367）：`VoiceService.ts:193` 的 `provider.protocol !== 'openai'`。评审实测，放宽前把它拼成 `'openaii'` 会报
+     `This comparison appears to be unintentional because the types 'ProviderProtocol' and '"openaii"' have no overlap`，
+     放宽后**这条保护消失**。后果是所有人的 voice 被静默禁用。
+     实际风险低 —— `VoiceService.test.ts:36/41` 双向覆盖，拼错必红 —— 但代价清单不能漏。
 2. **`ProviderProtocol` 类型名无消费方 ≠ protocol 值无消费方**。初稿把这两件事混为一谈。protocol 这个**值**有一处真实的硬编码判断：`packages/server/src/voice/VoiceService.ts:193` 的 `if (provider.protocol !== 'openai')`。它的存在说明本次重构的价值主张是**打折的**——见 §6 非目标第 1 条。
 
 ## 3. 设计
@@ -62,8 +67,10 @@ packages/core/src/
   openai-client.ts        + export const openaiProviderModule
   model-client.ts         switch → buildProviderIndex + 查表；删掉对具体 client 类的 import
   types.ts                ProviderProtocol: 联合 → string
-  index.ts                + export * 两个新文件（评审 P6：新 client 的作者要 import ProviderModule，必须是公开 API）
+  index.ts                + export * 两个新文件（见下方说明）
 ```
+
+**关于 `index.ts` 的导出，如实说明**（实现评审 F4 戳破了初稿的理由）：初稿说「新 client 的作者要 import `ProviderModule`，必须是公开 API」——这个理由**站不住**。按 §6.5（不做第三方 provider 加载），新 client 的作者永远在 `packages/core/src` 内部，走相对路径就行，`builtin-providers.ts:1` 自己就是这么写的。真实情况是：这是**给将来可能的外部 provider 预留的口子**，与 §6.5 当下的非目标并存。代价是把 `buildProviderIndex` / `BUILTIN_PROVIDER_MODULES` 提升成了发布包的公开面。留着，但别用假理由。
 
 ### 3.2 接口契约
 
@@ -98,7 +105,7 @@ const INDEX = buildProviderIndex(BUILTIN_PROVIDER_MODULES)  // 模块加载时�
 - 查不到 → 抛 `Unknown provider protocol "x". Known protocols: anthropic, openai`（协议名由 `INDEX` 的键实时生成，不硬写）。
 - **不给 `createModelClient` 加注入参数**。理由见 §5 的测试策略：扩展性由 `buildProviderIndex` 这个纯函数证明，不需要为测试拓宽全仓被调用最多的工厂的公开签名。
 
-签名不变是硬约束。`createModelClient` 全仓 **9 处引用**（初稿写 8 处、行号有误，评审 P2 订正）：
+签名不变是硬约束。`createModelClient` 全仓 **11 处引用、分布在 9 个文件**（初稿写 8 处且行号有误，两轮评审订正）：
 
 | 位置 | 说明 |
 |---|---|

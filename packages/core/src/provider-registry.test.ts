@@ -18,8 +18,10 @@ vi.mock('./builtin-providers.js', () => ({
   BUILTIN_PROVIDER_MODULES: [
     {
       protocol: 'fake',
-      make: (_provider: unknown, model: string) => ({
+      // 把收到的 provider 原样挂出来，供「透传」那条断言取用。
+      make: (provider: unknown, model: string) => ({
         tag: 'FAKE' as const,
+        seenProvider: provider,
         getModel: () => model,
         sendMessages: () => {
           throw new Error('not used')
@@ -42,5 +44,14 @@ describe('provider 注册表 —— 默认路径数据驱动', () => {
 
   it('内置表里没有 anthropic 时必须抛 —— 锁住 model-client.ts 无残留硬编码', () => {
     expect(() => createModelClient(cfg('anthropic'), 'm')).toThrow('Unknown provider protocol "anthropic"')
+  })
+
+  // provider 必须**原样**（同一个对象引用）交到 make 手上。原先的回归锁只验 class 与
+  // getModel()，于是「工厂顺手改写 apiKey/baseURL 再传下去」这类变异能存活 —— 独立评审
+  // 实测过。这条得穿过 createModelClient 本体才有意义，所以必须住在这个 mock 文件里。
+  it('把 provider 原样透传给 make，不拷贝、不改写', () => {
+    const provider = cfg('fake')
+    const c = createModelClient(provider, 'm') as unknown as { seenProvider: unknown }
+    expect(c.seenProvider).toBe(provider)
   })
 })

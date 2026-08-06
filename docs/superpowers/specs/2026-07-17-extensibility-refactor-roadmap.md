@@ -27,8 +27,12 @@
 
 1. **`runAgent`（`packages/core/src/agent.ts:155`）没有生命周期钩子总线。** 它是 async generator，对外只有固定的 `RunAgentOptions`（`agent.ts:80-133`）回调（`client`/`registry`/`canUseTool`/`onPersistAllow`/`onCwdChange`/`consumeSteer`/`expandAttachments`）+ yield 的 `StreamEvent`。唯一的 per-tool 钩子是 `canUseTool`（权限专用）。加任何横切关注点都要改 `RunAgentOptions` + 循环体 + 全部 3 个调用方。
 2. **`registerExtraTools(registry)`（`createSession.ts:52`）太薄** —— 只递 registry。需要会话状态的工具（**Agent** `SessionManager.ts:279`、**TodoWrite** `createSession.ts:114`）被迫塞进 SessionManager 构造/createSession；**ScheduleWakeup 至今没接**（`createSession.ts:122` 注释确认，缺"往会话注入消息"的回调缝）。
-3. **内置工具是中央清单** —— `createDefaultRegistry`（`packages/tools/src/index.ts:74-94`）硬编码 `register(...)`。加内置工具要改这个中央函数 + 顶部 import + 导出块。
-4. **provider 是硬编码 switch** —— `createModelClient`（`model-client.ts:32-43`）`switch(provider.protocol)` over `'anthropic'|'openai'`；`ProviderProtocol` union（`types.ts:111`）。加协议要改 union + switch + 新 client 文件。
+3. ~~**内置工具是中央清单**~~ —— **R3 已解决（2026-07-17 之后）**。原状：`createDefaultRegistry` 硬编码 `register(...)`。
+   现状：各工具自导出 `toolModule`，`packages/tools/src/builtin-tools.ts` 一张显式索引数组。
+4. ~~**provider 是硬编码 switch**~~ —— **R4 已解决（2026-08-06）**。原状：`createModelClient` 用 `switch(provider.protocol)`，
+   配一个闭合的 `ProviderProtocol` union（在 `types.ts:115`，本文档原先误写成 `:111`）。
+   现状：`buildProviderIndex` 建表 + 查表，协议集在 `packages/core/src/builtin-providers.ts`，`ProviderProtocol` 放宽为 `string`。
+   详见 [R4 设计](2026-08-06-R4-provider-registry-design.md)。
 
 已有的可插拔件（重构要复用、不重造）：`ToolRegistry`（`tool.ts:127`，工具即纯对象）、`registerExtraTools` 缝、`SessionManager.subscribe/emit`（但只出站 UI 事件、改不了回合行为）、配置式 shell hooks（`preToolUse/postToolUse`，exec 式，硬接在 `gateAndRunTool`）。
 
