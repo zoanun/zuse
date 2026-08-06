@@ -2,7 +2,10 @@
   <!--
     Zuse 标签页图标：TUI 启动横幅的像素 Z（packages/tui/src/components/Banner.tsx 的 Z_LOGO，
     9 列 × 7 行块字符）搬到 web 的紫色渐变底块上 —— 形状跟 TUI 认同一个标志，配色跟 web 的
-    调色板（styles.css 的 --accent / --accent-2）一致。
+    调色板（styles.css 里 accent 与 accent-2 那两个 CSS 变量）一致。
+
+    注意：XML 规定注释内不得出现连续两个 ASCII 连字符，所以上面写 CSS 变量名时
+    刻意去掉了前缀的两个连字符。写成 `-` `-accent` 会让整个 SVG 解析失败、图标不显示。
 
     每个块字符 = 4px。Z 占 36×28，四周留 4px（左右）/ 8px（上下）居中。
     对角线自右上向左下逐行左移 4px，与 Z_LOGO 逐行对齐，不是随手画的斜线。
