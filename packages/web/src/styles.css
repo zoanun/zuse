@@ -1,7 +1,11 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --sans: "DengXian", "等线", -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
-  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, monospace;
+  /* 中文用微软雅黑打头：原来是「等线」，笔画细，小字号下发虚发皱。 */
+  --sans: "Microsoft YaHei", "微软雅黑", -apple-system, "Segoe UI", system-ui, Roboto, Helvetica, Arial, sans-serif;
+  /* 等宽栈末尾补上雅黑：Cascadia 这些字体里**没有汉字**，不补的话浏览器会给中文
+     随便挑一个后备字体（就是 header 里那种发皱的观感）。字体回退是逐字形的 ——
+     拉丁与数字仍走 Cascadia，只有汉字落到雅黑。 */
+  --mono: "Cascadia Code", "Cascadia Mono", ui-monospace, Consolas, "SF Mono", Menlo, "Microsoft YaHei", "微软雅黑", monospace;
   /* 正文栏宽。对话是一列长文本，铺满宽屏会让每行走太远、眼睛找不到下一行的开头 ——
      Claude / ChatGPT 都把正文限在 45rem 上下并居中，这里取同一量级。 */
   --col: 46rem;
@@ -69,7 +73,7 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .mh-brand { display: none; }
 /* Header 里的状态项从「四个描边胶囊」降成纯文字：它们是常驻的次要信息，
    给每项都套一个框会让顶栏比对话本身还抢眼。仅保留连接状态的小圆点作为唯一色彩。 */
-.chip { display: inline-flex; align-items: center; font: 500 11.5px/1 var(--mono); color: var(--faint); background: none; border: 0; border-radius: 0; padding: 4px 2px; white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; font: 500 12.5px/1.2 var(--mono); color: var(--faint); background: none; border: 0; border-radius: 0; padding: 4px 2px; white-space: nowrap; }
 .chip .dot { width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; background: var(--faint); }
 .chip.live .dot { background: var(--good); }
 .chip.warn .dot { background: var(--warn); }
