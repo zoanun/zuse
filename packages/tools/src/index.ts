@@ -8,6 +8,19 @@ import { WebFetchTool } from './webfetch.js'
 
 export { ReadTool, WriteTool, EditTool, GlobTool, GrepTool, BashTool, WebFetchTool }
 export { getShellLabel, primeShellSnapshot } from './bash.js'
+// 进程层（proc）——「在某个目录里经系统 shell 跑一条命令并把输出收上来」的平台细节，
+// 由 bash.ts 纯提取而来（设计 §1），供将来的 run 服务复用。
+// killTree 此前只在包内用（bash / lsp），未从 barrel 转出；run 服务要在 daemon 退出时
+// 清理在飞进程，故一并转出。名字取得够独特，避开本仓库踩过的 barrel 撞名（TS2308）。
+export {
+  spawnShellCommand,
+  resolvedShell,
+  buildChildEnv,
+  ProcOutputDecoder,
+  killTree,
+  StreamShaper,
+  type SpawnShellOptions,
+} from './proc/index.js'
 export {
   checkTmuxAvailable,
   ensureTmuxSocket,
