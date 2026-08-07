@@ -87,6 +87,48 @@ describe('static SPA serving', () => {
     expect(await r.text()).not.toContain('root:')
   })
 
+  /**
+   * The preview iframe drops `allow-same-origin` (see packages/web SANDBOX_TOKENS), so the
+   * guest runs on an opaque origin and fetching the vendor modules is a CROSS-ORIGIN request.
+   * Without this header Chrome refuses the module with
+   * "blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present" and every
+   * React/Vue preview renders as an empty box.
+   */
+  it('serves /preview-vendor/* with Access-Control-Allow-Origin: * (opaque-origin guest needs it)', async () => {
+    mkdirSync(join(dir, 'preview-vendor'))
+    writeFileSync(join(dir, 'preview-vendor', 'react.js'), 'export default 1')
+    await start(dir)
+    const r = await fetch(base + '/preview-vendor/react.js')
+    expect(r.status).toBe(200)
+    expect(r.headers.get('access-control-allow-origin')).toBe('*')
+    // Credentials must NEVER be allowed: with `*` + credentials the browser would send the
+    // auth cookie, which is exactly the hole dropping allow-same-origin closed.
+    expect(r.headers.get('access-control-allow-credentials')).toBeNull()
+  })
+
+  /**
+   * The whole point of dropping allow-same-origin is that preview code can no longer reach the
+   * authenticated API (/api/sessions, PUT /api/files/content, POST /api/mcp — none of which
+   * prompt for permission). Widening CORS beyond /preview-vendor/ would hand it right back.
+   */
+  it('does NOT put CORS headers on other static assets', async () => {
+    mkdirSync(join(dir, 'assets'))
+    writeFileSync(join(dir, 'assets', 'app.js'), 'console.log(1)')
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>SPA</title>')
+    await start(dir)
+    for (const p of ['/assets/app.js', '/index.html', '/']) {
+      const r = await fetch(base + p)
+      expect(r.headers.get('access-control-allow-origin'), p).toBeNull()
+    }
+  })
+
+  it('does NOT put CORS headers on /api responses', async () => {
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>SPA</title>')
+    await start(dir)
+    const r = await fetch(base + '/api/sessions')
+    expect(r.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
   it('does not break /healthz or /api', async () => {
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>SPA</title>')
     await start(dir)

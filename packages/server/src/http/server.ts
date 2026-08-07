@@ -61,15 +61,32 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json; charset=utf-8',
 }
 
-async function tryServeFile(res: ServerResponse, abs: string): Promise<boolean> {
+async function tryServeFile(res: ServerResponse, abs: string, extraHeaders?: Record<string, string>): Promise<boolean> {
   try {
     const s = await stat(abs)
     if (!s.isFile()) return false
     const buf = await readFile(abs)
-    res.writeHead(200, { 'content-type': MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream' })
+    res.writeHead(200, { 'content-type': MIME[extname(abs).toLowerCase()] ?? 'application/octet-stream', ...extraHeaders })
     res.end(buf)
     return true
   } catch { return false }
+}
+
+/**
+ * 代码预览的 iframe 摘掉了 `allow-same-origin`（见 packages/web 的 `SANDBOX_TOKENS`），
+ * guest 因此跑在 opaque origin(`"null"`) 上，取 import map 里的 vendor 模块变成**跨源**
+ * 请求 —— 不放行的话浏览器直接报
+ * `blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present`，预览全空。
+ *
+ * **只给这一条前缀放行，且绝不能带 `Access-Control-Allow-Credentials`。**
+ * 加到 `/api/*` 或者补上 credentials，等于把已认证 API 拱手交给预览里的代码
+ * （`GET /api/sessions`、`PUT /api/files/content`、`POST /api/mcp` 全都没有权限提示），
+ * 那摘 `allow-same-origin` 就白摘了。这里的资源是我们自己构建出来的静态 JS，
+ * 无凭据、无用户数据，公开可读没有任何代价。
+ */
+const PREVIEW_VENDOR_PREFIX = '/preview-vendor/'
+function previewVendorHeaders(path: string): Record<string, string> | undefined {
+  return path.startsWith(PREVIEW_VENDOR_PREFIX) ? { 'access-control-allow-origin': '*' } : undefined
 }
 
 function sendJson(res: ServerResponse, status: number, obj: unknown): void {
@@ -984,7 +1001,8 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         const rel = normalize(path).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '')
         const abs = join(deps.webDir, rel)
         if (abs.startsWith(deps.webDir)) {
-          if (path !== '/' && (await tryServeFile(res, abs))) return
+          // CORS 只跟着真实存在的 vendor 文件走，不跟着 SPA 回退的 index.html 走。
+          if (path !== '/' && (await tryServeFile(res, abs, previewVendorHeaders(path)))) return
           if (await tryServeFile(res, join(deps.webDir, 'index.html'))) return
         }
       }

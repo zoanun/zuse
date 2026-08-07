@@ -94,7 +94,14 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
       <pre
         ref={(el) => {
           ref.current = el
-          const text = el?.textContent ?? ''
+          // **detach 时（el 为 null）必须直接返回，绝不能拿空串去冲掉已经取到的代码。**
+          // 内联箭头每次渲染都是新身份，React 会先 ref(null) 再 ref(el)。少了这一行，
+          // 每次重渲染 code 都要 `TEXT → '' → TEXT` 抖一圈 —— 对 PreviewFrame 的编译
+          // effect 那是两次真实的依赖变化，防抖只能压成一次重编译重跑，压不成零。
+          // 真浏览器现场：预览开着时点一下「复制」，demo 计数器从 3 归 0，
+          // 1.5 秒后 setCopied(false) 再归一次。
+          if (!el) return
+          const text = el.textContent ?? ''
           if (text !== code) setCode(text)
         }}
         {...rest}

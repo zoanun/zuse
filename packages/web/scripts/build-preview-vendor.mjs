@@ -1,4 +1,12 @@
-// 造 iframe 预览用的 vendor 产物（dist/preview-vendor/）。
+// 造 iframe 预览用的 vendor 产物（public/preview-vendor/）。
+//
+// **产物落在 `public/` 而不是 `dist/`**：vite dev 服务的是 `public/`，不服务 `dist/`。
+// 落 dist 的话 `pnpm dev` 下 `/preview-vendor/*` 全是 404，而**模块级 import 失败在
+// guest 里完全不可见**（实测 window.onerror / unhandledrejection 都不触发，
+// script.onerror 也不可靠）—— 现象是预览一片空白 + 控制台零输出，谁也查不出来。
+// 放 public/ 则 dev 直接服务、`vite build` 又会原样拷进 dist，两条路都吃得到。
+// **连带约束**：本脚本必须跑在 `vite build` **之前**（见 package.json 的 build），
+// 否则这一轮的 vendor 拷不进 dist。
 //
 // **入口清单驱动**：加一个框架 = 往 VENDOR 表里加一行，不改流程本体（设计 §8.1）。
 // 这条约束不是洁癖 —— 两个框架的形状本来就不同：
@@ -15,7 +23,7 @@ import { fileURLToPath } from 'node:url'
 const require = createRequire(import.meta.url)
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
-const outDir = resolve(root, 'dist', 'preview-vendor')
+const outDir = resolve(root, 'public', 'preview-vendor')
 
 /**
  * React 三个入口必须共用**同一个 React 实例**，否则 hooks 的 dispatcher 对不上 ——

@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build && node scripts/build-preview-vendor.mjs",
+    "dev": "node scripts/build-preview-vendor.mjs && vite",
+    "build": "node scripts/build-preview-vendor.mjs && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

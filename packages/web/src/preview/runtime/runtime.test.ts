@@ -49,6 +49,25 @@ describe('preamble —— 三条设计约束必须在源码里落地', () => {
     expect(src).not.toContain('location.origin')
   })
 
+  /**
+   * 模块级 import 失败是**完全静默**的：实测 `window.onerror` 不触发、
+   * `unhandledrejection` 不触发、`script.onerror` 也不可靠。最典型的场景是
+   * `/preview-vendor/*` 取不到（vendor 产物没构建、或路径变了），现象是
+   * 「预览一片空白 + 控制台零输出」—— 没有这条归因，用户和维护者都无从下手。
+   */
+  it('模块体没跑起来时能归因，而不是静默空白', () => {
+    // 报到标记必须**拼进注入的模块体**（只留下面那句检查是不够的 —— 摘掉这一句，
+    // 检查永远不成立，反而变成每次都误报）。
+    expect(src).toMatch(/script\.textContent\s*=\s*'window\.__zuseRan = ' \+ runId/)
+    // 超时后检查是否报到，报到了就闭嘴。
+    expect(src).toMatch(/window\.__zuseRan === runId/)
+    expect(src).toContain('MODULE_START_TIMEOUT_MS')
+    // 错误文本要指名道姓地把人引到 vendor 产物上，否则「归因」等于没归。
+    expect(src).toContain('/preview-vendor/')
+    // 只对最新一轮负责：连改两次代码时，上一轮的超时不能误报。
+    expect(src).toMatch(/runId !== EVAL_SEQ/)
+  })
+
   it('patch 了全部日志级别，并接了两类未捕获错误', () => {
     for (const lvl of ['log', 'info', 'warn', 'error', 'debug']) expect(src).toContain(`'${lvl}'`)
     expect(src).toContain('window.onerror')
@@ -77,5 +96,23 @@ describe('srcdoc 构造', () => {
     const out = buildHtmlSrcdoc('<p>片段</p>', 't', 'light')
     expect(out).toContain('<p>片段</p>')
     expect(out).toContain('ResizeObserver')
+  })
+
+  /**
+   * 模型吐出来的「HTML」经常是**片段**（`<div>…</div>`，根本没有 `<html>` 标签）。
+   * 初版用 `userHtml.replace(/<html/i, …)` 注入 data-theme —— 片段上正则不命中，
+   * 就**静默不加**，深色模式下用户看到的是一整块刺眼的白（BASE_CSS 的深色规则挂在
+   * `:root[data-theme="dark"]` 上，选择器匹配不上）。
+   */
+  it('HTML 片段（没有 <html> 标签）在深色模式下也必须带上 data-theme', () => {
+    const out = buildHtmlSrcdoc('<p>片段</p>', 't', 'dark')
+    expect(out).toMatch(/<html[^>]*data-theme="dark"/)
+    expect(out).toContain('<p>片段</p>')
+  })
+
+  it('片段补的 <html> 不能重复：用户已有 <html> 时仍然只有一个', () => {
+    const out = buildHtmlSrcdoc('<html><body><b>hi</b></body></html>', 't', 'dark')
+    expect(out.match(/<html/gi)).toHaveLength(1)
+    expect(out).toMatch(/<html[^>]*data-theme="dark"/)
   })
 })

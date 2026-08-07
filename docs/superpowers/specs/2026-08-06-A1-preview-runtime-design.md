@@ -140,7 +140,10 @@ fenced code block ──detect──► PreviewSpec{kind, code}
 
 - **iframe 只在 import map 变化时重建**（几乎不变）。
 - **代码更新走 `postMessage({action:'eval', js, css})`**，往同一个 document 里注入新的 `<script type="module">`。
-- 只在**代码围栏闭合后**才触发编译，并加防抖。
+- 只在**代码围栏闭合后**才触发编译，并加防抖（`COMPILE_DEBOUNCE_MS`，120ms）。
+- **iframe 也不绑 `theme`**（2026-08-07 补）。主题有独立的 postMessage 通道，把它塞进 `srcdoc` 的依赖里 = 切一次主题就换一个 document，demo 状态全丢。初版正是这么写的，配上「不重放产物」直接变成「切主题后预览永久空白且零报错」。
+- **`ready` 到达时统一重放**最近一次 eval 与最近一次 theme。新 document 不可能知道上一轮 eval 过什么；只在「编译完成」那一刻下发是错的。原来那个「单槽 `pendingRef` 缓冲」不行：只存得下一条消息，eval 与 theme 会互相覆盖并静默丢失。
+- **编译 effect 的依赖必须是 `spec.kind` / `spec.code` 两个原始值，不能是 `spec` 对象**。调用方每次渲染都新建 `{kind, code}` 字面量 —— 依赖对象身份的话，点一下代码块的「复制」按钮就会把整个 demo 重跑一遍、控制台清空（实测：计数器从 3 归 0，1.5 秒后再来一遍）。
 
 ### 4.1 「围栏是否闭合」这个信号从哪来（评审 D1，初稿的硬伤）
 
@@ -150,16 +153,42 @@ fenced code block ──detect──► PreviewSpec{kind, code}
 
 不写进 spec 的话，实现阶段会在这里现场发明一个错误方案（比如去数反引号，或用防抖赌"应该吐完了"）。
 
-## 5. 安全立场：**明确地不做隔离**
+## 5. 安全立场：**摘掉 `allow-same-origin`**（2026-08-07 订正，原立场是错的）
 
 `srcdoc` 文档继承父页面 origin。同时给 `allow-scripts` 与 `allow-same-origin`，guest 就能拿到 `parent.document` → 找到自己那个 `<iframe>` → **删掉 `sandbox` 属性** → reload → 解放自己。MDN 原文：*"it is **strongly discouraged** to use both... making it **no more secure than not using the `sandbox` attribute at all**."*
 
-**本设计明知故用**（Vue 官方 REPL 亦然），理由：
+初稿据此判定「反正挡不住，不如给功能让路」，并写下理由 1：
 
-1. zuse 的 `BashTool` 本来就能在本机执行任意命令。浏览器沙箱挡不住任何本来挡得住的东西，只会挡住**功能**。
-2. 真隔离的唯一办法是**独立 origin**（daemon 另开一个端口专供预览）。那要重做 daemon 表面积、配置与认证边界，代价与收益严重不匹配。
+> ~~zuse 的 `BashTool` 本来就能在本机执行任意命令。浏览器沙箱挡不住任何本来挡得住的东西，只会挡住**功能**。~~
 
-**约束**：`PreviewFrame.tsx` 里写一段注释说明这是有意选择，**并配一条断言 sandbox 两个 token 同时存在的测试**（评审 D9：注释拦不住手快的人，断言可以）。那不是安全测试，是防误改测试。
+**这条理由是事实错误。** `BashTool` 的每一次执行都要过 `canUseTool` 权限提示；同源 iframe 里的 `fetch` **不用**。两者的威胁模型根本不同 —— 沙箱挡住的正是 **「绕过权限提示的无人值守提权」**，那恰恰是它挡得住、也值得挡的东西。
+
+独立评审在**真浏览器**里实测确认（预览里的代码，零权限提示）：
+
+| 调用 | 结果 |
+|---|---|
+| `GET /api/sessions` | **200**，返回全部会话的真实内容 |
+| `PUT /api/files/content` | 已认证，可改本机任意文件 |
+| `POST /api/mcp` | 已认证，可注册一个 **command 任意**的 stdio server —— 下次 daemon 重启即执行 |
+
+一段模型生成的（或从网上复制的）代码块，用户点一下「运行」就够了。
+
+**现立场**：`SANDBOX_TOKENS` **不含 `allow-same-origin`**，guest 跑在 opaque origin(`"null"`)上。
+
+摘掉之后实测**唯一**坏掉的东西是 vendor 模块的 CORS：
+
+```
+Access to script at 'http://127.0.0.1:4180/preview-vendor/react.js' from origin 'null'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present
+```
+
+**对策**：`packages/server/src/http/server.ts` 里**只**给 `/preview-vendor/*` 这一条静态路由加 `Access-Control-Allow-Origin: *`。那里放的是我们自己构建的静态 JS，无凭据、无用户数据。**绝不加 `Access-Control-Allow-Credentials`，绝不扩到 `/api/*`** —— 那等于把上表三条洞原样还回去。
+
+高度上报（guest 内 `ResizeObserver`，见陷阱 1）与 postMessage 桥（`targetOrigin:'*'` + `event.source` + token 鉴别，见陷阱 8）本来就不依赖同源，不受影响。
+
+**约束**：配一条断言 `allow-same-origin` **不存在**的测试（`PreviewFrame.test.tsx`）。**这条是真的安全测试**，不再是防误改测试 —— 注释拦不住手快的人，断言可以。
+
+**残留风险（如实记录）**：opaque origin 只挡住「带着父页凭据打已认证 API」。guest 仍能访问公网（§6.5 的决定：不拦网络），所以它仍可以把 `postMessage` 拿到的数据外传，或对 `127.0.0.1` 的其它端口做无凭据探测。要彻底隔离仍然只有「独立 origin + 独立端口」一条路，那笔账没变（要重做 daemon 表面积、配置与认证边界），本轮不做。
 
 **CSP 的连带事实**：仓库当前**没有任何 `Content-Security-Policy`**（已 grep 核实），所以 srcdoc 预览今天直接可用。但只要有人给 daemon 加上 `script-src 'self'`，所有预览会瞬间全挂 —— guest 的 preamble 是 inline script，而 srcdoc 文档**继承嵌入方的 CSP**。故记一条约束：**加 CSP 前必须先把预览改成独立 URL**。
 
@@ -171,7 +200,10 @@ fenced code block ──detect──► PreviewSpec{kind, code}
 - ❌ `<style module>`（CSS Modules）
 - ❌ **Vue JSX**（需 `@vue/babel-plugin-jsx` → 把 Babel 拖回来，上游为此单独懒加载了一个 6.81 MB 的 chunk）
 - ⚠️ decorators、`const enum` 等 sucrase 覆盖不到的语法 —— **措辞订正（评审 D3）**：初稿说这些会「明确报错」，**是错的**。实测 sucrase 3.35.1 对 `@dec class A {}` **原样输出、不抛异常**（`const enum` 则被编成普通 enum IIFE）。真正报错的是浏览器：Chrome 对该输出报 `SyntaxError`。所以准确说法是「**不保证支持，表现为 guest 侧运行时错误**」，由 preamble 捕获后归因展示 —— 而不是编译期拦截。
-- ❌ 真正的安全隔离（§5，有意为之）
+- ❌ **`localStorage` / `sessionStorage`**。guest 跑在 opaque origin 上（§5），碰这两个 API 会抛 `SecurityError`。这是**响亮失败**（错误由 preamble 捕获、在 ConsolePanel 里可见），不是静默失效 —— 所以只需在这里写明，不必额外做垫片。要在 demo 里存状态就用内存变量。
+- ❌ 真正的安全隔离（§5 摘掉 `allow-same-origin` 之后挡住了「免权限提示打已认证 API」这一类，但**不是**完整隔离 —— 残留风险见 §5 末尾）
+
+**待定（产品判断，尚未决策）**：Vue SFC 的 **CSS 语法错**目前直接**否决整次预览**（`js` 置空、组件根本不渲染）。合理的替代是降级成 warning、照常渲染组件 —— 一个分号写错就整个白屏，对「看一眼」的用途未必划算。两种都说得通，等有真实使用反馈再定。（错误文本本身已经洗掉 ANSI 色码与构建机绝对路径，见 `compile/vue.ts` 的 `cleanErrorText`。）
 
 ## 6.5 UI 与生命周期（评审 D7：初稿整块缺失）
 
@@ -193,7 +225,8 @@ fenced code block ──detect──► PreviewSpec{kind, code}
 | 4 | **`compiler-sfc.esm-browser.js` 没有 minified 版本**（实测该包 dist 只有 `.cjs.js` 与 `.esm-browser.js`，无 `.prod` 变体）。从 CDN 直引 = 传 1.65 MB 未压缩源码 | 走 `import('vue/compiler-sfc')` 让 Vite 打包压缩进独立 async chunk。**连带**：浏览器版内联的 postcss 会报 `pathToFileURL` 相关错误，上游显式忽略这类错误 —— 上线第一天就会撞上 |
 | 5 | **有 `<script setup>` 时绝不能再调 `compileTemplate`**。`compileScript(descriptor, {inlineTemplate:true})` 已把 render 内联进去，再拼一次会得到双 render 的破组件（有时渲染两遍、有时白屏） | 守卫：`if (descriptor.template && (!descriptor.scriptSetup || inlineTemplate === false))` |
 | 5b | **scoped CSS 会静默失效**：需手动追加 `__sfc__.__scopeId = "data-v-" + id`，**且**把**同一个 id** 传给 `compileStyleAsync({scoped:true, id})`。两处 id 不一致 → 样式注入了、选择器一个都匹配不上、**零报错** | id 用文件名/内容的稳定哈希，单点生成、两处共用 |
-| 6 | **React 19 不发布任何浏览器可直接加载的构建**。实测 `packages/web` 解析到 react **19.2.7**，无 `umd/`、无 esm-browser（`node_modules` 里那个带 umd 的是 18.3.1，属别的包的依赖树） | 构建时加一个额外 rollup entry 产出 ESM bundle 到 `dist/preview-vendor/`。**Vue 相反** —— `vue.esm-browser.prod.js` 开箱即用，直接拷贝。**两个框架不能共用同一套 vendor 流程** |
+| 6 | **React 19 不发布任何浏览器可直接加载的构建**。实测 `packages/web` 解析到 react **19.2.7**，无 `umd/`、无 esm-browser（`node_modules` 里那个带 umd 的是 18.3.1，属别的包的依赖树） | 构建时加一个额外 entry 产出 ESM bundle 到 **`public/preview-vendor/`**。**Vue 相反** —— `vue.esm-browser.prod.js` 开箱即用，直接拷贝。**两个框架不能共用同一套 vendor 流程** |
+| 9 | **vendor 产物落 `dist/` 的话 `pnpm dev` 下全是 404**（vite dev 服务 `public/`，不服务 `dist/`），而**模块级 import 失败在 guest 里完全不可见** —— 实测 `window.onerror`、`unhandledrejection` 都不触发，`script.onerror` 也不可靠。现象是预览一片空白 + 控制台零输出 | ① 产物改出到 `public/preview-vendor/`，且 vendor 构建串在 `vite build`/`vite` **之前**（dev 与 build 都吃得到）；② preamble 在注入的模块体最前面写一个 `window.__zuseRan = runId` 报到标记，`MODULE_START_TIMEOUT_MS`(3s) 内没报到就发一条指名 `/preview-vendor/*` 的错误 —— 静默空白变成响亮失败 |
 | 7 | 编译器与运行时版本漂移 | `@vue/compiler-sfc` 与自托管的 `vue.runtime.esm-browser.prod.js` 必须出自**同一个** `vue` 依赖，别一个走 CDN 一个走 npm。先钉 `~3.5` |
 | 8 | **srcdoc 里 `location.origin` 恒为字符串 `"null"`**（评审真浏览器实测）。即使给了 `allow-same-origin`、能摸到 `parent.document`，它**仍然**是 `"null"`，`location.href` 是 `about:srcdoc` | preamble 里**绝不能**用 `location.origin` 做同源判断。父页鉴别消息只认 `event.source === iframe.contentWindow` + 每次预览随机生成的 token；guest 回信一律 `targetOrigin: '*'`（opaque origin 下没有别的值能匹配） |
 
@@ -222,7 +255,8 @@ iframe 生命周期 + postMessage 桥 + console/错误捕获 + preamble 这套�
 |---|---|---|
 | 纯函数 | `detect()` 从 `node` 里取语言的判定、import map 生成、`toString` 降级链 | vitest（jsdom），确定性 |
 | 编译 | sucrase 输出必须走 `react/jsx-runtime`（§2.3，选错 runtime 会大面积挂，值得钉死）；`<script setup>` 时**不得**二次 `compileTemplate`；scoped id 两处一致 | vitest，断言产物字符串特征 |
-| 防误改 | `PreviewFrame` 的 sandbox 属性同时含 `allow-scripts` 与 `allow-same-origin` | vitest + RTL。**这不是安全测试**，是防止将来某次"安全加固"顺手摘掉 `allow-same-origin` 而炸掉一堆依赖同源的东西（评审 D9：靠注释拦不住，靠断言可以） |
+| 安全 | `PreviewFrame` 的 sandbox 属性**不含** `allow-same-origin`（含 `allow-scripts`）；server 只给 `/preview-vendor/*` 加 CORS，`/api/*` 与其它静态资源都不加、且从不带 `Allow-Credentials` | vitest + RTL / node http。**这是真的安全测试**（2026-08-07 与 §5 一起订正 —— 初稿写的是「同时含两个 token 的防误改测试」，方向反了） |
+| 生命周期 | ① document 重建（再次收到 `ready`）后必须重放最近一次 eval；② 切主题不重建 document；③ 内容不变的重渲染不得重新下发 eval；④ 编译有防抖 | vitest + jsdom。用假 `contentWindow` 收父页→guest 的 postMessage，token 从 srcdoc 里的 preamble 源码回读。①③ 各自对应一个「测试全绿但真跑是空白 / demo 被重置」的真实缺陷 |
 | 端到端 | 真跑一段 HTML/JSX/Vue，看渲染结果与 console 捕获 | **agent 手工 smoke（照 `/ship` 的既有做法，用 Playwright MCP）** |
 
 **订正一条初稿的错误陈述（评审 D2）**：初稿说端到端走「Playwright（仓库已有 web 端 E2E 惯例）」——**仓库根本没有这套基建**。已核实：全仓 package.json 零 playwright 依赖、无 `playwright.config.*`、无 `e2e/` 目录、**连 `.github/workflows` 都不存在**（没有 CI）。唯一的"惯例"是 `.claude/skills/ship/SKILL.md` 规定的「web 改动时由 agent 用 Playwright MCP 手工 smoke」——那是一次性人工验证，**不是可提交、可回归的测试**。

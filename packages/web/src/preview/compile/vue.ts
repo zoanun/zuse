@@ -17,12 +17,38 @@ function stableId(code: string): string {
 const UNSUPPORTED_STYLE_LANGS = ['scss', 'sass', 'less', 'stylus', 'styl']
 const UNSUPPORTED_TEMPLATE_LANGS = ['pug', 'jade', 'haml']
 
+/** 传给 compiler-sfc 的虚拟文件名。错误文本里的路径按它来剥。 */
+const FILENAME = 'Preview.vue'
+
+// ANSI SGR 序列。postcss 的 CssSyntaxError 默认带终端色码（\u001b[1m\u001b[31m…），
+// 而 ConsolePanel 把错误当**纯文本**渲染 —— 不剥掉就是一屏乱码。
+// eslint-disable-next-line no-control-regex
+const ANSI = /\u001b\[[0-9;]*m/g
+// postcss 把 filename 解析成了**构建机的绝对路径**（实测
+// `E:\ai-study\zuse\packages\web\Preview.vue`）。对用户毫无意义，还泄漏本机目录结构。
+// 只剥前缀，保留 `Preview.vue:行:列` —— 那是唯一有用的定位信息。
+const ABS_PATH = new RegExp(String.raw`(?:[A-Za-z]:)?[\\/][^\s()'"]*?${FILENAME}`, 'g')
+
+/** 把一条错误文本洗成可以直接丢进 ConsolePanel 的样子。 */
+function cleanErrorText(s: string): string {
+  return s.replace(ANSI, '').replace(ABS_PATH, FILENAME).trimEnd()
+}
+
+/** 所有出口统一过一道，免得漏掉某条 return（错误文本是直接给用户看的）。 */
+function scrub(r: CompileResult): CompileResult {
+  return r.errors.length === 0 ? r : { ...r, errors: r.errors.map(cleanErrorText) }
+}
+
 export async function compileVue(code: string): Promise<CompileResult> {
+  return scrub(await compileVueRaw(code))
+}
+
+async function compileVueRaw(code: string): Promise<CompileResult> {
   const [sfc, sucrase] = await Promise.all([import('vue/compiler-sfc'), import('sucrase')])
   const id = stableId(code)
   const errors: string[] = []
 
-  const { descriptor, errors: parseErrors } = sfc.parse(code, { filename: 'Preview.vue' })
+  const { descriptor, errors: parseErrors } = sfc.parse(code, { filename: FILENAME })
   if (parseErrors.length > 0) {
     return { js: '', styles: [], errors: parseErrors.map((e) => `SFC 解析失败：${e.message}`) }
   }
@@ -71,7 +97,7 @@ export async function compileVue(code: string): Promise<CompileResult> {
     try {
       const tpl = sfc.compileTemplate({
         source: descriptor.template.content,
-        filename: 'Preview.vue',
+        filename: FILENAME,
         id,
         scoped: hasScoped,
         compilerOptions: { scopeId: hasScoped ? `data-v-${id}` : undefined },
@@ -90,7 +116,7 @@ export async function compileVue(code: string): Promise<CompileResult> {
     try {
       const out = await sfc.compileStyleAsync({
         source: s.content,
-        filename: 'Preview.vue',
+        filename: FILENAME,
         // 与上面 __scopeId 同源同值 —— 见 stableId 的注释。
         id: `data-v-${id}`,
         scoped: s.scoped,

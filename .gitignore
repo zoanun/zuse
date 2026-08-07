@@ -4,6 +4,9 @@ node_modules/
 # build output
 dist/
 *.tsbuildinfo
+# 预览用的 vendor 产物：由 scripts/build-preview-vendor.mjs 生成，放 public/ 只是为了
+# vite dev 也能服务到（见该脚本顶部注释），本身是构建产物、不进 git。
+packages/web/public/preview-vendor/
 
 # env
 .env

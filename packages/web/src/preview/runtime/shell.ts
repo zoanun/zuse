@@ -37,10 +37,19 @@ export function buildHtmlSrcdoc(userHtml: string, token: string, theme: 'light' 
   const inject = `<style>${BASE_CSS}</style><script>${preambleSource(token)}</script>`
   // 有 <head> 就插进去；没有就整段前置（浏览器会自行补全 document 结构）。
   const headOpen = userHtml.match(/<head[^>]*>/i)
-  const withTheme = userHtml.replace(/<html/i, `<html data-theme="${theme}"`)
+  // 模型吐出来的「HTML」经常是**片段**（`<div>…</div>`，压根没有 <html> 标签）。
+  // 只做 replace 的话正则不命中就**静默不加** data-theme —— BASE_CSS 的深色规则挂在
+  // `:root[data-theme="dark"]` 上，选择器匹配不上，深色模式下就是一整块刺眼的白。
+  // 所以未命中时把 <html> 显式补在最前面（浏览器会把它当作文档根，不会重复）。
+  const htmlOpen = `<html data-theme="${theme}">`
+  const hasHtmlTag = /<html/i.test(userHtml)
+  const withTheme = hasHtmlTag
+    ? userHtml.replace(/<html/i, `<html data-theme="${theme}"`)
+    : htmlOpen + userHtml
   if (headOpen) {
     const at = withTheme.indexOf(headOpen[0]) + headOpen[0].length
     return withTheme.slice(0, at) + inject + withTheme.slice(at)
   }
-  return inject + withTheme
+  // 补出来的 <html> 要留在最前面，inject 插在它**之后**。
+  return hasHtmlTag ? inject + withTheme : htmlOpen + inject + userHtml
 }

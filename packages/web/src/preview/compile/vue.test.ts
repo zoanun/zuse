@@ -41,7 +41,17 @@ describe('compileVue —— <script setup>', () => {
     const scopeId = m![1]!
     expect(r.styles).toHaveLength(1)
     expect(r.styles[0]!.scopeId).toBe(scopeId)
-    // 样式正文里也必须带上同一个属性选择器，否则说明 scoped 根本没生效。
+    /**
+     * **下面这一行是本文件唯一真正咬住 scopeId 一致性的断言，别「精简」掉。**
+     *
+     * 上面那条 `styles[0].scopeId === scopeId` 抓不到这个 bug：`vue.ts` 里
+     * `styles.push({ scopeId: \`data-v-${id}\` })` 的值是**另行拼出来的**，不是从
+     * compileStyleAsync 的产物回读的。两处 id 若不一致，那条断言照样绿。
+     *
+     * 只有检查**样式正文**里真的出现了 `[data-v-xxx]` 属性选择器，才能证明
+     * compileStyleAsync 收到的 id 和 `__sfc__.__scopeId` 是同一个值。不一致的后果是
+     * 样式注入了、选择器一个都匹配不上、**零报错的静默失效**。
+     */
     expect(r.styles[0]!.code).toContain(`[${scopeId}]`)
   })
 
@@ -103,6 +113,29 @@ describe('compileVue —— 浏览器里做不到的形态要给可读原因，�
     const r = await compileVue(`<template><b v-if></template>`)
     expect(r.errors.length).toBeGreaterThan(0)
     expect(r.js).toBe('')
+  })
+})
+
+describe('compileVue —— 错误文本是直接给用户看的', () => {
+  /**
+   * `ConsolePanel` 把错误当**纯文本**渲染，而 postcss 的 CssSyntaxError 默认带终端 ANSI
+   * 色码（`\u001b[1m\u001b[31m`）和**构建机的绝对路径**
+   * （实测：`样式编译失败：CssSyntaxError: E:\ai-study\zuse\packages\web\Preview.vue:1:1: ...`）。
+   * 前者在面板里是一串乱码，后者泄漏本机目录结构且对用户毫无意义。
+   *
+   * TODO（产品判断，本轮不动）：CSS 语法错目前直接**否决整次预览**（js 置空、组件不渲染）。
+   * 是否该降级成 warning、照样渲染组件？见设计文档 §6 的待定项。
+   */
+  it('样式编译失败的文本不含 ANSI 色码、不含绝对路径，但保留行列号', async () => {
+    const r = await compileVue(`<template><b/></template>\n<style scoped>.a { color: red;</style>`)
+    expect(r.errors.length).toBeGreaterThan(0)
+    const text = r.errors.join('\n')
+    // eslint-disable-next-line no-control-regex
+    expect(text).not.toMatch(/\u001b\[/)
+    expect(text).not.toMatch(/[A-Za-z]:[\\/]/) // E:\ai-study\... 这类盘符路径
+    expect(text).not.toContain('packages')
+    expect(text).toContain('Preview.vue:1:1')
+    expect(text).toContain('Unclosed block')
   })
 })
 

@@ -15,6 +15,9 @@
 export function preambleSource(token: string): string {
   return `(function () {
   var TOKEN = ${JSON.stringify(token)};
+  // 第 N 轮 eval。超时归因只对**最新**一轮负责，否则连改两次代码会误报上一轮。
+  var EVAL_SEQ = 0;
+  var MODULE_START_TIMEOUT_MS = 3000;
 
   // 结构化克隆的降级链。JSON.stringify 靠不住（循环引用直接抛），所以逐级退。
   function toText(v) {
@@ -94,13 +97,29 @@ export function preambleSource(token: string): string {
       });
 
       if (data.js) {
+        var runId = ++EVAL_SEQ;
         var script = document.createElement('script');
         script.type = 'module';
         script.setAttribute('data-preview-injected', '');
         // type=module 里抛的错不可靠地触发该元素的 onerror，所以 window.onerror 那头也挂着。
         script.onerror = function () { post({ type: 'error', message: '模块加载失败' }); };
-        script.textContent = data.js;
+        // **模块级 import 失败是完全静默的**（实测：window.onerror 不触发、
+        // unhandledrejection 不触发、script.onerror 也不可靠）——最典型的场景是
+        // /preview-vendor/* 取不到，现象是「预览一片空白 + 控制台零输出」，无从下手。
+        // 所以让模块自己报到：模块体只在**所有 import 都解析成功**后才执行，
+        // 超时还没报到就说明卡在 import 上，给一条能定位的错误。
+        script.textContent = 'window.__zuseRan = ' + runId + ';\\n' + data.js;
         document.body.appendChild(script);
+        setTimeout(function () {
+          if (runId !== EVAL_SEQ) return;          // 已经有下一轮了，这一轮不用管
+          if (window.__zuseRan === runId) return;  // 跑起来了
+          post({
+            type: 'error',
+            message: '预览没能启动：模块体一直没有执行，说明某个 import 没解析成功。'
+              + '最常见的原因是 import map 指向的 /preview-vendor/* 取不到'
+              + '（vendor 产物由 packages/web/scripts/build-preview-vendor.mjs 生成到 public/preview-vendor/）。',
+          });
+        }, MODULE_START_TIMEOUT_MS);
       }
       reportHeight();
     }

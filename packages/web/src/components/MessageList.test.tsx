@@ -157,6 +157,43 @@ describe('MessageList', () => {
     expect(container.querySelector('#msg-a1')!.classList.contains('flash')).toBe(true)
   })
 
+  /**
+   * 代码预览「运行」按钮的禁用信号，整条接线只有这一条测试盯着：
+   * `MessageList`（thinking + 最后一条 assistant → streamingId）→ `Message` 的 streaming prop
+   * → `Markdown` 的 `StreamingContext` → `CodeBlock` 的 `disabled`。
+   *
+   * 为什么必须端到端测这条链，而不是单测 CodeBlock：`CodeBlock` **自己判断不了**围栏是否
+   * 闭合 —— 未闭合的 ```jsx 围栏渲染出的 <pre> 结构和闭合的完全一样（设计 §4.1）。
+   * 信号只能从上面传下来，链上任何一环断了都是「模型刚吐半个组件，按钮就可点」，
+   * 而且**没有任何报错**。链子中间是 context，最容易在重构里被悄悄弄断。
+   */
+  it('流式未完成时，代码块的「运行」按钮禁用；流式结束后恢复可点', () => {
+    const streamingConvo: Message[] = [
+      { id: 'u1', role: 'user', parts: [{ kind: 'text', text: '写个组件' }] },
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: '```jsx\nconst a = 1\n```' }] },
+    ]
+    const { container, rerender } = render(<MessageList messages={streamingConvo} thinking />)
+    const runBtn = () => container.querySelector('.code-run') as HTMLButtonElement | null
+    expect(runBtn()).not.toBeNull() // 是禁用不是隐藏：隐藏会让按钮在流结束瞬间跳出来，布局抖动
+    expect(runBtn()!.disabled).toBe(true)
+
+    rerender(<MessageList messages={streamingConvo} thinking={false} />)
+    expect(runBtn()!.disabled).toBe(false)
+  })
+
+  it('只有正在流式的那条消息里的运行按钮被禁用，更早的回复不受牵连', () => {
+    const messages: Message[] = [
+      { id: 'a1', role: 'assistant', parts: [{ kind: 'text', text: '```jsx\nconst old = 1\n```' }] },
+      { id: 'u1', role: 'user', parts: [{ kind: 'text', text: '再写一个' }] },
+      { id: 'a2', role: 'assistant', parts: [{ kind: 'text', text: '```jsx\nconst neu = 2\n```' }] },
+    ]
+    const { container } = render(<MessageList messages={messages} thinking />)
+    const btns = container.querySelectorAll<HTMLButtonElement>('.code-run')
+    expect(btns).toHaveLength(2)
+    expect(btns[0]!.disabled).toBe(false) // 上一轮的回复早就写完了
+    expect(btns[1]!.disabled).toBe(true)  // 正在吐的这条
+  })
+
   it('selected rows carry the .sel class', () => {
     const { container } = render(
       <MessageList messages={convo} thinking={false} shareMode selected={new Set(['a1'])} onToggleSelect={vi.fn()} />,
