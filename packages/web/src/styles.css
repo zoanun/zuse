@@ -114,6 +114,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   display: flex; flex-direction: column; min-height: 0; min-width: 0;
   border-left: 1px solid var(--line); background: var(--surface);
 }
+/* 只有待办/子代理、没有预览时收窄到 320px（设计 §3 / §8）。
+   收窄**只能把聊天区变宽** —— 正文列有 `--col: 46rem` 的上限，gutter 是
+   `max(20px, (100% - --col)/2)`，所以 1440 屏上聊天区 780→864px 时正文仍是 736px，
+   一格不动（PR1 的核心承诺）。320 恰好也是上面 clamp 的下界，两种形态之间不会反向变宽。 */
+.main-body.rail-narrow .rail { width: 320px; }
 /* 有右栏时给聊天区兜底宽度，别被右栏挤成窄条。没有右栏时不能加 —— 窄窗口下会横向溢出。 */
 .main-body.has-rail .chat { min-width: 560px; }
 /* 窄行（本行 ≤900px）转覆盖式（设计 §4.3）。**只换外观，DOM 一个字不动**。
@@ -126,7 +131,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     width: min(100%, 480px); z-index: 10;
     box-shadow: -10px 0 30px var(--shadow);
   }
+  /* 窄行时待办/子代理**回到正文列**（设计 §8 的第 6 问）。
+     覆盖式对待办是自毁的：搬家的全部理由就是「环境感知、常驻可见」，而覆盖层要么盖住
+     整个对话、要么被收起，两种都等于看不见，还顺手挡住 Composer。而正文列里那个老位置
+     （`.stream` 与 Composer 之间）本来就**不跟消息滚动**，窄屏上它就是最优解。
+     所以窄行下让正文那份出场、右栏那份让位（两份都在 DOM 里，只由 CSS 决定谁显示 ——
+     用 JS 按宽度分叉会把 PreviewFrame 挪位置，那是 P0-4 明令禁止的）。 */
+  .main-body.has-rail .narrow-panels { display: block; }
+  .main-body.has-rail .rail > .todos { display: none; }
+  /* 没有预览时右栏此刻已经空了 —— 整栏收起，别留一条空竖线。
+     **只在没有预览时才敢 display:none**：有预览时这么干等于卸载 iframe，demo 全丢。 */
+  .main-body.rail-narrow .rail { display: none; }
 }
+/* 正文列里的那份待办/子代理是**窄行专用**的回退位，宽行下不出场（右栏那份才是主角）。 */
+.narrow-panels { display: none; }
 .stream {
   flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; gap: 18px; width: 100%;
@@ -342,6 +360,19 @@ button.head:hover .caret { opacity: 0.9; }
 .perm .actions button { padding: 8px 16px; font-size: 13px; }
 
 .todos { margin-inline: max(20px, calc((100% - var(--col)) / 2)); margin-bottom: 10px; background: none; border: 0; border-left: 2px solid var(--line); border-radius: 0; padding: 2px 0 2px 14px; max-height: 36vh; overflow-y: auto; }
+/* 待办 / 子代理在**右栏**里的形态（设计 §8）。上面那条基础规则的
+   `margin-inline: max(20px, calc((100% - var(--col)) / 2))` 是按**聊天列限宽居中**算的
+   —— 在右栏里这个式子恒取 20px，看着不坏，但**语义上接错了容器**：以后调 --col
+   会莫名其妙地动到右栏。所以整条断开，不要留着「反正现在结果对」。
+   左边那道 2px 竖线也去掉：它在消息流里是「这块归属正文」的引导线，独立分栏里没有这个含义；
+   面板之间改用底分隔线，最后一块不画（否则栏底多一条断线）。 */
+.rail > .todos {
+  margin: 0; padding: 12px 14px;
+  border-left: 0; border-bottom: 1px solid var(--line);
+  flex: 0 1 auto; min-height: 0;
+}
+.rail > .todos:last-child { border-bottom: 0; }
+.rail > .todos .th { justify-content: space-between; }
 .todos .th { font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); margin-bottom: 7px; display: flex; gap: 10px; justify-content: flex-start; }
 .todos .ti { display: flex; gap: 9px; align-items: center; font-size: 13.5px; line-height: 1.5; margin: 4px 0; color: var(--text); }
 .todos .ti .cbx { margin-top: 1px; }

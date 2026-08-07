@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PermissionVerdict, PermissionMode, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import { useStore, newMessageId } from '../state/store.js'
 import { Header } from './Header.js'
@@ -6,8 +6,8 @@ import { Sidebar, type SidebarHandle } from './Sidebar.js'
 import { MessageList } from './MessageList.js'
 import { isSelectableRow } from './Message.js'
 import { isTurnOpener, type Message as Msg } from '../state/types.js'
-import { TodosPanel } from './TodosPanel.js'
-import { AgentsPanel } from './AgentsPanel.js'
+import { TodosPanel, hasVisibleTodos } from './TodosPanel.js'
+import { AgentsPanel, runningAgentCount } from './AgentsPanel.js'
 import { PermissionCard } from './PermissionCard.js'
 import { Composer, type ComposerHandle, imageFilesFrom, otherFilesFrom } from './Composer.js'
 import { ManageDrawer } from './ManageDrawer.js'
@@ -59,6 +59,21 @@ export function Shell() {
   // ——`activePreview` 是模块级单例，**在此之前没有任何人在切会话时清它**（设计 §3.3 / P0-2）。
   // `/clear`（newSession）、revert、switchSession 都会换掉 currentSessionId，走的是同一条路。
   useEffect(() => { closeRun() }, [currentSessionId])
+
+  // 右栏的显示条件（设计 §8）：**有预览 或 有待办 或 有在跑的子代理**。
+  // 判据**一律来自面板自己导出的谓词**，Shell 不复刻 —— `hasVisibleTodos` 里「全完成也消失」
+  // 那条、`runningAgentCount` 背后 currentTurn 的切分与「后台派发跳过」规则，都是踩过坑写出来的
+  // （后者刚因为「永久卡在 1 运行中」重写过）。在这里手写一份等于把那些故障请回来。
+  // memo 的理由：Shell 每个流式 delta 都重渲染，而 runningAgentCount 要遍历本回合所有 part。
+  const runningAgents = useMemo(
+    () => runningAgentCount(state.messages, state.backgroundAgents),
+    [state.messages, state.backgroundAgents],
+  )
+  const showTodos = hasVisibleTodos(state.todos)
+  const hasRail = !!activeRun || showTodos || runningAgents > 0
+  // 只有待办/子代理、没有预览时右栏收窄（设计 §3 的 320px）。
+  // 收窄**只能把聊天区变宽**，所以正文列（--col=736px 上限）一格不动 —— PR1 的核心承诺。
+  const railNarrow = hasRail && !activeRun
 
   const historyRef = useRef<Map<string, string[]>>(new Map())
   const dirPickerRef = useRef<DirPickerHandle>(null)
@@ -288,7 +303,7 @@ export function Shell() {
           窄屏覆盖式**只由 CSS 的 `@container` 换外观**（styles.css），这里不分叉出第二棵子树 ——
           换子树会让 PreviewFrame 的 token 重生 → 新 document → demo 归零（设计 §4.3 / P0-4）。
         */}
-        <div className={'main-body' + (activeRun ? ' has-rail' : '')}>
+        <div className={'main-body' + (hasRail ? ' has-rail' : '') + (railNarrow ? ' rail-narrow' : '')}>
         <SessionContext.Provider value={currentSessionId}>
         {mainView === 'cron' ? <main className="chat"><CronPanel /></main> : (
         <main className="chat">
@@ -319,8 +334,18 @@ export function Shell() {
               {state.pendingPermissions.map((p) => <PermissionCard key={p.id} pending={p} onReply={onReply} />)}
             </div>
           ) : null}
-          <TodosPanel todos={state.todos} />
-          <AgentsPanel messages={state.messages} backgroundAgents={state.backgroundAgents} />
+          {/*
+            待办 / 子代理的**窄行回退位**（设计 §8 第 6 问）。宽行下由 CSS 隐藏，主角是右栏那份。
+            为什么两份都渲染、由 CSS 二选一，而不是按宽度在 JS 里选一处挂：判据是 `.main-body`
+            的**容器宽度**（`@container`），JS 里读不到它就得上 ResizeObserver；更要命的是
+            按宽度分叉会让右栏的 PreviewFrame 跟着换位置 → token 重生 → demo 归零（P0-4）。
+            这两个面板是纯函数组件、无 iframe 无内部状态，多渲染一份的代价只是几个 DOM 节点，
+            隐藏那份是 `display:none`，不进无障碍树也不参与布局。
+          */}
+          <div className="narrow-panels">
+            <TodosPanel todos={state.todos} />
+            <AgentsPanel messages={state.messages} backgroundAgents={state.backgroundAgents} />
+          </div>
           {state.pendingSteers.length > 0 ? (
             <div className="pending-steers">
               {state.pendingSteers.map((p) => (
@@ -346,10 +371,20 @@ export function Shell() {
         </main>
         )}
         </SessionContext.Provider>
-        {/* cron 视图下也保留右栏。设计 §8 把「右栏在 cron 视图下显不显示」留给 PR2 表态，
-            PR1 选**保留**：这里若不渲染就是**卸载** iframe（demo 状态全丢），而不是「藏起来」；
-            run 还活着，用户也还需要那个「收起预览」按钮才能停掉它。 */}
-        {activeRun ? <Rail run={activeRun} /> : null}
+        {/* cron 视图下也保留右栏 —— PR2 与 PR1 的选择保持一致（设计 §8 要求 PR2 表态）。
+            对预览，不渲染就是**卸载** iframe（demo 状态全丢），而不是「藏起来」；run 还活着，
+            用户也还需要那个「收起预览」按钮才能停掉它。
+            对待办/子代理，理由是它们本就是「后台此刻在干什么」的环境感知：去定时任务页看一眼
+            正是最需要知道「上一轮还有子代理在跑」的时候，藏掉等于把搬家的理由自己抹掉。
+            代价：cron 页正文会被右栏挤窄一点。 */}
+        {hasRail ? (
+          <Rail
+            run={activeRun}
+            todos={state.todos}
+            messages={state.messages}
+            backgroundAgents={state.backgroundAgents}
+          />
+        ) : null}
         </div>
       </div>
       <ManageDrawer

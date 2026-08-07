@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import { AgentsPanel, collectAgents } from './AgentsPanel.js'
+import { render, screen, cleanup } from '@testing-library/react'
+import { AgentsPanel, collectAgents, runningAgentCount } from './AgentsPanel.js'
 import type { Message } from '../state/types.js'
 
 const msg = (parts: Message['parts']): Message => ({ id: 'm', role: 'assistant', parts })
@@ -134,4 +134,62 @@ describe('AgentsPanel —— 后台子代理来自服务端', () => {
     const { container } = render(<AgentsPanel messages={[ackMsg]} />)
     expect(container.firstChild).toBeNull()
   })
+})
+
+/**
+ * 谓词与组件必须**永远同答案**（设计 §8）。
+ *
+ * 右栏的显示条件调用 `runningAgentCount`，面板自己 `if (!running) return null` 也走
+ * 同一条链路（turnAgents → countRunning）。这条测试是那份「同一个真相」的锁。
+ *
+ * 为什么非得是**这个**谓词、不许在 Shell 里现写一个：判据里藏着两条踩过坑的规则 ——
+ * `currentTurn` 的回合切分（插话不是回合开头，否则本回合早先派出的子代理会被切丢），
+ * 以及 collectAgents 的「后台派发跳过」（拿历史里那句 ack 当在飞，就是「永久卡在 1 运行中」
+ * 那个真实故障）。复刻一份等于把故障请回来，而这里会立刻变红。
+ */
+describe('runningAgentCount —— 谓词与组件渲染结果一致', () => {
+  const cases: Array<{ name: string; messages: Message[]; bg?: string[] }> = [
+    { name: '没有子代理', messages: [msg([{ kind: 'text', text: 'hi' }])] },
+    { name: '一个在跑', messages: [msg([agentUse('a1', 'running one')])] },
+    { name: '全部已返回', messages: [msg([agentUse('a1', 'x'), toolResult('a1', 'ok')])] },
+    { name: '全部已失败', messages: [msg([agentUse('a1', 'x'), toolResult('a1', 'boom', true)])] },
+    { name: '一个返回一个在跑', messages: [msg([agentUse('a1', 'x'), toolResult('a1', 'ok'), agentUse('a2', 'y')])] },
+    {
+      name: '上一回合在跑的不算（回合切分）',
+      messages: [msg([agentUse('old', 'old one')]), userMsg('next'), msg([{ kind: 'text', text: 'hi' }])],
+    },
+    {
+      name: '插话不切回合，本回合在跑的还算',
+      messages: [
+        userMsg('go'), msg([agentUse('a1', 'running one')]),
+        { id: 's1', role: 'user', parts: [{ kind: 'text', text: 'also X' }], steer: true },
+      ],
+    },
+    {
+      name: '后台派发的 ack 不算在跑（服务端说没有在飞的）',
+      messages: [msg([
+        { kind: 'tool-use', id: 'b1', name: 'Agent', input: { description: 'bg', prompt: 'p', runInBackground: true } },
+        toolResult('b1', 'launched in background'),
+      ])],
+      bg: [],
+    },
+    {
+      name: '后台在飞由服务端给 → 算在跑',
+      messages: [msg([
+        { kind: 'tool-use', id: 'b1', name: 'Agent', input: { description: 'bg', prompt: 'p', runInBackground: true } },
+        toolResult('b1', 'launched in background'),
+      ])],
+      bg: ['bg'],
+    },
+  ]
+  for (const c of cases) {
+    it(c.name, () => {
+      const n = runningAgentCount(c.messages, c.bg ?? [])
+      const { container } = render(<AgentsPanel messages={c.messages} backgroundAgents={c.bg ?? []} />)
+      expect(container.querySelector('.agents') !== null).toBe(n > 0)
+      // 反向钉死：谓词报的数就是面板头上那个「N 运行中」，两边不许各算各的。
+      if (n > 0) expect(container.querySelector('.th')!.textContent).toContain(`${n} 运行中`)
+      cleanup()
+    })
+  }
 })

@@ -268,3 +268,138 @@ describe('右栏 —— 预览不再长在消息流里', () => {
     expect(container.querySelector('.code-wrap.running')).toBeNull()
   })
 })
+
+/** 灌一份待办 / 一份在飞后台子代理（整份覆盖，与服务端同形）。 */
+function setTodos(todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'completed' }>): void {
+  act(() => { captured!.dispatch({ kind: 'server', msg: ev({ type: 'todos-update', todos } as SessionEvent) }) })
+}
+function setBackgroundAgents(labels: string[]): void {
+  act(() => { captured!.dispatch({ kind: 'server', msg: ev({ type: 'background-agents', labels } as SessionEvent) }) })
+}
+
+describe('右栏 —— 待办 / 子代理搬家（设计 §8 / PR2）', () => {
+  /**
+   * 主位在右栏；正文列里那份是**窄行回退位**，宽行由 CSS `display:none`（jsdom 不跑 CSS，
+   * 所以这里断言的是「两份都在 DOM 里、各自在该在的位置」，外观归属交给容器查询）。
+   * 唯一不许出现的位置是 `.stream` —— 落进去就会跟着消息滚走，那是搬家要治的病。
+   */
+  it('待办：右栏一份 + 正文列的窄行回退位一份，`.stream` 里一份都没有', () => {
+    const { container } = mount()
+    setTodos([{ content: '写测试', status: 'in_progress' }])
+    expect(container.querySelectorAll('.todos')).toHaveLength(2)
+    expect(container.querySelector('.rail > .todos')).not.toBeNull()
+    expect(container.querySelector('.chat .narrow-panels > .todos')).not.toBeNull()
+    expect(container.querySelector('.stream .todos')).toBeNull()
+    // 正文列里除了回退位不许再有第二处（老位置必须真的搬走了）
+    expect(container.querySelectorAll('.chat .todos')).toHaveLength(1)
+  })
+
+  it('在跑的子代理也能单独把右栏开出来', () => {
+    const { container } = mount()
+    expect(container.querySelector('.rail')).toBeNull()
+    setBackgroundAgents(['慢活'])
+    expect(container.querySelector('.rail')).not.toBeNull()
+    expect(container.querySelector('.rail .agents')).not.toBeNull()
+    setBackgroundAgents([])
+    expect(container.querySelector('.rail')).toBeNull()
+  })
+
+  /**
+   * 显示条件必须**和面板自己的判据同源**（导出的谓词），不许在 Shell 里复刻。
+   * 复刻最典型的漂移就是丢掉「全完成也消失」那条 —— 那时右栏还开着，里面却什么都没有。
+   */
+  it('待办全部完成 → 右栏关掉，不留空壳', () => {
+    const { container } = mount()
+    setTodos([{ content: 'a', status: 'in_progress' }, { content: 'b', status: 'pending' }])
+    expect(container.querySelector('.rail')).not.toBeNull()
+    setTodos([{ content: 'a', status: 'completed' }, { content: 'b', status: 'completed' }])
+    expect(container.querySelector('.rail')).toBeNull()
+    // 空壳的样子：栏还在但里面一条待办都没有。上一行若放松成 not.toBeNull 这里就是兜底。
+    expect(container.querySelector('.rail .ti')).toBeNull()
+  })
+
+  /**
+   * **P0-1 的第二把锁。** PR1 只在「预览开关」这条路上验过 `.main-body` 不是条件包装；
+   * 待办比预览刁钻得多 —— 它一个回合内能出现/消失好几次，还完全由服务端推动。
+   * 一旦有人把 `.main-body` 写成 `hasRail ? <div className="main-body">…` 的条件包裹，
+   * 每次待办更新都会重建 MessageList + Composer：草稿没了、`.stream` 回到顶。
+   *
+   * 断言用 **DOM 节点身份**（`toBe`，同一个对象）：jsdom 没有布局，scrollTop 恒 0，
+   * 拿它断言是空跑；「节点没被换掉」正是滚动位置与草稿得以保住的机制本身。
+   */
+  it('待办从无到有、从有到无，聊天树不重建，草稿还在', () => {
+    const { container } = mount()
+    const body = container.querySelector('.main-body')!
+    const stream = container.querySelector('.stream')!
+    const ta = container.querySelector('textarea') as HTMLTextAreaElement
+    fireEvent.change(ta, { target: { value: '还没发出去的草稿' } })
+    // **必须重新查 DOM**：重建之后旧引用是一个脱离文档的节点，它身上的 value 还在，
+    // 拿它断言就是空跑。
+    const draft = (): string | undefined => (container.querySelector('textarea') as HTMLTextAreaElement | null)?.value
+
+    setTodos([{ content: 'a', status: 'in_progress' }])
+    expect(container.querySelector('.rail .todos')).not.toBeNull()
+    expect(draft()).toBe('还没发出去的草稿')
+    expect(container.querySelector('.main-body')).toBe(body)
+    expect(container.querySelector('.stream')).toBe(stream)
+    expect(container.querySelector('textarea')).toBe(ta)
+
+    setTodos([])
+    expect(container.querySelector('.rail')).toBeNull()
+    expect(draft()).toBe('还没发出去的草稿')
+    expect(container.querySelector('.main-body')).toBe(body)
+    expect(container.querySelector('.stream')).toBe(stream)
+    expect(container.querySelector('textarea')).toBe(ta)
+  })
+
+  /** 只有待办、没有预览 → 收窄态。有预览就必须退出收窄，否则预览只剩 320px。 */
+  it('只有待办时打上 .rail-narrow；预览一开就撤掉', async () => {
+    const { container } = mount()
+    seed([FENCE('a')])
+    await waitFor(() => expect(container.querySelector('.code-run')).not.toBeNull())
+    const body = () => container.querySelector('.main-body')!.className
+
+    setTodos([{ content: 'a', status: 'in_progress' }])
+    expect(body()).toContain('has-rail')
+    expect(body()).toContain('rail-narrow')
+
+    act(() => { fireEvent.click(container.querySelector('.code-run')!) })
+    expect(body()).toContain('has-rail')
+    expect(body()).not.toContain('rail-narrow')
+
+    act(() => { fireEvent.click(container.querySelector('.preview-close')!) })
+    expect(body()).toContain('rail-narrow')       // 待办还在 → 回到收窄态
+  })
+
+  /**
+   * 待办出现/消失**绝不能重挂预览**。三个子节点是固定槽位（Rail 的注释），
+   * 若改成数组/条件拼接，待办一出现就把 RailRun 挤到别的位置 → PreviewFrame 重挂 →
+   * 新 document → demo 归零。token 来自 `useMemo(...,[])` + ++seq，重挂必变。
+   */
+  it('待办出现/消失时 iframe 不重挂（同一个元素、同一个 token）', async () => {
+    const { container } = mount()
+    seed([FENCE('a')])
+    await waitFor(() => expect(container.querySelector('.code-run')).not.toBeNull())
+    act(() => { fireEvent.click(container.querySelector('.code-run')!) })
+    const iframe = container.querySelector('iframe')!
+    const token = tokenOf(iframe)
+
+    setTodos([{ content: 'a', status: 'in_progress' }])
+    setBackgroundAgents(['慢活'])
+    setTodos([])
+    setBackgroundAgents([])
+
+    expect(container.querySelectorAll('iframe')).toHaveLength(1)
+    expect(tokenOf(container.querySelector('iframe')!)).toBe(token)
+    expect(container.querySelector('iframe')).toBe(iframe)
+  })
+
+  /** cron 视图下右栏保留 —— 与 PR1 对预览的选择一致（Shell.tsx 的注释写了理由）。 */
+  it('cron 视图下待办仍在右栏', () => {
+    const { container } = mount()
+    setTodos([{ content: '写测试', status: 'in_progress' }])
+    act(() => { captured!.setMainView('cron') })
+    expect(container.querySelector('.stream')).toBeNull()          // 确实进了 cron 视图
+    expect(container.querySelector('.rail .todos')).not.toBeNull()
+  })
+})

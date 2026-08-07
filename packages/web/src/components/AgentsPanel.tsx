@@ -55,17 +55,36 @@ function currentTurn(messages: Message[]): Message[] {
   return messages.slice(start)
 }
 
+/**
+ * 本回合要显示的子代理表 —— 两个来源，两种真相：
+ *  - 前台子代理来自**本回合**的消息（没结果 = 在跑），自愈；
+ *  - 后台子代理来自服务端的待投递表，是此刻的实况 —— 它跨回合存活，翻历史推不出来
+ *    （见 collectAgents 的注释：拿历史里的 ack 当在飞，就是那次「永久卡在 1 运行中」的成因）。
+ */
+export function turnAgents(messages: Message[], backgroundAgents: readonly string[] = []): SubAgent[] {
+  const fg = collectAgents(currentTurn(messages))
+  const bg: SubAgent[] = backgroundAgents.map((label, i) => ({ id: `bg-${i}-${label}`, label, status: 'doing' }))
+  return [...fg, ...bg]
+}
+
+/** 唯一一处「在跑的算法」。组件与 `runningAgentCount` 都走它 —— 见下面的注释。 */
+const countRunning = (agents: SubAgent[]): number => agents.filter((a) => a.status === 'doing').length
+
+/**
+ * 面板可见吗（设计 §8）：>0 即可见。
+ *
+ * 右栏要按「有没有内容」决定显不显示，**不许在 Shell 里复刻这套判据**。这里的
+ * `currentTurn` 切分 + collectAgents 的「后台派发跳过」规则刚因为一个真实故障重写过
+ * （AgentsPanel.tsx:8-18 与 AgentsPanel.test.tsx 的那组测试），复刻一份 = 把那个故障请回来。
+ * 组件自己也用同一条链路（turnAgents → countRunning），所以两边不可能不一致。
+ */
+export function runningAgentCount(messages: Message[], backgroundAgents: readonly string[] = []): number {
+  return countRunning(turnAgents(messages, backgroundAgents))
+}
+
 export function AgentsPanel({ messages, backgroundAgents = [] }: { messages: Message[]; backgroundAgents?: string[] }) {
-  // 两个来源，两种真相：
-  //  - 前台子代理来自本回合的消息（没结果 = 在跑），自愈；
-  //  - 后台子代理来自服务端的待投递表，是此刻的实况 —— 它跨回合存活，
-  //    翻历史推不出来（见 collectAgents 的注释）。
-  const agents = useMemo(() => {
-    const fg = collectAgents(currentTurn(messages))
-    const bg: SubAgent[] = backgroundAgents.map((label, i) => ({ id: `bg-${i}-${label}`, label, status: 'doing' }))
-    return [...fg, ...bg]
-  }, [messages, backgroundAgents])
-  const running = agents.filter((a) => a.status === 'doing').length
+  const agents = useMemo(() => turnAgents(messages, backgroundAgents), [messages, backgroundAgents])
+  const running = countRunning(agents)
   // 完成才消失: show only while a sub-agent is still running; once all have returned/failed,
   // the panel clears (their results remain on the inline tool cards in the chat).
   if (!running) return null

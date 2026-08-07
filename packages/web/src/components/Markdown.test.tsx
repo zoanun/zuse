@@ -24,7 +24,7 @@ function Harness({ text, messageId = 'm1' }: { text: string; messageId?: string 
       <SessionContext.Provider value={SID}>
         <Markdown text={text} messageId={messageId} />
       </SessionContext.Provider>
-      {run ? <Rail run={run} /> : null}
+      {run ? <Rail run={run} todos={[]} messages={[]} backgroundAgents={[]} /> : null}
     </div>
   )
 }
