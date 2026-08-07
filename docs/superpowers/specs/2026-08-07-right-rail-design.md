@@ -163,6 +163,24 @@ v1 的 `min(50%, 720px)` 实测把 1440 屏的正文列从 736px 压到 552px（
 1440 屏上开个不最大化的窗口就永远是覆盖式。
 **另一个取舍**：覆盖式会盖住 Composer（实测 composer 盒子完全落在 `.chat` 内），即看预览时不能打字。
 
+### 4.3.1 `@container` 规则**改不了容器自己**（PR2 实现期撞出来的，血的教训）
+
+`.main-body` 自己带 `container-type: inline-size`，而容器查询匹配的是**祖先**容器。所以
+
+```css
+@container (max-width: 900px) { .main-body.rail-narrow { flex-direction: column } }   /* ✗ 永不命中 */
+```
+
+这条规则**永远不会生效**。PR2 第一版据此做「窄屏转顶部横带」，真浏览器里量出 `flexDirection`
+仍是 `row`，右栏塌成一条 182px 竖条，把正文列从 726px 挤到 **612px** —— 直接违反 §4.2 的核心承诺。
+
+**jsdom 完全看不见这个**（无布局、无容器查询），单测全绿。又一个「测试绿 ≠ 能用」的实例。
+
+**结论**：任何想给 `.main-body` **自身**换布局的方案，都必须先把 `container-type` 挪到别的宿主。
+评估过挪到 `.main`（宽度相同），但那会让 `.dirpick-pop` / `.model-pop-anchor` 这些 `position: fixed`
+弹层以 `.main` 为包含块、整体偏移 256px —— 风险不值当。
+PR2 因此改用「窄屏时待办/子代理回落正文列」的方案（见 §8）。
+
 ## 5. 面板结构
 
 `PreviewFrame.tsx:178-181` 已有一条 `.preview-bar`（kind + 「收起预览」），
