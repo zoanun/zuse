@@ -101,6 +101,8 @@ export function createLspInstallTool(run: InstallRunner = defaultRunner): Tool {
       const l = (input as LspInstallInput).lang
       return typeof l === 'string' ? l : null
     },
+    // 语言 id（`typescript` / `go`）不是路径。
+    specifierKind: 'opaque',
 
     async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
       const input = (rawInput ?? {}) as LspInstallInput

@@ -110,6 +110,8 @@ describe('WebFetchTool metadata', () => {
     expect(WebFetchTool.specifierFor?.({ url: 'https://github.com/a/b' })).toBe('github.com')
     expect(WebFetchTool.specifierFor?.({ url: 'not a url' })).toBeNull()
     expect(WebFetchTool.specifierFor?.({})).toBeNull()
+    // 主机名不是文件路径，别让权限层拿它去 resolve(cwd, …)
+    expect(WebFetchTool.specifierKind).toBe('opaque')
   })
 })
 

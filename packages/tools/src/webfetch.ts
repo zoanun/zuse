@@ -200,6 +200,8 @@ export const WebFetchTool: Tool = {
       return null
     }
   },
+  // 主机名不是文件路径 —— 把它拿去 resolve(cwd, 'github.com') 当路径比是纯属巧合才对得上。
+  specifierKind: 'opaque',
 
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const input = (rawInput ?? {}) as WebFetchInput

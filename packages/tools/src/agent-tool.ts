@@ -84,6 +84,10 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
       const desc = (input as { description?: unknown }).description
       return typeof desc === 'string' ? desc : null
     },
+    // 描述是自由文本，不是路径。不标 opaque 的话权限层会拿它去 resolve/相对化,
+    // 描述里带 `../` 或以 `/` 开头就会被 cwd 围栏判成「逃逸」——「本会话允许」
+    // 追加的 `Agent(../修接口)` 匹配不上它自己,于是每轮都重新弹框。
+    specifierKind: 'opaque',
 
     async run(input: unknown, ctx: ToolContext) {
       const { prompt, description, model, allowedTools, runInBackground, isolation } = input as {

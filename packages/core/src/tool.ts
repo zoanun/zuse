@@ -110,6 +110,16 @@ export interface Tool {
   parallelizable?: boolean
   /** 返回用于规则限定符匹配的字符串：Bash 返回命令，文件工具返回路径；无则 null。 */
   specifierFor?(input: unknown): string | null
+  /**
+   * `specifierFor` 返回的到底是不是**文件路径**。缺省 `'path'`（绝大多数工具都是）。
+   *
+   * 标 `'opaque'` 的工具（Agent 的自由文本描述、WebFetch 的主机名、LspInstall 的语言 id）
+   * 必须显式声明，否则权限层会把它们当路径处理：先 `resolve(cwd, …)` 再按 cwd 围栏判逃逸。
+   * 后果不是理论问题 —— 描述为 `../修接口` 的 Agent 调用，用户在弹框点了「本会话允许」后
+   * 追加的会话规则 `Agent(../修接口)` 会因为「逃出 cwd」而再也匹配不上自己，于是每次都
+   * 重新弹框。把主机名拿去 resolve 成文件路径同样荒谬。
+   */
+  specifierKind?: 'path' | 'opaque'
 }
 
 /** 发送给厂商 API `tools` 参数的形状。 */

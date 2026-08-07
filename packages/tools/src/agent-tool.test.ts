@@ -181,6 +181,9 @@ describe('createAgentTool', () => {
     expect(tool.specifierFor!({ description: 'my label' })).toBe('my label')
     expect(tool.specifierFor!({ description: 123 })).toBeNull()
     expect(tool.specifierFor!({})).toBeNull()
+    // 描述是自由文本不是路径。漏了这个声明，权限层会把它当路径 resolve + 过 cwd 围栏，
+    // 描述里带 `../` 的调用点了「本会话允许」之后仍会每轮重新弹框。
+    expect(tool.specifierKind).toBe('opaque')
   })
 
   it('returns fallback text when sub-agent produces no output', async () => {

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { writeFile, mkdir, mkdtemp, rm, utimes } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { tmpdir, homedir } from 'node:os'
+import { join, sep } from 'node:path'
 import { GlobTool } from './glob.js'
-import { createFileTracker, type ToolContext } from '@zuse/core'
+import { createFileTracker, decide, type ToolContext, type ResolvedSettings } from '@zuse/core'
 
 let dir: string
 
@@ -110,6 +110,48 @@ describe('GlobTool', () => {
       expect(result.output).toMatch(/truncated: showing first 200 of 260 matches/)
     } finally {
       await rm(many, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('GlobTool.specifierFor —— 权限限定符必须是搜索根，不是模式串', () => {
+  // 安全回归：决定「能读到哪些文件」的是 `cwd` 字段（run() 里的 base），不是 pattern。
+  // 曾经返回 pattern —— 于是 {pattern:'**', cwd:'~/.ssh'} 报给权限层的限定符是 `**`
+  // （看着像"就在本项目里搜"），实际枚举家目录私钥目录，deny 规则完全拦不住。
+  it('返回 cwd 字段；未指定时是 "."', () => {
+    expect(GlobTool.specifierFor?.({ pattern: '**' })).toBe('.')
+    expect(GlobTool.specifierFor?.({ pattern: '**', cwd: 'src' })).toBe('src')
+    expect(GlobTool.specifierFor?.({ pattern: '**', cwd: '/home/u/.ssh' })).toBe('/home/u/.ssh')
+  })
+
+  it('deny 规则现在真的拦得住「换个搜索根」的枚举', () => {
+    const settings: ResolvedSettings = {
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], ask: [], deny: ['Glob(~/.ssh/**)'] },
+      providers: {},
+    }
+    const home = homedir().split(sep).join('/')
+    const evil = { pattern: '**', cwd: `${home}/.ssh` }
+    expect(decide(GlobTool, GlobTool.specifierFor!(evil), settings, [], '/repo').decision).toBe('deny')
+    // 项目内正常搜索不受影响
+    const ok = { pattern: '**/*.ts', cwd: 'src' }
+    expect(decide(GlobTool, GlobTool.specifierFor!(ok), settings, [], '/repo').decision).toBe('allow')
+  })
+
+  it('pattern 里的 ../ 逃不出搜索根（所以只校验根就是完备的）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'zuse-glob-esc-'))
+    try {
+      await mkdir(join(base, 'inside'), { recursive: true })
+      await writeFile(join(base, 'secret.txt'), 'x', 'utf8')
+      const ctx: ToolContext = {
+        cwd: base,
+        signal: new AbortController().signal,
+        tracker: createFileTracker(),
+      }
+      const r = await GlobTool.run({ pattern: '../*.txt', cwd: join(base, 'inside') }, ctx)
+      expect(r.output).toMatch(/No files match/)
+    } finally {
+      await rm(base, { recursive: true, force: true })
     }
   })
 })

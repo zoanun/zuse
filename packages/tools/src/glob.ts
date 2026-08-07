@@ -119,9 +119,16 @@ export const GlobTool: Tool = {
   inputSchema,
   readOnly: true,
   specifierFor: (input: unknown): string | null => {
-    // 返回 glob 模式作为限定符；无则 null。
-    const p = (input as { pattern?: unknown }).pattern
-    return typeof p === 'string' ? p : null
+    // 返回**搜索根**（未指定时 '.'），与 Grep 对齐 —— 不是 pattern。
+    //
+    // 曾经返回 pattern，那是个洞：真正决定能读到哪些文件的是 `cwd` 字段（见 run() 里的
+    // `base`），权限层却拿模式串去比。于是 `{pattern:'**', cwd:'~/.ssh'}` 报给权限层的
+    // 限定符是 `**`（看着像"就在本项目里搜"），实际枚举的是家目录的私钥目录,而
+    // `deny: Glob(~/.ssh/**)` 完全拦不住 —— 实测能列出 id_ed25519 等文件名。
+    // pattern 本身逃不出 base（collect() 是从 base 往下走目录树、拿 relative(base, abs)
+    // 去比模式），所以只校验搜索根就是完备的。
+    const c = (input as { cwd?: unknown }).cwd
+    return typeof c === 'string' ? c : '.'
   },
 
   async run(rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {

@@ -28,6 +28,8 @@ describe('LspInstall tool', () => {
     const tool = createLspInstallTool(async () => ({ code: 0, output: '' }))
     expect(tool.specifierFor?.({ lang: 'typescript' })).toBe('typescript')
     expect(tool.specifierFor?.({})).toBeNull()
+    // 语言 id 不是路径
+    expect(tool.specifierKind).toBe('opaque')
   })
 
   it('errors when lang is missing, without running anything', async () => {
