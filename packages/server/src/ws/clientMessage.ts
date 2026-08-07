@@ -5,7 +5,7 @@ import type { ClientMessage } from '@zuse/protocol'
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type SessionManagerLike = Pick<
   SessionManager,
-  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry' | 'compactNow' | 'isBusy'
+  'submit' | 'interrupt' | 'steer' | 'resolvePermission' | 'switchModel' | 'reset' | 'revert' | 'retry' | 'compactNow' | 'isBusy' | 'setPermissionMode'
 >
 
 /**
@@ -60,6 +60,21 @@ export function applyClientMessage(
           return
         }
         mgr.resolvePermission(msg.id, msg.verdict)
+        return
+      }
+      case 'set-permission-mode': {
+        // 白名单校验，先例见上面的 VALID_VERDICTS。理由是实证的、不是防御性编程：
+        // 用户全局配置 ~/.zuse/settings.jsonc 里写的就是 "defaultMode": "bypass" ——
+        // 那**不是**合法值（合法的是 "bypassPermissions"），而配置读取链全程无校验，
+        // 它静默落到了 'default' 分支。也就是说野生非法值已经存在于这个系统里。
+        // 不校验的话，一个 "bypass" 帧会把 defaultMode 写成一个 decide() 认不出的字符串，
+        // 结果是「界面显示全自主、实际按询问档跑」——最坏的那种分叉。
+        const VALID_MODES = ['default', 'acceptEdits', 'bypassPermissions']
+        if (!VALID_MODES.includes(msg.mode as string)) {
+          sendError('set-permission-mode: invalid "mode"')
+          return
+        }
+        mgr.setPermissionMode(msg.mode)
         return
       }
       case 'switch-model':

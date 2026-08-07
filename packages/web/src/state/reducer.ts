@@ -4,6 +4,7 @@ import type { AppState, Connection, Part } from './types.js'
 export const initialState: AppState = {
   messages: [], todos: [], backgroundAgents: [], pendingPermissions: [], pendingSteers: [],
   thinking: false, connection: 'connecting',
+  permissionMode: 'default', permissionModeEditable: false, autoAllowedCount: 0,
 }
 
 export type Action =
@@ -85,6 +86,12 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     todos: s.todos,
     backgroundAgents: s.backgroundAgents ?? [],
     pendingPermissions: s.pendingPermissions,
+    // 刷新页面不丢档位：它活在服务端的 SessionManager 里，快照带回来。
+    // `?? ` 兜底是给「新前端 + 旧 daemon」这一帧用的（重启前的 daemon 不发这些字段）——
+    // 缺省成「询问 + 不可编辑」，即最保守的那组，而不是画出一个假的全自主。
+    permissionMode: s.permissionMode ?? 'default',
+    permissionModeEditable: s.permissionModeEditable ?? false,
+    autoAllowedCount: s.autoAllowedCount ?? 0,
     thinking: s.isThinking,
     messages: projectSnapshotMessages(s.messages),
     pendingSteers: [], // a fresh snapshot is authoritative — drop any transient queued-steer previews
@@ -167,6 +174,8 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     // A tool's `cd` moved the session cwd — reflect it live so the header/dir picker update without
     // waiting for a reload. (Also covers the abort-time cwd revert, which re-emits this event.)
     case 'cwd-change': return { ...state, cwd: e.cwd }
+    // 服务端权威的档位 + 自动放行计数（同一帧到达，横幅不会先闪一个旧数字）。
+    case 'permission-mode-changed': return { ...state, permissionMode: e.mode, autoAllowedCount: e.autoAllowedCount }
     case 'warning': return withNotice(state, e.message, 'warn')
     case 'error': return withNotice(state, e.message, 'error')
     // Stop also drops any transient queued-steer previews (per the chosen UX: they clear when shown

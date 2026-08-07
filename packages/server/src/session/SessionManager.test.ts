@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { SessionManager } from './SessionManager.js'
-import { fakeClient, fakeSnapshotStore } from './testFakes.js'
+import { fakeClient, fakeSnapshotStore, interactiveOpts } from './testFakes.js'
 import { Conversation, ToolRegistry, steerFoldSuffix } from '@zuse/core'
 import type { Message, ModelClient, ResolvedSettings, Tool, ToolContext, ToolResult, StreamEvent } from '@zuse/core'
 import type { SessionCheckpoint, SessionEvent } from './events.js'
@@ -56,9 +56,8 @@ function makeManagerFromClient(client: ModelClient) {
     cwd: '/work',
     client,
     registry: new ToolRegistry(),
-    settings: makeSettings(),
     systemPrompt: 'SYS',
-    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    ...interactiveOpts(makeSettings()),
     snapshotStore: fakeSnapshotStore(),
   })
 }
@@ -90,9 +89,8 @@ function makeManager(scripts = [] as Parameters<typeof fakeClient>[0]) {
     cwd: '/work',
     client,
     registry: new ToolRegistry(),
-    settings: makeSettings(),
     systemPrompt: 'SYS',
-    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    ...interactiveOpts(makeSettings()),
     snapshotStore: fakeSnapshotStore(),
   })
   return { mgr, calls }
@@ -147,9 +145,8 @@ describe('SessionManager snapshot projection', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
     })
@@ -183,9 +180,8 @@ describe('SessionManager snapshot projection', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
     })
@@ -208,9 +204,8 @@ describe('SessionManager snapshot projection', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
       checkpoints: [{ messageIndex: 0, hash: 'cp-h', at: '2026-06-26T12:34:00.000Z', label: 'first turn' }],
@@ -223,9 +218,8 @@ describe('SessionManager snapshot projection', () => {
 
   const buildMgr = (conversation: Conversation): SessionManager =>
     new SessionManager({
-      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
-      settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation,
     })
 
@@ -328,9 +322,8 @@ describe('SessionManager stable message id', () => {
     conversation.append({ role: 'assistant', id: 'a-old', content: [{ type: 'text', text: 'half' }] })
     conversation.append({ role: 'user', id: 'm-old-marker', content: [{ type: 'text', text: '[Request interrupted by user]' }] })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
-      settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation,
     })
     const msgs = mgr.getState().messages
@@ -472,9 +465,8 @@ function makeManagerWith(
     cwd: '/work',
     client,
     registry,
-    settings: makeSettings(),
     systemPrompt: 'SYS',
-    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    ...interactiveOpts(makeSettings()),
     snapshotStore: fakeSnapshotStore(),
   })
   return { mgr, calls }
@@ -598,8 +590,8 @@ describe('SessionManager turn loop', () => {
     const registry = new ToolRegistry()
     registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
     })
     const echoes: Array<{ text: string; steer?: boolean }> = []
@@ -767,8 +759,8 @@ describe('SessionManager re-entrancy guard', () => {
       run: async (_input, ctx): Promise<ToolResult> => { ctx.setCwd!('/changed'); return { output: 'ok' } },
     })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
     })
 
@@ -898,8 +890,8 @@ describe('SessionManager re-entrancy guard', () => {
     const registry = new ToolRegistry()
     registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
     })
 
@@ -950,8 +942,8 @@ describe('SessionManager re-entrancy guard', () => {
     const registry = new ToolRegistry()
     registry.register({ name: 'Bash', description: 'run', inputSchema: { type: 'object', properties: {} }, readOnly: true, run: async (): Promise<ToolResult> => ({ output: 'done' }) })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
     })
     const echoes: Array<{ text: string; steer?: boolean }> = []
@@ -1018,9 +1010,8 @@ describe('SessionManager failover', () => {
       cwd: '/work',
       client: primary,
       registry: new ToolRegistry(),
-      settings,
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(settings),
       snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       createClient: () => backup,
@@ -1075,8 +1066,8 @@ describe('SessionManager failover', () => {
       },
     }
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(), settings,
-      systemPrompt: 'SYS', permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(),
+      systemPrompt: 'SYS', ...interactiveOpts(settings),
       snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup,
     })
     await mgr.submit('hi', undefined, undefined, undefined, { messageId: 'msg_front_end' })
@@ -1121,9 +1112,8 @@ describe('SessionManager auto-compaction', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
     })
@@ -1181,9 +1171,9 @@ describe('SessionManager auto-compaction', () => {
     ]
     const { client, calls } = fakeClient([summaryScript])
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation,
     })
     const types: string[] = []
@@ -1254,8 +1244,8 @@ describe('SessionManager Stop during auto-compaction', () => {
       },
     })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation: seed(),
     })
     mgrRef = mgr
@@ -1308,8 +1298,8 @@ describe('SessionManager Stop during auto-compaction', () => {
       },
     }
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation: seed(),
     })
     // @ts-expect-error test-only seam: force the pre-send compaction trigger
@@ -1363,9 +1353,8 @@ describe('SessionManager compaction failover', () => {
       },
     }
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: quotaClient('primary'), registry: new ToolRegistry(),
-      settings: settingsWith(['primary', 'backup']), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: quotaClient('primary'), registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(settingsWith(['primary', 'backup'])),
       snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup, conversation: seed(),
     })
     const types: string[] = []
@@ -1385,9 +1374,8 @@ describe('SessionManager compaction failover', () => {
 
   it('summarize quota with no other model → mechanical fallback + warning', async () => {
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: quotaClient('only'), registry: new ToolRegistry(),
-      settings: settingsWith(['only']), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: quotaClient('only'), registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(settingsWith(['only'])),
       snapshotStore: fakeSnapshotStore(), providerId: 'p', conversation: seed(),
     })
     const types: string[] = []
@@ -1416,9 +1404,9 @@ describe('SessionManager compaction failover', () => {
       totalUsage: { input_tokens: 0, output_tokens: 0 },
     })
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: settingsWith(['m']),
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(settingsWith(['m'])),
       snapshotStore: fakeSnapshotStore(), providerId: 'p', conversation: conv,
       compaction: { summaryText: 'old summary', cutIndex: 0 },   // already compacted; nothing new to fold
     })
@@ -1446,9 +1434,8 @@ describe('SessionManager checkpoints + revert', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       // track() returns a known hash so we can assert on it.
       snapshotStore: { track: async () => 'cp-hash-1', restore: async () => {} },
     })
@@ -1475,9 +1462,8 @@ describe('SessionManager checkpoints + revert', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
     })
     const reverted: string[] = []
@@ -1523,9 +1509,8 @@ describe('SessionManager checkpoints + revert', () => {
     const { client } = fakeClient([mkScript(), mkScript()])
     const restored: string[] = []
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
-      settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: { track: async () => 'cp-hash-1', restore: async (h) => { restored.push(h) } },
     })
     const reverted: string[] = []
@@ -1571,9 +1556,8 @@ describe('SessionManager checkpoints + revert', () => {
     ]])
     const restored: string[] = []
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
-      settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: { track: async () => 'cp-new', restore: async (h) => { restored.push(h) } },
       conversation: seeded,
       checkpoints: [{ messageIndex: 0, hash: 'cp0', at: '2026-06-27T10:00:00.000Z', label: 'q' }],
@@ -1596,9 +1580,8 @@ describe('SessionManager checkpoints + revert', () => {
     ], totalUsage: new Conversation().totalUsage })
     const restored: string[] = []
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(),
-      settings: makeSettings(), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client: fakeClient([]).client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(makeSettings()),
       snapshotStore: { track: async () => 'cp-new', restore: async (h) => { restored.push(h) } },
       conversation: seeded,
       checkpoints: [
@@ -1638,9 +1621,8 @@ describe('SessionManager switchModel', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings,
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(settings),
       snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       createClient: () => newClient,
@@ -1666,9 +1648,8 @@ describe('SessionManager switchModel', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings,
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(settings),
       snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       createClient: () => { throw new Error('provider "bad" is not configured') },
@@ -1723,9 +1704,8 @@ describe('SessionManager memory flush in compact()', () => {
       cwd: '/work',
       client,
       registry,
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
     })
@@ -1988,9 +1968,9 @@ describe('SessionManager reset ("New chat")', () => {
   it('clears compaction metadata (feature B: compaction lives outside the ledger now)', () => {
     const { client } = fakeClient([])
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       compaction: { summaryText: 'old summary', cutIndex: 3 },
     })
@@ -2022,9 +2002,8 @@ describe('SessionManager persistence accessors', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       conversation,
     })
@@ -2043,9 +2022,8 @@ describe('SessionManager persistence accessors', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       checkpoints,
     })
@@ -2067,9 +2045,8 @@ describe('SessionManager persistence accessors', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
       createdAt: '2026-03-15T10:00:00.000Z',
     })
@@ -2083,9 +2060,8 @@ describe('SessionManager persistence accessors', () => {
       cwd: '/work',
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(),
     })
     expect(mgr.getModelId()).toBe('test-model-xyz')
@@ -2117,9 +2093,8 @@ describe('SessionManager image routing (I2)', () => {
   }) {
     const { client, calls } = fakeClient(opts.scripts)
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(),
-      settings: visionSettings(opts.vision), systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      sessionId: 's1', cwd: '/work', client, registry: new ToolRegistry(), systemPrompt: 'SYS',
+      ...interactiveOpts(visionSettings(opts.vision)),
       snapshotStore: fakeSnapshotStore(),
       providerId: 'p',
       imageClient: opts.imageClient,
@@ -2253,9 +2228,9 @@ describe('SessionManager image routing (I2)', () => {
     conv.append({ role: 'user', id: 'm1', content: [{ type: 'text', text: trailing }] })
     const { client } = fakeClient([])
     const mgr = new SessionManager({
-      sessionId: 's2', cwd: '/work', client, registry: new ToolRegistry(), settings: makeSettings(),
+      sessionId: 's2', cwd: '/work', client, registry: new ToolRegistry(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: fakeSnapshotStore(), conversation: conv,
     })
     const userSnap = mgr.getState().messages.find((m) => m.role === 'user')!
@@ -2404,9 +2379,9 @@ describe('SessionManager image routing (I2)', () => {
     let expandCount = 0
     const expandAttachments = async (messages: Message[]) => { expandCount++; return messages }
     const mgr = new SessionManager({
-      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(), settings,
+      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(settings),
       snapshotStore: fakeSnapshotStore(), providerId: 'p', createClient: () => backup, expandAttachments,
     })
     let recovered = ''
@@ -2474,9 +2449,9 @@ describe('会话能力工具注册 —— 名称占用', () => {
       registry.register(impostor)
       const { client } = fakeClient([])
       new SessionManager({
-        sessionId: 's1', cwd: '/work', client, registry, settings: makeSettings(),
+        sessionId: 's1', cwd: '/work', client, registry,
         systemPrompt: 'SYS',
-        permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+        ...interactiveOpts(makeSettings()),
         snapshotStore: fakeSnapshotStore(),
       })
       expect(registry.get('TodoWrite')).toBe(impostor) // pre-existing tool NOT replaced

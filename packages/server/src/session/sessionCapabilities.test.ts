@@ -11,6 +11,7 @@ function fakeCtx(over: Partial<SessionCapabilityContext> = {}): SessionCapabilit
     settings: {} as unknown as ResolvedSettings,
     sessionAllow: [],
     canUseTool: async () => ({ behavior: 'allow' }) as never,
+    onAutoAllow: () => {},
     setTodos: () => {},
     scheduleWakeup: () => true,
     startBackgroundAgent: () => () => {},

@@ -110,6 +110,13 @@ export interface RunAgentOptions {
   /** allow_persist 时的写盘动作；缺省调用 settings 的 appendAllowRule。 */
   onPersistAllow?: (rule: string) => void
   /**
+   * bypassPermissions 档**决定性地**放行了一次调用时回调（其它放行途径——deny 未命中后的
+   * allow 表、只读工具兜底——不触发）。调用方据此显示「本会话已自动放行 N 次」。
+   * 放在闸门里而不是让调用方数 tool-use 事件：子代理的工具调用同样过这道闸，
+   * 而它们的 tool-use 事件根本不冒到会话层，那样数会漏掉整个子代理分支。
+   */
+  onAutoAllow?: (toolName: string, specifier: string | null) => void
+  /**
    * Bash 的 `cd` 改变工作目录时回调（传入新的绝对 cwd）。调用方（TUI）据此更新
    * 自己持有的会话 cwd,使下一个用户回合的 `opts.cwd` 接续本回合结束时的目录。
    * 缺省时 cd 仅在本回合内的后续工具间生效,回合结束后不保留。
@@ -375,6 +382,7 @@ export async function* runAgent(opts: RunAgentOptions): AsyncIterable<StreamEven
     // 后续工具的路径规则匹配（decide）才看得到新目录。
     const gateDeps = (): GateDeps => ({
       settings, sessionAllow, cwd: sessionCwd, canUseTool: opts.canUseTool, onPersistAllow,
+      onAutoAllow: opts.onAutoAllow,
     })
 
     // 参数非合法 JSON 的调用不过闸、不执行,直接合成回喂 observation(Phase 11);
@@ -460,6 +468,7 @@ interface GateDeps {
   cwd: string
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
   onPersistAllow: (rule: string) => void
+  onAutoAllow?: (toolName: string, specifier: string | null) => void
 }
 
 /**
@@ -507,6 +516,11 @@ async function gateAndRunTool(
     }
     if (verdict === 'allow_persist') deps.onPersistAllow(rule)
   }
+
+  // 全自主档决定性地放行了这一次 —— 报给调用方计数。放在这里（闸门通过之后、真正执行之前）
+  // 而不是 decide() 里面：decide 是纯函数，被 TUI / 规则预览等只想「问问结果」的地方调用，
+  // 在里面记副作用会把预览也算进去。
+  if (decision === 'allow' && matched === 'bypassPermissions') deps.onAutoAllow?.(tu.name, specifier)
 
   const hookEnv = { toolName: tu.name, toolInput: tu.input, cwd: deps.cwd }
   const preWarnings = runHooks(deps.settings.hooks?.preToolUse, hookEnv).warnings

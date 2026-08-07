@@ -24,7 +24,7 @@ import { CronService } from '../cron/CronService.js'
 import { cronDir } from '../cron/cronStore.js'
 import { SessionManager } from '../session/SessionManager.js'
 import type { CreateSessionOpts } from '../session/createSession.js'
-import { fakeClient, fakeSnapshotStore } from '../session/testFakes.js'
+import { fakeClient, fakeSnapshotStore, interactiveOpts } from '../session/testFakes.js'
 import { makeRequestHandler, readJsonBody, PayloadTooLargeError } from './server.js'
 import { VoiceService, VoiceNotConfiguredError, UnsupportedAudioTypeError } from '../voice/VoiceService.js'
 
@@ -44,9 +44,8 @@ function fakeCreateSession(opts: CreateSessionOpts): SessionManager {
     cwd: opts.cwd,
     client,
     registry: new ToolRegistry(),
-    settings: makeSettings(),
     systemPrompt: 'SYS',
-    permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+    ...interactiveOpts(makeSettings()),
     snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
     conversation: opts.conversation,
     checkpoints: opts.checkpoints,

@@ -39,6 +39,7 @@ import {
   type ResolvedSettings,
   type ProviderConfig,
   type PermissionsConfig,
+  type PermissionMode,
   type PermissionRequest,
   type PermissionVerdict,
   type Usage,
@@ -280,6 +281,17 @@ export class SessionManager {
 
   private readonly listeners = new Set<(e: SessionEvent) => void>()
 
+  /**
+   * 会话诞生时的权限档。reset()（「新对话」）复位到它。
+   *
+   * 必须构造时**存下来**，不能事后回读 `this.settings.permissions.defaultMode` ——
+   * setPermissionMode 就地改的正是那个字段，回读只会拿到用户最后一次点的档，
+   * 「新对话复位」就成了空操作。
+   */
+  private readonly bootPermissionMode: PermissionMode
+  /** 全自主档下被自动放行的调用数（含子代理内部的）。常驻横幅的诚实计数。 */
+  private autoAllowedCount = 0
+
   constructor(opts: SessionManagerOptions) {
     // Spec §9's "client uninitialised → emit error, reject" row is unreachable by
     // construction: client is a required (non-null) constructor arg, so no runtime guard.
@@ -290,6 +302,7 @@ export class SessionManager {
     this.settings = opts.settings
     this.systemPrompt = opts.systemPrompt
     this.policy = opts.permissionPolicy
+    this.bootPermissionMode = opts.permissionPolicy.config.defaultMode
     this.kind = opts.kind
     this.snapshotStore = opts.snapshotStore
     this.conversation = opts.conversation ?? new Conversation()
@@ -326,6 +339,7 @@ export class SessionManager {
       settings: this.settings,
       sessionAllow: this.sessionAllow,
       canUseTool: this.canUseTool,
+      onAutoAllow: this.onAutoAllow,
       setTodos: (todos) => this.setTodos(todos),
       scheduleWakeup: (delayMs, message) => this.scheduleWakeup(delayMs, message),
       startBackgroundAgent: (description) => this.startBackgroundAgent(description),
@@ -385,6 +399,75 @@ export class SessionManager {
 
   setPermissionPolicy(p: PermissionPolicy): void {
     this.policy = p
+  }
+
+  /** 当前权限档。交互式会话下 policy.config **就是** settings.permissions，两者恒同。 */
+  getPermissionMode(): PermissionMode {
+    return this.policy.config.defaultMode
+  }
+
+  /**
+   * 切换本会话的权限档（界面上的「询问 / 自动接受编辑 / 全自主」）。会话级，不落盘。
+   *
+   * 【为什么必须就地写、不能替换对象】createSession 的交互式分支写的是
+   * `config: settings.permissions`（**没有 spread**），于是 `policy.config` 与
+   * `this.settings.permissions` 是**同一个对象**。判定链有两条入口都要看到新值：
+   *   - 交互回合：runAgent 捕获 `this.settings` 对象引用，permission.decide() 每次现读
+   *     `settings.permissions.defaultMode`；
+   *   - canUseTool 的非交互分支：读 `this.policy.config`。
+   * 就地改一处，两条自动同步。若改成 `this.settings = { ...this.settings, permissions: {…} }`，
+   * 别名被打断 —— 交互路径读新值、policy.config 还指着旧对象，静默分叉。
+   * `settings` 字段的 `readonly` 是刻意保留的：它让上面那种写法编译不过。
+   */
+  setPermissionMode(mode: PermissionMode): void {
+    // 非交互（cron）会话拒绝切换。它的 permissions 是**克隆**的（createSession 的
+    // 非交互分支带 spread），改 settings.permissions 根本传不到 policy.config；
+    // 而 wsServer 接受任意 ?session=<id>，一个被网页接管的 cron 会话若能被切档，
+    // 等于让无人值守的定时任务遵守某人几周前随手点的 UI 开关。
+    if (!this.policy.interactive) {
+      throw new Error('该会话为非交互会话（如定时任务），不支持切换权限模式')
+    }
+    if (this.settings.permissions.defaultMode === mode) return
+    this.settings.permissions.defaultMode = mode
+
+    // 切到全自主时，已 park 在 this.pending 的权限卡要一并结算为 allow：切换对**在飞**的
+    // 判定立即生效（decide 每次现读），但已经停在 canUseTool 里等人点的那张卡不会被重新判定 ——
+    // 不结算的话，用户按下「全自主」后屏幕上那张卡还杵着等他点，正是他按这个开关想摆脱的东西。
+    // 写法与 reset() 里结算 'deny' 的那段同款。反方向（切回询问）不需要回溯：
+    // 已经放行跑掉的调用追不回来，也不该把新的确认凭空补出来。
+    if (mode === 'bypassPermissions') {
+      for (const [id, p] of this.pending) {
+        p.resolve('allow')
+        this.emit({ type: 'permission-resolved', id, verdict: 'allow' })
+        // 这些也要计入横幅：它们**正在**问你，是这次切换替你按掉的 —— 恰恰是「你少点了
+        // 多少次确认」里最实在的那几次。它们走不到 onAutoAllow（闸门早已放行进了 ask
+        // 分支、在这里等结果），漏加的话真浏览器上会看到「按下全自主、卡片消失、数字不动」。
+        this.autoAllowedCount++
+      }
+      this.pending.clear()
+    }
+    this.emit({ type: 'permission-mode-changed', mode, autoAllowedCount: this.autoAllowedCount })
+  }
+
+  /**
+   * 全自主档决定性地放行了一次调用（core 的闸门回调，子代理内部的调用也走这里）。
+   * 只在「换成询问档就会被拦下来问」时计数 —— 否则只读工具、allow 表里的调用也会被算进去，
+   * 横幅上那个数字就不再是「你少点了多少次确认」，而是一个没人看得懂的活跃度指标。
+   */
+  private onAutoAllow = (toolName: string, specifier: string | null): void => {
+    const tool = this.registry.get(toolName)
+    if (!tool) return
+    // 反事实：把档位换成 'default'（询问）重跑一次纯函数判定。decide 无副作用，可随便算。
+    const asked = decide(
+      tool,
+      specifier,
+      { ...this.settings, permissions: { ...this.settings.permissions, defaultMode: 'default' } },
+      this.sessionAllow,
+      this.cwd,
+    ).decision
+    if (asked === 'allow') return
+    this.autoAllowedCount++
+    this.emit({ type: 'permission-mode-changed', mode: this.getPermissionMode(), autoAllowedCount: this.autoAllowedCount })
   }
 
   /** 当前模型的上下文窗口大小(token);供前端算 ctx 占用百分比。 */
@@ -485,6 +568,11 @@ export class SessionManager {
       todos: this.todos,
       backgroundAgents: this.backgroundAgentLabels(),
       pendingPermissions,
+      permissionMode: this.getPermissionMode(),
+      // 非交互会话（cron）切了也不生效 —— 见 setPermissionMode 的注释。前端据此隐藏控件，
+      // 而不是让它显示一个点了没反应（或更糟：显示了一个假档位）的开关。
+      permissionModeEditable: this.policy.interactive,
+      autoAllowedCount: this.autoAllowedCount,
       messageCount: this.conversation.length,
       messages: this.projectMessages(),
       checkpoints: this.checkpoints.map((c) => ({ id: c.hash, label: c.label })),
@@ -681,6 +769,16 @@ export class SessionManager {
     // Invalidate any in-flight turn's post-turn tail: its finally/drain run async AFTER this reset,
     // and would otherwise re-queue the discarded steer + re-emit the old todos onto the blank session.
     this.turnEpoch++
+
+    // 权限档复位到会话诞生时的档。本方法已经清了 sessionAllow（上面那行）—— 也就是说
+    // 「新对话应当丢弃本会话累积的放行」本就是它的价值取向；把 UI 上点出来的全自主留下来，
+    // 与那条取向直接矛盾，而且是往「安全姿态被静默保留」的方向矛盾。
+    // 只在交互式会话上做：非交互会话的档位由 policy.config 决定，settings 那份从来不参与判定。
+    if (this.policy.interactive && this.settings.permissions.defaultMode !== this.bootPermissionMode) {
+      this.settings.permissions.defaultMode = this.bootPermissionMode
+    }
+    this.autoAllowedCount = 0
+    this.emit({ type: 'permission-mode-changed', mode: this.getPermissionMode(), autoAllowedCount: 0 })
 
     this.emit({ type: 'todos-update', todos: [] })
   }
@@ -1131,6 +1229,7 @@ export class SessionManager {
           return combined
         },
         canUseTool: this.canUseTool,
+        onAutoAllow: this.onAutoAllow,
       })) {
         switch (event.type) {
           case 'message-start':

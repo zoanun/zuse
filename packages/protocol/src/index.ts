@@ -5,9 +5,9 @@
  * better-sqlite3 等），不能进浏览器 bundle；但 `export type` 在编译期被擦除，web
  * 侧 `import type` 这些类型不会把任何 core 运行时拖进 bundle。详见 F3 设计 §2。
  */
-import type { PermissionRequest, PermissionVerdict, Usage } from '@zuse/core'
+import type { PermissionRequest, PermissionVerdict, PermissionMode, Usage } from '@zuse/core'
 
-export type { PermissionRequest, PermissionVerdict, Usage } from '@zuse/core'
+export type { PermissionRequest, PermissionVerdict, PermissionMode, Usage } from '@zuse/core'
 
 /** 快照消息的单个内容片段（镜像 web 侧 Part 形状；tool-result 用 isError，非 is_error）。 */
 export type SnapshotPart =
@@ -282,6 +282,9 @@ export type SessionEvent =
   /** 在飞的后台 Agent 集合变了（派出 / 完成 / 被作废）。与 todos-update 同形：整份覆盖。 */
   | { type: 'background-agents'; labels: string[] }
   | { type: 'cwd-change'; cwd: string }
+  /** 权限档变了（用户点了 Header 的 chip / 跑了 /mode / reset() 复位到 boot 档）。
+   *  autoAllowedCount 一并带上：bypass 横幅的计数与档位永远同一帧到达，不会先显示旧数字。 */
+  | { type: 'permission-mode-changed'; mode: PermissionMode; autoAllowedCount: number }
   | { type: 'warning'; message: string }
   | { type: 'error'; message: string; category?: string }
   | { type: 'aborted' }
@@ -314,6 +317,16 @@ export interface SessionSnapshot {
    */
   backgroundAgents: string[]
   pendingPermissions: PendingPermissionLite[]
+  /** 本会话当前的权限档（界面上的「询问 / 自动接受编辑 / 全自主」开关）。会话级、不落盘。 */
+  permissionMode: PermissionMode
+  /**
+   * 界面上这个开关能不能点。false = 非交互会话（cron 跑出来的那种）：它的 permissions 是
+   * **克隆**的，判定走 policy.config 而不是 settings.permissions，切了也不会生效；
+   * 而且一个无人值守的定时任务不该遵守谁几周前随手点的 UI 开关。前端据此隐藏控件。
+   */
+  permissionModeEditable: boolean
+  /** bypassPermissions 期间自动放行了多少次工具调用（常驻横幅的诚实计数）。 */
+  autoAllowedCount: number
   messageCount: number
   messages: SnapshotMessage[]
   checkpoints: CheckpointLite[]
@@ -325,6 +338,7 @@ export type ClientMessage =
   | { type: 'interrupt' }
   | { type: 'steer'; text: string; messageId: string; images?: UploadedImageRef[]; pastedTexts?: PastedTextInput[]; files?: UploadedFileRef[] }
   | { type: 'permission-reply'; id: string; verdict: PermissionVerdict }
+  | { type: 'set-permission-mode'; mode: PermissionMode }
   | { type: 'switch-model'; providerId: string; model: string }
   | { type: 'reset-session' }
   | { type: 'revert'; checkpointId: string }

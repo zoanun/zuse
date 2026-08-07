@@ -16,6 +16,12 @@ export interface AgentToolDeps {
   sessionAllow?: string[]
   canUseTool?: (req: PermissionRequest) => Promise<PermissionVerdict>
   /**
+   * 全自主档放行子代理内部某次工具调用时回调（见 core 的 RunAgentOptions.onAutoAllow）。
+   * 必须透传下去：子代理的工具调用不冒 tool-use 事件到会话层，漏传则「已自动放行 N 次」
+   * 会把整个子代理分支数漏 —— 而子代理恰恰是全自主档下最能闷头干活的那条路径。
+   */
+  onAutoAllow?: (toolName: string, specifier: string | null) => void
+  /**
    * 后台 Agent **启动时**触发，返回「完成时调用」的结果回调。
    *
    * 之所以是「启动时给回调」而不是「完成时给结果」：调用方需要知道有 Agent 在飞
@@ -174,6 +180,7 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
             settings: deps.settings,
             sessionAllow: deps.sessionAllow,
             canUseTool: deps.canUseTool,
+            onAutoAllow: deps.onAutoAllow,
           })) {
             if (event.type === 'text-delta') {
               finalText += event.text

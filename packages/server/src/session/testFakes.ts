@@ -1,5 +1,22 @@
-import type { ModelClient, Message, StreamEvent } from '@zuse/core'
+import type { ModelClient, Message, StreamEvent, ResolvedSettings } from '@zuse/core'
 import type { SnapshotStore } from './events.js'
+import type { PermissionPolicy } from './SessionManager.js'
+
+/**
+ * 交互式会话的 `settings` + `permissionPolicy` 一对入参，**与生产同构**。
+ *
+ * 关键点是 `config` 必须**就是** `settings.permissions` 那个对象 ——
+ * createSession.ts 的交互式分支写的是 `config: settings.permissions`（没有 spread），
+ * 两条判定路径共享同一份 permissions。此前测试各自传一个**另外的**字面量，
+ * 于是「就地改 settings.permissions 会不会同步到 policy.config」这类断言
+ * 跑在一个生产中根本不存在的拓扑上 —— 怎么写都不会红。
+ *
+ * 非交互（cron）会话**不能**用这个：那条路径生产上就是克隆的 config，
+ * 与 settings.permissions 刻意分家（见 createSession.ts 的非交互分支）。
+ */
+export function interactiveOpts(settings: ResolvedSettings): { settings: ResolvedSettings; permissionPolicy: PermissionPolicy } {
+  return { settings, permissionPolicy: { interactive: true, config: settings.permissions } }
+}
 
 /**
  * Scripted ModelClient for tests.

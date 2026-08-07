@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { SessionRegistry } from './SessionRegistry.js'
 import { SessionManager } from './SessionManager.js'
-import { fakeClient, fakeSnapshotStore } from './testFakes.js'
+import { fakeClient, fakeSnapshotStore, interactiveOpts } from './testFakes.js'
 import { ToolRegistry } from '@zuse/core'
 import type { ResolvedSettings } from '@zuse/core'
 
@@ -12,16 +12,12 @@ function mgr(id: string): SessionManager {
     cwd: '/w',
     client,
     registry: new ToolRegistry(),
-    settings: {
+    systemPrompt: 'S',
+    ...interactiveOpts({
       providers: {},
       tools: {},
       permissions: { defaultMode: 'default', allow: [], ask: [], deny: [] },
-    } as unknown as ResolvedSettings,
-    systemPrompt: 'S',
-    permissionPolicy: {
-      interactive: true,
-      config: { defaultMode: 'default', allow: [], ask: [], deny: [] },
-    },
+    } as unknown as ResolvedSettings),
     snapshotStore: fakeSnapshotStore(),
   })
 }

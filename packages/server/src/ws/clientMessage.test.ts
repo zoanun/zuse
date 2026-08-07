@@ -12,6 +12,7 @@ function fakeMgr(): SessionManagerLike & {
   retry: ReturnType<typeof vi.fn>
   compactNow: ReturnType<typeof vi.fn>
   isBusy: ReturnType<typeof vi.fn>
+  setPermissionMode: ReturnType<typeof vi.fn>
 } {
   return {
     submit: vi.fn(async () => {}),
@@ -25,6 +26,7 @@ function fakeMgr(): SessionManagerLike & {
     compactNow: vi.fn(async () => {}),
     // Default to idle; the steer dispatch routes on this (idle → submit, thinking → steer).
     isBusy: vi.fn(() => false),
+    setPermissionMode: vi.fn(),
   }
 }
 
@@ -192,5 +194,48 @@ describe('applyClientMessage', () => {
     applyClientMessage(mgr, JSON.stringify({ type: 'permission-reply', id: 'p1', verdict: 'maybe' }), err)
     expect(mgr.resolvePermission).not.toHaveBeenCalled()
     expect(err).toHaveBeenCalledWith(expect.stringContaining('invalid "verdict"'))
+  })
+
+  it('dispatches set-permission-mode for each of the three legal modes', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    for (const mode of ['default', 'acceptEdits', 'bypassPermissions']) {
+      applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode }), err)
+    }
+    expect(mgr.setPermissionMode.mock.calls.map((c) => c[0])).toEqual(['default', 'acceptEdits', 'bypassPermissions'])
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid permission mode — "bypass" is a REAL wild value, not a hypothetical', () => {
+    // 用户全局配置 ~/.zuse/settings.jsonc 里写的就是 "defaultMode": "bypass"（合法值是
+    // "bypassPermissions"）。配置读取链全程无校验，它静默落到了 'default' 分支 ——
+    // 也就是说这种非法值已经存在于这个系统里，一个手写/复制来的 WS 帧同样会带上它。
+    // 不拦的话 defaultMode 会被写成 decide() 认不出的字符串，结果是「界面显示全自主、
+    // 实际按询问档跑」这种最坏的分叉。
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypass' }), err)
+    expect(mgr.setPermissionMode).not.toHaveBeenCalled()
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('invalid "mode"'))
+  })
+
+  it('rejects a non-string / missing permission mode', () => {
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode' }), err)
+    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 42 }), err)
+    expect(mgr.setPermissionMode).not.toHaveBeenCalled()
+    expect(err).toHaveBeenCalledTimes(2)
+  })
+
+  it('a setPermissionMode throw (non-interactive session) becomes a sendError, not a pump crash', () => {
+    // SessionManager.setPermissionMode throws for cron sessions; wsServer accepts any ?session=<id>,
+    // so a taken-over cron session IS reachable from the browser. The dispatcher's contract is
+    // "never throws" — the message pump must not die on one bad frame.
+    const mgr = fakeMgr()
+    mgr.setPermissionMode.mockImplementation(() => { throw new Error('该会话为非交互会话（如定时任务），不支持切换权限模式') })
+    const err = vi.fn()
+    expect(() => applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypassPermissions' }), err)).not.toThrow()
+    expect(err).toHaveBeenCalledWith(expect.stringContaining('非交互会话'))
   })
 })

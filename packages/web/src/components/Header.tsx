@@ -5,13 +5,14 @@ import { createPortal } from 'react-dom'
 import { DirPicker } from './DirPicker.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { ModelPicker } from './ModelPicker.js'
+import { modeInfo, nextMode } from './permissionMode.js'
 
 function fmt(n: number | undefined): string {
   if (n === null || n === undefined) return '—'
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
+export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, onCyclePermissionMode, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; onCyclePermissionMode: (mode: import('@zuse/protocol').PermissionMode) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
   const [, force] = useState(0)
   // Model picker popover: anchored under the model chip, portaled so it escapes the header's overflow.
   const [modelOpen, setModelOpen] = useState(false)
@@ -59,6 +60,20 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
             </div>
           </>,
           document.body,
+        ) : null}
+        {/*
+          权限档 chip。**只在 permissionModeEditable 时渲染** —— 非交互会话（cron 跑出来的、
+          被网页接管的那种）切了不生效，画一个点了没反应的开关比不画更糟。
+          点击 = 循环切换；另有 /mode 斜杠命令。刻意**不给全局快捷键**：只在 composer 聚焦时
+          才生效的全局热键，是一个你会误触、又会在真需要时按不出来的热键；且 Composer 已绑裸 Tab。
+          全自主用告警色（chip-danger），并另有常驻横幅 —— chip 本身不承担告知风险的职责。
+        */}
+        {state.permissionModeEditable ? (
+          <button
+            className={'chip chip-btn' + (state.permissionMode === 'bypassPermissions' ? ' chip-danger' : '')}
+            title={modeInfo(state.permissionMode).desc + '（点击切换到「' + modeInfo(nextMode(state.permissionMode)).label + '」）'}
+            onClick={() => onCyclePermissionMode(nextMode(state.permissionMode))}
+          >权限 {modeInfo(state.permissionMode).label} ▾</button>
         ) : null}
         {ctxText ? <span className="chip">{ctxText}{tok ? ' · ' + tok : ''}</span> : null}
         <span className={'chip ' + (conn === 'live' ? 'live' : conn === 'connecting' ? 'warn' : 'down')}>

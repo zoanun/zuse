@@ -9,7 +9,7 @@ import { SessionService } from './SessionService.js'
 import { SessionManager } from './SessionManager.js'
 import type { CreateSessionOpts } from './createSession.js'
 import { loadSession, saveSession, type SessionRecord } from './sessionStore.js'
-import { fakeClient, fakeSnapshotStore } from './testFakes.js'
+import { fakeClient, fakeSnapshotStore, interactiveOpts } from './testFakes.js'
 
 /**
  * 等后台 autosave 真的落盘。
@@ -87,9 +87,8 @@ function fakeCreateSessionFactory(scriptsById: Record<string, StreamEvent[][]> =
       cwd: opts.cwd,
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       // Forward kind so create({kind:'cron'}) is observable via getKind() in tests.
       kind: opts.kind,
       snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
@@ -404,9 +403,8 @@ function fakeCreateSessionFactoryWithTitle(titleText: string, titleCalls: Record
       cwd: opts.cwd,
       client,
       registry: new ToolRegistry(),
-      settings: makeSettings(),
       systemPrompt: 'SYS',
-      permissionPolicy: { interactive: true, config: { defaultMode: 'default', allow: [], ask: [], deny: [] } },
+      ...interactiveOpts(makeSettings()),
       snapshotStore: opts.snapshotStore ?? fakeSnapshotStore(),
       conversation: opts.conversation,
       checkpoints: opts.checkpoints,

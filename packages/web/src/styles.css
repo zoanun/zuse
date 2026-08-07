@@ -509,6 +509,17 @@ button.head:hover .caret { opacity: 0.9; }
 /* Model switcher (Header): a clickable chip that opens a provider-grouped picker popover. */
 .chip-btn { cursor: pointer; color: var(--muted); }
 .chip-btn:hover { color: var(--text); background: var(--surface-2); border-radius: 7px; }
+/* 权限档 chip 的全自主态：告警色。这是全局去饱和配色里少数几个刻意扎眼的地方 ——
+   它标的是安全姿态被降级，读起来就该不太舒服。真正的告知由下方常驻横幅承担。 */
+.chip-btn.chip-danger { color: var(--bad); }
+.chip-btn.chip-danger:hover { color: var(--bad); background: var(--surface-2); }
+/* 全自主常驻横幅：横跨主区、跟着 Header 走。用左侧粗边而不是整块填充 ——
+   整块告警色在一个会挂几小时的会话里会变成噪音，人很快就学会不看它。 */
+.bypass-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 20px; border-bottom: 1px solid var(--line); border-left: 3px solid var(--bad); background: var(--surface-2); }
+.bypass-banner-text { font: 400 12.5px/1.5 var(--sans, inherit); color: var(--text); }
+.bypass-banner-text strong { color: var(--bad); font-weight: 600; }
+.bypass-banner-exit { flex: none; cursor: pointer; font: 500 12px/1 var(--sans, inherit); color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; }
+.bypass-banner-exit:hover { color: var(--text); border-color: var(--muted); }
 /* Fixed anchor (portaled to body) positioned from the chip's rect; the popover sits inside it. */
 .model-pop-anchor { position: fixed; z-index: 51; }
 .model-pop { width: 300px; max-width: 92vw; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 10px 32px var(--shadow); padding: 10px; }

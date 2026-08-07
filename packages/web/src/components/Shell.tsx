@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PermissionVerdict, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
+import type { PermissionVerdict, PermissionMode, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import { useStore, newMessageId } from '../state/store.js'
 import { Header } from './Header.js'
 import { Sidebar, type SidebarHandle } from './Sidebar.js'
@@ -14,6 +14,8 @@ import { ManageDrawer } from './ManageDrawer.js'
 import type { ManagePanel } from './ManageDrawer.js'
 import { CronPanel } from './CronPanel.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
+import { nextMode } from './permissionMode.js'
+import { BypassBanner } from './BypassBanner.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { persistModel } from '../state/manageApi.js'
 import { SessionContext } from './Markdown.js'
@@ -113,6 +115,7 @@ export function Shell() {
     focusHistorySearch,
     showHelp: () => dispatch({ kind: 'notice', text: SLASH_COMMANDS.map((c) => `${c.name} — ${c.desc}`).join('\n'), noticeKind: 'help' }),
     openDirPicker: () => dirPickerRef.current?.open(),
+    cyclePermissionMode: () => onCyclePermissionMode(nextMode(state.permissionMode)),
   }
   const onRunCommand = (cmd: SlashCommand) => cmd.run(commandCtx)
   const currentHistory = historyRef.current.get(currentSessionId ?? '') ?? EMPTY_HISTORY
@@ -165,6 +168,10 @@ export function Shell() {
     dispatch({ kind: 'model-changed', model, providerId })
     if (persist) persistModel(providerId, model).catch(() => dispatch({ kind: 'notice', text: '永久保存默认模型失败', noticeKind: 'error' }))
   }
+  // 权限档切换。**不做乐观更新** —— 与 switch-model 不同，服务端对这条帧会拒绝（非交互会话、
+  // 非法 mode），乐观改本地状态会留下一个界面显示「全自主」、实际还在「询问」的骗人档位。
+  // 服务端接受后会发 permission-mode-changed，reducer 据此更新。
+  const onCyclePermissionMode = (mode: PermissionMode) => send({ type: 'set-permission-mode', mode })
   const onReply = (id: string, verdict: PermissionVerdict) => send({ type: 'permission-reply', id, verdict })
   // Stable so React.memo(Message) holds across streaming re-renders (send is stable).
   const onRevert = useCallback((checkpointId: string) => send({ type: 'revert', checkpointId }), [send])
@@ -269,7 +276,9 @@ export function Shell() {
           onOpenCron={() => { setShareSel(null); setMainView('cron'); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} dirPickerRef={dirPickerRef} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} dirPickerRef={dirPickerRef} />
+        {/* Header 正下方、聊天区之上 —— 横跨整个主区，看不见它需要主动无视。 */}
+        <BypassBanner mode={state.permissionMode} count={state.autoAllowedCount} onExit={() => onCyclePermissionMode('default')} />
         {/*
           `.main-body` **永远渲染**，只有 `.rail` 子节点是条件的（设计 §4.1 / P0-1）。
           写成 `hasRail ? <div className="main-body">{chat}{rail}</div> : <main className="chat">…</main>`

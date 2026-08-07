@@ -9,6 +9,8 @@ export interface CommandContext {
   focusHistorySearch: () => void
   showHelp: () => void
   openDirPicker: () => void
+  /** 键盘侧的权限档入口（/mode）：与 Header 的 chip 同一个循环顺序、同一条上行帧。 */
+  cyclePermissionMode: () => void
 }
 
 export interface SlashCommand {
@@ -33,6 +35,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/files', desc: '打开文件浏览器', run: (c) => c.openPanel('files') },
   { name: '/history', desc: '搜索历史消息', run: (c) => c.focusHistorySearch() },
   { name: '/work', desc: '切换工作目录', run: (c) => c.openDirPicker() },
+  { name: '/mode', desc: '切换权限模式（询问 / 自动接受编辑 / 全自主）', run: (c) => c.cyclePermissionMode() },
 ]
 
 /** Menu candidates for the current input: prefix-match on name (case-insensitive) when input

