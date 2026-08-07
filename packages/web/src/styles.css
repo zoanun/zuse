@@ -96,7 +96,37 @@ button.ghost:hover { background: var(--surface-2); color: var(--text); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .msg-error { color: var(--bad); font-size: 12.5px; margin-top: 12px; min-height: 1em; }
 
+/* 聊天区与右侧工作栏并排的那一行（设计 §4）。`.main-header` 仍横跨全宽，在它外面。
+   `container-type: inline-size` 让右栏能按**本行的宽度**（不是视口宽度）自适应 ——
+   两者关系是非单调的：820px 处 `.sidebar` 转 position:fixed 脱离文档流，视口 830 时
+   本行 574px、视口 815 时反而 815px。所以窄屏判据只能用 @container，不能用 @media。
+   代价：contain 让本元素成为 fixed 定位后代的包含块 —— 聊天区里唯一的全屏浮层
+   （ImageLightbox / TextLightbox）走的是 createPortal(document.body)，不受影响。 */
+.main-body { flex: 1; min-height: 0; display: flex; position: relative; container-type: inline-size; }
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* 右栏宽度：`clamp(320px, 100cqw - 780px, 720px)`（设计 §4.2）。
+   要害是**正文列一格不动**：1440 屏上本行 1184px → 右栏 404px → 聊天区 780px →
+   .stream 的 gutter 各 22px → 正文仍是 --col=736px，与不开右栏时一模一样。
+   若图省事写 `min(50%, 720px)`，1440 屏正文列会从 736 掉到 552（-25%），整篇对话重新换行。
+   代价：宽屏上预览默认窄一点。 */
+.rail {
+  flex: none; width: clamp(320px, 100cqw - 780px, 720px);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
+  border-left: 1px solid var(--line); background: var(--surface);
+}
+/* 有右栏时给聊天区兜底宽度，别被右栏挤成窄条。没有右栏时不能加 —— 窄窗口下会横向溢出。 */
+.main-body.has-rail .chat { min-width: 560px; }
+/* 窄行（本行 ≤900px）转覆盖式（设计 §4.3）。**只换外观，DOM 一个字不动**。
+   要写进账的代价：900px 阈值意味着只有视口 ≥1156px（900+256 侧栏）才有并排视图；
+   而且覆盖层会盖住 Composer —— 看预览时不能打字。 */
+@container (max-width: 900px) {
+  .main-body.has-rail .chat { min-width: 0; }
+  .main-body .rail {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(100%, 480px); z-index: 10;
+    box-shadow: -10px 0 30px var(--shadow);
+  }
+}
 .stream {
   flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; gap: 18px; width: 100%;
@@ -203,11 +233,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .code-copy:hover, .code-run:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .code-run { color: var(--accent); border-color: var(--accent-border); }
 .code-run:disabled { cursor: default; opacity: .45; }
-/* 预览已展开时按钮常驻，否则鼠标一移开就找不到「停止」了。 */
-.code-wrap:has(.preview) .code-run { opacity: 1; }
+/* 预览已展开时按钮常驻，否则鼠标一移开就找不到「停止」了。
+   **不能写成 `.code-wrap:has(.preview)`**：预览搬去右栏后 `.preview` 不再是代码块的后代，
+   那个选择器会**静默失效**（样式不报错，只是不再命中），注释里说的体验问题原样回归。
+   现在由 React 打 `.running` 类（右栏 store 说了算），见 Markdown.tsx 的 CodeBlock。 */
+.code-wrap.running .code-run { opacity: 1; }
 
-/* 预览区：就地展开在代码块下方，不进抽屉 —— 要能和代码对照着看。 */
+/* 预览区。fitMode 会额外打上 `preview-content` / `preview-fill`：
+   前者是老的就地展开形态（高度由内联 style 跟着 guest 上报走，因此**不需要**自己的规则）；
+   后者是右栏形态，要把高度交给 flex。 */
 .preview { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.preview-fill { margin-top: 0; border: 0; border-radius: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.preview-fill .preview-frame { flex: 1; min-height: 0; }
 .preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .preview-kind { text-transform: uppercase; letter-spacing: .04em; }
 .preview-close { background: none; border: none; color: var(--muted); font-size: 12px; padding: 2px 6px; cursor: pointer; }
@@ -215,6 +252,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .preview-frame { display: block; width: 100%; border: 0; background: #fff; }
 :root[data-theme="dark"] .preview-frame { background: #212120; }
 .preview-console { border-top: 1px solid var(--line); max-height: 220px; overflow: auto; }
+/* 右栏里控制台是 PreviewFrame 的兄弟节点（设计 §5.2），不许被 flex 拉伸/压扁。 */
+.rail > .preview-console { flex: none; }
 .preview-console-bar { display: flex; align-items: center; justify-content: space-between; padding: 5px 10px; font-size: 11px; color: var(--muted); position: sticky; top: 0; background: var(--surface); }
 .preview-console-bar button { background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; }
 .preview-console-list { list-style: none; margin: 0; padding: 0 10px 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5; }

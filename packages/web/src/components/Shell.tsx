@@ -16,6 +16,9 @@ import { CronPanel } from './CronPanel.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { persistModel } from '../state/manageApi.js'
+import { SessionContext } from './Markdown.js'
+import { Rail } from '../preview/Rail.js'
+import { closeRun, useActiveRun } from '../preview/activePreview.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -47,6 +50,13 @@ export function Shell() {
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
   // null = not sharing; a Set = share-selection mode with the chosen message ids.
   const [shareSel, setShareSel] = useState<Set<string> | null>(null)
+
+  // 右栏：只认属于当前会话的 run（选择器同步比对，切会话那一帧不会闪上一个会话的预览）。
+  const activeRun = useActiveRun(currentSessionId)
+  // 真正把 store 清干净。选择器已经保证了显示正确，这条 effect 负责不让旧 run 长期驻留
+  // ——`activePreview` 是模块级单例，**在此之前没有任何人在切会话时清它**（设计 §3.3 / P0-2）。
+  // `/clear`（newSession）、revert、switchSession 都会换掉 currentSessionId，走的是同一条路。
+  useEffect(() => { closeRun() }, [currentSessionId])
 
   const historyRef = useRef<Map<string, string[]>>(new Map())
   const dirPickerRef = useRef<DirPickerHandle>(null)
@@ -260,6 +270,17 @@ export function Shell() {
         />
       <div className="main">
         <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} dirPickerRef={dirPickerRef} />
+        {/*
+          `.main-body` **永远渲染**，只有 `.rail` 子节点是条件的（设计 §4.1 / P0-1）。
+          写成 `hasRail ? <div className="main-body">{chat}{rail}</div> : <main className="chat">…</main>`
+          会在右栏每次出现/消失时**卸载并重建 MessageList + Composer**，丢掉 Composer 里没发出的
+          草稿、`.stream` 的滚动位置（MessageList.tsx:20-21），一个回合里能发生好几次。
+
+          窄屏覆盖式**只由 CSS 的 `@container` 换外观**（styles.css），这里不分叉出第二棵子树 ——
+          换子树会让 PreviewFrame 的 token 重生 → 新 document → demo 归零（设计 §4.3 / P0-4）。
+        */}
+        <div className={'main-body' + (activeRun ? ' has-rail' : '')}>
+        <SessionContext.Provider value={currentSessionId}>
         {mainView === 'cron' ? <main className="chat"><CronPanel /></main> : (
         <main className="chat">
           {shareSel ? (
@@ -315,6 +336,12 @@ export function Shell() {
           />
         </main>
         )}
+        </SessionContext.Provider>
+        {/* cron 视图下也保留右栏。设计 §8 把「右栏在 cron 视图下显不显示」留给 PR2 表态，
+            PR1 选**保留**：这里若不渲染就是**卸载** iframe（demo 状态全丢），而不是「藏起来」；
+            run 还活着，用户也还需要那个「收起预览」按钮才能停掉它。 */}
+        {activeRun ? <Rail run={activeRun} /> : null}
+        </div>
       </div>
       <ManageDrawer
         open={drawerOpen}

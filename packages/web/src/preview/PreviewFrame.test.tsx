@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { PreviewFrame, SANDBOX_TOKENS } from './PreviewFrame.js'
-import { __resetActivePreview, closePreview, openPreview, useIsPreviewOpen } from './activePreview.js'
+import { useState } from 'react'
+import { PreviewFrame, SANDBOX_TOKENS, type PreviewFitMode } from './PreviewFrame.js'
+import { ConsolePanel } from './ConsolePanel.js'
+import { __resetActivePreview, closeRun, openRun, useIsRunOpen } from './activePreview.js'
 import { setTheme } from '../theme.js'
-import type { HostMessage, PreviewSpec } from './types.js'
+import type { ConsoleEntry, HostMessage, PreviewSpec } from './types.js'
 import { renderHook, act, render, cleanup } from '@testing-library/react'
 
 afterEach(() => {
@@ -38,14 +40,28 @@ describe('sandbox token 集 —— 安全锁', () => {
 })
 
 /**
+ * `entries` 已经提出 PreviewFrame（设计 §5.2），由父级持有、ConsolePanel 与 PreviewFrame
+ * 平级。这个 Host 就是最小的父级：Rail 是它的生产版本。
+ */
+function Host({ spec, fitMode }: { spec: PreviewSpec; fitMode?: PreviewFitMode }) {
+  const [entries, setEntries] = useState<ConsoleEntry[]>([])
+  return (
+    <div className="rail">
+      <PreviewFrame spec={spec} fitMode={fitMode} setEntries={setEntries} onClose={() => {}} />
+      <ConsolePanel entries={entries} onClear={() => setEntries([])} />
+    </div>
+  )
+}
+
+/**
  * jsdom 里 iframe 的 guest 脚本不会真跑，所以这里用一个假 contentWindow 顶替：
  * 收集父页 → guest 的 postMessage，并手工派发 guest → 父页的 'ready'。
  * token 从 srcdoc 里的 preamble 源码回读（`var TOKEN = "..."`），不猜。
  */
-function harness(spec: PreviewSpec) {
+function harness(spec: PreviewSpec, fitMode?: PreviewFitMode) {
   const sent: HostMessage[] = []
   const fakeWin = { postMessage: (m: HostMessage) => { sent.push(m) } }
-  const view = render(<PreviewFrame spec={spec} onClose={() => {}} />)
+  const view = render(<Host spec={spec} fitMode={fitMode} />)
   const iframe = view.container.querySelector('iframe')!
   Object.defineProperty(iframe, 'contentWindow', { configurable: true, get: () => fakeWin })
   const srcdoc = () => iframe.getAttribute('srcdoc') ?? ''
@@ -143,7 +159,7 @@ describe('PreviewFrame —— 不该重跑的时候绝不重跑', () => {
 
     // 同样的 kind/code，但是一个全新的对象 —— 正是 CodeBlock 每次渲染干的事。
     for (let i = 0; i < 3; i++) {
-      h.view.rerender(<PreviewFrame spec={{ kind: 'jsx', code: JSX_A }} onClose={() => {}} />)
+      h.view.rerender(<Host spec={{ kind: 'jsx', code: JSX_A }} />)
       await settle()
     }
     expect(h.evals()).toHaveLength(1)
@@ -153,7 +169,7 @@ describe('PreviewFrame —— 不该重跑的时候绝不重跑', () => {
     const h = harness({ kind: 'jsx', code: JSX_A })
     await settle()
     h.ready()
-    h.view.rerender(<PreviewFrame spec={{ kind: 'jsx', code: JSX_B }} onClose={() => {}} />)
+    h.view.rerender(<Host spec={{ kind: 'jsx', code: JSX_B }} />)
     await settle()
     expect(h.evals()).toHaveLength(2)
     expect(h.evals()[1]!.js).toContain('const b = 2')
@@ -168,7 +184,7 @@ describe('PreviewFrame —— 不该重跑的时候绝不重跑', () => {
     h.ready()
     // 防抖窗口内连改，中间态一次都不该被编译下发。
     for (const code of ['const x = 1', 'const x = 12', 'const x = 123']) {
-      h.view.rerender(<PreviewFrame spec={{ kind: 'jsx', code }} onClose={() => {}} />)
+      h.view.rerender(<Host spec={{ kind: 'jsx', code }} />)
       await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
     }
     await settle()
@@ -177,26 +193,28 @@ describe('PreviewFrame —— 不该重跑的时候绝不重跑', () => {
   })
 })
 
+const runOf = (id: string) => ({ id, kind: 'jsx' as const, code: JSX_A, sessionId: 's1' })
+
 describe('全局单例：同一时刻只有一个预览是活的', () => {
   it('打开 B 会顶掉 A', () => {
-    const a = renderHook(() => useIsPreviewOpen('A'))
-    const b = renderHook(() => useIsPreviewOpen('B'))
+    const a = renderHook(() => useIsRunOpen('A'))
+    const b = renderHook(() => useIsRunOpen('B'))
 
-    act(() => openPreview('A'))
+    act(() => openRun(runOf('A')))
     expect(a.result.current).toBe(true)
     expect(b.result.current).toBe(false)
 
-    act(() => openPreview('B'))
+    act(() => openRun(runOf('B')))
     expect(a.result.current).toBe(false)
     expect(b.result.current).toBe(true)
   })
 
   it('关闭只认自己的 id —— 收起 A 不该顺手关掉正开着的 B', () => {
-    const b = renderHook(() => useIsPreviewOpen('B'))
-    act(() => openPreview('B'))
-    act(() => closePreview('A'))
+    const b = renderHook(() => useIsRunOpen('B'))
+    act(() => openRun(runOf('B')))
+    act(() => closeRun('A'))
     expect(b.result.current).toBe(true)
-    act(() => closePreview('B'))
+    act(() => closeRun('B'))
     expect(b.result.current).toBe(false)
   })
 })

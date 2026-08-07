@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { MessageAttachment } from '@zuse/protocol'
 import type { Message as Msg, Part } from '../state/types.js'
-import { Markdown } from './Markdown.js'
+import { Markdown, countCodeFences } from './Markdown.js'
 import { ToolCall } from './ToolCall.js'
 import { useCopy } from '../state/useCopy.js'
 import { useVoiceCaps, useSpeaking } from '../state/store.js'
@@ -116,7 +116,7 @@ export const Message = memo(function Message({ msg, onRevert, onShare, onRetry, 
     <div className="msg agent">
       {/* Share mode renders the exact prose export keeps (replyMarkdown) — not a parts filter,
           which would diverge (e.g. leave <think> blocks the export drops). */}
-      <div className="text-wrap">{shareMode ? <Markdown text={md} /> : renderParts(msg.parts, streaming)}</div>
+      <div className="text-wrap">{shareMode ? <Markdown text={md} messageId={msg.id} /> : renderParts(msg.parts, streaming, msg.id)}</div>
       {!shareMode && md && showActions ? (
         <div className="msg-actions">
           <CopyButton text={md} />
@@ -394,28 +394,50 @@ function ThinkBlock({ text }: { text: string }) {
   )
 }
 
+/**
+ * 一个 text part 里真正会被渲染成 markdown 的部分（think 段被折叠成纯文本卡片，里面不会有
+ * CodeBlock）。用来推进代码块序号的基数，与 `replyMarkdown`（分享模式那条路）保持一致。
+ */
+function proseOf(text: string): string {
+  return splitThink(text).filter((s) => !s.think).map((s) => s.text).join('')
+}
+
 /** Render an assistant text part, folding any `<think>` reasoning into collapsible blocks. */
-function AssistantText({ text, streaming }: { text: string; streaming: boolean }) {
+function AssistantText({ text, streaming, messageId, blockBase }: { text: string; streaming: boolean; messageId: string; blockBase: number }) {
   // splitThink fast-returns a single plain segment when there are no tags, so the common
   // (no-think) case is just one <Markdown> — no extra branch needed here.
+  // base 在 map 里累加：非分享模式把一条消息切成好几个 <Markdown>，而分享模式只有一个，
+  // 必须把切口前面的代码块数补回去，两条路才会算出同一个序号（见 Markdown.tsx BlockIdContext）。
+  let base = blockBase
   return (
     <>
-      {splitThink(text).map((s, j) => (s.think
-        ? <ThinkBlock key={j} text={s.text} />
-        : (s.text.trim() ? <Markdown key={j} text={s.text} streaming={streaming} /> : null)))}
+      {splitThink(text).map((s, j) => {
+        if (s.think) return <ThinkBlock key={j} text={s.text} />
+        if (!s.text.trim()) return null
+        const b = base
+        base += countCodeFences(s.text)
+        return <Markdown key={j} text={s.text} streaming={streaming} messageId={messageId} blockBase={b} />
+      })}
     </>
   )
 }
 
-function renderParts(parts: Part[], streaming: boolean) {
+function renderParts(parts: Part[], streaming: boolean, messageId: string) {
   const out: ReactNode[] = []
   // Pair a tool-use with its result BY ID, not by adjacency: the model often batches several
   // calls (all tool_use, then all tool_result), so a use and its result aren't neighbours.
   const resultById = new Map<string, Extract<Part, { kind: 'tool-result' }>>()
   for (const p of parts) if (p.kind === 'tool-result') resultById.set(p.id, p)
+  // 代码块序号跨 part 累加：分享模式把所有 text part 的正文拼成一个 <Markdown>，
+  // 这里不累加的话「第二个 part 里的代码块」在两条路下会拿到不同的序号 → 进出分享模式
+  // run 被顶掉（P0-3 的原始故障）。
+  let blockBase = 0
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]!
-    if (p.kind === 'text') out.push(<AssistantText key={i} text={p.text} streaming={streaming} />)
+    if (p.kind === 'text') {
+      out.push(<AssistantText key={i} text={p.text} streaming={streaming} messageId={messageId} blockBase={blockBase} />)
+      blockBase += countCodeFences(proseOf(p.text))
+    }
     else if (p.kind === 'tool-use') {
       if (p.name === 'TodoWrite') continue            // suppressed — shown in the TodosPanel instead
       out.push(<ToolCall key={i} use={p} result={resultById.get(p.id)} />)

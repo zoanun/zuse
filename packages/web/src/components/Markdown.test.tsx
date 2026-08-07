@@ -1,10 +1,33 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
-import { Markdown } from './Markdown.js'
-import { __resetActivePreview } from '../preview/activePreview.js'
+import { Markdown, SessionContext } from './Markdown.js'
+import { __resetActivePreview, useActiveRun } from '../preview/activePreview.js'
+import { Rail } from '../preview/Rail.js'
 import type { HostMessage } from '../preview/types.js'
 
 afterEach(() => { __resetActivePreview(); cleanup() })
+
+const SID = 's-test'
+
+/**
+ * `<Markdown>` + `<Rail>` 的最小组合，形状与 `Shell` 的 `.main-body` 一致：
+ * 预览已经不在代码块内部了（PR1 把它搬进右栏），所以想端到端验
+ * 「代码块 → store → 右栏 iframe」这条链，就必须把两边一起挂上。
+ *
+ * **这个 harness 不是为了让老测试变绿而糊的壳**：它锁的路径（`<pre>` 内联 ref detach →
+ * code 抖成空串 → 重编译）在旧结构下是真 bug，见下面两条用例的注释。
+ */
+function Harness({ text, messageId = 'm1' }: { text: string; messageId?: string }) {
+  const run = useActiveRun(SID)
+  return (
+    <div className="main-body">
+      <SessionContext.Provider value={SID}>
+        <Markdown text={text} messageId={messageId} />
+      </SessionContext.Provider>
+      {run ? <Rail run={run} /> : null}
+    </div>
+  )
+}
 
 describe('Markdown', () => {
   it('renders [-] task items as an in-progress marker while keeping GFM checkboxes', () => {
@@ -51,12 +74,13 @@ describe('CodeBlock —— 预览不该被无关重渲染踢一脚', () => {
   it('预览开着时点「复制」，不得重新下发 eval', async () => {
     const sent: HostMessage[] = []
     const fakeWin = { postMessage: (m: HostMessage) => { sent.push(m) } }
-    const { container } = render(<Markdown text={'```jsx\nconst a = 1\n```'} />)
+    const { container } = render(<Harness text={'```jsx\nconst a = 1\n```'} />)
 
     fireEvent.click(container.querySelector('.code-run')!)
     const iframe = container.querySelector('iframe')!
     Object.defineProperty(iframe, 'contentWindow', { configurable: true, get: () => fakeWin })
-    const token = /var TOKEN = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')![1]!
+    const tokenOf = (): string => /var TOKEN = "([^"]+)"/.exec(iframe.getAttribute('srcdoc') ?? '')![1]!
+    const token = tokenOf()
     const ready = (): void => {
       const ev = new MessageEvent('message', { data: { type: 'ready', token } })
       Object.defineProperty(ev, 'source', { value: fakeWin })
@@ -83,16 +107,32 @@ describe('CodeBlock —— 预览不该被无关重渲染踢一脚', () => {
     await settle()
     await settle()
     expect(evals()).toHaveLength(1)
+    // 右栏也不该被这次重渲染顶掉重挂：同一个 iframe 元素、同一个 token。
+    expect(container.querySelector('iframe')).toBe(iframe)
+    expect(tokenOf()).toBe(token)
   })
 
   /**
    * 上一条依赖「点复制会触发重渲染」这个间接路径；这条直接钉住机制本身，
    * 免得将来 useCopy 换了实现就把上面那条变成空跑。
+   *
+   * **搬到右栏后这条锁的东西变了，但没变弱**：`code` 现在是点「运行」那一刻取的快照
+   * （设计 §3.2），所以 detach 把它冲成空串**不再表现为重编译，而是表现为「预览里空空如也」**
+   * —— 更难发现。因此这里改成：先来几轮无关重渲染，**再**点运行，断言送进 guest 的
+   * 产物里真的有代码。`Markdown.tsx` 里 `if (!el) return` 那行删掉就红。
    */
-  it('任何一次重渲染都不得让 code 抖成空串（内联 ref 的 detach 陷阱）', async () => {
+  it('重渲染之后再点「运行」，快照里必须是真代码（内联 ref 的 detach 陷阱）', async () => {
     const sent: HostMessage[] = []
     const fakeWin = { postMessage: (m: HostMessage) => { sent.push(m) } }
-    const { container, rerender } = render(<Markdown text={'```jsx\nconst a = 1\n```'} />)
+    const text = '```jsx\nconst a = 1\n```'
+    const { container, rerender } = render(<Harness text={text} />)
+    // 文本一字未改的重渲染。（React 19.2 实测：仅函数身份变了不会解绑重绑；这里仍然照跑，
+    // 因为这条锁的是「点运行时拿到的快照」，不依赖 React 哪一版的 ref 时序。）
+    for (let i = 0; i < 3; i++) {
+      rerender(<Harness text={text} />)
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
+    }
+
     fireEvent.click(container.querySelector('.code-run')!)
     const iframe = container.querySelector('iframe')!
     Object.defineProperty(iframe, 'contentWindow', { configurable: true, get: () => fakeWin })
@@ -101,13 +141,33 @@ describe('CodeBlock —— 预览不该被无关重渲染踢一脚', () => {
     Object.defineProperty(ev, 'source', { value: fakeWin })
     await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
     act(() => { window.dispatchEvent(ev) })
-    expect(sent.filter((m) => m.type === 'eval')).toHaveLength(1)
 
-    // 文本一字未改的重渲染，来几次都不该重跑。
+    const evals = () => sent.filter((m) => m.type === 'eval') as Array<Extract<HostMessage, { type: 'eval' }>>
+    expect(evals()).toHaveLength(1)
+    expect(evals()[0]!.js).toContain('const a = 1') // 快照不是空串
+
+    // 运行中再来几轮重渲染，同样不该重跑。
     for (let i = 0; i < 3; i++) {
-      rerender(<Markdown text={'```jsx\nconst a = 1\n```'} />)
+      rerender(<Harness text={text} />)
       await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
     }
-    expect(sent.filter((m) => m.type === 'eval')).toHaveLength(1)
+    expect(evals()).toHaveLength(1)
+  })
+
+  /**
+   * **`Markdown.tsx` 里 `if (!el) return` 那行不许删。**
+   *
+   * 它当初的理由（「内联 ref 每次渲染都解绑重绑 → code 抖成空串」）在 React 19.2 上
+   * 实测已经不成立：只有函数身份变了 React 不再 `ref(null)`（连续 5 次重渲染实测 code 恒定）。
+   * 但代码块**真的被移走**时 React 确实会 `ref(null)` —— 删掉这行就是
+   * `TypeError: Cannot read properties of null (reading 'textContent')`，整棵树炸。
+   * 上面那条「快照里必须是真代码」抓不到删除（它只在挂着的时候取值），所以补这一条。
+   */
+  it('代码块被换掉 / 组件卸载时不得抛（ref detach 拿到 null）', () => {
+    const text = '```jsx\nconst a = 1\n```'
+    const { rerender, unmount } = render(<Harness text={text} />)
+    expect(() => rerender(<Harness text={'换成一段没有代码块的正文'} />)).not.toThrow()
+    rerender(<Harness text={text} />)
+    expect(() => unmount()).not.toThrow()
   })
 })

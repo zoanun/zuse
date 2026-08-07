@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type { ConsoleEntry, GuestMessage, HostMessage, PreviewSpec } from './types.js'
 import { compile } from './compile/index.js'
 import { buildHtmlSrcdoc, buildShellSrcdoc } from './runtime/shell.js'
 import { useTheme } from '../theme.js'
-import { ConsolePanel } from './ConsolePanel.js'
 
 /**
  * sandbox token 集。
@@ -42,7 +41,33 @@ export const COMPILE_DEBOUNCE_MS = 120
 
 let seq = 0
 
-export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: () => void }) {
+/**
+ * 高度模型（设计 §5.1）。
+ * - `content`：iframe 高度跟着 guest 上报的内容高度走（代码块内联展开时的老行为）。
+ * - `fill`：iframe 吃满容器剩余高度。右栏用这个 —— 一个上报 50px 的计数器 demo 塞进
+ *   `flex:1` 的右栏，`content` 模式下会变成「一个 80px 的框 + 800px 空白」，第一眼就是做坏了。
+ *
+ * **两种模式都保留 guest 的 resize 上报通道**（preamble.ts:65-73）：那条通道是刻意设计的
+ * （沙箱摘掉 allow-same-origin 之后父页读不到 guest 的 scrollHeight），删掉就再也补不回来；
+ * `fill` 只是不拿它驱动布局。
+ */
+export type PreviewFitMode = 'content' | 'fill'
+
+export function PreviewFrame({ spec, onClose, fitMode = 'content', setEntries }: {
+  spec: PreviewSpec
+  onClose: () => void
+  fitMode?: PreviewFitMode
+  /**
+   * 控制台条目的写入口（设计 §5.2：entries 提出 PreviewFrame，由父级持有，
+   * ConsolePanel 因此能和本组件成为兄弟节点，在右栏里各自占一块高度）。
+   *
+   * **类型刻意是 useState 的 setter 而不是两个回调**（onLog/onClear）：`push` 进了编译 effect
+   * 的依赖数组（见下方 `[kind, code, push, send]`），依赖里的回调身份一抖就重新编译、重下发
+   * eval、清空控制台 —— 正是 PreviewFrame.test.tsx「不该重跑的时候绝不重跑」那组锁住的 bug。
+   * useState 的 setter 由 React 保证恒等，父级不可能不小心把它写抖。
+   */
+  setEntries: Dispatch<SetStateAction<ConsoleEntry[]>>
+}) {
   const frameRef = useRef<HTMLIFrameElement>(null)
   const readyRef = useRef(false)
   /**
@@ -56,7 +81,6 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
    * 新 document 的 ready 到达时槽里已经是空的 —— 正是 P0-1 的现场。
    */
   const lastEvalRef = useRef<HostMessage | null>(null)
-  const [entries, setEntries] = useState<ConsoleEntry[]>([])
   const [height, setHeight] = useState(160)
   const theme = useTheme()
   const lastThemeRef = useRef<HostMessage>({ type: 'theme', theme })
@@ -82,7 +106,7 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
 
   const push = useCallback((e: Omit<ConsoleEntry, 'id'>) => {
     setEntries((prev) => [...prev.slice(-199), { ...e, id: ++seq }])
-  }, [])
+  }, [setEntries])
 
   // 没就绪就直接丢，**不缓冲**：ready 到达时下面那个分支会把 theme 与最近一次 eval
   // 一起重放。缓冲只会制造「单槽互相覆盖 → 静默丢消息」。
@@ -151,7 +175,8 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
       })
     }, COMPILE_DEBOUNCE_MS)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [kind, code, push, send])
+    // setEntries 是 useState 的 setter，React 保证恒等 —— 放进依赖不会引起重编译。
+  }, [kind, code, push, send, setEntries])
 
   // guest 是独立 document，不会继承 <html data-theme>，主题要显式下发（设计 §6.5）。
   useEffect(() => {
@@ -174,7 +199,9 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
   }, [srcdoc])
 
   return (
-    <div className="preview">
+    // `.preview-bar` 就是右栏的头部 —— **不要在右栏里另造一条 `.rail-head`**，
+    // 否则同一块面板上会出现两个关闭按钮（设计 §5）。
+    <div className={'preview preview-' + fitMode}>
       <div className="preview-bar">
         <span className="preview-kind">{spec.kind}</span>
         <button type="button" className="preview-close" onClick={onClose}>收起预览</button>
@@ -185,9 +212,9 @@ export function PreviewFrame({ spec, onClose }: { spec: PreviewSpec; onClose: ()
         title="代码预览"
         sandbox={SANDBOX_TOKENS}
         srcDoc={srcdoc}
-        style={{ height }}
+        // fill 模式下高度交给 flex，内联 style 必须让位（内联优先级高于任何类选择器）。
+        style={fitMode === 'fill' ? undefined : { height }}
       />
-      <ConsolePanel entries={entries} onClear={() => setEntries([])} />
     </div>
   )
 }
