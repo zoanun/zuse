@@ -18,6 +18,13 @@ export function preambleSource(token: string): string {
   // 第 N 轮 eval。超时归因只对**最新**一轮负责，否则连改两次代码会误报上一轮。
   var EVAL_SEQ = 0;
   var MODULE_START_TIMEOUT_MS = 3000;
+  // 「模块跑完了但页面还是空的」的判定延迟。要比 MODULE_START 长：模块体先执行、
+  // 之后 React 才提交渲染，而 createRoot 的提交是异步的。
+  var EMPTY_RENDER_TIMEOUT_MS = 4000;
+  // 本轮 eval 产生过多少条控制台输出。**这是「空白」提示的抑制条件**：
+  // 「写个快排打印一下」是完全合法的用法 —— 页面本来就该是空的，结果在控制台面板里。
+  // 只按「#app 为空」判定会对这类代码误报（实测会），反倒把一条正确的提示变成噪音。
+  var OUTPUT_SINCE_EVAL = 0;
 
   // 结构化克隆的降级链。JSON.stringify 靠不住（循环引用直接抛），所以逐级退。
   function toText(v) {
@@ -51,6 +58,7 @@ export function preambleSource(token: string): string {
     console[level] = function () {
       var args = Array.prototype.slice.call(arguments);
       try { orig.apply(console, args); } catch (e) {}
+      OUTPUT_SINCE_EVAL++;
       post({ type: 'log', level: level, args: args.map(toText) });
     };
   });
@@ -98,6 +106,7 @@ export function preambleSource(token: string): string {
 
       if (data.js) {
         var runId = ++EVAL_SEQ;
+        OUTPUT_SINCE_EVAL = 0;
         var script = document.createElement('script');
         script.type = 'module';
         script.setAttribute('data-preview-injected', '');
@@ -120,6 +129,30 @@ export function preambleSource(token: string): string {
               + '（vendor 产物由 packages/web/scripts/build-preview-vendor.mjs 生成到 public/preview-vendor/）。',
           });
         }, MODULE_START_TIMEOUT_MS);
+        // **模块跑完了、也没报错，但页面还是空的** —— 这是另一种完全静默的失败，
+        // 上面那个 import 探针抓不到（它只管模块体有没有开始执行）。
+        // 最常见的成因：Vue 的 SFC 编译产物会自动 createApp().mount('#app')，
+        // 而 React/JSX 不会 —— 模型只写 "export default function App()" 就到此为止，
+        // （注意：本注释在模板字符串内部，**不能用反引号** —— 会把模板字符串提前终止。）
+        // 现象是「iframe 在、里面永久空白、控制台零输出」，和真 bug 长得一模一样。
+        // 与其猜测组件名去自动挂载（改写 export default 遇到字符串里含该字面量就出错），
+        // 不如把静默失败换成一条能照着做的提示。
+        setTimeout(function () {
+          if (runId !== EVAL_SEQ) return;
+          if (window.__zuseRan !== runId) return;  // 压根没跑起来，上面那条已经报过了
+          if (OUTPUT_SINCE_EVAL > 0) return;       // 有控制台输出 = 这段代码本来就不渲染，别误报
+          var app = document.getElementById('app');
+          if (!app || app.firstChild) return;      // 渲染出东西了
+          // 用户自己往 body 里塞了内容（不经过 #app）也算跑通了，别误报。
+          if (document.body.querySelector('[data-preview-injected]') !== document.body.lastElementChild) return;
+          post({
+            type: 'error',
+            message: '代码跑完了，但页面上什么都没有。React / JSX 需要你自己挂载，例如：\\n'
+              + "  import { createRoot } from 'react-dom/client'\\n"
+              + "  createRoot(document.getElementById('app')).render(<App />)\\n"
+              + '（Vue 单文件组件会自动挂载，不用写这句。）',
+          });
+        }, EMPTY_RENDER_TIMEOUT_MS);
       }
       reportHeight();
     }

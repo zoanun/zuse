@@ -28,8 +28,35 @@ describe('import map', () => {
 describe('preamble —— 三条设计约束必须在源码里落地', () => {
   const src = preambleSource('tok-1')
 
+  // 这份源码是**拼字符串**拼出来的 guest JS，而它整个躺在一个模板字符串里。
+  // 往里加注释时手滑打一个反引号，就会把模板串提前终止 —— 真发生过。
+  // 那次是 tsc 先炸所以立刻发现了，但反引号落在别的位置完全可能编译通过、
+  // 只在浏览器里变成语法错（而模块级语法错是**静默**的，现象只有「预览一片空白」）。
+  // 所以这里用真正的解析器兜底，跟 publicAssets.test.ts 用 XML 解析器挡 favicon 是同一招。
+  it('产出的 guest 源码语法合法（拼字符串最容易翻车的地方）', () => {
+    expect(() => new Function(src)).not.toThrow()
+  })
+
   it('token 被写进去', () => {
     expect(src).toContain('"tok-1"')
+  })
+
+  // Vue 的 SFC 产物自动 mount，React/JSX 不会 —— 模型漏写挂载那句时，
+  // 现象是「iframe 在、里面空白、控制台零输出」，和真 bug 无法区分。
+  // 这条探针把静默失败换成一句能照着做的提示。
+  it('模块跑完但页面为空时给出可操作的提示', () => {
+    expect(src).toContain('EMPTY_RENDER_TIMEOUT_MS')
+    expect(src).toContain('createRoot')
+    expect(src).toContain("getElementById('app')")
+  })
+
+  // 「写个快排打印一下」页面本来就该是空的，结果在控制台里。真浏览器实测过：
+  // 只按「#app 为空」判定会对这类代码误报 —— 那会把一条正确的提示变成噪音，比不提示更糟。
+  // 所以有任何控制台输出就闭嘴。这两条断言缺一不可：计数要清零、判定要用它。
+  it('有控制台输出时不报「页面为空」（否则纯打印的代码会被误报）', () => {
+    expect(src).toContain('OUTPUT_SINCE_EVAL = 0')          // 每轮 eval 重置
+    expect(src).toContain('OUTPUT_SINCE_EVAL++')            // 日志时累加
+    expect(src).toMatch(/if \(OUTPUT_SINCE_EVAL > 0\) return/) // 抑制判定
   })
 
   // 约束 1：高度由 guest 自己上报。父页读 contentDocument 会把「换成真沙箱」这个决策锁死。
