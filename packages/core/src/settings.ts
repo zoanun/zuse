@@ -9,9 +9,9 @@ import {
   printParseErrorCode,
   type ParseError,
 } from 'jsonc-parser'
+import { normalizePermissionMode } from './permission.js'
 import type {
   ResolvedSettings,
-  PermissionMode,
   RawProviderConfig,
   ProviderConfig,
   ModelSelection,
@@ -61,7 +61,7 @@ export const DEFAULT_ALLOW_RULES: readonly string[] = [
  *
  * 曾考虑烤入 `Bash(rm -rf /)`、`Bash(mkfs *)` 之类的"硬底线",最终放弃，理由：
  * 1. decide() 中非只读 Bash 在 default 模式本就走 ask —— `rm -rf /` 等危险命令默认必经人审，
- *    deny 规则只在用户配了宽泛 `Bash(*)` allow 或开了 bypassPermissions 时才额外生效。
+ *    deny 规则只在用户配了宽泛 `Bash(*)` allow 或开了 bypass（全自主）时才额外生效。
  * 2. matchCommand 是字面前缀匹配，对 `rm -rf` / `rm -fr` / `rm -r -f` / `rm --recursive --force`
  *    / 双空格等等价变体是打地鼠，永远列不全 —— 给的是虚假的安全感。
  * 3. 而带尾通配的形式（`rm -rf /*`）又会退化成前缀 `rm -rf /`，误伤 `rm -rf /data/xxx` 这类
@@ -98,7 +98,11 @@ interface RawSettings {
   failoverMode?: 'dialog' | 'auto'
   tools?: { enabled?: string[]; disabled?: string[] }
   permissions?: {
-    defaultMode?: PermissionMode
+    // 刻意是 string 而不是 PermissionMode：这是**未经校验的磁盘内容**，readLayer 只做
+    // `parsed as RawSettings` 的断言、不做运行期检查。声明成窄类型是在骗自己 —— 野生
+    // 非法值（`"yolo"`）和老别名（`"bypassPermissions"`）都真实存在于用户的配置文件里。
+    // 收窄发生在 mergeLayers 里的 normalizePermissionMode 那一步。
+    defaultMode?: string
     allow?: string[]
     ask?: string[]
     deny?: string[]
@@ -191,7 +195,15 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
     if (layer.mcpServers) out.mcpServers = { ...(out.mcpServers ?? {}), ...layer.mcpServers }
     const pm = layer.permissions
     if (pm) {
-      if (pm.defaultMode !== undefined) out.permissions.defaultMode = pm.defaultMode
+      // 归一化边界之一：老别名 `bypassPermissions` 在这里被认成 `bypass`（落盘的旧配置
+      // 还写着老名字，不认它就等于让人家的全自主档静默失效）。认不出的值（`"yolo"`）
+      // **整层当没写**，保留低层结果 —— 而不是强行拉回 'default'：user 层写了
+      // acceptEdits、project 层手滑写错一个词，把用户按到比两层都严的档位上是意外行为。
+      // 全新配置下低层就是基线 'default'，所以「非法值 → default」那条也仍然成立。
+      if (pm.defaultMode !== undefined) {
+        const mode = normalizePermissionMode(pm.defaultMode)
+        if (mode) out.permissions.defaultMode = mode
+      }
       if (pm.allow) out.permissions.allow.push(...pm.allow)
       if (pm.ask) out.permissions.ask.push(...pm.ask)
       if (pm.deny) out.permissions.deny.push(...pm.deny)

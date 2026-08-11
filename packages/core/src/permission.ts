@@ -1,8 +1,45 @@
 import { resolve, relative, sep } from 'node:path'
 import { homedir } from 'node:os'
 import type { Tool } from './tool.js'
-import type { ResolvedSettings, PermissionDecision } from './types.js'
+import type { ResolvedSettings, PermissionDecision, PermissionMode } from './types.js'
 import { hasBlockingBashSecurityIssue } from './bash-security.js'
+
+/**
+ * 全自主档在 `PermissionDecision.matched` 里的取值。
+ *
+ * 这是**跨文件的字符串契约**：decide() 写它，agent.ts 的闸门读它来决定要不要触发
+ * onAutoAllow（横幅上「本会话已自动放行 N 次」的计数）。曾经两边各写一个字面量，
+ * 只改一边不会有任何编译错误 —— 症状是计数永远停在 0，而权限判定本身完全正常，
+ * 没人会想到去看它。抽成常量后，改名只可能两边一起变。
+ */
+export const MATCHED_BYPASS = 'bypass'
+
+/**
+ * 权限模式的**唯一**解析入口：把外部来源（settings 文件、落盘的 cron 任务、WS 上行帧）
+ * 的原始值归一化成正名，认不出的返回 undefined 交调用方兜底。
+ *
+ * 为什么必须只有这一处：`bypassPermissions` 是历史落盘数据里的老名字（各机器的
+ * settings.json(c) 的 permissions.defaultMode、~/.zuse/cron/tasks.json 的 permissionMode）。
+ * 直接改名会让这些配置**静默失效** —— 落回询问档，而界面和日志都不会说一个字。
+ * 把「老名字也算数」这条规则复制到五个 if 里，迟早有一个新增的读路径忘了写，
+ * 于是同一份配置在系统的不同角落有两种解释。
+ *
+ * 返回 undefined 而不是替调用方回落到 'default'：settings 是分层合并的，非法值应当
+ * 「这一层当没写」保留低层结果，而 WS 入站要的是明确报错。兜底语义因调用方而异。
+ */
+export function normalizePermissionMode(raw: unknown): PermissionMode | undefined {
+  switch (raw) {
+    case 'default':
+    case 'acceptEdits':
+    case 'bypass':
+      return raw
+    // 只读别名：老配置/老任务里写的是它，读进来一律当 'bypass'。写路径绝不产出这个名字。
+    case 'bypassPermissions':
+      return 'bypass'
+    default:
+      return undefined
+  }
+}
 
 /** 由工具名 + 限定符拼出规则字符串。 */
 export function buildRule(toolName: string, specifier: string | null): string {
@@ -320,11 +357,12 @@ export function decide(
     if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
   }
 
-  // 3.5 bypassPermissions 模式直接放行（deny 与安全闸已在上面检查过）。
+  // 3.5 bypass（全自主）模式直接放行（deny 与安全闸已在上面检查过）。
   // 带上 matched：调用方（SessionManager 的自动放行计数）要能分辨「是 bypass 放的」
   // 与「本来就在 allow 表里 / 是只读工具」，否则常驻横幅上的数字会把根本不需要确认的
   // 调用也算进去 —— 那个数字就不再是「你少点了多少次」。
-  if (perms.defaultMode === 'bypassPermissions') return { decision: 'allow', rule, matched: 'bypassPermissions' }
+  // 用 MATCHED_BYPASS 常量而不是字面量：agent.ts 那边要比对同一个值，见常量处的说明。
+  if (perms.defaultMode === 'bypass') return { decision: 'allow', rule, matched: MATCHED_BYPASS }
 
   // 4. allow（含会话覆盖层）。Bash 需整条被规则"完整覆盖"才放行。allowRules 已在上方构造。
   if (isBash) {

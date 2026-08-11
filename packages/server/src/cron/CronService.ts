@@ -1,4 +1,5 @@
 import type { CronTask, CronTaskInput, CronTaskWithNext, CronRun, CronRunDetail } from '@zuse/protocol'
+import { normalizePermissionMode } from '@zuse/core'
 import { newSessionId } from '../session/sessionStore.js'
 import { loadTasks, saveTasks, loadRuns, deleteTaskRuns } from './cronStore.js'
 import { CronScheduler, isValidCron } from './CronScheduler.js'
@@ -35,7 +36,10 @@ export class CronService {
     const task: CronTask = {
       id: newSessionId(), name: input.name, cron: input.cron, prompt: input.prompt,
       cwd: input.cwd ?? this.deps.defaultCwd,
-      permissionMode: input.permissionMode ?? 'bypassPermissions',
+      // 归一化边界之一：input 直接来自 HTTP 请求体（server.ts 的 POST /api/cron 把 body
+      // 原样交过来，不做字段校验），所以老版本网页 bundle 发上来的老别名要在这里认掉。
+      // 认不出 → 默认全自主（历史默认档，见 spec §5）。
+      permissionMode: normalizePermissionMode(input.permissionMode) ?? 'bypass',
       enabled: input.enabled ?? true, createdAt: now, updatedAt: now,
     }
     const tasks = await loadTasks(this.deps.dir)
@@ -51,13 +55,16 @@ export class CronService {
     const i = tasks.findIndex((t) => t.id === id)
     if (i < 0) return null
     const current = tasks[i]!
+    const patchedMode = patch.permissionMode !== undefined ? normalizePermissionMode(patch.permissionMode) : undefined
     tasks[i] = {
       ...current,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.cron !== undefined ? { cron: patch.cron } : {}),
       ...(patch.prompt !== undefined ? { prompt: patch.prompt } : {}),
       ...(patch.cwd !== undefined ? { cwd: patch.cwd } : {}),
-      ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+      // 同 create：patch 来自 PATCH 请求体，未经校验。认不出就当这个字段没传（保留原档），
+      // 而不是回落全自主 —— 改个名字的请求顺手把档位提到最松是绝不能有的行为。
+      ...(patchedMode ? { permissionMode: patchedMode } : {}),
       ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
       updatedAt: new Date().toISOString(),
     }

@@ -16,14 +16,14 @@ function headerProps(state: AppState, onCycle = noop as (m: never) => void) {
 describe('nextMode —— 点击 chip 的循环顺序', () => {
   it('询问 → 自动接受编辑 → 全自主 → 询问', () => {
     expect(nextMode('default')).toBe('acceptEdits')
-    expect(nextMode('acceptEdits')).toBe('bypassPermissions')
-    expect(nextMode('bypassPermissions')).toBe('default')
+    expect(nextMode('acceptEdits')).toBe('bypass')
+    expect(nextMode('bypass')).toBe('default')
   })
 })
 
 describe('档位文案（§2 / §3：写机械行为，不写承诺）', () => {
   it('三档齐全，标签是中文', () => {
-    expect(PERMISSION_MODES.map((m) => m.mode)).toEqual(['default', 'acceptEdits', 'bypassPermissions'])
+    expect(PERMISSION_MODES.map((m) => m.mode)).toEqual(['default', 'acceptEdits', 'bypass'])
     expect(PERMISSION_MODES.map((m) => m.label)).toEqual(['询问', '自动接受编辑', '全自主'])
   })
 
@@ -35,7 +35,7 @@ describe('档位文案（§2 / §3：写机械行为，不写承诺）', () => {
   })
 
   it('「全自主」档不宣称护栏比实际厚：只承认 deny 与 Bash 安全检查两道', () => {
-    const desc = modeInfo('bypassPermissions').desc
+    const desc = modeInfo('bypass').desc
     // 必须点名仅剩的两道，且明说没有别的 —— 用户会按文案上写的去用它
     expect(desc).toContain('deny')
     expect(desc).toContain('安全检查')
@@ -59,7 +59,7 @@ describe('Header 的权限 chip', () => {
   })
 
   it('全自主档带告警色 class', () => {
-    render(<Header {...headerProps({ ...initialState, permissionModeEditable: true, permissionMode: 'bypassPermissions' })} />)
+    render(<Header {...headerProps({ ...initialState, permissionModeEditable: true, permissionMode: 'bypass' })} />)
     expect(screen.getByRole('button', { name: /权限 全自主/ }).className).toContain('chip-danger')
   })
 })
@@ -72,13 +72,13 @@ describe('全自主常驻横幅', () => {
     const { container: c2 } = render(<BypassBanner mode="acceptEdits" count={0} onExit={noop} />)
     expect(c2.querySelector('.bypass-banner')).toBeNull()
     cleanup()
-    const { container: c3 } = render(<BypassBanner mode="bypassPermissions" count={0} onExit={noop} />)
+    const { container: c3 } = render(<BypassBanner mode="bypass" count={0} onExit={noop} />)
     expect(c3.querySelector('.bypass-banner')).not.toBeNull()
   })
 
   it('显示自动放行次数，并给一个一键切回的出口', () => {
     const onExit = vi.fn()
-    render(<BypassBanner mode="bypassPermissions" count={7} onExit={onExit} />)
+    render(<BypassBanner mode="bypass" count={7} onExit={onExit} />)
     expect(screen.getByRole('status').textContent).toContain('7')
     fireEvent.click(screen.getByRole('button', { name: '切回询问' }))
     expect(onExit).toHaveBeenCalled()
@@ -87,8 +87,8 @@ describe('全自主常驻横幅', () => {
 
 describe('reducer', () => {
   it('permission-mode-changed 同时更新档位与计数（同一帧，横幅不会先闪旧数字）', () => {
-    const s = reduce(initialState, { kind: 'server', msg: { type: 'event', event: { type: 'permission-mode-changed', mode: 'bypassPermissions', autoAllowedCount: 4 } } })
-    expect(s.permissionMode).toBe('bypassPermissions')
+    const s = reduce(initialState, { kind: 'server', msg: { type: 'event', event: { type: 'permission-mode-changed', mode: 'bypass', autoAllowedCount: 4 } } })
+    expect(s.permissionMode).toBe('bypass')
     expect(s.autoAllowedCount).toBe(4)
   })
 

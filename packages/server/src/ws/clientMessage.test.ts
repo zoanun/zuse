@@ -199,22 +199,35 @@ describe('applyClientMessage', () => {
   it('dispatches set-permission-mode for each of the three legal modes', () => {
     const mgr = fakeMgr()
     const err = vi.fn()
-    for (const mode of ['default', 'acceptEdits', 'bypassPermissions']) {
+    for (const mode of ['default', 'acceptEdits', 'bypass']) {
       applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode }), err)
     }
-    expect(mgr.setPermissionMode.mock.calls.map((c) => c[0])).toEqual(['default', 'acceptEdits', 'bypassPermissions'])
+    expect(mgr.setPermissionMode.mock.calls.map((c) => c[0])).toEqual(['default', 'acceptEdits', 'bypass'])
     expect(err).not.toHaveBeenCalled()
   })
 
-  it('rejects an invalid permission mode — "bypass" is a REAL wild value, not a hypothetical', () => {
-    // 用户全局配置 ~/.zuse/settings.jsonc 里写的就是 "defaultMode": "bypass"（合法值是
-    // "bypassPermissions"）。配置读取链全程无校验，它静默落到了 'default' 分支 ——
-    // 也就是说这种非法值已经存在于这个系统里，一个手写/复制来的 WS 帧同样会带上它。
-    // 不拦的话 defaultMode 会被写成 decide() 认不出的字符串，结果是「界面显示全自主、
-    // 实际按询问档跑」这种最坏的分叉。
+  it('接受老别名 "bypassPermissions" 并归一化成 "bypass" 再往下传', () => {
+    // 改名前网页 bundle 发上来的就是老名字。浏览器缓存/没刷新的标签页会继续发它，
+    // 拒掉的表现是「点权限档 chip 没反应」—— 一个只在老客户端上出现、本地怎么点都复现
+    // 不了的 bug。这里断言的不只是"没报错"，更是**传下去的值已经是正名**：
+    // 若只放行不归一化，SessionManager 会收到一个 decide() 认不出的字符串，
+    // 结果是「界面显示全自主、实际按询问档跑」这种最坏的分叉。
     const mgr = fakeMgr()
     const err = vi.fn()
-    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypass' }), err)
+    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypassPermissions' }), err)
+    expect(mgr.setPermissionMode).toHaveBeenCalledTimes(1)
+    expect(mgr.setPermissionMode).toHaveBeenCalledWith('bypass')
+    expect(err).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid permission mode — 野生非法值不是假想的', () => {
+    // 用户全局配置 ~/.zuse/settings.jsonc 里长期写着一个当时非法的 defaultMode，
+    // 配置读取链全程无校验，它静默落到了 'default' 分支 —— 也就是说这种非法值已经
+    // 存在于这个系统里，一个手写/复制来的 WS 帧同样会带上它。不拦的话 defaultMode
+    // 会被写成 decide() 认不出的字符串，结果是「界面显示全自主、实际按询问档跑」。
+    const mgr = fakeMgr()
+    const err = vi.fn()
+    applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'yolo' }), err)
     expect(mgr.setPermissionMode).not.toHaveBeenCalled()
     expect(err).toHaveBeenCalledWith(expect.stringContaining('invalid "mode"'))
   })
@@ -235,7 +248,7 @@ describe('applyClientMessage', () => {
     const mgr = fakeMgr()
     mgr.setPermissionMode.mockImplementation(() => { throw new Error('该会话为非交互会话（如定时任务），不支持切换权限模式') })
     const err = vi.fn()
-    expect(() => applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypassPermissions' }), err)).not.toThrow()
+    expect(() => applyClientMessage(mgr, JSON.stringify({ type: 'set-permission-mode', mode: 'bypass' }), err)).not.toThrow()
     expect(err).toHaveBeenCalledWith(expect.stringContaining('非交互会话'))
   })
 })

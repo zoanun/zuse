@@ -348,7 +348,7 @@ describe('SessionService', () => {
     const dir = join(tempDir(), 'web-sessions')
     const svc = new SessionService({ dir, cwd: '/work', createSession: fakeCreateSessionFactory() })
 
-    const { id } = await svc.create({ cwd: '/tmp', permissionMode: 'bypassPermissions', kind: 'cron' })
+    const { id } = await svc.create({ cwd: '/tmp', permissionMode: 'bypass', kind: 'cron' })
     const mgr = await svc.getOrLoad(id)
     expect(mgr!.getKind()).toBe('cron')
 

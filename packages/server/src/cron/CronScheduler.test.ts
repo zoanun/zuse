@@ -11,7 +11,7 @@ beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'cronsch-')) })
 
 const task = (over: Partial<CronTask> = {}): CronTask => ({
   id: 't1', name: 'n', cron: '0 9 * * *', prompt: 'do it', cwd: '/tmp',
-  permissionMode: 'bypassPermissions', enabled: true, createdAt: 'c', updatedAt: 'u', ...over,
+  permissionMode: 'bypass', enabled: true, createdAt: 'c', updatedAt: 'u', ...over,
 })
 
 // fake SessionService: create→id, getOrLoad→manager with submit + getState + 唤醒链那几个方法
@@ -46,7 +46,7 @@ describe('CronScheduler.fire', () => {
     const sessions = fakeSessions('ok')
     const sch = new CronScheduler({ dir, sessions })
     await sch.fire(task())
-    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/tmp', permissionMode: 'bypassPermissions', kind: 'cron' }))
+    expect(sessions.create).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/tmp', permissionMode: 'bypass', kind: 'cron' }))
     expect(sessions.submit).toHaveBeenCalledWith('do it')
     expect(sessions.release).toHaveBeenCalledWith('sess-1')
     const runs = await loadRuns(dir, 't1')

@@ -8,7 +8,7 @@ import { splitBashCommand } from './permission.js'
  * `allow && evil` 这类「顶层操作符拼接」绕过。但词法拆分**看不见**那些把危险命令
  * 藏进引号/转义/展开/替换里的混淆手法 —— 本模块就专补这一层：在「一条命令本会被
  * allow 规则自动放行」时，识别这些混淆/注入/解析歧义模式并**降级为 ask**（强制人审），
- * 既不静默放行，也不直接 deny（用户仍可当场批准）。deny 与 bypassPermissions 的优先级
+ * 既不静默放行，也不直接 deny（用户仍可当场批准）。deny 与 bypass 的优先级
  * 都高于本层（见 permission.decide 的顺序）。
  *
  * 严重度分两档：

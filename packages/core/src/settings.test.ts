@@ -361,3 +361,44 @@ describe('resolveFailoverMode', () => {
     expect(resolveFailoverMode(s)).toBe('auto')
   })
 })
+
+describe('loadSettings —— defaultMode 的别名归一化与非法值兜底', () => {
+  const load = (): ResolvedSettings =>
+    loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
+
+  it('正名 "bypass" 读进来就是 bypass', () => {
+    writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'bypass' } }))
+    expect(load().permissions.defaultMode).toBe('bypass')
+  })
+
+  it('老别名 "bypassPermissions" 读进来归一化成 bypass —— 这是落盘旧配置的兼容底线', () => {
+    // 改名前各机器的 settings.json(c) 里写的都是这个。不认它 = 人家的全自主档在某次
+    // 升级后静默失效，而界面、日志都不会说一个字。
+    writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }))
+    expect(load().permissions.defaultMode).toBe('bypass')
+  })
+
+  it('三层里任意一层写老别名都认（归一化在合并循环内，不是只看最后一层）', () => {
+    writeFileSync(p('pj.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }))
+    expect(load().permissions.defaultMode).toBe('bypass')
+  })
+
+  it('非法值不崩、回落到 default（"yolo" 这类值真的在用户配置里出现过）', () => {
+    writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'yolo' } }))
+    expect(load().permissions.defaultMode).toBe('default')
+  })
+
+  it('非法值是"这一层当没写"，不会把低层已设的档位冲掉', () => {
+    // 语义选择：user 层认真配了 acceptEdits，local 层手滑拼错一个词，不该因此把用户
+    // 按到比两层都严的 default 上 —— 那是个没人要求过的、静默的行为变化。
+    writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'acceptEdits' } }))
+    writeFileSync(p('l.json'), JSON.stringify({ permissions: { defaultMode: 'nonsense' } }))
+    expect(load().permissions.defaultMode).toBe('acceptEdits')
+  })
+
+  it('高层的老别名照常覆盖低层（别名不是"半个值"）', () => {
+    writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'acceptEdits' } }))
+    writeFileSync(p('l.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }))
+    expect(load().permissions.defaultMode).toBe('bypass')
+  })
+})

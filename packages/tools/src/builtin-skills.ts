@@ -57,7 +57,7 @@ const ZUSE_CONFIG_BODY = `# 修改 zuse 自身的配置
 
 - \`model\` / \`smallModel\`（标题生成等轻活）/ \`imageModel\`（主模型不支持视觉时的图片解析兜底）
 - \`providers.<id>\`：\`apiKey\`、\`baseURL\`、\`protocol\`（\`anthropic\` 或 \`openai\`）、\`models[]\`（元素可写成 \`{ name, type }\`；\`type: vision\` 标记支持图片，\`ocr\`/\`embedding\` 等非聊天模型会被排除在可选清单外）、\`contextWindow\`
-- \`permissions\`：\`defaultMode\`（\`default\` | \`acceptEdits\` | \`bypassPermissions\`）+ \`allow\` / \`ask\` / \`deny\` 三张规则表，语法 \`Tool(specifier)\`，例如 \`Bash(git commit:*)\`、\`Read(~/.ssh/**)\`。**判定顺序：deny → bypass → allow → ask → defaultMode 兜底**，所以 \`deny\` 表即使在 bypassPermissions 下也照样拦。
+- \`permissions\`：\`defaultMode\`（\`default\` | \`acceptEdits\` | \`bypass\`）+ \`allow\` / \`ask\` / \`deny\` 三张规则表，语法 \`Tool(specifier)\`，例如 \`Bash(git commit:*)\`、\`Read(~/.ssh/**)\`。**判定顺序：deny → bypass → allow → ask → defaultMode 兜底**，所以 \`deny\` 表即使在 \`bypass\` 下也照样拦。旧名 \`bypassPermissions\` 读取时仍被认作 \`bypass\`（兼容老配置），但写入请用 \`bypass\`。
 - \`mcpServers\`（见下节）、\`webSearch\`
 
 **生效**：设置在会话构建时读 → **新会话**生效；跑 Web UI 的话要**重启 daemon** 才会重读。
@@ -105,7 +105,7 @@ frontmatter **只认 \`name\` 和 \`description\`**；\`description\` 写不好 
   - \`POST /api/cron/<id>/run\` 立即执行一次
   - \`GET /api/cron/<id>/runs\` 历次执行、\`GET /api/cron/<id>/runs/<runId>\` 某次详情
 
-任务字段：\`name\`、\`cron\`（标准 5 段 \`分 时 日 月 周\`，与 Linux crontab 同义，如 \`0 9 1 * *\` = 每月 1 号 9 点）、\`prompt\`（到点执行的指令）、\`cwd\`、\`permissionMode\`（默认 \`bypassPermissions\` 全自主；全局 deny 表仍是硬底线）、\`enabled\`。
+任务字段：\`name\`、\`cron\`（标准 5 段 \`分 时 日 月 周\`，与 Linux crontab 同义，如 \`0 9 1 * *\` = 每月 1 号 9 点）、\`prompt\`（到点执行的指令）、\`cwd\`、\`permissionMode\`（默认 \`bypass\` 全自主；全局 deny 表仍是硬底线）、\`enabled\`。
 
 每次触发开一个**全新会话**执行（不接续历史），过程留档可回看；同一任务上次没跑完时本次触发会被跳过（不叠加并发）。
 

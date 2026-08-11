@@ -1,6 +1,7 @@
 import type { SessionManager } from '../session/SessionManager.js'
 import { deliverToSession } from '../session/deliver.js'
 import type { ClientMessage } from '@zuse/protocol'
+import { normalizePermissionMode } from '@zuse/core'
 
 /** 上行分派器驱动的 SessionManager 子集（便于单测注入 spy）。 */
 export type SessionManagerLike = Pick<
@@ -63,18 +64,22 @@ export function applyClientMessage(
         return
       }
       case 'set-permission-mode': {
-        // 白名单校验，先例见上面的 VALID_VERDICTS。理由是实证的、不是防御性编程：
-        // 用户全局配置 ~/.zuse/settings.jsonc 里写的就是 "defaultMode": "bypass" ——
-        // 那**不是**合法值（合法的是 "bypassPermissions"），而配置读取链全程无校验，
-        // 它静默落到了 'default' 分支。也就是说野生非法值已经存在于这个系统里。
-        // 不校验的话，一个 "bypass" 帧会把 defaultMode 写成一个 decide() 认不出的字符串，
-        // 结果是「界面显示全自主、实际按询问档跑」——最坏的那种分叉。
-        const VALID_MODES = ['default', 'acceptEdits', 'bypassPermissions']
-        if (!VALID_MODES.includes(msg.mode as string)) {
+        // 校验+归一化边界之一，先例见上面的 VALID_VERDICTS。理由是实证的、不是防御性编程：
+        // 用户全局配置 ~/.zuse/settings.jsonc 里长期写着一个当时**非法**的 defaultMode，
+        // 而配置读取链全程无校验，它静默落到了 'default' 分支 —— 也就是说野生非法值真实
+        // 存在于这个系统里。不校验的话，一个坏 mode 帧会把 defaultMode 写成一个 decide()
+        // 认不出的字符串，结果是「界面显示全自主、实际按询问档跑」——最坏的那种分叉。
+        //
+        // 用 normalizePermissionMode 而不是本地白名单数组：老版本网页（缓存的 bundle、
+        // 没刷新的标签页）发上来的仍是老名字 `bypassPermissions`，白名单里漏掉它就等于
+        // 让这些客户端的档位开关点了没反应。归一化后再往下传，SessionManager 及以下
+        // 只见得到正名。
+        const mode = normalizePermissionMode(msg.mode)
+        if (!mode) {
           sendError('set-permission-mode: invalid "mode"')
           return
         }
-        mgr.setPermissionMode(msg.mode)
+        mgr.setPermissionMode(mode)
         return
       }
       case 'switch-model':

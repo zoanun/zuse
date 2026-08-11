@@ -435,7 +435,7 @@ export class SessionManager {
     // 不结算的话，用户按下「全自主」后屏幕上那张卡还杵着等他点，正是他按这个开关想摆脱的东西。
     // 写法与 reset() 里结算 'deny' 的那段同款。反方向（切回询问）不需要回溯：
     // 已经放行跑掉的调用追不回来，也不该把新的确认凭空补出来。
-    if (mode === 'bypassPermissions') {
+    if (mode === 'bypass') {
       for (const [id, p] of this.pending) {
         p.resolve('allow')
         this.emit({ type: 'permission-resolved', id, verdict: 'allow' })
@@ -663,7 +663,7 @@ export class SessionManager {
       // Non-interactive: delegate to core's canonical decide() so that:
       // - Bash compound commands are subcommand-split (no prefix-bypass of "safe && evil")
       // - deny list is honored (deny has higher priority than allow)
-      // - defaultMode / bypassPermissions are respected
+      // - defaultMode / bypass are respected
       // No human is attached, so anything not auto-allowed (ask) becomes deny.
       const tool = this.registry.get(req.toolName)
       if (!tool) return Promise.resolve('deny')

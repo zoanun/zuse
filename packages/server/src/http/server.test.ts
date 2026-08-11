@@ -628,7 +628,7 @@ describe('/api/cron REST', () => {
     const task = await created.json() as { id: string; enabled: boolean; permissionMode: string; cwd: string; nextRun: string | null }
     expect(task.id).toBeTruthy()
     expect(task.enabled).toBe(true)
-    expect(task.permissionMode).toBe('bypassPermissions') // default fully-autonomous
+    expect(task.permissionMode).toBe('bypass') // default fully-autonomous
     expect(task.cwd).toBe('/work')
     expect(task.nextRun).toBeTruthy() // scheduled → croner computed a next run
 

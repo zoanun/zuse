@@ -23,7 +23,7 @@ function fakeClient(scripts: StreamEvent[][]): ModelClient {
 
 const PERMISSIVE: ResolvedSettings = {
   tools: {},
-  permissions: { defaultMode: 'bypassPermissions', allow: [], ask: [], deny: [] },
+  permissions: { defaultMode: 'bypass', allow: [], ask: [], deny: [] },
   providers: {},
 }
 

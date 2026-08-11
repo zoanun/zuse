@@ -325,7 +325,7 @@ export interface SessionSnapshot {
    * 而且一个无人值守的定时任务不该遵守谁几周前随手点的 UI 开关。前端据此隐藏控件。
    */
   permissionModeEditable: boolean
-  /** bypassPermissions 期间自动放行了多少次工具调用（常驻横幅的诚实计数）。 */
+  /** bypass（全自主）期间自动放行了多少次工具调用（常驻横幅的诚实计数）。 */
   autoAllowedCount: number
   messageCount: number
   messages: SnapshotMessage[]
@@ -376,7 +376,13 @@ export interface SessionSearchResult {
   hitCount: number
 }
 
-export type CronPermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions'
+/**
+ * 与 core 的 `PermissionMode` 同值（此处刻意复述而非 re-export，保持 protocol 对 core
+ * 只做 type-only 转导的既有约定）。全自主档的正名是 `bypass`；老别名
+ * `bypassPermissions` 不在这里 —— 它只活在解析边界（server 的 cronStore.loadTasks
+ * 读磁盘时归一化），线上协议与新落盘数据一律只有 `bypass`。
+ */
+export type CronPermissionMode = 'default' | 'acceptEdits' | 'bypass'
 export type CronRunStatus = 'running' | 'success' | 'failed'
 
 export interface CronTask {

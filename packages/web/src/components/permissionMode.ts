@@ -34,7 +34,7 @@ export const PERMISSION_MODES: PermissionModeInfo[] = [
     desc: '同上，但兜底那一步把 Edit / Write 也算作放行。Bash 等仍会问。',
   },
   {
-    mode: 'bypassPermissions',
+    mode: 'bypass',
     label: '全自主',
     desc: 'deny 规则与 Bash 安全检查之后一律放行，不再询问。这两道之外没有别的检查。',
   },

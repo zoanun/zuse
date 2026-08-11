@@ -94,8 +94,15 @@ export interface ModelConfig {
 
 // ——— Phase 5：设置与权限 ———
 
-/** 权限模式（对齐 CC，本期不含 plan）。 */
-export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions'
+/**
+ * 权限模式（本期不含 plan）。
+ *
+ * 全自主档的正名是 `bypass`。旧名 `bypassPermissions` 是**只读别名**，刻意**不**出现在
+ * 这个联合类型里 —— 它只活在解析边界（`normalizePermissionMode`，见 permission.ts），
+ * 读进来就被归一化成 `bypass`。把别名塞进类型会让它顺着类型系统渗进每一处比较分支，
+ * 于是每加一个新分支都要记得写两遍；漏一遍的表现是「界面显示全自主、实际按询问档跑」。
+ */
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypass'
 
 /** 工具暴露开关。enabled 在场 → 只暴露交集；disabled → 黑名单。 */
 export interface ToolsConfig {

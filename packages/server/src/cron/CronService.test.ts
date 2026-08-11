@@ -19,7 +19,7 @@ describe('CronService CRUD', () => {
     const t = await svc.create({ name: 'n', cron: '0 9 * * *', prompt: 'p' })
     expect(t.id).toBeTruthy()
     expect(t.enabled).toBe(true)
-    expect(t.permissionMode).toBe('bypassPermissions')  // 默认全自主
+    expect(t.permissionMode).toBe('bypass')  // 默认全自主
     expect(t.cwd).toBe('/tmp')
     expect(t.nextRun).toBe('2026-07-25T09:00:00.000Z')
     expect((await loadTasks(dir)).map((x) => x.id)).toEqual([t.id])

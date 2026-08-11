@@ -5,7 +5,7 @@ import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolContext, ToolRegistry, FileReadTracker, Tool } from './tool.js'
 import { createFileTracker } from './tool.js'
-import { decide } from './permission.js'
+import { decide, MATCHED_BYPASS } from './permission.js'
 import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import { runHooks } from './hooks.js'
@@ -74,7 +74,7 @@ export function isRunawayRepetition(text: string): boolean {
 /** 未提供 settings 时的宽松回退：全部放行（保持 Phase 4 行为，便于旧测试/无头调用）。 */
 const PERMISSIVE_SETTINGS: ResolvedSettings = {
   tools: {},
-  permissions: { defaultMode: 'bypassPermissions', allow: [], ask: [], deny: [] },
+  permissions: { defaultMode: 'bypass', allow: [], ask: [], deny: [] },
   providers: {},
 }
 
@@ -110,7 +110,7 @@ export interface RunAgentOptions {
   /** allow_persist 时的写盘动作；缺省调用 settings 的 appendAllowRule。 */
   onPersistAllow?: (rule: string) => void
   /**
-   * bypassPermissions 档**决定性地**放行了一次调用时回调（其它放行途径——deny 未命中后的
+   * bypass（全自主）档**决定性地**放行了一次调用时回调（其它放行途径——deny 未命中后的
    * allow 表、只读工具兜底——不触发）。调用方据此显示「本会话已自动放行 N 次」。
    * 放在闸门里而不是让调用方数 tool-use 事件：子代理的工具调用同样过这道闸，
    * 而它们的 tool-use 事件根本不冒到会话层，那样数会漏掉整个子代理分支。
@@ -520,7 +520,7 @@ async function gateAndRunTool(
   // 全自主档决定性地放行了这一次 —— 报给调用方计数。放在这里（闸门通过之后、真正执行之前）
   // 而不是 decide() 里面：decide 是纯函数，被 TUI / 规则预览等只想「问问结果」的地方调用，
   // 在里面记副作用会把预览也算进去。
-  if (decision === 'allow' && matched === 'bypassPermissions') deps.onAutoAllow?.(tu.name, specifier)
+  if (decision === 'allow' && matched === MATCHED_BYPASS) deps.onAutoAllow?.(tu.name, specifier)
 
   const hookEnv = { toolName: tu.name, toolInput: tu.input, cwd: deps.cwd }
   const preWarnings = runHooks(deps.settings.hooks?.preToolUse, hookEnv).warnings

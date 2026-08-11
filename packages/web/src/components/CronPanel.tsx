@@ -84,7 +84,7 @@ function relTime(iso: string | null): string {
 }
 
 const PERM_OPTS: { value: CronPermissionMode; label: string }[] = [
-  { value: 'bypassPermissions', label: '全自主 · 跳过所有确认 (bypassPermissions)' },
+  { value: 'bypass', label: '全自主 · 跳过所有确认 (bypass)' },
   { value: 'acceptEdits', label: '自动接受编辑 (acceptEdits)' },
   { value: 'default', label: '默认档 (default)' },
 ]
@@ -108,7 +108,7 @@ function CronTaskForm({ initial, onSaved, onCancel }: {
   const [name, setName] = useState(initial?.name ?? '')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
   const [cwd, setCwd] = useState(initial?.cwd ?? '')
-  const [permissionMode, setPermissionMode] = useState<CronPermissionMode>(initial?.permissionMode ?? 'bypassPermissions')
+  const [permissionMode, setPermissionMode] = useState<CronPermissionMode>(initial?.permissionMode ?? 'bypass')
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
   const [schedKind, setSchedKind] = useState<CronPreset['kind']>(p0.kind)
   const hasTime = p0.kind === 'daily' || p0.kind === 'weekly' || p0.kind === 'monthly'
@@ -211,7 +211,7 @@ function CronTaskForm({ initial, onSaved, onCancel }: {
           {PERM_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </label>
-      {permissionMode === 'bypassPermissions' ? (
+      {permissionMode === 'bypass' ? (
         <div className="cron-warn">⚠ 无人看管会话将跳过所有权限确认、全自动执行（全局 deny 表仍是硬底线）。</div>
       ) : null}
       <label className="cron-check">

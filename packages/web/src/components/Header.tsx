@@ -70,7 +70,7 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
         */}
         {state.permissionModeEditable ? (
           <button
-            className={'chip chip-btn' + (state.permissionMode === 'bypassPermissions' ? ' chip-danger' : '')}
+            className={'chip chip-btn' + (state.permissionMode === 'bypass' ? ' chip-danger' : '')}
             title={modeInfo(state.permissionMode).desc + '（点击切换到「' + modeInfo(nextMode(state.permissionMode)).label + '」）'}
             onClick={() => onCyclePermissionMode(nextMode(state.permissionMode))}
           >权限 {modeInfo(state.permissionMode).label} ▾</button>

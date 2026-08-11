@@ -15,7 +15,7 @@ import type { PermissionMode } from '@zuse/protocol'
  * 而 deny 表是字面前缀匹配（`Bash(rm -rf *)` 拦不住 `rm -fr /`）。
  */
 export function BypassBanner({ mode, count, onExit }: { mode: PermissionMode; count: number; onExit: () => void }) {
-  if (mode !== 'bypassPermissions') return null
+  if (mode !== 'bypass') return null
   return (
     <div className="bypass-banner" role="status">
       <span className="bypass-banner-text">
