@@ -21,6 +21,7 @@ import { persistModel } from '../state/manageApi.js'
 import { SessionContext } from './Markdown.js'
 import { Rail } from '../preview/Rail.js'
 import { closeRun, useActiveRun } from '../preview/activePreview.js'
+import { getCleanView, setCleanView } from '../cleanViewPref.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -48,6 +49,11 @@ const EMPTY_HISTORY: string[] = []
 export function Shell() {
   const { state, send, dispatch, newSession, sessions, currentSessionId, switchSession, removeSession, rename, searchJump, pendingScrollTo, clearScrollTo, pendingRestoreInput, clearRestoreInput, mainView, setMainView } = useStore()
   const [menuOpen, setMenuOpen] = useState(false)
+  // 精简视图（默认开）。存 localStorage —— 观感偏好属于这台机器上的这个人，不跟着会话走。
+  const [cleanView, setCleanViewState] = useState(getCleanView)
+  const toggleCleanView = useCallback(() => {
+    setCleanViewState((on) => { setCleanView(!on); return !on })
+  }, [])
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
   // null = not sharing; a Set = share-selection mode with the chosen message ids.
@@ -291,7 +297,7 @@ export function Shell() {
           onOpenCron={() => { setShareSel(null); setMainView('cron'); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} dirPickerRef={dirPickerRef} />
+        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} cleanView={cleanView} onToggleCleanView={toggleCleanView} dirPickerRef={dirPickerRef} />
         {/* Header 正下方、聊天区之上 —— 横跨整个主区，看不见它需要主动无视。 */}
         <BypassBanner mode={state.permissionMode} count={state.autoAllowedCount} onExit={() => onCyclePermissionMode('default')} />
         {/*
@@ -324,6 +330,7 @@ export function Shell() {
             onShare={onShare}
             onRetry={onRetry}
             shareMode={!!shareSel}
+            cleanView={cleanView}
             selected={shareSel ?? undefined}
             onToggleSelect={toggleSelect}
             scrollToId={pendingScrollTo}

@@ -177,6 +177,33 @@ describe('右栏 —— iframe 身份必须活过布局变化（设计 §7.1 / P
     expect(container.querySelector('.rail')).toBe(rail)
     expect(container.querySelector('.rail')!.parentElement).toBe(body) // 结构没改，只该换 class
   })
+
+  /**
+   * 切「精简视图」开关时 iframe 不能重挂。
+   *
+   * 上面那条只覆盖了**跨断点**这条路，覆盖不到精简开关 —— 而精简开关同样有把 `.rail` 的
+   * 槽位数改掉的诱惑（设计初稿就是把 StepsPanel 塞进 `.rail` 当条件子节点的，
+   * 那一刻 RailRun 位置漂移 → PreviewFrame 重挂 → demo 归零）。定案是过滤**只发生在
+   * `.stream` 里面**，右栏一个字不碰；这条测试就是那个决定的锁。
+   */
+  it('切精简视图开关，iframe 不重挂（同一个 token）', async () => {
+    const { container } = mount()
+    seed([FENCE('a')])
+    await waitFor(() => expect(container.querySelector('.code-run')).not.toBeNull())
+    act(() => { fireEvent.click(container.querySelector('.code-run')!) })
+
+    const iframe = container.querySelector('iframe')!
+    const token = tokenOf(iframe)
+    const btn = container.querySelector('button[aria-label="精简视图"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+
+    // 开 → 关 → 开，各跨一次。
+    for (let i = 0; i < 2; i++) await act(async () => { fireEvent.click(btn); await Promise.resolve() })
+
+    expect(container.querySelectorAll('iframe')).toHaveLength(1)
+    expect(tokenOf(container.querySelector('iframe')!)).toBe(token)
+    expect(container.querySelector('iframe')).toBe(iframe)
+  })
 })
 
 describe('右栏 —— 进出分享模式不该顶掉 run（设计 §3.4 / P0-3）', () => {

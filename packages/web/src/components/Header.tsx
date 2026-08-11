@@ -12,7 +12,7 @@ function fmt(n: number | undefined): string {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, onCyclePermissionMode, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; onCyclePermissionMode: (mode: import('@zuse/protocol').PermissionMode) => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
+export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, onCyclePermissionMode, cleanView, onToggleCleanView, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; onCyclePermissionMode: (mode: import('@zuse/protocol').PermissionMode) => void; cleanView: boolean; onToggleCleanView: () => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
   const [, force] = useState(0)
   // Model picker popover: anchored under the model chip, portaled so it escapes the header's overflow.
   const [modelOpen, setModelOpen] = useState(false)
@@ -81,6 +81,13 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
         </span>
       </div>
       <div className="mh-right">
+        <button
+          className={'icon-btn' + (cleanView ? ' on' : '')}
+          aria-label="精简视图"
+          aria-pressed={cleanView}
+          title={cleanView ? '精简视图：只显示提问与最终回答（点击显示全部过程）' : '完整视图：显示工具调用与中间过程（点击精简）'}
+          onClick={onToggleCleanView}
+        >{cleanView ? '◧' : '▤'}</button>
         <button className="icon-btn" aria-label="管理" title="管理" onClick={onOpenManage}>⚙</button>
         <button className="icon-btn" aria-label="切换主题" onClick={() => { toggleTheme(); force((n) => n + 1) }}>
           {getTheme() === 'light' ? '☾' : '☀'}

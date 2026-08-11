@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { Message as Msg } from '../state/types.js'
 import { Message, isSelectableRow } from './Message.js'
+import { filterForCleanView } from './cleanView.js'
 
 export function MessageList({
-  messages, thinking, pendingCount = 0, onRevert, onShare, onRetry, shareMode = false, selected, onToggleSelect, scrollToId, onScrolled,
+  messages, thinking, pendingCount = 0, onRevert, onShare, onRetry, shareMode = false, cleanView = false, selected, onToggleSelect, scrollToId, onScrolled,
 }: {
   messages: Msg[]
   thinking: boolean
@@ -12,6 +13,8 @@ export function MessageList({
   onShare?: (id: string) => void
   onRetry?: () => void
   shareMode?: boolean
+  /** 精简视图：已结束的轮次只留「提问 + 最终回答」，工具调用与中间碎碎念不显示。 */
+  cleanView?: boolean
   selected?: ReadonlySet<string>
   onToggleSelect?: (id: string) => void
   scrollToId?: string | null
@@ -76,7 +79,15 @@ export function MessageList({
   }, [messages])
   // Share mode previews exactly what export keeps: questions + replies with prose; tool-only
   // turns and system notices are hidden so you select among shareable content only.
-  const visible = shareMode ? messages.filter(isSelectableRow) : messages
+  // 三个过滤器同一层，互不嵌套：
+  //  - shareMode：只列可分享的（提问 + 有正文的回复），优先级最高 —— 勾选面板不该被精简影响
+  //  - cleanView：已结束的轮次收拢成「提问 + 最终回答」，在飞那轮全量（见 cleanView.ts）
+  //  - 都没开：原样
+  // 上面的 lastAssistantId / streamingId / turnFinalIds **刻意算在原始数组上**：
+  // retry 按钮、复制页脚、代码预览的禁用状态都属于"这一轮"，不该因为某条消息被过滤掉而消失。
+  const visible = shareMode
+    ? messages.filter(isSelectableRow)
+    : cleanView ? filterForCleanView(messages, thinking) : messages
 
   return (
     <div className="stream">
