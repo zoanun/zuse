@@ -138,7 +138,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
      所以窄行下让正文那份出场、右栏那份让位（两份都在 DOM 里，只由 CSS 决定谁显示 ——
      用 JS 按宽度分叉会把 PreviewFrame 挪位置，那是 P0-4 明令禁止的）。 */
   .main-body.has-rail .narrow-panels { display: block; }
-  .main-body.has-rail .rail > .todos { display: none; }
+  /* 步骤区**和待办同样处理**。漏掉它的后果实测过（1140×760、有预览因而右栏不隐藏）：
+     两份 `.steps` 同屏并存 —— 正文列那份 x=330 w=736、右栏那份 x=661 w=479，
+     内容完全重复，而且 `aria-label="中间步骤"` 的地标对读屏出现两次。
+     窄行下一律以**正文列那份**为准（右栏是覆盖层，覆盖式对这类常驻面板是自毁的）。 */
+  .main-body.has-rail .rail > .todos,
+  .main-body.has-rail .rail > .steps { display: none; }
   /* 没有预览时右栏此刻已经空了 —— 整栏收起，别留一条空竖线。
      **只在没有预览时才敢 display:none**：有预览时这么干等于卸载 iframe，demo 全丢。 */
   .main-body.rail-narrow .rail { display: none; }
@@ -351,8 +356,19 @@ button.head:hover .caret { opacity: 0.9; }
    之所以不做成"预览开着就自动收起"：那会在每次点运行时把用户正在读的步骤抽走。 */
 .steps:not(.collapsed) { min-height: 180px; }
 .steps.collapsed { flex: none; }
-/* 预览控制台紧挨着步骤时补一条分隔线。待办/子代理自带 border-bottom，不用管。 */
-.rail > .preview-console + .steps { border-top: 1px solid var(--line); }
+/* 预览控制台紧挨着步骤时补一条分隔线。待办/子代理自带 border-bottom，不用管。
+   同时**把上面那条 180px 下限让掉**（选择器更具体，赢过 `.steps:not(.collapsed)`）：
+
+   预览是用户**主动点「运行」**打开的东西，两块抢高度时该让位的是步骤，不是它。
+   而原来的搭配正好反过来 —— `.preview-fill` 是 `min-height: 0`（没有下限）、
+   `.steps` 有 180px 硬下限，于是挤压全由预览承担。实测 1400×460：
+   todos 166 / preview **33** / steps 180 —— 33px 高的 iframe 等于没有。
+   现在改成：预览拿下限，步骤按内容给、可压缩、且不超过四成高。 */
+.rail > .preview-fill { min-height: 160px; }
+.rail > .preview-console + .steps {
+  border-top: 1px solid var(--line);
+  flex: 0 1 auto; max-height: 40%; min-height: 0;
+}
 
 /* 标题整行是按钮 = **宽屏唯一的逃生口**。上一版只有窄屏能收，宽屏想让步骤别占地方
    就只能去 Header 关掉整个精简视图（顺带改变主画面的过滤），等于没有逃生口。 */
@@ -398,7 +414,15 @@ button.head:hover .caret { opacity: 0.9; }
    它不参与右栏的 flex 分高，自己限高内滚；`margin-inline` 跟着正文列走，与旁边的待办对齐。
    为什么必须有它：窄行下 `.rail` 整栏 display:none，而主画面已经把工具卡片过滤掉了 ——
    没有这一份就是"两边都没有"，工具调用在界面上彻底消失（实测过，见 Shell.tsx 的注释）。 */
-.narrow-panels .steps { flex: none; max-height: 46vh; margin-bottom: 10px;
+/* 正文列里这几块的高度是**相加**的，而 `.stream` 是 `flex:1` 的滚动容器、
+   自动最小尺寸为 0 —— 谁都不封顶的话对话会被压到几乎没有。实测 1140×760 展开步骤后
+   `.stream` 只剩 102px（待办 274 + 步骤 228）。
+   **注意 `max-height` 只是上限不是固定值**：把步骤从 46vh 压到 30vh 一点用没有，
+   因为它内容本来才 222px 高、压根没顶到上限。真正吃高度的是待办那 36vh。
+   所以两边一起压：24 + 26 = 50vh，另外一半留给对话和输入框。
+   两块各自都有内部滚动，压上限不会让内容够不着。 */
+.narrow-panels .todos { max-height: 24vh; }
+.narrow-panels .steps { flex: none; max-height: 26vh; margin-bottom: 10px;
   margin-inline: max(20px, calc((100% - var(--col)) / 2)); border-top: 1px solid var(--line); }
 .narrow-panels .steps-head { padding-inline: 0; }
 .narrow-panels .steps-list { padding-inline: 0; }

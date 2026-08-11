@@ -14,6 +14,17 @@ import type { Message } from '../state/types.js'
  * 消息整段跳过（`while` 循环遇到非 opener 就 `i++; continue`）。
  *
  * 加新形状时只要往下面接一个 `shape(...)` 即可，不用想"该断言什么"——断言只有这一条。
+ *
+ * ## 这条护栏照不到的地方（评审指出，写在这里省掉后来人一次误判）
+ *
+ * 它数的是**部件的个数**，不是"渲染得出来"。下面 system / steer 那两条之所以绿，
+ * 是因为 `filterForCleanView` 把非 assistant 消息**整条**放进主画面、计数就算数上了；
+ * 但 `Message.tsx` 渲染 `role:'system'` / `role:'user'` 时走的是 `partsText()`，
+ * 而那个函数只拼 text 部件、**静默丢掉工具部件**。所以这两种形状真出现的话，
+ * 界面上依然是黑洞，这里照样是绿的。
+ *
+ * 现在不修，是因为投影层不产出这种消息（`SessionManager.projectMessages()`）。
+ * 哪天真出现了，要改的是 `Message.tsx` 的渲染，不是这里的判据。
  */
 const user = (id: string, text: string): Message => ({ id, role: 'user', parts: [{ kind: 'text', text }] })
 const steer = (id: string, text: string): Message => ({ id, role: 'user', steer: true, parts: [{ kind: 'text', text }] })
