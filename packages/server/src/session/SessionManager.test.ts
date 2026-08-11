@@ -2240,11 +2240,118 @@ describe('SessionManager image routing (I2)', () => {
     const { mgr } = makeImageMgr({
       scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
     })
+    const events: { type: string; message?: string }[] = []
+    mgr.subscribe((e) => events.push(e as never))
     await mgr.submit('one', [img({ id: 'a', name: 'a.png' }), img({ id: 'b', name: 'b.png' })])
     const atts = userMsgOf(mgr).attachments!
     expect(atts).toHaveLength(2)
-    expect(atts[0]!.description).toBe('(图片解析失败)')
+    expect(atts[0]!.description).toContain('图片解析失败')
     expect(atts[1]!.description).toBe('good desc')
+
+    // 真实事故回归锁：这里以前只把失败换成一句「(图片解析失败)」塞给模型，**对用户完全静默**。
+    // 后果：模型拿到那七个字当成图片内容，照着编；用户看到的是一次正常回答，无从知道
+    // 有张图根本没进去 —— 用户原话「不是让用户去猜测」。失败必须冒到界面上，并指名是哪张。
+    const warn = events.find((e) => e.type === 'warning')
+    expect(warn).toBeDefined()
+    expect(warn!.message).toContain('a.png')
+    expect(warn!.message).toContain('boom')       // 原因要带上，否则用户没法判断是重试还是换图
+    expect(warn!.message).not.toContain('b.png')  // 成功的那张不能被误报
+  })
+
+  /**
+   * 回归锁：**已经 abort 的 signal 不会再触发 'abort' 事件**。只 addEventListener 会静默漏掉它，
+   * 于是「用户按停之后才起跑」的那张图仍然发出请求，把回合多拖满一个墙钟（60s）。
+   * 多图时这条路真实可达：A 读完开始描述 → 用户按停 → B 的 readImageBase64 才 resolve，
+   * 此时 describeImage 拿到的就是一个已经 abort 的 signal。
+   */
+  it('传进来的 signal 已经 abort 时，识图请求不许再发出去', async () => {
+    const seen: (boolean | undefined)[] = []
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      // eslint-disable-next-line require-yield
+      async *sendMessages(_m, _c, _t, signal) {
+        seen.push(signal?.aborted)          // 派生 signal 必须已经是 aborted
+        throw new Error('aborted')
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    const ctl = new AbortController()
+    ctl.abort()
+    // 直接打 describeImage：submit 那层会在更早的地方就被 abort 挡掉，盖不到这段。
+    await expect(
+      (mgr as unknown as {
+        describeImage: (d: string, m: string, q: string, s?: AbortSignal) => Promise<string>
+      }).describeImage('B', 'image/png', 'q', ctl.signal),
+    ).rejects.toThrow()
+    expect(seen).toEqual([true])
+  })
+
+  it('超时的原因要说人话，不能是 SDK 那句 "Request was aborted."', async () => {
+    // 客户端永远不吐字节，只等 signal —— 正是 60s 墙钟要对付的形态。
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      // eslint-disable-next-line require-yield
+      async *sendMessages(_m, _c, _t, signal) {
+        await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
+        // 真实 client 在 abort 后走自己的中断分支，抛出的是 SDK 原话，毫无信息量。
+        throw new Error('Request was aborted.')
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    vi.useFakeTimers()
+    try {
+      const p = (mgr as unknown as {
+        describeImage: (d: string, m: string, q: string, s?: AbortSignal) => Promise<string>
+      }).describeImage('B', 'image/png', 'q', undefined)
+      const assertion = expect(p).rejects.toThrow('60s 内没有返回')
+      await vi.advanceTimersByTimeAsync(60_000)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('全部图片都解析失败：警告要逐张列出，且不谎称模型看过图', async () => {
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages() { yield { type: 'error', message: 'rate limited', category: 'quota' } },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    const events: { type: string; message?: string }[] = []
+    mgr.subscribe((e) => events.push(e as never))
+    await mgr.submit('看图', [img({ id: 'a', name: 'a.png' }), img({ id: 'b', name: 'b.png' })])
+    const warn = events.find((e) => e.type === 'warning')
+    expect(warn).toBeDefined()
+    expect(warn!.message).toContain('a.png')
+    expect(warn!.message).toContain('b.png')
+  })
+
+  it('读取图片字节就失败（不是模型的问题）也要告知用户', async () => {
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages() { yield { type: 'text-delta', text: 'never reached' } },
+    }
+    // 上传文件被删/权限不足这类：连 base64 都拿不到，压根到不了识图模型。
+    const readImageBase64 = async (_id: string) => { throw new Error('ENOENT: upload gone') }
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    const events: { type: string; message?: string }[] = []
+    mgr.subscribe((e) => events.push(e as never))
+    await mgr.submit('看图', [img({ id: 'a', name: 'gone.png' })])
+    const warn = events.find((e) => e.type === 'warning')
+    expect(warn).toBeDefined()
+    expect(warn!.message).toContain('gone.png')
+    expect(warn!.message).toContain('ENOENT')
   })
 
   it('non-vision + no imageClient configured: emits error and does NOT enter runAgent', async () => {
@@ -2359,6 +2466,43 @@ describe('SessionManager image routing (I2)', () => {
     expect(calls).toHaveLength(0)                  // main model never ran
     expect(mgr.getConversation().length).toBe(0)   // nothing committed
     expect(mgr.getState().isThinking).toBe(false)
+  })
+
+  /**
+   * `!controller.signal.aborted` 那道闸的专属覆盖 —— 评审实测：**把它删掉，112 条测试全绿**。
+   *
+   * 它是整个「不许再沉默」改动里**唯一的静音开关**。一个没有测试的静音开关，正是原 bug
+   * 走回来的路。上面 #5 那条盖不住它：#5 的 imageClient 放行后是**成功**的，failures 为空，
+   * 这个分支根本不会被求值。这里让它放行后**报错**，于是分支真被走到。
+   */
+  it('用户按停导致的解析失败不弹警告（按停不是故障）', async () => {
+    let reached!: () => void
+    const reachedP = new Promise<void>((r) => { reached = r })
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const imageClient: ModelClient = {
+      getModel: () => 'vision-helper',
+      async *sendMessages() {
+        reached()
+        await gate
+        yield { type: 'error', message: 'aborted', category: 'other' }   // 按停之后才失败
+      },
+    }
+    const readImageBase64 = async (_id: string) => ({ data: 'B', mediaType: 'image/png' })
+    const { mgr } = makeImageMgr({
+      scripts: [textTurn], vision: false, imageClient, imageModel: 'vision-helper', readImageBase64,
+    })
+    const types: string[] = []
+    mgr.subscribe((e) => types.push(e.type))
+
+    const p = mgr.submit('describe', [img()])
+    await reachedP
+    expect(mgr.interrupt()).toBe(true)
+    release()
+    await p
+
+    expect(types).toContain('aborted')
+    expect(types).not.toContain('warning')   // 这一条就是那道闸
   })
 
   it('#8 vision main model + images but expandAttachments NOT wired → error, does NOT enter runAgent', async () => {

@@ -67,6 +67,28 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 16384
 const IMAGE_DESCRIPTION_MAX_TOKENS = 1024
 
 /**
+ * 单张图解析的墙钟上限。
+ *
+ * **不要写成「否则会永久挂起」** —— 那是错的：内置 client 已经套了 `StreamIdleGuard`
+ * （`core/stream-idle.ts`，默认 120s 空闲即中断），流真断了自会报错。这个数的作用是把
+ * 识图这一路收紧到 60s：它只是主回合的一个前置步骤，让用户为一张图干等两分钟不合理。
+ *
+ * **代价**：这是墙钟，不是空闲计时。一个持续吐字、只是慢的描述（自建 VL 模型 + 1024
+ * tokens）会被它掐掉，而空闲守卫不会掐。本机 Qwen3-VL-32B 描述 40KB 截图实测约 5s，
+ * 留了一个数量级余量；若将来有人接更慢的模型，该调的是这个数，不是删掉它。
+ */
+const IMAGE_DESCRIBE_TIMEOUT_MS = 60_000
+
+/**
+ * 失败原因带进模型上下文和 DOM 前的截断长度。
+ *
+ * `reason` 是 provider SDK 的原始 message，不可控：有些 OpenAI 兼容网关会把**整个请求体**
+ * 回显在错误里 —— 而这个请求体里装着图片的 base64。不截断就会把几 MB 的串塞进下一回合的
+ * 上下文、写进会话存档，还会在界面上撑破一行（`.note` 没有 word-break）。
+ */
+const IMAGE_FAILURE_REASON_CAP = 200
+
+/**
  * waitUntilQuiescent 的轮询间隔:从 250ms 起步、每轮 ×1.5 退避到 5s 封顶。
  * 定长 250ms 在「模型排了个半小时后的唤醒」这种常态下要空转 7200 次 —— 那些轮询的结果
  * 提前就知道是 false。退避把 1 小时内的唤醒次数从 ~14400 降到 ~726，代价是静默判定最多晚
@@ -1006,16 +1028,43 @@ export class SessionManager {
       ],
     }]
     let out = ''
-    const events = this.imageClient!.sendMessages(
-      request,
-      { model: this.imageModel!, max_tokens: IMAGE_DESCRIPTION_MAX_TOKENS },
-      undefined,
-      signal,
-    )
-    for await (const e of events) {
-      if (e.type === 'text-delta') out += e.text
-      else if (e.type === 'error') throw new Error(e.message)
+    // 墙钟：底层 StreamIdleGuard 已有 120s 空闲兜底（stream-idle.ts），所以这里**不是**
+    // 「否则永久挂起」，而是把识图这一路的反馈收紧到 60s —— 它只是主回合里的一个前置步骤，
+    // 让用户为一张图干等两分钟不合理。代价写明：这是**墙钟**不是空闲计时，一个健康但慢的
+    // 描述（自建 VL 模型 + 1024 tokens）会被它掐掉。本机 40KB 截图实测约 5s，留了一个数量级。
+    const timeout = new AbortController()
+    // 已经 abort 的 signal 不会再触发 'abort' 事件 —— 只 addEventListener 会**静默漏掉**它，
+    // 于是用户按停之后才起跑的那张图仍会发出请求，把整个回合多拖 60s。
+    // 同一个坑 stream-idle.ts:44 早就踩过并写对了，这里照抄它的形状。
+    const onOuterAbort = (): void => timeout.abort()
+    if (signal?.aborted) timeout.abort()
+    else signal?.addEventListener('abort', onOuterAbort, { once: true })
+    // 超时与「用户按停」必须分得开：前者是故障、要告诉用户，后者是用户自己的动作。
+    // 用标志位而不是事后查 `timeout.signal.aborted` —— abort 会让 client 走它自己的
+    // 中断分支 yield 一个 error 事件，循环是**抛出**退出的，事后那行代码根本到不了。
+    let timedOut = false
+    const timer = setTimeout(() => { timedOut = true; timeout.abort() }, IMAGE_DESCRIBE_TIMEOUT_MS)
+    try {
+      const events = this.imageClient!.sendMessages(
+        request,
+        { model: this.imageModel!, max_tokens: IMAGE_DESCRIPTION_MAX_TOKENS },
+        undefined,
+        timeout.signal,
+      )
+      for await (const e of events) {
+        if (e.type === 'text-delta') out += e.text
+        else if (e.type === 'error') throw new Error(e.message)
+      }
+    } catch (err) {
+      // 超时时把 SDK 那句无信息量的 "Request was aborted." 换成人话 —— 否则用户看到的
+      // 原因和自己按停时一模一样，又回到「分不清到底发生了什么」。
+      if (timedOut) throw new Error(`识图模型 ${IMAGE_DESCRIBE_TIMEOUT_MS / 1000}s 内没有返回`)
+      throw err
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onOuterAbort)
     }
+    if (timedOut) throw new Error(`识图模型 ${IMAGE_DESCRIBE_TIMEOUT_MS / 1000}s 内没有返回`)
     return out.trim()
   }
 
@@ -1100,12 +1149,41 @@ export class SessionManager {
       } else {
         // Describe each image via the auxiliary model, all in parallel (results aligned by index).
         // A single image's failure records an error string as its description (not aborting the
-        // others); all share the one controller.signal so Stop cancels the whole batch.
-        const descriptions = await Promise.all(images.map((im) =>
+        // others). controller.signal 传给每一个 describeImage，它在内部与自己的墙钟合成一个
+        // 派生 signal（见 describeImage）—— 用户按停仍然取消整批，但每张图另有 60s 上限。
+        //
+        // 失败**必须冒到用户面前**。真实事故：两张图里第二张解析失败，代码把异常吞掉换成
+        // 一句「(图片解析失败)」塞给模型 —— 模型把这七个字当成图片内容，照着第一张图和聊天
+        // 历史编了个说法，界面上看起来是一次完全正常的回答。用户事后问「它到底看见图没有，
+        // 我没法判断」—— 这正是问题：**沉默让用户无从分辨模型看没看见**。
+        // 所以这里收集失败原因，逐张具名 warning；描述里也带上原因，让模型知道那是错误而非内容。
+        // 按图片下标记录，不是按失败先后 —— 这些 catch 是并行完成的，push 顺序取决于谁先挂，
+        // 而警告的全部意义就是告诉用户「是哪几张」，顺序跟着界面上的顺序才读得懂。
+        const failures: (string | undefined)[] = new Array(images.length).fill(undefined)
+        const descriptions = await Promise.all(images.map((im, idx) =>
           this.readImageBase64!(im.id)
             .then(({ data, mediaType }) => this.describeImage(data, mediaType, text, controller.signal))
-            .catch(() => '(图片解析失败)'),
+            .catch((err: unknown) => {
+              const raw = err instanceof Error ? err.message : String(err)
+              const reason = raw.length > IMAGE_FAILURE_REASON_CAP
+                ? raw.slice(0, IMAGE_FAILURE_REASON_CAP) + '…'
+                : raw
+              failures[idx] = reason
+              return `(图片解析失败：${reason})`
+            }),
         ))
+        // 中断导致的失败不算故障，不该弹警告 —— 是用户自己按的停。
+        const failedList = images
+          .map((im, idx) => ({ name: im.name, reason: failures[idx] }))
+          .filter((f): f is { name: string; reason: string } => f.reason !== undefined)
+        if (failedList.length > 0 && !controller.signal.aborted) {
+          this.emit({
+            type: 'warning',
+            message: `以下图片解析失败，模型没有看到它们的内容：${
+              failedList.map((f) => `「${f.name}」（${f.reason}）`).join('、')
+            }`,
+          })
+        }
         // #5: the parallel describe round-trips just awaited above may have straddled a Stop. Re-check
         // the abort signal BEFORE building the context view / entering runAgent — otherwise a Stop
         // during description would fall through into a turn against an already-aborted signal (which

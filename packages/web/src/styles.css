@@ -327,7 +327,10 @@ button.head:hover .caret { opacity: 0.9; }
 /* 系统旁白（故障切换、已中断、压缩提示…）：这类信息重要性最低但出现频率最高，
    居中 + 彩色 = 一屏最扎眼的东西。降成极小的灰字，warn/bad 只在色相上留一点线索。 */
 .note { align-self: center; font: 500 11.5px/1.5 var(--mono); color: var(--faint); text-align: center; opacity: 0.85; }
-.note.warn { color: var(--muted); } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
+/* warn 用 --warn 而不是 --muted：上一行注释自己写的是「warn/bad 只在色相上留一点线索」，
+   而 --muted 是纯灰、一点色相都没有 —— warn 和 live(信息) 长得一模一样，甚至比普通 .note
+   还淡。这条通道现在要承载「模型根本没看到你上传的图」这类必须被看见的消息。 */
+.note.warn { color: var(--warn); opacity: 1; } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
 /* Compaction summary: a collapsible card (collapsed by default, like a tool/think block). The
    body is the dimmed italic left-aligned summary; the head toggles it. */
 .note.summary { align-self: stretch; text-align: left; margin: 2px 0; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }
