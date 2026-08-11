@@ -38,6 +38,25 @@
 | 墙钟 300s / 空闲 30min 测试按字面写不是 5 分钟就是假绿 | 时长全部可注入（§7.1） | 漏写约束 |
 | 其余建议：探针路径写错、POSIX env 名单缺项、300ms 必须是真定时器、定码后要重放缓冲、ring 无测试、`StreamShaper` 没有「满了」信号、SSE 理由措辞、路由必须插在 SPA 兜底之前、并发上限、会话删除清理 | 逐条已改，见对应小节 | 建议 |
 
+## 0.2 实现进度（每完成一件就在这里打勾，方便隔天接手）
+
+| 模块 | 状态 | 备注 |
+|---|---|---|
+| `run/stream.ts` StreamDecoder | ✅ 已合 | 13 条测试；两次变异各杀 2/3 条（见下） |
+| `run/sink.ts` truncate + ring | ⬜ 未开始 | ring **必须**带单测，见 §4 |
+| `run/childEnv.ts` runEnv | ⬜ 未开始 | 断言**子进程真实环境**，并做变异验证，见 §5 |
+| `run/policy.ts` + `run/run.ts` | ⬜ 未开始 | 时长全部可注入，见 §7.1 |
+| `run/registry.ts` | ⬜ 未开始 | 注入不做单例，见 §2.2 |
+| HTTP 端点 | ⬜ 未开始 | isAuthed / cwd 服务端反查 / 409 可确认 / 路由插在 SPA 兜底前，见 §8 |
+
+**StreamDecoder 的变异验证记录**（别重做，也别以为它是纸糊的）：
+
+- 变异①：`pickLabel` 里去掉 `{ stream: true }` → 「窗口末尾切断多字节序列不能误判成 OEM」
+  与「UTF-8 多字节跨 chunk」**2 条变红**。
+- 变异②：把 `stream` 参数挪回 `new TextDecoder(label, {stream:true})`（= spec v1 犯的错）
+  → **3 条变红**，含 GBK 跨 chunk 那条。
+- 两次都精确还原、与变异前逐字节一致（`diff` 无输出）。
+
 ## 1. 实测事实
 
 > 每条都附命令与**完整**输出。探针：`docs/superpowers/specs/probe-run-step2.mjs`

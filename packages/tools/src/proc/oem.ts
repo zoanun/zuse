@@ -48,8 +48,12 @@ export function winOemLabel(): string | null {
 /** Combined raw-byte cap for the OEM re-decode buffer; beyond it we keep the streamed UTF-8. */
 export const OEM_RAW_CAP = 2_000_000
 /** Re-decode as OEM only when replacement chars are at least this fraction of the UTF-8 body — i.e.
- *  the bytes are genuinely OEM, not clean UTF-8 with a few stray invalid bytes. */
-const OEM_MOJIBAKE_RATIO = 0.02
+ *  the bytes are genuinely OEM, not clean UTF-8 with a few stray invalid bytes.
+ *
+ *  导出是给 `run/stream.ts` 的流式解码器用的：两处判据必须**同源**。各写一个 0.02
+ *  的话，哪天有人调了其中一个，一次性路径（bash 工具）和流式路径（run 服务）就会对同一份
+ *  输出给出不同编码 —— 那种不一致查起来极痛苦，且没人会想到去比两个常量。 */
+export const OEM_MOJIBAKE_RATIO = 0.02
 
 /**
  * Re-decode child output in the Windows OEM codepage when UTF-8 decoding failed DENSELY — i.e. the
