@@ -1,70 +1,48 @@
-import { isTurnOpener, type Message, type Part } from '../state/types.js'
-import { replyMarkdown } from './Message.js'
+import type { Message, Part } from '../state/types.js'
 
 /**
- * 精简视图：主画面只留「用户问的」和「模型最终答的」，中间过程（工具调用、模型在工具之间
- * 的碎碎念）不显示。
+ * 精简视图：主画面留下**全部正文**（用户问的、模型说的），只把**工具调用与工具结果**
+ * 收进右侧的步骤抽屉。
  *
- * ## 为什么正在跑的那一轮不过滤
+ * ## 为什么不是「只留最终回答」（这一版推翻了上一版）
  *
- * reducer 的真实行为是：`text-delta` / `tool-use` / `tool-result` 都**追加到最后一条**
- * assistant 消息上，然后 `message-start` 新建下一条。于是「本轮最后一条有正文的消息」
- * 在流式期间是**非单调**的 —— 模型先说一句话（用户已经读到了），再在同一条上追加工具调用，
- * 再开新消息；那一刻刚读到的正文当场从主画面消失、每调一次工具闪一次。
+ * 上一版的规则是「一轮只留最后一条有正文的 assistant 消息」，它在真实会话里丢过答案
+ * （`~/.zuse/web-sessions/20260811-140454-8615dfef.json` 第 26~39 条）：
  *
- * 所以按「轮次是否已结束」分档：**在飞的那一轮全量显示，结束后才收拢**。
- * 这不只是回避 bug —— 跑的过程中你想看它在干什么，跑完只想看结论，本来就是人读东西的方式。
- * 而且过滤只在轮次终结那一刻发生一次，是稳定的收敛动作，不是逐 delta 的抖动。
+ *   用户：第二个，也改成全部完成
+ *   #29 ：善。日常工作组三事，皆已毕矣 …        ← 真正的回答
+ *   #31~37：我将执行 pwd 命令来查看当前工作目录。 ← 模型顺手又验了几次 cwd
+ *   #39 ：当前工作目录为 /e/ai-study/zuse       ← 旧规则只留下这条
  *
- * ## 为什么按部件而不是按消息
+ * 主画面于是用「当前工作目录为 …」回答了「改成全部完成」。
  *
- * 一条 assistant 消息的常态形状是 `[text, tool-use, tool-result]`（`foldToolResults` 把
- * 工具结果并进前一条消息）。按消息级过滤必然自相矛盾：想保住"最后一条有正文的消息"，
- * 就会把它挂着的工具卡片一起放回主画面。所以只取 text 部件。
+ * **根子上的问题是「哪句是最终回答」没有可靠判据。** 模型给完答案再顺手跑条命令
+ * 验证/收尾，是 agent 的常态形状，不是边角情况。任何基于位置（最后一条）或长度
+ * （最长的一条）的启发式都会在这个形状上翻车，区别只是翻得多明显。
  *
- * ## 兜底是规则自带的
+ * 所以退到一条**不需要判断**的规则：正文一句不删，只收工具卡片。
+ * 代价是主画面会多出「我将执行 pwd 命令」这类碎碎念 —— **接受**。多几句废话
+ * 远好过把答案藏起来，后者用户根本不知道自己少看了什么。
  *
- * 取的是「最后一条**有正文的**」而不是「最后一条」。一轮若以纯工具消息收尾（被中断、
- * 工具收尾），自然回退到更早那条有正文的 —— 不会出现"用户问了但模型没回话"的空白轮次。
+ * ## 顺带消失的两个复杂度
  *
- * @param thinking 最后一轮是否仍在跑。**必须传**：没有它，规则本身无法自洽（见上）。
+ * 1. **不再需要 `thinking` 参数。** 旧规则要靠它兜住「流式期间"最后一条有正文的消息"
+ *    非单调 → 刚读到的正文当场从主画面消失、每调一次工具闪一次」。新规则里 text 部件
+ *    只增不减，天然不闪，那个参数连同它背后的「在飞轮次免过滤」整段一起删掉。
+ * 2. **不再需要切分轮次。** 判据是纯部件级的，与轮次边界、与 steer 是不是边界都无关。
+ *
+ * 3. 因此主画面与抽屉（`turnStepsOf`）**天然互补**：这里留 text，那里收非 text，
+ *    合起来正好是原始部件全集。上一版两边各写一套「最后一条有正文的」判据、抄了两遍，
+ *    是"某个东西两边都没有"这类信息黑洞的温床。
  */
-export function filterForCleanView(messages: Message[], thinking: boolean): Message[] {
-  // 最后一个轮次开头的下标 —— thinking 时这一轮整段免过滤。
-  let liveTurnStart = -1
-  if (thinking) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (isTurnOpener(messages[i]!)) { liveTurnStart = i; break }
-    }
-  }
-
-  // 每个已结束轮次里「最后一条有正文的 assistant 消息」的下标集合。
-  const keepAssistant = new Set<number>()
-  let turnStart = 0
-  const closeTurn = (endExclusive: number): void => {
-    if (liveTurnStart >= 0 && turnStart === liveTurnStart) return   // 在飞那轮不参与
-    for (let i = endExclusive - 1; i >= turnStart; i--) {
-      const m = messages[i]!
-      if (m.role === 'assistant' && replyMarkdown(m.parts) !== '') { keepAssistant.add(i); return }
-    }
-  }
-  for (let i = 1; i < messages.length; i++) {
-    if (!isTurnOpener(messages[i]!)) continue
-    closeTurn(i)
-    turnStart = i
-  }
-  closeTurn(messages.length)
-
+export function filterForCleanView(messages: Message[]): Message[] {
   const out: Message[] = []
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i]!
-    // 在飞的那一轮：一个字不动。
-    if (liveTurnStart >= 0 && i >= liveTurnStart) { out.push(m); continue }
-    // 用户消息（含插话）与系统提示照常保留 —— 后者是「关于这次对话本身」的信息，
-    // 不是模型的工作过程，收进抽屉等于把警告又藏起来。
+  for (const m of messages) {
+    // 用户消息（含插话）与系统提示照常保留 —— 后者是「关于这次对话本身」的信息
+    // （压缩摘要、已被中断、图片解析失败），不是模型的工作过程。收进抽屉等于把警告又藏起来。
     if (m.role !== 'assistant') { out.push(m); continue }
-    if (!keepAssistant.has(i)) continue
     const textParts = m.parts.filter((p: Part) => p.kind === 'text')
+    if (textParts.length === 0) continue          // 纯工具消息：整条不显示，别留个空壳子占位
     // 全是 text 时保持同一引用：Message 是 memo 的，重建对象会让它白白重渲染。
     out.push(textParts.length === m.parts.length ? m : { ...m, parts: textParts })
   }

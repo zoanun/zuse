@@ -331,40 +331,70 @@ button.head:hover .caret { opacity: 0.9; }
    而 --muted 是纯灰、一点色相都没有 —— warn 和 live(信息) 长得一模一样，甚至比普通 .note
    还淡。这条通道现在要承载「模型根本没看到你上传的图」这类必须被看见的消息。 */
 .note.warn { color: var(--warn); opacity: 1; } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
-/* ── 中间步骤抽屉（`.main-body` 的第三列，`.rail` 的兄弟） ─────────────────
-   竖向 tab 条**贴最右边、通高**，步骤内容在它左边。整块在 `.rail` 外面：
-   塞进去会多一个条件子节点，让 RailRun 位置漂移、预览 iframe 重挂。 */
-/* DOM 顺序是 [步骤区, tab 条]，用默认的 row —— tab 条因此落在**最右**。
-   曾经写成 row-reverse，结果 tab 跑到步骤区左边、离窗口右缘 340px（实测 navRight=1580 / 窗宽 1920）。 */
-.steps { display: flex; min-width: 0; border-left: 1px solid var(--line); }
-.steps-body { width: 340px; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 24px; }
-.steps-head { font: 600 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--faint);
-  text-transform: uppercase; margin: 2px 0 8px; }
-.steps-text { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
-.steps-text > :first-child { margin-top: 0; }
-.steps-text > :last-child { margin-bottom: 0; }
+/* ── 中间步骤：右栏最下面的一段（`.rail` 的第 4 个固定槽位） ──────────────────
+   上一版把它做成 `.main-body` 的**第三列**。三列是过约束的，实测下来三条都在打脸：
+   `.chat` 有 min-width:560、`.rail` 是 flex:none，所有挤压全由这一列独扛 ——
+   ① 1400 屏开着预览时它只剩 182px 宽，`.tool .result` 是 pre-wrap、`.edit-diff` 是 pre，
+      每行都要横向拖滚动条；
+   ② 正文列同时从 726 掉到 510（-30%），而上面 `.rail` 那段注释白纸黑字写着
+      "正文列一格不动"是 PR1 的核心承诺 —— 肇事者只是从 `min(50%,720px)` 换成了第三列；
+   ③ 窄行下它和 `.rail` 都绝对定位贴右缘，而 `.rail` 更宽(480)、z-index 更高(10>5)，
+      把 tab 条**完全盖住**（实测 elementFromPoint 命中 ASIDE.rail）—— 主画面已经把工具
+      收走了，这里再点不到就是"两边都没有"，正是下面那条誓死要避免的状态。
+   并回右栏后三条同时消失，且**窄行不需要任何特殊规则**：它跟着 `.rail` 一起覆盖式。 */
+/* `flex: 1 1 0%` 而**不是** `1 1 auto`：`.preview-fill` 是 `flex: 1`（= 基准 0），
+   若这里用 auto（基准 = 内容高度），同一栏里两个 flex 项就不是对半分，而是步骤按内容
+   把预览挤扁 —— 实测 1400×900 下预览只剩 87px 高，等于没有。同基准后两者各 ~247px。 */
+.steps { display: flex; flex-direction: column; min-height: 0; flex: 1 1 0%; }
+/* 上面还有预览时两块在同一栏里抢高度：给步骤一个下限，别被预览压成一条缝；
+   真不够用时用户点标题把它收起来，高度整个让给预览（`.collapsed`）。
+   之所以不做成"预览开着就自动收起"：那会在每次点运行时把用户正在读的步骤抽走。 */
+.steps:not(.collapsed) { min-height: 180px; }
+.steps.collapsed { flex: none; }
+/* 预览控制台紧挨着步骤时补一条分隔线。待办/子代理自带 border-bottom，不用管。 */
+.rail > .preview-console + .steps { border-top: 1px solid var(--line); }
 
-/* tab 条：竖列，自上而下 = 从旧到新，与主画面滚动方向一致。 */
-.turn-tabs { display: flex; flex-direction: column; gap: 2px; padding: 8px 4px; overflow-y: auto;
-  border-left: 1px solid var(--line); background: var(--surface-2); }
-.turn-tab { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 40px;
-  padding: 7px 2px; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
-  color: var(--faint); font: 500 10px/1.2 var(--mono); }
-.turn-tab:hover { background: var(--surface); color: var(--muted); }
-.turn-tab.on { background: var(--surface); color: var(--text); }
-.turn-tab .tt-n { font: 600 12px/1 var(--mono); }
-/* 标签竖排：中文一列一个字，比横排截断更省宽度，也更像"书脊"。 */
-.turn-tab .tt-label { writing-mode: vertical-rl; text-orientation: mixed; max-height: 92px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 标题整行是按钮 = **宽屏唯一的逃生口**。上一版只有窄屏能收，宽屏想让步骤别占地方
+   就只能去 Header 关掉整个精简视图（顺带改变主画面的过滤），等于没有逃生口。 */
+.steps-head { display: flex; align-items: center; gap: 8px; width: 100%; flex: none;
+  padding: 12px 14px 8px; border: 0; background: none; cursor: pointer; text-align: left;
+  font: 600 10px/1 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+.steps-head:hover { color: var(--muted); }
+.steps-head .sh-caret { font-size: 9px; letter-spacing: 0; }
+.steps-head .sh-title { flex: 1; }
+.steps-head .sh-count { letter-spacing: 0; font-weight: 500; }
 
-/* 窄屏：整列变成覆盖式 —— tab 条仍贴边可见，步骤区默认收起、点 tab 才滑出。
-   **绝不允许"两边都没有"**：主画面已经把工具调用收走了，这里再隐藏就彻底够不着。 */
-@container (max-width: 900px) {
-  .steps { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; }
-  .steps .steps-body { width: 0; padding: 0; border: 0; }
-  .steps.open .steps-body { width: min(320px, 80vw); padding: 10px 12px 24px;
-    background: var(--surface); box-shadow: -8px 0 24px rgba(0,0,0,0.12); }
-}
+/* 轮次列表：**一行一轮、横排文字**，自上而下 = 从旧到新，与主画面滚动方向一致。
+   上一版是 40px 宽的竖排字条（writing-mode: vertical-rl）。实测每格 120px 高、
+   7 轮的 scrollHeight 就到 865px 越过了可视区 —— 用户说的"随便说几句就很多很多 tab"
+   是真的。横排每行约 30px，同样高度放得下 26 行，密度差 4 倍；而且竖排只放得下 12 个字，
+   连续追问（"你给第一个改成全部完成" / "第二个，也改成全部完成"）截完长得一模一样。
+   限高 30% + 自身内滚：轮次再多也**不挤压下面的步骤内容**。 */
+.turn-tabs { display: flex; flex-direction: column; gap: 1px; flex: none;
+  max-height: 30%; overflow-y: auto; padding: 0 8px 6px; }
+.turn-tab { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+  color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.turn-tab:hover { background: var(--surface-2); color: var(--text); }
+.turn-tab.on { background: var(--surface-2); color: var(--text); font-weight: 650; }
+.turn-tab .tt-n { flex: none; min-width: 1.4em; font: 600 11px/1.5 var(--mono); color: var(--faint); }
+.turn-tab.on .tt-n { color: var(--accent); }
+.turn-tab .tt-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 该轮调了几次工具。一行字里最有用的一个数字：0 次的轮次根本不出现在这里，
+   而 "12" 一眼就知道那一轮是重头戏、值得点进去。 */
+.turn-tab .tt-c { flex: none; font: 500 10px/1.5 var(--mono); color: var(--faint); }
+
+.steps-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px 12px 16px; }
+
+/* 窄行回退位里的那份（`.narrow-panels` 里，正文列 与 Composer 之间）。
+   它不参与右栏的 flex 分高，自己限高内滚；`margin-inline` 跟着正文列走，与旁边的待办对齐。
+   为什么必须有它：窄行下 `.rail` 整栏 display:none，而主画面已经把工具卡片过滤掉了 ——
+   没有这一份就是"两边都没有"，工具调用在界面上彻底消失（实测过，见 Shell.tsx 的注释）。 */
+.narrow-panels .steps { flex: none; max-height: 46vh; margin-bottom: 10px;
+  margin-inline: max(20px, calc((100% - var(--col)) / 2)); border-top: 1px solid var(--line); }
+.narrow-panels .steps-head { padding-inline: 0; }
+.narrow-panels .turn-tabs { max-height: 150px; padding-inline: 0; }
+.narrow-panels .steps-body { padding-inline: 0; }
 
 /* 待办的分组标题。**刻意不复用 `.th`**：`.th` 是面板级标题（大写化 + letter-spacing + mono），
    组标题若长成那样，右栏里会连着出现「任务 / 甲 / 乙 / 丙 / 子代理」五个同款标题，

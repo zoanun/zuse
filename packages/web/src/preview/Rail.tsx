@@ -6,6 +6,8 @@ import { ConsolePanel } from './ConsolePanel.js'
 import type { ConsoleEntry } from './types.js'
 import { TodosPanel } from '../components/TodosPanel.js'
 import { AgentsPanel } from '../components/AgentsPanel.js'
+import { StepsDrawer } from '../components/StepsDrawer.js'
+import type { TurnSteps } from '../components/turnSteps.js'
 import type { Message } from '../state/types.js'
 
 /**
@@ -44,21 +46,31 @@ function RailRun({ run }: { run: ActiveRun }) {
  * 收益的九成在这一条：**预览与待办不再跟着聊天一起滚走**。所以它必须是 `.main-body` 的
  * 直接子节点、`.chat` 的兄弟，而不是消息流里的元素。
  *
- * **三个子节点是固定槽位，不要改成数组/条件拼接**：`TodosPanel`/`AgentsPanel` 自己返回 null
- * 时槽位仍在，React 按位置对齐，`RailRun` 因此不会因为「上面那块出现了」而被重挂
- * （重挂 = iframe 换 document = demo 归零）。
+ * **四个子节点是固定槽位，不要改成数组/条件拼接**：`TodosPanel`/`AgentsPanel`/`StepsDrawer`
+ * 自己返回 null 时槽位仍在，React 按位置对齐，`RailRun` 因此不会因为「上面那块出现了」
+ * 而被重挂（重挂 = iframe 换 document = demo 归零）。
+ *
+ * `StepsDrawer` 是后加的，**只能追加在 `RailRun` 之后**：插在它前面会让 `RailRun` 的
+ * 下标从 2 变成 3，等于每次步骤区出现/消失都重挂一次 iframe。
+ *
+ * 上下顺序也是用户拍的板：任务在上、步骤在下，「让任务一直挂到全部完成再消失」——
+ * 而它本来就是这个行为（`hasVisibleTodos` = 有任何一条没完成就显示），不需要改。
  */
-export function Rail({ run, todos, messages, backgroundAgents }: {
+export function Rail({ run, todos, messages, backgroundAgents, steps, selectedTurn, onSelectTurn }: {
   run: ActiveRun | null
   todos: TodoItemLite[]
   messages: Message[]
   backgroundAgents: string[]
+  steps: TurnSteps[]
+  selectedTurn: string | null
+  onSelectTurn: (turnId: string) => void
 }) {
   return (
     <aside className="rail" aria-label="工作栏">
       <TodosPanel todos={todos} />
       <AgentsPanel messages={messages} backgroundAgents={backgroundAgents} />
       {run ? <RailRun run={run} /> : null}
+      <StepsDrawer turns={steps} selectedId={selectedTurn} onSelect={onSelectTurn} />
     </aside>
   )
 }

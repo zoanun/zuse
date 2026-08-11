@@ -22,8 +22,8 @@ import { SessionContext } from './Markdown.js'
 import { Rail } from '../preview/Rail.js'
 import { closeRun, useActiveRun } from '../preview/activePreview.js'
 import { getCleanView, setCleanView } from '../cleanViewPref.js'
-import { StepsDrawer } from './StepsDrawer.js'
 import { turnStepsOf } from './turnSteps.js'
+import { StepsDrawer } from './StepsDrawer.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -58,6 +58,8 @@ export function Shell() {
   }, [])
   // 步骤抽屉：按轮次切分（memo —— Shell 每个流式 delta 都重渲染，切分要遍历全部消息）。
   const turnSteps = useMemo(() => turnStepsOf(state.messages), [state.messages])
+  // 关掉精简视图时工具卡片本来就在主画面上，右栏再放一份是同一份东西出现两次。
+  const visibleSteps = cleanView ? turnSteps : []
   // null = **跟随最新**。用户手动点过别的 tab 才置成具体 id，否则读第 2 轮时会被
   // 新流进来的内容一把拽走，根本读不完（与"滚动列表粘底"同一个交互模式）。
   const [selectedTurn, setSelectedTurn] = useState<string | null>(null)
@@ -98,7 +100,10 @@ export function Shell() {
     [state.messages, state.backgroundAgents],
   )
   const showTodos = hasVisibleTodos(state.todos)
-  const hasRail = !!activeRun || showTodos || runningAgents > 0
+  // 步骤区并进右栏后，`hasRail` **必须**把它算进来：否则「看完回复想翻工具调用」时
+  // 前三个条件通常一个都不成立（没预览、待办全完成、没子代理），整栏不渲染 →
+  // 步骤跟着一起消失，而主画面已经把工具卡片收走了 = 两边都没有。
+  const hasRail = !!activeRun || showTodos || runningAgents > 0 || visibleSteps.length > 0
   // 只有待办/子代理、没有预览时右栏收窄（设计 §3 的 320px）。
   // 收窄**只能把聊天区变宽**，所以正文列（--col=736px 上限）一格不动 —— PR1 的核心承诺。
   const railNarrow = hasRail && !activeRun
@@ -374,6 +379,15 @@ export function Shell() {
           <div className="narrow-panels">
             <TodosPanel todos={state.todos} />
             <AgentsPanel messages={state.messages} backgroundAgents={state.backgroundAgents} />
+            {/*
+              步骤区也要有窄行回退位，而且它比待办更**必须**：待办没显示只是少个提醒，
+              步骤没显示 = 主画面已经把工具卡片过滤掉了、右栏又不出场 = **两边都没有**，
+              工具调用在界面上彻底消失。实测过这个状态：视口 1140 时本行 884px 触发窄行，
+              `.main-body.rail-narrow .rail{display:none}`（那条规则是"右栏此刻已经空了"
+              年代写的，那时它只装待办）把整栏连同步骤一起抹掉，主画面里 `.stream .tool` 为 0。
+              默认收成一行：窄窗口本来就矮，别一上来就挤掉聊天。
+            */}
+            <StepsDrawer turns={visibleSteps} selectedId={selectedTurn} onSelect={onSelectTurn} defaultCollapsed />
           </div>
           {state.pendingSteers.length > 0 ? (
             <div className="pending-steers">
@@ -412,15 +426,10 @@ export function Shell() {
             todos={state.todos}
             messages={state.messages}
             backgroundAgents={state.backgroundAgents}
+            steps={visibleSteps}
+            selectedTurn={selectedTurn}
+            onSelectTurn={onSelectTurn}
           />
-        ) : null}
-        {/* 步骤抽屉：**`.rail` 的兄弟，不是它的子节点**。塞进 `.rail` 会多一个条件子节点，
-            让 RailRun 位置漂移 → PreviewFrame 重挂 → 预览里的 demo 归零（Rail.tsx 的
-            固定槽位注释说的就是这个）。放外面还有一个好处：`hasRail` 一个字不用改，
-            这一列自己决定何时出现 —— 否则「看完回复想翻工具调用」时右栏三个条件
-            通常一个都不成立，抽屉根本不会出现。 */}
-        {cleanView ? (
-          <StepsDrawer turns={turnSteps} selectedId={selectedTurn} onSelect={onSelectTurn} />
         ) : null}
         </div>
       </div>

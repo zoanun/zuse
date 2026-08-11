@@ -81,13 +81,14 @@ export function MessageList({
   // turns and system notices are hidden so you select among shareable content only.
   // 三个过滤器同一层，互不嵌套：
   //  - shareMode：只列可分享的（提问 + 有正文的回复），优先级最高 —— 勾选面板不该被精简影响
-  //  - cleanView：已结束的轮次收拢成「提问 + 最终回答」，在飞那轮全量（见 cleanView.ts）
+  //  - cleanView：正文全留，只把工具卡片收进右侧步骤区（见 cleanView.ts —— 上一版
+  //    "只留最终回答"会丢答案，已推翻；它也是 `thinking` 曾经要传进去的唯一理由）
   //  - 都没开：原样
   // 上面的 lastAssistantId / streamingId / turnFinalIds **刻意算在原始数组上**：
   // retry 按钮、复制页脚、代码预览的禁用状态都属于"这一轮"，不该因为某条消息被过滤掉而消失。
   const visible = shareMode
     ? messages.filter(isSelectableRow)
-    : cleanView ? filterForCleanView(messages, thinking) : messages
+    : cleanView ? filterForCleanView(messages) : messages
 
   return (
     <div className="stream">

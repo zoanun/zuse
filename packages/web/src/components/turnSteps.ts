@@ -1,5 +1,4 @@
 import { isTurnOpener, type Message, type Part } from '../state/types.js'
-import { replyMarkdown } from './Message.js'
 
 /** 一轮的中间步骤（抽屉里的一页 / tab 条里的一格）。 */
 export interface TurnSteps {
@@ -14,25 +13,37 @@ export interface TurnSteps {
   parts: { msgId: string; part: Part }[]
 }
 
-/** tab 标签取提问的前几个字。太长会把竖条撑宽，太短认不出来。 */
-const LABEL_CAP = 12
+/**
+ * tab 标签取提问的前几个字。
+ *
+ * 12 是**竖排文字**时代的遗留上限（`writing-mode: vertical-rl`，一格只有 40px 宽）。
+ * 改横排后一行有 300px 左右，放得下更多字；而连续追问常常前几个字一模一样
+ * （「你给第一个改成全部完成」/「第二个，也改成全部完成」），截太短就认不出是哪一轮。
+ */
+const LABEL_CAP = 20
 
 /**
- * 按轮次抽出「中间步骤」= 主画面精简后被收走的那些东西：工具调用、工具结果、
- * 以及不是最终回答的那些正文。
+ * 按轮次抽出「中间步骤」= 主画面精简后被收走的东西。
  *
- * **与 `filterForCleanView` 共用同一条判据**（「该轮最后一条有正文的 assistant 消息」
- * 留在主画面，其余是步骤），但**刻意不共用「在飞轮次免过滤」那一条**：
+ * **判据与 `filterForCleanView` 严格互补**：那边留下全部 `text` 部件，这边收走全部
+ * 非 text 部件（tool-use / tool-result）。两者合起来正好是原始部件全集，
+ * 一个不多、一个不少 —— 有 cleanView.test.ts 里的"不丢不重"那条钉着。
  *
- * 主画面对在飞的那一轮全量显示（防止读到一半的正文消失，见 cleanView.ts）；
- * 而抽屉必须**从第一次工具调用起就有内容**，否则「默认显示当前轮的中间步骤」这个诉求
- * 在最需要它的时刻（正在跑）恰好是空的。
+ * 上一版两边各写了一套「本轮最后一条有正文的 assistant」判据（同一段逻辑抄两遍），
+ * 那是信息黑洞的温床：判据一漂移，某个部件就会**两边都没有**、在界面上彻底消失。
+ * 现在的分法不需要任何判断，也就没有漂移的余地。
  *
- * 代价：流式期间同一份工具卡片在主画面和抽屉里各有一份。**接受** —— 它只持续到本轮结束，
- * 而且此时两处都在讲同一件正在发生的事，并不矛盾。轮次一结束主画面就收拢，抽屉成为唯一去处。
+ * ## 「随便说几句话不该冒出一堆 tab」是这条分法自带的
  *
- * 只返回**真有步骤**的轮次：一轮若没调过工具、也没有中间正文，它没有"中间内容"，
- * 给它出一个点开是空的 tab 属于骗人。
+ * 纯聊天的轮次（没调过工具）非 text 部件为零 → `parts` 为空 → **不出 tab**。
+ * 不需要额外的"简单轮次"启发式，也就不用承担"判简单了就把内容藏没"的风险。
+ * 只有真的调过工具的轮次才占一格，而那一格里确实有东西可看。
+ *
+ * ## 为什么在飞的那一轮也照收
+ *
+ * 抽屉必须**从第一次工具调用起就有内容**，否则「默认显示当前轮的中间步骤」这个诉求
+ * 在最需要它的时刻（正在跑）恰好是空的。这里不存在上一版那个"流式期间两边各一份"的
+ * 重复问题了 —— 工具卡片任何时候都只在抽屉里，主画面从头到尾都没有它。
  */
 export function turnStepsOf(messages: Message[]): TurnSteps[] {
   const out: TurnSteps[] = []
@@ -45,19 +56,12 @@ export function turnStepsOf(messages: Message[]): TurnSteps[] {
     let end = start + 1
     while (end < messages.length && !isTurnOpener(messages[end]!)) end++
 
-    // 主画面留的那条（= 本轮最后一条有正文的 assistant），它的正文不算步骤。
-    let keptIdx = -1
-    for (let k = end - 1; k >= start; k--) {
-      const m = messages[k]!
-      if (m.role === 'assistant' && replyMarkdown(m.parts) !== '') { keptIdx = k; break }
-    }
-
     const parts: { msgId: string; part: Part }[] = []
     for (let k = start; k < end; k++) {
       const m = messages[k]!
       if (m.role !== 'assistant') continue    // 用户提问 / 插话 / 系统提示都留在主画面
       for (const part of m.parts) {
-        if (part.kind === 'text' && k === keptIdx) continue   // 最终回答在主画面
+        if (part.kind === 'text') continue    // 正文一律留在主画面（见 cleanView.ts）
         parts.push({ msgId: m.id, part })
       }
     }
