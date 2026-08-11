@@ -17,7 +17,7 @@ import {
   TAIL_BUDGET_RATIO,
   createModelClient,
   getProviderConfig,
-  modelNames,
+  chatModelNames,
   resolveFailoverMode,
   decideFailover,
   modelKey,
@@ -838,7 +838,9 @@ export class SessionManager {
   private failoverToNext(cat: ErrorCategory): { fromModel: string; toModel: string; reason: string } | null {
     const pid = this.currentProviderId
     const fromModel = this.client.getModel()
-    const models = modelNames(this.settings.providers[pid])
+    // chatModelNames 而非 modelNames：降级绝不能挑中 ocr/tts/embedding 这类没有对话调用路径的
+    // 模型（真实事故：切到 qwen3.5-ocr，会话此后每句话都回 `{"text":"..."}`）。见 settings.ts。
+    const models = chatModelNames(this.settings.providers[pid])
     // Mark bad: auth invalidates the whole provider (shared key); others only this model.
     for (const k of badKeysForFailure(pid, fromModel, cat, models)) {
       this.badModels.set(k, k === modelKey(pid, fromModel) ? cat : 'auth')

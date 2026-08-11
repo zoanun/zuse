@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, resolveSttModelSelection, resolveTtsModelSelection, getProviderConfig, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, resolveSttModelSelection, resolveTtsModelSelection, getProviderConfig, chatModelNames, modelNames, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -400,5 +400,45 @@ describe('loadSettings —— defaultMode 的别名归一化与非法值兜底',
     writeFileSync(p('u.json'), JSON.stringify({ permissions: { defaultMode: 'acceptEdits' } }))
     writeFileSync(p('l.json'), JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }))
     expect(load().permissions.defaultMode).toBe('bypass')
+  })
+})
+
+/**
+ * `chatModelNames` 是「这个模型能不能当主模型」的共同依赖：降级（SessionManager /
+ * useConversation）和 TUI 的模型选择器都靠它。此前只有 server 那条集成测试间接覆盖，
+ * 而真实事故（降级切到 `type:'ocr'` 的模型，会话此后每句话都回 `{"text":"..."}`）
+ * 正是出在这块判断上 —— 共同依赖必须有自己的直接护栏，别让它只在别人的测试里顺带过。
+ */
+describe('chatModelNames —— 非对话模型不许当主模型', () => {
+  it('剔除 ocr/tts/embedding/image 等非对话类型', () => {
+    const p = {
+      models: [
+        'plain-chat',
+        { name: 'a-ocr', type: 'ocr' },
+        { name: 'a-tts', type: 'tts' },
+        { name: 'a-emb', type: 'embedding' },
+        { name: 'a-img', type: 'image' },
+        { name: 'a-vision', vision: true },
+      ],
+    }
+    expect(chatModelNames(p as never)).toEqual(['plain-chat', 'a-vision'])
+    // 与未过滤版本对照，确认差异确实来自过滤而不是别的（比如顺序或形态归一化出错）。
+    expect(modelNames(p as never)).toHaveLength(6)
+  })
+
+  it('大小写与空格要归一化 —— 手写配置里 "Image" / " TTS " 同样得剔掉', () => {
+    const p = { models: [{ name: 'x', type: 'Image' }, { name: 'y', type: ' TTS ' }, { name: 'z', type: 'chat' }] }
+    expect(chatModelNames(p as never)).toEqual(['z'])
+  })
+
+  it('裸字符串条目一律保留 —— 没有 type 就视为可对话，与 listSelectableModels 同语义', () => {
+    // 刻意用一个名字里带 "ocr" 的裸字符串：判据只认 type 字段，不许靠名字嗅探
+    //（那会误杀 gpt-4o-cr 这类正常模型）。
+    expect(chatModelNames({ models: ['some-ocr-ish-name'] } as never)).toEqual(['some-ocr-ish-name'])
+  })
+
+  it('provider 缺失 / 没有 models 字段 → 空数组，不抛', () => {
+    expect(chatModelNames(undefined)).toEqual([])
+    expect(chatModelNames({} as never)).toEqual([])
   })
 })

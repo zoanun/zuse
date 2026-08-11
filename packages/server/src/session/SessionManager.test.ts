@@ -1076,6 +1076,64 @@ describe('SessionManager failover', () => {
     const userMsg = mgr.getConversation().getMessages().find((m) => m.role === 'user')
     expect(userMsg!.id).toBe('msg_front_end')
   })
+
+  // 真实事故回归锁：主模型报 quota 后，降级挑中了紧挨着的下一条 —— 一个 `type:'ocr'` 的
+  // OCR 模型。会话从此每句话都回 `{"text":"..."}`（OCR 的正常输出格式），用户以为模型坏了，
+  // 而顶栏还显示着旧模型名。根因是降级用 modelNames()（原样列出全部），而模型选择器用的是
+  // listSelectableModels()（会排掉 ocr/tts/embedding）—— 两条路，只有一条设了闸。
+  //
+  // 这里刻意把 ocr 摆在 chat 前面：若降级只是「碰巧」跳过它，顺序一换就会露馅。
+  it('降级跳过 ocr/tts 这类非对话模型，不把会话切成 OCR 接口', async () => {
+    const settings = {
+      failoverMode: 'auto',
+      providers: {
+        p: {
+          protocol: 'anthropic',
+          apiKey: 'test-key',
+          models: [
+            'primary',
+            { name: 'ocr-only', type: 'ocr' },
+            { name: 'tts-only', type: 'tts' },
+            'real-chat',
+          ],
+        },
+      },
+      tools: {},
+      permissions: { defaultMode: 'default', allow: [], deny: [], ask: [] },
+    } as unknown as ResolvedSettings
+
+    const primary: ModelClient = {
+      getModel: () => 'primary',
+      async *sendMessages() { yield { type: 'error', message: 'quota exceeded', category: 'quota' } },
+    }
+    // 降级实际选中了谁，只能从 createClient 收到的 model 参数看 —— 它是唯一的真相来源。
+    const picked: string[] = []
+    const backup: ModelClient = {
+      getModel: () => 'real-chat',
+      async *sendMessages() {
+        yield { type: 'message-start', id: 'm1', model: 'real-chat' }
+        yield { type: 'text-delta', text: 'ok' }
+        yield { type: 'message-stop', stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }
+      },
+    }
+    const mgr = new SessionManager({
+      sessionId: 's1', cwd: '/work', client: primary, registry: new ToolRegistry(),
+      systemPrompt: 'SYS', ...interactiveOpts(settings),
+      snapshotStore: fakeSnapshotStore(), providerId: 'p',
+      createClient: (_cfg, model) => { picked.push(model); return backup },
+    })
+    const events: { type: string; [k: string]: unknown }[] = []
+    mgr.subscribe((e) => events.push(e as never))
+
+    await mgr.submit('hi')
+
+    expect(picked).not.toContain('ocr-only')
+    expect(picked).not.toContain('tts-only')
+    expect(picked).toEqual(['real-chat'])
+    expect(events.find((e) => e.type === 'failover')).toMatchObject({
+      fromModel: 'primary', toModel: 'real-chat',
+    })
+  })
 })
 
 describe('SessionManager auto-compaction', () => {

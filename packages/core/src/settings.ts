@@ -10,6 +10,7 @@ import {
   type ParseError,
 } from 'jsonc-parser'
 import { normalizePermissionMode } from './permission.js'
+import { isNonChatModelType } from './compaction.js'
 import type {
   ResolvedSettings,
   RawProviderConfig,
@@ -25,6 +26,26 @@ import type { ModelClient } from './model-client.js'
 /** 归一化 providers.models 条目为模型名列表(字符串/对象两种形态都合法)。 */
 export function modelNames(p?: RawProviderConfig): string[] {
   return (p?.models ?? []).map((m) => (typeof m === 'string' ? m : m.name))
+}
+
+/**
+ * 同 `modelNames`，但**排掉 `type` 标为非对话的模型**（ocr/tts/embedding/image/…）。
+ *
+ * **降级(failover)必须用这个，不是 `modelNames`。** 真实事故：主模型报 quota 后，降级按
+ * 声明顺序取"下一个"，正好取到紧挨着的 `{ name:'qwen3.5-ocr', type:'ocr' }` —— 会话从此
+ * 每句话都回 `{"text":"..."}`（OCR 模型的正常输出格式），而顶栏还显示着旧模型名，用户
+ * 完全看不出发生了什么。
+ *
+ * **"能不能当主模型"这个判断在本仓库有三个实现**，事故当时只有第一个设了闸：
+ * server/web 的 `listSelectableModels`（对的）、降级、TUI 的 `buildModelOptions`。
+ * 后两个现在都改用本函数。**再加第四个入口时，用它，别又写一份。**
+ *
+ * 放在这里而不是 compaction.ts：它是 `modelNames` 的姊妹函数，调用方找的是这个名字。
+ */
+export function chatModelNames(p?: RawProviderConfig): string[] {
+  return (p?.models ?? [])
+    .filter((m) => typeof m === 'string' || !isNonChatModelType(m.type))
+    .map((m) => (typeof m === 'string' ? m : m.name))
 }
 
 // 默认 provider 标识符与默认模型（未配置 model 时的回退）。

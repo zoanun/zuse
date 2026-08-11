@@ -2,7 +2,7 @@ import { homedir } from 'node:os'
 import type { SlashCommand, CommandInfo } from './types.js'
 import { saveConversation, loadConversation, listAutoSessions, loadAutoSession } from './sessionStore.js'
 import { installTerminalSetup } from './terminalSetup.js'
-import { resolveModelSelection, modelNames, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
+import { resolveModelSelection, modelNames, chatModelNames, isNonChatModel, DEFAULT_PROVIDER_ID, type ResolvedSettings, type ErrorCategory } from '@zuse/core'
 
 /** /model 交互式选择器的一个候选：provider+model 配对，外加是否为当前激活项。 */
 export interface ModelOption {
@@ -29,7 +29,10 @@ export function buildModelOptions(
   const options: ModelOption[] = []
   let currentSeen = false
   for (const [id, p] of Object.entries(settings.providers)) {
-    for (const m of modelNames(p)) {
+    // chatModelNames 而非 modelNames：ocr/tts/embedding 这类没有对话调用路径，选中即坏。
+    // 这是「能不能当主模型」的第三个实现（另两个：server 的 listSelectableModels、
+    // 降级的 chatModelNames）—— 之所以这里曾经漏掉，正是因为判断散在三处。
+    for (const m of chatModelNames(p)) {
       const isCurrent = id === currentProviderId && m === currentModel
       if (isCurrent) currentSeen = true
       const reason = badKeys?.get(`${id}/${m}`)
@@ -287,6 +290,13 @@ const model: SlashCommand = {
       print(
         `⚠ Provider "${sel.providerId}" 未配置${suggestion ? `，你是否想要 "${suggestion}"？` : '。'}已保留当前模型（未切换）。`,
       )
+      return
+    }
+    // 直输 `/model <provider>/<ocr 模型>`：它**在**已声明清单里，所以下面那道「不在清单中」
+    // 的校验放它过去，选择器又不列它 —— 于是这是唯一能手动踩进事故的入口。单独拦，
+    // 并说清为什么（不是打错字，是这个模型压根没有对话调用路径）。
+    if (isNonChatModel(settings, sel.providerId, sel.model)) {
+      print(`⚠ 模型 "${sel.model}" 被配置标为非对话类型（ocr/tts/embedding 等），不能作主模型。已保留当前模型（未切换）。`)
       return
     }
     // 校验 model：provider 声明了 models 清单、但目标不在其中。

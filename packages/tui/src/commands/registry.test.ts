@@ -90,6 +90,27 @@ describe('nearestMatch', () => {
 })
 
 describe('buildModelOptions — /model 交互式选择器的候选清单', () => {
+  /**
+   * 真实事故的第三条路。事故本身是「降级挑中了 `type:'ocr'` 的模型，会话此后每句话都回
+   * `{"text":"..."}`」—— 降级那条路已修。但 dialog 模式 / auth 失败时，弹的是**这个选择器**，
+   * 它同样没滤，用户选中就是同一起事故换个门进来。server/web 侧的 `listSelectableModels`
+   * 早就滤了，TUI 这份是各自实现的第二套判断 —— 漏一条就是这个后果。
+   */
+  it('不列出 ocr/tts/embedding 这类非对话模型', () => {
+    const settings = makeSettings({
+      qwen: {
+        models: [
+          'qwen3.7-max',
+          { name: 'qwen3.5-ocr', type: 'ocr' },
+          { name: 'cosyvoice', type: 'tts' },
+          { name: 'qwen3.7-plus', vision: true },
+        ],
+      },
+    } as unknown as ResolvedSettings['providers'])
+    const opts = buildModelOptions(settings, 'qwen', 'qwen3.7-max')
+    expect(opts.map((o) => o.model)).toEqual(['qwen3.7-max', 'qwen3.7-plus'])
+  })
+
   it('展开每个 provider 的 models，配对标记当前项', () => {
     const settings = makeSettings({
       opencode: { models: ['mimo-v2.5-free', 'glm-5.1'] },
@@ -147,6 +168,21 @@ describe('/model 切换校验', () => {
     const { printed, selectorOpened } = runModel('', settings, current)
     expect(selectorOpened).toBe(true)
     expect(printed).toEqual([])
+  })
+
+  /**
+   * 直输是唯一还能手动踩进「会话变 OCR 接口」那起事故的入口：ocr 模型**在**已声明清单里，
+   * 所以「不在清单中」那道校验放它过；选择器（buildModelOptions）又不列它。单独拦一道。
+   */
+  it('直输一个 type:ocr 的模型：拒绝切换，并说清不是打错字', () => {
+    const s = makeSettings({
+      qwen: { models: ['qwen3.7-max', { name: 'qwen3.5-ocr', type: 'ocr' }] },
+    } as unknown as ResolvedSettings['providers'])
+    const { printed, persistSeen } = runModel('qwen/qwen3.5-ocr', s, { providerId: 'qwen', model: 'qwen3.7-max' })
+    expect(persistSeen).toBeUndefined()          // switchModel 根本没被调用
+    const warn = printed.find((l) => l.startsWith('⚠'))
+    expect(warn).toContain('非对话类型')
+    expect(warn).toContain('已保留当前模型（未切换）')
   })
 
   it('清单外拼错、有相近候选：拒绝切换，保留当前', () => {

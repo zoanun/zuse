@@ -32,7 +32,7 @@ import {
   buildConsolidationPrompt,
   parseConsolidationOps,
   resolveContextWindow,
-  modelNames,
+  chatModelNames,
   COMPACTION_THRESHOLD,
   DEFAULT_PROVIDER_ID,
   type ModelClient,
@@ -797,7 +797,9 @@ export function useConversation({
           // 递归 sendMessage 是同一闭包实例(currentModel 是陈旧的初始值),而 clientRef 已被
           // 热替换,getModel() 才是本回合真正在用、刚失败的那个 model。
           const failedModel = clientRef.current?.getModel() ?? currentModel
-          const models = modelNames(settings.providers[pid])
+          // chatModelNames 而非 modelNames：降级不能挑中 ocr/tts/embedding 这类非对话模型。
+          // server 侧同一处（SessionManager.failoverToNext）有同样的修，两条路必须一致。
+          const models = chatModelNames(settings.providers[pid])
           // 1) 标坏(auth 标整个 provider 的所有 model)。
           for (const k of badKeysForFailure(pid, failedModel, cat, models)) {
             badModelsRef.current.set(k, k === modelKey(pid, failedModel) ? cat : 'auth')
