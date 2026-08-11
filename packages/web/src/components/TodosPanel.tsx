@@ -28,6 +28,10 @@ export function TodosPanel({ todos }: { todos: TodoItemLite[] }) {
   return (
     <div className="todos">
       <div className="th"><span>任务</span><span>{done} / {todos.length}</span></div>
+      {/* key 用下标：本组件是「整份覆盖」的受控列表，行没有自己的状态。
+          曾经想改成 `${i}:${content}` 当第二道防线，被评审推翻 —— 真实事故是
+          「文案不动、只翻状态」，那种 key 根本不变，一点忙没帮上；反倒因为让内容一变就
+          重建节点，把一条本该发红的回归测试变成了空跑。没有覆盖的"防御"就是这个下场。 */}
       {todos.map((t, i) => {
         const cls = STATUS_CLS[t.status] ?? 'todo'
         return <div key={i} className={'ti ' + cls}>{taskMarker(cls)}<span>{t.content}</span></div>
