@@ -446,7 +446,14 @@ export function useConversation({
       const rows = store.all()
       if (rows.length === 0) return
       const projection = renderMemoryMarkdown(rows)
-      const lastRunAt = store.getMeta('consolidated_at')
+      // 取数范围必须是「当前项目 ∪ 全局」，不能是全库 —— 理由见 memory-store.ts
+      // allForProject 的注释（SAVE 协议没有 project 字段，全库取数会把别的项目的
+      // 记忆改挂到本会话的项目名下）。水位也按项目记。与 web 侧保持一致。
+      const slug = cwdSlug(cwd)
+      const scoped = store.allForProject(slug)
+      if (scoped.length === 0) return
+      const watermarkKey = `consolidated_at:${slug}`
+      const lastRunAt = store.getMeta(watermarkKey)
       if (
         !shouldConsolidateMemories({
           projectionChars: projection.length,
@@ -457,8 +464,8 @@ export function useConversation({
         return
       }
       // 先写水位:本次失败也 24h 内不再打扰(防抖优先于成功率)。
-      store.setMeta('consolidated_at', new Date().toISOString())
-      const prompt = buildConsolidationPrompt(rows)
+      store.setMeta(watermarkKey, new Date().toISOString())
+      const prompt = buildConsolidationPrompt(scoped)
       store.close()
       store = null // 模型请求期间不占着 sqlite 连接
       notify('🧠 记忆索引接近满容,后台巩固中…')

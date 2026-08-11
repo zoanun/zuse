@@ -255,3 +255,32 @@ describe('renderMemoryMarkdown(MEMORY.md 投影)', () => {
     expect(renderMemoryMarkdown([])).toContain('还没有任何记忆')
   })
 })
+
+describe('allForProject —— 巩固的取数范围', () => {
+  // 巩固把 store.all()（**全库**）喂给模型，让它合并，再把结果按
+  // cwdSlug(当前会话 cwd) 统一落地 —— 而 SAVE 协议里**没有 project 字段**，
+  // 模型看得见每条属于哪个项目，却没有任何办法把它表达出来。
+  // 净效果：一次巩固会把所有项目的记忆改挂到「触发巩固的那个会话所在的项目」名下。
+  // 修法不是给协议加字段，而是把取数范围收窄到「当前项目 ∪ 全局」——
+  // 这样「按当前项目落地」就天然正确，跨项目合并从结构上不可能发生。
+  it('只取当前项目与全局，绝不带出别的项目', () => {
+    store.save('project', 'A 的记忆', 'proj-a')
+    store.save('project', 'B 的记忆', 'proj-b')
+    store.save('user', '全局记忆', '')
+
+    const forA = store.allForProject('proj-a').map((r) => r.content)
+    expect(forA).toContain('A 的记忆')
+    expect(forA).toContain('全局记忆')
+    expect(forA).not.toContain('B 的记忆')
+
+    // all() 仍是全库（管理面板要用），不能顺手改掉它的语义
+    expect(store.all()).toHaveLength(3)
+  })
+
+  it('空项目名 = 只看全局，不是「看全部」', () => {
+    store.save('project', 'A 的记忆', 'proj-a')
+    store.save('user', '全局记忆', '')
+    const forGlobal = store.allForProject('').map((r) => r.content)
+    expect(forGlobal).toEqual(['全局记忆'])
+  })
+})

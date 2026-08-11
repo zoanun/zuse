@@ -1730,14 +1730,25 @@ export class SessionManager {
       const rows = store.all()
       if (rows.length === 0) return
       const projection = renderMemoryMarkdown(rows)
-      const lastRunAt = store.getMeta('consolidated_at')
+      // 巩固的**取数范围**必须是「当前项目 ∪ 全局」，不能是全库。
+      // 结果统一按 slug 落地（applyMemoryConsolidation 下方），而 SAVE 协议里没有 project 字段 ——
+      // 模型看得见每条属于哪个项目，却没办法把它表达出来。用全库取数，
+      // 一次巩固就会把别的项目的记忆改挂到本会话的项目名下、源行删除，且 catch{} 全吞无痕迹。
+      // 触发判据仍看全局投影（容量闸本来就是全局预算），只有喂给模型的清单收窄。
+      const slug = cwdSlug(this.cwd)
+      const scoped = store.allForProject(slug)
+      if (scoped.length === 0) return
+      // 水位**按项目**记：否则「全局超限是因为项目 B、而我人在 A」时，A 白跑一趟
+      // 却把 24h 防抖设上了，B 永远轮不到。
+      const watermarkKey = `consolidated_at:${slug}`
+      const lastRunAt = store.getMeta(watermarkKey)
       if (!shouldConsolidateMemories({ projectionChars: projection.length, indexCap: MEMORY_INDEX_CAP, lastRunAt })) {
         return
       }
       // Write the watermark first: even a failed run is debounced for 24h (debounce
       // wins over success — we never want this to nag every turn).
-      store.setMeta('consolidated_at', new Date().toISOString())
-      const prompt = buildConsolidationPrompt(rows)
+      store.setMeta(watermarkKey, new Date().toISOString())
+      const prompt = buildConsolidationPrompt(scoped)
       store.close()
       store = null // do not hold the sqlite connection during the model request
       this.emit({ type: 'memory-notice', text: 'Memory index near capacity; consolidating in background…' })

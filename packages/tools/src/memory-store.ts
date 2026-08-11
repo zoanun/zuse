@@ -59,6 +59,16 @@ export interface MemoryStore {
   remove(id: number): boolean
   /** 全量(MEMORY.md 投影用),id 升序。 */
   all(): MemoryRow[]
+  /**
+   * 范围 = 该项目 ∪ 全局，id 升序。**巩固必须用这个而不是 `all()`**。
+   *
+   * 巩固把取到的行喂给模型合并，再把结果按「当前会话 cwd 的项目 slug」统一落地，
+   * 而 SAVE 协议里没有 project 字段 —— 模型看得见每条属于哪个项目，
+   * 却没有任何办法把它表达出来。若取数用 `all()`（全库），
+   * 一次巩固就会把所有项目的记忆改挂到「触发巩固的那个会话所在的项目」名下。
+   * 收窄取数范围让「按当前项目落地」天然正确，跨项目合并从结构上不可能发生。
+   */
+  allForProject(project: string): MemoryRow[]
   /** 元数据(如上次巩固时间);不存在返回 null。 */
   getMeta(key: string): string | null
   setMeta(key: string, value: string): void
@@ -250,6 +260,15 @@ export function openMemoryStore(dbPath = defaultDbPath()): MemoryStore {
 
     all() {
       const rows = db.prepare('SELECT * FROM memories ORDER BY id').all() as unknown as RawRow[]
+      return rows.map(toRow)
+    },
+
+    allForProject(project) {
+      // 与 search() 的范围语义一致：该项目 ∪ 全局。空项目名 = 只看全局
+      // （不是「看全部」—— 那正是本方法要杜绝的）。
+      const rows = db
+        .prepare("SELECT * FROM memories WHERE project = ? OR project = '' ORDER BY id")
+        .all(project) as unknown as RawRow[]
       return rows.map(toRow)
     },
 
