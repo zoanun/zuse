@@ -43,7 +43,7 @@
 | 模块 | 状态 | 备注 |
 |---|---|---|
 | `run/stream.ts` StreamDecoder | ✅ 已合 | 13 条测试；两次变异各杀 2/3 条（见下） |
-| `run/sink.ts` truncate + ring | ⬜ 未开始 | ring **必须**带单测，见 §4 |
+| `run/sink.ts` truncate + ring | ✅ 已合 | 10 条测试（ring 占 5 条）；两次变异各杀 1 条。**§4 有一处改主意，见下** |
 | `run/childEnv.ts` runEnv | ⬜ 未开始 | 断言**子进程真实环境**，并做变异验证，见 §5 |
 | `run/policy.ts` + `run/run.ts` | ⬜ 未开始 | 时长全部可注入，见 §7.1 |
 | `run/registry.ts` | ⬜ 未开始 | 注入不做单例，见 §2.2 |
@@ -266,6 +266,16 @@ dec.decode(chunk, { stream: true })         // ← stream 是 decode 的参数�
 | 满了怎么办 | 停止收集 + **杀进程**，reason=`output-cap` | 丢最旧的，进程不动 |
 | 预算 | `StreamShaper` + **调用方自己数字节** | 环形字节缓冲 |
 | 语义 | 「这条命令输出太多，已停止」 | 「只保留最近 N KB」 |
+
+> **实现时改主意了（2026-08-11，已落地）**：本节原写「truncate 档 = `StreamShaper` +
+> 调用方自己数字节」。真读完 `truncate.ts` 之后放弃复用 —— `StreamShaper` 是为
+> 「一次性 `finalize()` + 落盘」造的，head/tail 都是 private，**没有中途取快照的能力**，
+> 而 run 服务恰恰要给中途接入的 SSE 订阅者补历史。硬套它要么把它改造成两用、
+> 要么在它外面再挂一份缓冲，两条都比几十行的有界缓冲贵。
+> **代价：`run/sink.ts` 不落盘。** 片段档预算内的输出内存里放得下；项目档要落盘是步骤 4
+> 的事，届时再决定复用 `StreamShaper` 还是给 ring 加 spill。
+> 另外定了一条 v2 没写的语义：**`overflowed` 的意思是「该杀进程了」，不是「缓冲区满了」**，
+> 所以 ring 档恒 false —— 它天天在丢字符，若也举旗，调用方会去杀一个跑得好好的 dev server。
 
 **`StreamShaper` 没有「满了」这个信号**（v1 说「直接用不重写」，不准确）：
 它是 head 定长 + tail 环形 + 落盘，永远不停、永远不报警；`totalChars` 是 private
