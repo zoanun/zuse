@@ -1,95 +1,135 @@
-# 切换工作目录后的状态错位 —— 待实现
+# 切换工作目录后的状态错位 —— 设计 v2
 
-> 会话中 `cd` 到另一个项目，只有 `this.cwd` 改了，**技能、记忆、工具注册表全部停留在旧目录**。
+> 会话中 `cd` 到另一个项目，只有 `this.cwd` 改了，**技能、记忆、系统提示词全部停留在旧目录**。
 > 不是「两个目录的东西混在一起」，是「人在新目录、用的是旧目录的东西」。
-> 状态：**已定位，待设计评审后实现**。
+>
+> v1 被独立评审判为「不能进入实现」：核心决策 §3.1 建立在一个**事实错误**上，
+> 照它实现最常见的用法依然坏；另有两个会静默毁掉功能的陷阱没提；还漏了一整类烧死状态。
 
-## 1. 事实（全部来自实读，行号为实际行号）
+## 0. v1 错在哪
 
-### 1.1 唯一的触发路径
-`cd` 只能通过 Bash 工具生效：`bash.ts:258` 捕获 cwd → `ctx.setCwd` → `agent.ts` 的 `onCwdChange`。
-没有其它入口（UI 的目录选择器是**建新会话**时用的，不走这条）。
+| v1 的说法 | 实际 |
+|---|---|
+| §3.1「模型这一轮的工具清单是回合开始时发出去的，中途换必然对不上，所以在**用户回合边界**结算」 | **前提是错的**。`agent.ts` 的 `runAgent` 主循环**每个 model round 都重取** `registry.getDefinitions(...)`，注释明写「Re-read each turn so dynamically registered tools become visible on the next turn」（McpSearch 已是先例）。实测：在 `cwd-change` 那一刻就地换掉 `Skill` 工具，**round 2 就能看到新技能**。<br>照 v1 实现，「cd 到 B，然后用 B 的 deploy 技能」这个**最典型的触发方式**全程失效，直到用户再发一条消息 |
+| §3.1 担心「换表后模型点名的工具不存在 → unknown tool」 | **不会发生**。技能不是一个个工具，是**一个** `Skill` 工具把清单拼进 description。名字恒定，只有描述变 |
+| §3.1 担心并发批里「已在飞的工具持有旧 registry 引用」 | 方向反了。`BashTool` **没有** `readOnly`，带 `cd` 的批**必然串行** |
+| §3.2 只说「要换技能与记忆」，做法是重建 registry | **重建会静默废掉子代理**：`Agent` 工具在构造时就捕获了 registry 对象引用，换新对象后它永远指着旧的，无报错无日志 |
+| §1.3 列了三类烧死状态 | **漏了第四类：systemPrompt**（含 cwd 字面量 + 项目 `ZUSE.md`）。见 §2.4 |
+| §1「记忆完全不跟 cwd」 | **是分裂的**，和 v1 自己在 §1.4 描述权限时那张表一模一样的病，但没发现。见 §2.5 —— 而且后果比「读不到」严重得多 |
+| 全文标「行号为实际行号」 | 行号在写的时候是对的，**之后被后续提交冲掉了**（权限模式开关往 `SessionManager.ts` 加了行；`bash.ts:258→229` 是抽进程层那次从 459 行缩到 245 行造成的）。<br>**结论不是「下次小心」，是「会比代码活得久的文档不该拿行号当锚点」** —— v2 全文改引符号名 |
 
-### 1.2 回调只做了两件事
-`SessionManager.ts:1112-1115`：
-```ts
-onCwdChange: (next: string) => {
-  this.cwd = next
-  this.emit({ type: 'cwd-change', cwd: next })
-},
-```
-**没有重建 registry、没有重扫技能、没有重绑记忆、没有重读配置。**
+## 1. 事实（引符号，不引行号）
 
-### 1.3 三类状态在建会话时被烧死
-`createSession.ts:114-118`：
-```ts
-const registry = createDefaultRegistry({
-  webSearch: getWebSearchConfig(settings),
-  memoryProject: cwdSlug(cwd),                                    // ← 记忆项目，绑死
-  skills: scanSkills(home, cwd).filter((s) => !disabledSkills.has(s.name)),  // ← 技能，扫一次
-})
-```
-`scanSkills(home, cwd)`（`skills.ts:122`）沿 cwd 向上逐级收集 `.zuse/skills`，内层同名覆盖外层。
-结果进 registry 后不再更新。
+- **唯一触发路径**：Bash 工具里的 `cd` → `applyCapturedCwd` → `ctx.setCwd` → `agent.ts` 的 `onCwdChange`。
+- **回调只做两件事**：`this.cwd = next` + `emit({type:'cwd-change'})`。不重扫、不重建、不重读。
+- **建会话时烧死**（`createSession`）：`scanSkills(home, cwd)` 与 `memoryProject: cwdSlug(cwd)` 进 `createDefaultRegistry`；
+  `loadPromptSections(home, cwd)` + `buildSystemPrompt({...cwd...})` 拼成 `systemPrompt` 字符串。
+- **权限是分裂的**：规则表来自 `findProjectRoot()`（**daemon 进程 cwd**，无参函数），不跟；
+  匹配基准用 `this.cwd`，跟。后者是对的，前者见 §5。
+- **实测复现**（评审代理跑的，脚本可复用为回归骨架）：
+  ```
+  建会话(cwd=A):  Skill 列出 alpha? true   beta? false
+  cd 到 B 之后:   mgr.cwd = B（跟了）      Skill 列出 alpha? true  beta? false（没跟）
+  对照重扫 B:     含 beta? true            含 alpha? false
+  ```
 
-### 1.4 权限是**分裂**的（一半跟、一半不跟）
+## 2. 修什么
 
-| | 跟 cwd 走？ | 依据 |
-|---|---|---|
-| 规则表内容（allow/ask/deny） | **不跟** | `loadSettings()` → `findProjectRoot()` 从 **daemon 进程 cwd** 往上找 `pnpm-workspace.yaml`（`settings.ts:77`）。与会话 cwd 无关，且每会话只读一次（`createSession.ts:80`） |
-| 规则匹配基准（`./**` 的 `.`） | **跟** | `cwd: this.cwd` 每回合现取（`SessionManager.ts:1101`）；`agent.ts:238-239` 注释明说「让本回合后续工具看到新目录」 |
+### 2.1 结算点：工具批边界，不是用户回合边界
+`cd` 发生在一次工具执行内部。**在本轮工具批跑完、下一次 `getDefinitions` 之前**就地替换。
+与 McpSearch 中途注册同构，代价为零。
+（一个回合里 `cd` 两次没问题，每次替换幂等。并发子代理批中途替换会让同批技能集不一致 ——
+概率极低，「批结束后再结算」这一句话即可消掉。）
 
-匹配基准跟着走**是对的**（`2026-08-07-permission-glob-escape-design.md` 修完后，
-`Write(./**)` 的围栏会随 `cd` 移动，这正是期望行为）。
-规则表不跟是另一个话题（见 §4），本设计不动它。
+### 2.2 不重建 registry，只就地替换两个条目
+换：`Skill`、`Memory`。
+**不动**：`MCP`、`LSP`、`Agent`、`TodoWrite`、`ScheduleWakeup` —— 天然零风险，
+比 v1 设想的「重建 + 小心别弄丢」简单一个量级。
 
-## 2. 用户可感知的后果
+额外收益：`agent-tool.ts` 的 `buildChildRegistry` 是**调用时**克隆父 registry，
+所以就地改能被子代理自动接住。
 
-1. **技能错位**：人在 B 项目，可用的是 A 项目的技能；B 项目自己的技能一个都加载不到。
-2. **记忆错位**：新写的记忆挂到 A 项目名下；B 项目已有的记忆读不到。
-3. 两者都**没有任何提示** —— 界面只显示 cwd 变了，看不出技能/记忆没跟上。
+### 2.3 需要新增 `ToolRegistry.replace()`
+`ToolRegistry` 现在只有 `register / get / list / getDefinitions`，
+`register` 遇重复键**直接抛**（`Tool already registered: X`），没有 replace / unregister。
+就地替换目前**做不到**。
 
-## 3. 待解决的设计问题（实现前必须想清楚）
+加一个**独立**的 `replace(tool)`，**不要放宽 `register` 的抛出** ——
+CLAUDE.md 明确「注册表遇重复键直接抛」是刻意设计（重复注册在运行期表现为「某项神秘失效」）。
 
-### 3.1 时序：回合进行到一半换工具集
-`cd` 发生在**一次工具调用内部**，而同一回合后面还可能有并发的工具调用
-（`agent.ts:351` 有并发批的逻辑）。此刻替换 registry 意味着：
-- 已经在飞的工具持有旧 registry 的引用吗？
-- 模型这一轮已经"看见"的工具清单会不会和实际可调的对不上（工具在 tool_use 里被点名，
-  但换表后不存在了 → 报 unknown tool）？
+**顺带**：`Skill` 工具现在只在「技能数 > 0」时注册，全禁用时工具不存在，
+于是 `cd` 会遇到「需要新增/需要删除」两个方向（后者 `ToolRegistry` 做不到）。
+改成 **`Skill` 恒注册、空列表时描述里写明无可用技能**，两个分支一起消掉。
+代价：多几百 token 的常驻工具定义。
 
-**倾向**：不在回合中途换，**在回合边界（turn-end）结算**。
-`cd` 当下只记一个「待重扫」标记，下一回合开始前统一重建。
-理由：模型这一轮的工具清单是回合开始时发出去的，中途换必然出现清单与现实不符。
+### 2.4 systemPrompt / `ZUSE.md`：做，并写明代价
+`cd` 后系统提示词仍写着 A 的目录，且 **B 的 `ZUSE.md` 项目规则一条都不生效** ——
+从 zuse 仓库 `cd` 到别的项目，模型会继续按 zuse 的「合本地 master、不 push origin」干活。
+**对这个仓库而言这比技能错位更严重。**
 
-### 3.2 换掉哪些、不换哪些
-- **要换**：技能（`scanSkills`）、记忆项目（`memoryProject`）
-- **不要换**：MCP 工具（daemon 持有连接生命周期，见 `createSession.ts:109-110` 注释）、
-  LSP、会话级工具（Agent / TodoWrite，由 SessionManager 的能力清单注册）
-- **待定**：`webSearch` 配置（来自 settings，settings 本身不跟 cwd 走，所以不用换）
+技术上可行：`systemPrompt` 非 readonly，且 `getSystemPrompt: () => this.systemPrompt` 本就是为热替换设计的取值函数。
 
-### 3.3 要不要告诉用户
-技能集变了是**用户应当知道**的事（他可能正指望某个技能存在）。
-倾向：`cwd-change` 事件里带上「技能从 N 个变成 M 个」，界面给一句轻提示。
-不做提示的话，这个修复会变成另一种静默行为。
+**代价必须写进 spec**：系统块保持 byte-identical 是为了 **prompt cache**（代码里有注释说明）。
+重建它会让缓存失效，`cd` 那一刻多付一次全量 input token。**接受这个代价** ——
+按错误的项目规则干活的损失更大，且 `cd` 跨项目是低频动作。
 
-### 3.4 `~/.zuse/skills-disabled.json` 的重读时机
-`createSession.ts:111-112` 的注释明说「每次新会话重读 → 面板里的启停在下一个新聊天生效」。
-重扫技能时要不要顺带重读禁用表？**倾向不要** —— 那会让这条既有约定在 `cd` 时被意外打破，
-两种时机并存更难解释。保持「只在新会话重读」。
+### 2.5 记忆：先修一个今天就存在的数据问题
+两处不同源：
+- 记忆工具：`createMemoryTool(o.memoryProject ?? '')` —— 建会话时烧死
+- 巩固：`applyMemoryConsolidation(ops, cwdSlug(this.cwd))` —— **活 cwd**
 
-## 4. 明确不在本设计范围内
+而 `applyMemoryConsolidation` 内部是 `store.save(..., project, ...)` 然后 `store.remove(id)`，
+`store.all()` 读的是**全库所有项目**的行。净效果：
 
-- **规则表跟随 cwd**：让 `loadSettings()` 读会话 cwd 的项目配置而不是 daemon 的。
-  这是个**更大**的改动（影响所有会话的权限来源、涉及多项目并存时的安全语义），
-  且与本条正交。单独立项。
-- **UI 里直接切 cwd**：目前只能靠 `cd`。是否给目录选择器一个「在当前会话切换」的入口，另议。
+> **`cd` 之后一旦触发巩固，A 项目的记忆会被改挂到 B 项目名下，源行删除。**
+> 而巩固是 fire-and-forget、`catch {}` 全吞，出事没有任何痕迹。
 
-## 5. 测试要求（实现时）
+**这条独立于本功能，今天就在发生，优先级更高，单独修**：两处必须同源。
 
-- `cd` 到含 `.zuse/skills` 的目录 → **下一回合**技能集包含该目录的技能
+本设计范围内：记忆项目跟随 cwd 切换。切过去后 A 的 project/insight/reference 读不到
+（user 型强制全局，不受影响）。用户观感是「记忆丢了」—— 所以 §3 的提示必须说清是「换柜子」不是「丢了」。
+
+### 2.6 `reset()`（新对话）也要重扫
+`reset()` 刻意保留环境（model client / registry / settings / systemPrompt / cwd）。
+用户察觉不对点「新对话」，以为重置了，其实技能/记忆/提示词仍是 A 的。
+
+**反向证据很有意思**：`SessionService` 存的是**活** cwd，`getOrLoad` 用它重建 ——
+所以**重启 daemon 后同一会话自动按新 cwd 重扫，bug 自愈**。
+同一个会话「重启前坏、重启后好」本身就够抓狂，同时也反证**「按新 cwd 重扫」才是系统的既定语义**。
+
+采纳 §2.1 的就地方案后这条天然覆盖，但要有测试锁住。
+
+## 3. 提示：必需，不是可选
+技能集**静默变化**和**静默不变**，同样都是静默。`cwd-change` 事件要带上：
+
+- 技能：`N → M`
+- 记忆：「已切到 <B 目录名>，A 的记忆仍在但本会话不再可见」（数据现成：`/api/projects` 已经在做 slug→cwd 反查）
+- 权限：「规则仍来自 <daemon 项目根>」—— 把 §5 那条不一致**显式化**
+
+**不做模态弹窗**：`cd` 发生在工具执行中途，此刻插一个模态会和权限队列、steer 折叠搅在一起。非阻断提示足够。
+
+## 4. 不做「禁止会话中途换 cwd」
+考虑过让 `cd` 只在本回合有效、换项目必须开新会话。**不采纳**，两条实证理由：
+1. 现有代码已在多处按「`cd` 跨回合持久」实现并写了注释，且 `SessionService` 存的是活 cwd。改回去是回退既定语义，还要动持久化。
+2. 重启 daemon 后同一会话自动按新 cwd 重扫（§2.6）—— 系统的既有立场就是「会话可以合法地活在新 cwd 上」。禁止它反而制造新矛盾。
+
+## 5. 明确不在范围内
+- **规则表跟随 cwd**：`findProjectRoot()` 无参、直接用进程 cwd，改它等于改所有会话的权限来源，
+  安全语义要重新论证。单独立项。**但 §3 的提示里要显式说明这条不一致**，否则修完更让人困惑。
+- **LSP**：不是「安全所以不动」，是**本来就已经错位** —— `LspManager` 的 cwd「首次调用 setCwd 时固定」，
+  而整个 daemon 只有一个实例，根由「哪个会话先用了 Lsp」决定。列进「不要换」没错，
+  但要写明是**已知遗留错位**，否则实现者会以为 LSP 没问题。
+- **禁用表重读**：不重读。理由不是 v1 说的「两种时机并存难解释」，而是
+  **重读会让技能面板的启停通过一个不相干的动作（`cd`）生效，是隐式耦合**。
+
+## 6. 测试
+- `cd` 到含 `.zuse/skills` 的目录 → **本回合的下一个 model round** 技能集就包含该目录的技能
+  （**不是**「下一个用户回合」—— v1 那条测试锁的是错误行为，删掉）
 - `cd` 回原目录 → 技能集恢复
-- 回合**中途** `cd` → 本回合工具清单不变（锁 §3.1 的决定）
-- 记忆项目跟随（写一条记忆，`cd` 后读得到/读不到符合预期）
-- MCP / LSP / 会话级工具在重建后**仍然在**（这是最容易在重建 registry 时弄丢的）
-- **变异验证**：把重建逻辑去掉，上述断言必须变红
+- **子代理接住新技能**：`cd` 后派子代理，它拿到的是新目录的技能（锁 §2.2 的「不重建」）
+- `MCP` / `LSP` / `Agent` / `TodoWrite` 在替换后仍然在
+- systemPrompt 重建后含新 cwd 与 B 的 `ZUSE.md`
+- 记忆项目跟随；且**记忆工具与巩固两处同源**（锁 §2.5）
+- `reset()` 后仍是新 cwd 的技能集
+- 全禁用技能时 `Skill` 工具仍注册（锁 §2.3 的常注册决定）
+- **变异验证**：去掉就地替换 → 上述断言变红；把 `replace` 换成 `register` → 抛错
