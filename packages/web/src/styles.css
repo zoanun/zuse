@@ -364,27 +364,35 @@ button.head:hover .caret { opacity: 0.9; }
 .steps-head .sh-title { flex: 1; }
 .steps-head .sh-count { letter-spacing: 0; font-weight: 500; }
 
-/* 轮次列表：**一行一轮、横排文字**，自上而下 = 从旧到新，与主画面滚动方向一致。
-   上一版是 40px 宽的竖排字条（writing-mode: vertical-rl）。实测每格 120px 高、
-   7 轮的 scrollHeight 就到 865px 越过了可视区 —— 用户说的"随便说几句就很多很多 tab"
-   是真的。横排每行约 30px，同样高度放得下 26 行，密度差 4 倍；而且竖排只放得下 12 个字，
-   连续追问（"你给第一个改成全部完成" / "第二个，也改成全部完成"）截完长得一模一样。
-   限高 30% + 自身内滚：轮次再多也**不挤压下面的步骤内容**。 */
-.turn-tabs { display: flex; flex-direction: column; gap: 1px; flex: none;
-  max-height: 30%; overflow-y: auto; padding: 0 8px 6px; }
-.turn-tab { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+/* 折叠列表（QQ 好友分组那种）：一行一轮，点哪行就**在原地**展开哪行的内容。
+   **整段只有这一个滚动区** —— 上一版是「列表在上限高 30% + 内容区在下」的两段式，
+   代价是每次都要把视线从行跳到下面那块，而且两块各分一半高度、两边都不够用。
+
+   一行一轮、横排文字，自上而下 = 从旧到新，与主画面滚动方向一致。
+   更早那一版是 40px 宽的竖排字条（writing-mode: vertical-rl）：实测每格 120px 高、
+   7 轮的 scrollHeight 就到 865px 越过了可视区 —— 用户说的「随便说几句就很多很多 tab」
+   是真的。横排每行约 30px，同样高度放得下 26 行；而且竖排只放得下 12 个字，
+   连续追问（"你给第一个改成全部完成" / "第二个，也改成全部完成"）截完长得一模一样。 */
+.steps-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 8px 12px; }
+.turn-item + .turn-item { margin-top: 1px; }
+.turn-tab { display: flex; align-items: baseline; gap: 7px; width: 100%; text-align: left;
   padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; cursor: pointer;
   color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .turn-tab:hover { background: var(--surface-2); color: var(--text); }
 .turn-tab.on { background: var(--surface-2); color: var(--text); font-weight: 650; }
+/* 展开中的那一行**粘在列表顶部**：一轮调了十几次工具时，滚到中段还看得见自己在哪一轮。
+   背景必须实心，否则下面的工具卡片会从它底下透出来。 */
+.turn-tab.on { position: sticky; top: 0; z-index: 1; }
+.turn-tab .tt-caret { flex: none; width: 0.8em; font-size: 9px; color: var(--faint); }
 .turn-tab .tt-n { flex: none; min-width: 1.4em; font: 600 11px/1.5 var(--mono); color: var(--faint); }
 .turn-tab.on .tt-n { color: var(--accent); }
 .turn-tab .tt-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 该轮调了几次工具。一行字里最有用的一个数字：0 次的轮次根本不出现在这里，
    而 "12" 一眼就知道那一轮是重头戏、值得点进去。 */
 .turn-tab .tt-c { flex: none; font: 500 10px/1.5 var(--mono); color: var(--faint); }
-
-.steps-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px 12px 16px; }
+/* 展开出来的内容：左边一道细线，把"属于上面那一行"这件事画出来 —— 否则连着几轮展开
+   收起之后，卡片看着像是浮在列表里、不知道归谁。 */
+.turn-panel { margin: 2px 0 6px 12px; padding-left: 10px; border-left: 1px solid var(--line); }
 
 /* 窄行回退位里的那份（`.narrow-panels` 里，正文列 与 Composer 之间）。
    它不参与右栏的 flex 分高，自己限高内滚；`margin-inline` 跟着正文列走，与旁边的待办对齐。
@@ -393,8 +401,7 @@ button.head:hover .caret { opacity: 0.9; }
 .narrow-panels .steps { flex: none; max-height: 46vh; margin-bottom: 10px;
   margin-inline: max(20px, calc((100% - var(--col)) / 2)); border-top: 1px solid var(--line); }
 .narrow-panels .steps-head { padding-inline: 0; }
-.narrow-panels .turn-tabs { max-height: 150px; padding-inline: 0; }
-.narrow-panels .steps-body { padding-inline: 0; }
+.narrow-panels .steps-list { padding-inline: 0; }
 
 /* 待办的分组标题。**刻意不复用 `.th`**：`.th` 是面板级标题（大写化 + letter-spacing + mono），
    组标题若长成那样，右栏里会连着出现「任务 / 甲 / 乙 / 丙 / 子代理」五个同款标题，

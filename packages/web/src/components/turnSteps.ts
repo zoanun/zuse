@@ -4,8 +4,9 @@ import { isTurnOpener, type Message, type Part } from '../state/types.js'
 export interface TurnSteps {
   /** 该轮**用户提问**那条消息的 id —— 点 tab 时主画面滚到这里（不是滚到回复）。 */
   turnId: string
-  /** 轮次序号（1 起）。是**轮次**的序号而不是 tab 的下标：第 3 轮就显示 3，
-   *  哪怕第 2 轮没有步骤、不出 tab —— 否则点开跟主画面对不上号。 */
+  /** 轮次序号（1 起）。是**轮次**的序号而不是列表下标：第 3 轮就显示 3，
+   *  哪怕第 2 轮没有步骤、不出现 —— 否则点开跟主画面对不上号。
+   *  **0 = 不属于任何轮次**（排在第一条用户提问之前的那一段），UI 上显示为「·」。 */
   index: number
   /** tab 上的短标签：提问的前若干字。纯序号认不出是哪一轮。 */
   label: string
@@ -50,9 +51,15 @@ export function turnStepsOf(messages: Message[]): TurnSteps[] {
   let turnIndex = 0
   let i = 0
   while (i < messages.length) {
-    if (!isTurnOpener(messages[i]!)) { i++; continue }
-    turnIndex++
     const start = i
+    // **不跳过任何消息。** 上一版这里是 `if (!isTurnOpener(...)) { i++; continue }`，
+    // 于是「第一条用户提问**之前**」的 assistant 消息（会话开头的形状、revert 掉开头的
+    // 提问、快照恢复时的怪形状、整个数组全是 steer）连同它们的工具调用被整段跳过 ——
+    // 而主画面那边照常把工具部件过滤掉，结果就是**两边都没有**、在界面上彻底消失。
+    // 这正是「不丢不重」那条护栏要防的事，但护栏当时只喂了规整输入，没照出来。
+    // 现在的写法把数组切成连续的段，段的起点不一定是 turn opener，一个部件也漏不掉。
+    const opened = isTurnOpener(messages[start]!)
+    if (opened) turnIndex++      // 只有真轮次才推进序号；开头那段挂 0，UI 上显示为「·」
     let end = start + 1
     while (end < messages.length && !isTurnOpener(messages[end]!)) end++
 
@@ -67,10 +74,11 @@ export function turnStepsOf(messages: Message[]): TurnSteps[] {
     }
 
     if (parts.length > 0) {
-      const opener = messages[start]!
-      const raw = opener.parts.filter((p) => p.kind === 'text').map((p) => (p as { text: string }).text).join(' ').trim()
-      const label = raw.length > LABEL_CAP ? raw.slice(0, LABEL_CAP) + '…' : (raw || '（无标题）')
-      out.push({ turnId: opener.id, index: turnIndex, label, parts })
+      const anchor = messages[start]!
+      const raw = anchor.parts.filter((p) => p.kind === 'text').map((p) => (p as { text: string }).text).join(' ').trim()
+      const fallback = opened ? '（无标题）' : '（会话开头）'
+      const label = raw.length > LABEL_CAP ? raw.slice(0, LABEL_CAP) + '…' : (raw || fallback)
+      out.push({ turnId: anchor.id, index: turnIndex, label, parts })
     }
     i = end
   }

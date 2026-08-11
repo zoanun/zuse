@@ -50,11 +50,24 @@ function RailRun({ run }: { run: ActiveRun }) {
  * 自己返回 null 时槽位仍在，React 按位置对齐，`RailRun` 因此不会因为「上面那块出现了」
  * 而被重挂（重挂 = iframe 换 document = demo 归零）。
  *
- * `StepsDrawer` 是后加的，**只能追加在 `RailRun` 之后**：插在它前面会让 `RailRun` 的
- * 下标从 2 变成 3，等于每次步骤区出现/消失都重挂一次 iframe。
+ * **注意上面这条的适用边界**（评审用可跑的最小复现纠正过一次，见
+ * `probe.railSlot.test.tsx`）：JSX 的**静态**子节点列表按槽位对齐，`{cond ? <X/> : null}`
+ * 不论真假都占住它那一格，`null` 也占一格 —— 所以「在 `RailRun` 前面多一个条件孩子」
+ * 本身**不会**挪动它的下标，这里曾经写着的"下标从 2 变成 3"是想当然，不成立。
  *
- * 上下顺序也是用户拍的板：任务在上、步骤在下，「让任务一直挂到全部完成再消失」——
- * 而它本来就是这个行为（`hasVisibleTodos` = 有任何一条没完成就显示），不需要改。
+ * 真正会重挂的是这几种写法，它们才是这段注释要拦的：
+ *   - `{[a, b, c].filter(Boolean)}` —— 数组长度真的会变，后面的 key/下标跟着变；
+ *   - 按视口/容器宽度分叉出**第二棵子树**（设计 §4.3 / P0-4）；
+ *   - 给 `RailRun` 或 `PreviewFrame` 加一个会变的 `key`（这条已做过变异验证：
+ *     加上去之后 railSlot 那三条测试全红）。
+ *
+ * `StepsDrawer` 仍然**无条件渲染、排在 `RailRun` 之后**，但理由是别的两条：
+ * ① 用户定的上下顺序是「任务在上、步骤在下」；
+ * ② styles.css 里 `.rail > .preview-console + .steps` 这条相邻选择器依赖这个顺序画分隔线。
+ * 顺序真要改，先把那条 CSS 一起改，并重新在浏览器里量一遍高度分配。
+ *
+ * 「让任务一直挂到全部完成再消失」也是用户拍的板 —— 而它本来就是这个行为
+ * （`hasVisibleTodos` = 有任何一条没完成就显示），不需要改。
  */
 export function Rail({ run, todos, messages, backgroundAgents, steps, selectedTurn, onSelectTurn }: {
   run: ActiveRun | null
@@ -70,6 +83,9 @@ export function Rail({ run, todos, messages, backgroundAgents, steps, selectedTu
       <TodosPanel todos={todos} />
       <AgentsPanel messages={messages} backgroundAgents={backgroundAgents} />
       {run ? <RailRun run={run} /> : null}
+      {/* 无条件渲染（turns 为空时它自己 `return null`），排在 `RailRun` 之后。
+          理由见上面的注释 —— **不是**因为下标会跳变（那条已被最小复现证伪），
+          而是用户定的上下顺序 + `.preview-console + .steps` 那条 CSS 依赖这个顺序。 */}
       <StepsDrawer turns={steps} selectedId={selectedTurn} onSelect={onSelectTurn} />
     </aside>
   )

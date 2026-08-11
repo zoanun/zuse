@@ -18,11 +18,13 @@ import type { TurnSteps } from './turnSteps.js'
  *
  * 所以并回右栏：**右侧只有一栏**，任务在上、步骤在下。
  *
- * ## 放在 `RailRun` **之后**是必须的
+ * ## 放在 `RailRun` 之后
  *
- * `Rail` 的子节点是固定槽位（见 Rail.tsx 的注释）。React 按位置对齐，插在 `RailRun`
- * 前面会让它的下标漂移 → PreviewFrame 重挂 → iframe 换 document → 预览里的 demo 归零。
- * 追加到最后不改变任何既有槽位的下标，是安全的。
+ * 这里曾经写着"插在 `RailRun` 前面会让它的下标漂移 → PreviewFrame 重挂"。
+ * **那是想当然，已被最小复现证伪**（`preview/probe.railSlot.test.tsx`）：JSX 静态子节点
+ * 按槽位对齐，`{cond ? <X/> : null}` 真假都占一格，条件孩子在前不会挪动后面兄弟的下标。
+ * 真实的顺序理由写在 Rail.tsx 上（用户定的上下顺序 + 一条相邻选择器的 CSS），
+ * 改顺序前先读那段。
  */
 export function StepsDrawer({ turns, selectedId, onSelect, defaultCollapsed = false }: {
   turns: TurnSteps[]
@@ -36,37 +38,48 @@ export function StepsDrawer({ turns, selectedId, onSelect, defaultCollapsed = fa
   // 别占地方就只能去 Header 关掉整个精简视图（顺带改变主画面的过滤），等于没有逃生口。
   // 开着预览时尤其需要它 —— 预览和步骤在同一栏里抢高度，总得有一个能让位。
   const [collapsed, setCollapsed] = useState(defaultCollapsed)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const tabsRef = useRef<HTMLElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const active = turns.find((t) => t.turnId === selectedId) ?? turns[turns.length - 1]
 
-  // 换一轮就把步骤区滚回顶部 —— 否则读第 5 轮时停在半腰，点到第 2 轮还停在那个位置。
-  useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = 0 }, [active?.turnId])
+  // 用户主动收起的那一轮。**记 id 而不是记一个布尔**，是为了不打断「自动跟随最新」：
+  // 收起第 5 轮之后来了第 6 轮，`active` 变成第 6 轮而 closedId 还停在第 5 轮，
+  // 新一轮照常展开。若记布尔，收起过一次就再也不会自动展开了。
+  const [closedId, setClosedId] = useState<string | null>(null)
+  const openId = active && active.turnId !== closedId ? active.turnId : null
 
-  // 轮次列表限了高，选中项可能在可视区外。默认是"跟随最新"，不滚的话第 6 轮起用户
-  // 得先手动往下拖才能看到自己当前在哪一轮 —— 一个默认行为却要手动找，是说不通的。
+  const toggle = (turnId: string): void => {
+    // 点已经展开的那一行 = 收起它。**刻意不调 onSelect** —— 收起是本地的视觉动作，
+    // 不该顺手把主画面滚到别处去（点开才滚，是"我要看这一轮"；收起只是"看完了"）。
+    if (openId === turnId) { setClosedId(turnId); return }
+    setClosedId(null)
+    onSelect(turnId)
+  }
+
+  // 展开的那一行要在可视区里。默认是"跟随最新"，不滚的话第 6 轮起用户得先手动往下拖
+  // 才能看到自己当前在哪一轮 —— 一个默认行为却要手动找，是说不通的。
   //
   // 两个坑，都是实测出来的：
-  // 1. **必须 rAF。** `.turn-tabs` 的限高是 `max-height: 30%`（相对 `.steps` 的高度），
-  //    首帧 effect 跑的时候右栏刚挂上、高度还没定下来，nav 尚未溢出 → 滚了个寂寞，
-  //    等布局稳定了也不会自己补一次。实测首屏选中第 8 轮时 scrollTop 恒为 0，
-  //    而它在 156px 可视区外的 210px 处。
+  // 1. **必须 rAF。** 列表的高度来自 flex 分配，首帧 effect 跑的时候右栏刚挂上、
+  //    高度还没定下来，容器尚未溢出 → 滚了个寂寞，等布局稳定了也不会自己补一次。
+  //    实测首屏选中第 8 轮时 scrollTop 恒为 0，而它在 156px 可视区外的 210px 处。
   // 2. **不用 `scrollIntoView`。** 它会沿途滚动**所有**可滚祖先 —— 这一列外面就是
   //    `.stream`（实测 scrollTop 2655），一次误滚就把用户读到一半的对话拽走了。
-  //    下面这段是 `block:'nearest'` 的语义，但只作用在 nav 自己身上。
+  //    下面这段是 `block:'nearest'` 的语义，但只作用在列表自己身上。
+  //    滚的目标是**行头**不是整个展开项：一轮调了十几次工具时，把整项塞进视野
+  //    会把行头顶出上边缘，反而看不见自己点的是哪一行。
   useEffect(() => {
-    const nav = tabsRef.current
-    if (!nav) return
+    const list = listRef.current
+    if (!list) return
     const id = requestAnimationFrame(() => {
-      const on = nav.querySelector<HTMLElement>('.turn-tab.on')
+      const on = list.querySelector<HTMLElement>('.turn-tab.on')
       if (!on) return
-      const nb = nav.getBoundingClientRect()
+      const nb = list.getBoundingClientRect()
       const ob = on.getBoundingClientRect()
-      if (ob.top < nb.top) nav.scrollTop += ob.top - nb.top
-      else if (ob.bottom > nb.bottom) nav.scrollTop += ob.bottom - nb.bottom
+      if (ob.top < nb.top) list.scrollTop += ob.top - nb.top
+      else if (ob.bottom > nb.bottom) list.scrollTop += ob.bottom - nb.bottom
     })
     return () => cancelAnimationFrame(id)
-  }, [active?.turnId, turns.length])
+  }, [openId, turns.length])
 
   if (turns.length === 0) return null
 
@@ -83,30 +96,41 @@ export function StepsDrawer({ turns, selectedId, onSelect, defaultCollapsed = fa
         <span className="sh-count">{turns.length} 轮</span>
       </button>
       {collapsed ? null : (
-        <>
-          {/* 轮次列表：一行一轮、**横排文字**。上一版是 40px 宽的竖排字条，实测每格 120px 高，
-              7 轮就已经在滚了；横排每行约 30px，同样高度能放 26 行 —— 密度差 4 倍，
-              而且竖排的 12 字标签在连续追问下根本认不出是哪一轮。 */}
-          <nav className="turn-tabs" aria-label="按轮次查看中间步骤" ref={tabsRef}>
-            {turns.map((t) => (
-              <button
-                key={t.turnId}
-                type="button"
-                className={'turn-tab' + (t.turnId === active?.turnId ? ' on' : '')}
-                aria-current={t.turnId === active?.turnId}
-                title={`第 ${t.index} 轮：${t.label}`}
-                onClick={() => onSelect(t.turnId)}
-              >
-                <span className="tt-n">{t.index}</span>
-                <span className="tt-label">{t.label}</span>
-                <span className="tt-c">{t.parts.filter((p) => p.part.kind === 'tool-use').length}</span>
-              </button>
-            ))}
-          </nav>
-          <div className="steps-body" ref={bodyRef}>
-            {active ? renderParts(active.parts) : null}
-          </div>
-        </>
+        /*
+          折叠列表（QQ 好友分组那种）：一行一轮，点哪行就**在原地**展开哪行的内容。
+          上一版是「列表在上、内容在下」的两段式，代价是每次都要把视线从行跳到下面那块，
+          而且列表和内容各占一半高度、两边都不够用。原地展开只有一处滚动区，
+          行与内容永远贴在一起。
+
+          **同时只展开一行**（手风琴）而不是多行随意展开：这一列窄，多行同时展开时
+          光是找"我刚点的那行在哪"就得滚半天；而且单开正好对上外面 `selectedTurn`
+          那套"跟随最新 / 点了就锁定"的语义，不用再造第二套状态。
+        */
+        <div className="steps-list" ref={listRef}>
+          {turns.map((t) => {
+            const open = t.turnId === openId
+            return (
+              <div key={t.turnId} className={'turn-item' + (open ? ' open' : '')}>
+                <button
+                  type="button"
+                  className={'turn-tab' + (open ? ' on' : '')}
+                  aria-expanded={open}
+                  title={t.index ? `第 ${t.index} 轮：${t.label}` : `会话开头：${t.label}`}
+                  onClick={() => toggle(t.turnId)}
+                >
+                  <span className="tt-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                  {/* index 0 = 不属于任何轮次（排在第一条提问之前）。显示「0 轮」会骗人 —— 没有第 0 轮。 */}
+                  <span className="tt-n">{t.index || '·'}</span>
+                  <span className="tt-label">{t.label}</span>
+                  <span className="tt-c">{t.parts.filter((p) => p.part.kind === 'tool-use').length}</span>
+                </button>
+                {/* 收起的那些**不渲染内容**，不是 display:none 藏起来。几十轮的会话里
+                    每轮十几张工具卡片，全挂在 DOM 上白白吃内存、也让列表的滚动计算变重。 */}
+                {open ? <div className="turn-panel">{renderParts(t.parts)}</div> : null}
+              </div>
+            )
+          })}
+        </div>
       )}
     </section>
   )
