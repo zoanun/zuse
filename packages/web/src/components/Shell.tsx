@@ -22,6 +22,8 @@ import { SessionContext } from './Markdown.js'
 import { Rail } from '../preview/Rail.js'
 import { closeRun, useActiveRun } from '../preview/activePreview.js'
 import { getCleanView, setCleanView } from '../cleanViewPref.js'
+import { StepsDrawer } from './StepsDrawer.js'
+import { turnStepsOf } from './turnSteps.js'
 
 /**
  * All message ids in the same "turn" as `id`: the opening user message plus every assistant
@@ -54,6 +56,26 @@ export function Shell() {
   const toggleCleanView = useCallback(() => {
     setCleanViewState((on) => { setCleanView(!on); return !on })
   }, [])
+  // 步骤抽屉：按轮次切分（memo —— Shell 每个流式 delta 都重渲染，切分要遍历全部消息）。
+  const turnSteps = useMemo(() => turnStepsOf(state.messages), [state.messages])
+  // null = **跟随最新**。用户手动点过别的 tab 才置成具体 id，否则读第 2 轮时会被
+  // 新流进来的内容一把拽走，根本读不完（与"滚动列表粘底"同一个交互模式）。
+  const [selectedTurn, setSelectedTurn] = useState<string | null>(null)
+  // 选中的轮次不存在了 → 复位到跟随。切会话 / /clear / revert 把那一轮删掉都会落到这里；
+  // 不复位的话抽屉空白，而用户**没有"最新 tab"可点**（tab 条已经换了），
+  // 只能靠发新消息解锁 —— 一个"看着像坏了"的状态。
+  useEffect(() => {
+    if (selectedTurn && !turnSteps.some((t) => t.turnId === selectedTurn)) setSelectedTurn(null)
+  }, [turnSteps, selectedTurn])
+  const onSelectTurn = useCallback((turnId: string) => {
+    // 点回最新的那个 = 恢复自动跟随（spec §3.3 的另一半）。
+    const isNewest = turnSteps.length > 0 && turnSteps[turnSteps.length - 1]!.turnId === turnId
+    setSelectedTurn(isNewest ? null : turnId)
+    // 主画面滚到该轮的**用户提问**（不是最后一条回复）—— 与分享模式的锚点取法一致。
+    // 复用搜索跳转那条现成通道：`#msg-<id>` + scrollIntoView + 一次性高亮闪烁。
+    if (currentSessionId) searchJump(currentSessionId, turnId)
+  }, [turnSteps, currentSessionId, searchJump])
+
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [activePanel, setActivePanel] = useState<ManagePanel>('memory')
   // null = not sharing; a Set = share-selection mode with the chosen message ids.
@@ -391,6 +413,14 @@ export function Shell() {
             messages={state.messages}
             backgroundAgents={state.backgroundAgents}
           />
+        ) : null}
+        {/* 步骤抽屉：**`.rail` 的兄弟，不是它的子节点**。塞进 `.rail` 会多一个条件子节点，
+            让 RailRun 位置漂移 → PreviewFrame 重挂 → 预览里的 demo 归零（Rail.tsx 的
+            固定槽位注释说的就是这个）。放外面还有一个好处：`hasRail` 一个字不用改，
+            这一列自己决定何时出现 —— 否则「看完回复想翻工具调用」时右栏三个条件
+            通常一个都不成立，抽屉根本不会出现。 */}
+        {cleanView ? (
+          <StepsDrawer turns={turnSteps} selectedId={selectedTurn} onSelect={onSelectTurn} />
         ) : null}
         </div>
       </div>

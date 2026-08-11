@@ -331,6 +331,41 @@ button.head:hover .caret { opacity: 0.9; }
    而 --muted 是纯灰、一点色相都没有 —— warn 和 live(信息) 长得一模一样，甚至比普通 .note
    还淡。这条通道现在要承载「模型根本没看到你上传的图」这类必须被看见的消息。 */
 .note.warn { color: var(--warn); opacity: 1; } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
+/* ── 中间步骤抽屉（`.main-body` 的第三列，`.rail` 的兄弟） ─────────────────
+   竖向 tab 条**贴最右边、通高**，步骤内容在它左边。整块在 `.rail` 外面：
+   塞进去会多一个条件子节点，让 RailRun 位置漂移、预览 iframe 重挂。 */
+/* DOM 顺序是 [步骤区, tab 条]，用默认的 row —— tab 条因此落在**最右**。
+   曾经写成 row-reverse，结果 tab 跑到步骤区左边、离窗口右缘 340px（实测 navRight=1580 / 窗宽 1920）。 */
+.steps { display: flex; min-width: 0; border-left: 1px solid var(--line); }
+.steps-body { width: 340px; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 24px; }
+.steps-head { font: 600 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--faint);
+  text-transform: uppercase; margin: 2px 0 8px; }
+.steps-text { font-size: 13px; color: var(--muted); margin: 4px 0 8px; }
+.steps-text > :first-child { margin-top: 0; }
+.steps-text > :last-child { margin-bottom: 0; }
+
+/* tab 条：竖列，自上而下 = 从旧到新，与主画面滚动方向一致。 */
+.turn-tabs { display: flex; flex-direction: column; gap: 2px; padding: 8px 4px; overflow-y: auto;
+  border-left: 1px solid var(--line); background: var(--surface-2); }
+.turn-tab { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 40px;
+  padding: 7px 2px; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--faint); font: 500 10px/1.2 var(--mono); }
+.turn-tab:hover { background: var(--surface); color: var(--muted); }
+.turn-tab.on { background: var(--surface); color: var(--text); }
+.turn-tab .tt-n { font: 600 12px/1 var(--mono); }
+/* 标签竖排：中文一列一个字，比横排截断更省宽度，也更像"书脊"。 */
+.turn-tab .tt-label { writing-mode: vertical-rl; text-orientation: mixed; max-height: 92px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 窄屏：整列变成覆盖式 —— tab 条仍贴边可见，步骤区默认收起、点 tab 才滑出。
+   **绝不允许"两边都没有"**：主画面已经把工具调用收走了，这里再隐藏就彻底够不着。 */
+@container (max-width: 900px) {
+  .steps { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; }
+  .steps .steps-body { width: 0; padding: 0; border: 0; }
+  .steps.open .steps-body { width: min(320px, 80vw); padding: 10px 12px 24px;
+    background: var(--surface); box-shadow: -8px 0 24px rgba(0,0,0,0.12); }
+}
+
 /* 待办的分组标题。**刻意不复用 `.th`**：`.th` 是面板级标题（大写化 + letter-spacing + mono），
    组标题若长成那样，右栏里会连着出现「任务 / 甲 / 乙 / 丙 / 子代理」五个同款标题，
    读起来像五个并列的面板，而它们其实是一个面板里的三段。做成更轻的一行。 */
