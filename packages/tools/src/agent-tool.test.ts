@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ToolRegistry } from '@zuse/core'
-import type { ModelClient, StreamEvent, Usage, ResolvedSettings } from '@zuse/core'
-import { createAgentTool } from './agent-tool.js'
+import type { ModelClient, StreamEvent, Usage, ResolvedSettings, Tool } from '@zuse/core'
+import { createAgentTool, buildChildRegistry } from './agent-tool.js'
 
 const USAGE: Usage = { input_tokens: 10, output_tokens: 5 }
 
@@ -628,5 +628,39 @@ describe('createAgentTool', () => {
 
     await new Promise((r) => setTimeout(r, 50))
     expect(got).toBe('(sub-agent background execution failed)')
+  })
+})
+
+/**
+ * 会话级工具（绑在**父会话** sink 上的那些）绝不能进子代理的注册表。
+ *
+ * 真实缺陷：`TodoWrite` 的 `onUpdate` 绑的是父会话的 `setTodos`（sessionCapabilities.ts:62），
+ * 而 buildChildRegistry 此前只跳过 `Agent`。于是子代理一调 TodoWrite，就把**用户正在看的**
+ * 那份待办整份顶掉 —— 用户分的 3 组当场消失。`ScheduleWakeup` 同理（能给父会话排自唤醒、
+ * 吃父会话额度）。
+ *
+ * 按 `sessionScoped` 标记排除，不按名字硬编：名字清单意味着第四个会话级工具出现时
+ * 没人会想起来加那一行，而缺陷表现为「某个东西神秘地被子代理改掉」—— 最难查的那类。
+ */
+describe('子代理不继承会话级工具', () => {
+  it('sessionScoped 的工具被排除，普通工具照常继承', async () => {
+    const registry = new ToolRegistry()
+    const seen: string[] = []
+    const mk = (name: string, sessionScoped?: boolean): Tool => ({
+      name,
+      description: name,
+      inputSchema: { type: 'object', properties: {} },
+      ...(sessionScoped ? { sessionScoped: true } : {}),
+      async run() { seen.push(name); return { output: 'ok' } },
+    })
+    registry.register(mk('Read'))
+    registry.register(mk('TodoWrite', true))
+    registry.register(mk('ScheduleWakeup', true))
+
+    const child = buildChildRegistry(registry, undefined)
+    const names = child.list().map((t) => t.name)
+    expect(names).toContain('Read')
+    expect(names).not.toContain('TodoWrite')
+    expect(names).not.toContain('ScheduleWakeup')
   })
 })

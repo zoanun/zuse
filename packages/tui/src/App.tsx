@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import { Box, Text, Static, useApp } from 'ink'
+import { groupTodos } from '@zuse/protocol'
 import { useInput } from './input/useInput.js'
 import { InputBox } from './components/InputBox.js'
 import { MessageList } from './components/MessageList.js'
@@ -207,15 +208,22 @@ export function App({ cwd, initialSession }: AppProps) {
 
       {todos.length > 0 && todos.some((t: { status: string }) => t.status !== 'completed') && (
         <Box flexDirection="column" marginBottom={1} paddingX={MSG_PAD_X}>
-          {todos.map((t: { content: string; status: string }, i: number) => {
-            const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'
-            const color = t.status === 'completed' ? 'green' : t.status === 'in_progress' ? 'cyan' : undefined
-            return (
-              <Text key={i} color={color} dimColor={t.status === 'completed'}>
-                {icon} {t.content}
-              </Text>
-            )
-          })}
+          {/* 分组：与 web 右栏读的是同一份数据、共用同一个 groupTodos —— 只改一边，
+              命令行里就会看到一堆丢了组名的裸标题，比不分组更糟。 */}
+          {groupTodos(todos).map(({ group, items }, gi: number) => (
+            <Box key={group ?? ' ungrouped'} flexDirection="column">
+              {group === undefined ? null : <Text bold dimColor>{group}</Text>}
+              {items.map((t: { content: string; status: string }, i: number) => {
+                const icon = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○'
+                const color = t.status === 'completed' ? 'green' : t.status === 'in_progress' ? 'cyan' : undefined
+                return (
+                  <Text key={`${gi}:${i}`} color={color} dimColor={t.status === 'completed'}>
+                    {icon} {t.content}
+                  </Text>
+                )
+              })}
+            </Box>
+          ))}
         </Box>
       )}
 

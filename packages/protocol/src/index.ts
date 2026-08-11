@@ -245,6 +245,39 @@ export interface PromptSection {
 export interface TodoItemLite {
   content: string
   status: 'pending' | 'in_progress' | 'completed'
+  /** 可选分组名（多个 todolist）。缺省 = 不分组，与加这个字段之前完全一致。 */
+  group?: string
+}
+
+/**
+ * 把待办按分组归拢。**未分组的恒排最前且不带标题**，其余按**首次出现顺序**（不是字典序）。
+ *
+ * 首次出现而非字典序：扁平表示允许同名分组不连续（甲、乙、甲），按字典序会让用户看到的
+ * 顺序和他给的顺序对不上；按首次出现则「甲」始终在「乙」前面，与模型写下的意图一致。
+ *
+ * 未分组置顶：它对应「没有分组需求」的普通用法，不该被有组名的挤到下面。代价是模型漏填
+ * 一条时那条会跳到最顶端 —— 刻意接受；另一种做法（留在原位）会把隐式桶切成好几段，更难解释。
+ *
+ * **住在 protocol 而不是 tools 或 web，是因为它是一份契约**：TodoWrite 回给模型的那串文本
+ * 和右栏面板必须用**同一个**排序。两处若各排各的，模型看到的顺序和用户看到的顺序就会不一样，
+ * 而 TodoWrite 是整份覆盖 —— 模型下一轮会按它看到的那套重建列表，用户的分组就会漂。
+ * 这是本包第一个运行期导出：排序本身就是线上契约的一部分，不只是类型。
+ */
+export function groupTodos<T extends { group?: string }>(
+  todos: readonly T[],
+): { group?: string; items: T[] }[] {
+  const ungrouped: T[] = []
+  const byGroup = new Map<string, T[]>()
+  for (const t of todos) {
+    if (t.group === undefined) { ungrouped.push(t); continue }
+    const bucket = byGroup.get(t.group)
+    if (bucket) bucket.push(t)
+    else byGroup.set(t.group, [t])   // Map 保持插入顺序 = 首次出现顺序
+  }
+  const out: { group?: string; items: T[] }[] = []
+  if (ungrouped.length > 0) out.push({ items: ungrouped })
+  for (const [group, items] of byGroup) out.push({ group, items })
+  return out
 }
 
 /** 已推给前端但尚未解决的权限请求。 */

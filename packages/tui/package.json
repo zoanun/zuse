@@ -17,6 +17,7 @@
     "@mozilla/readability": "^0.6.0",
     "@vscode/ripgrep": "^1.18.0",
     "@zuse/core": "workspace:*",
+    "@zuse/protocol": "workspace:*",
     "@zuse/tools": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "ink": "^5.0.1",

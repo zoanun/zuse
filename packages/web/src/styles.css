@@ -331,6 +331,13 @@ button.head:hover .caret { opacity: 0.9; }
    而 --muted 是纯灰、一点色相都没有 —— warn 和 live(信息) 长得一模一样，甚至比普通 .note
    还淡。这条通道现在要承载「模型根本没看到你上传的图」这类必须被看见的消息。 */
 .note.warn { color: var(--warn); opacity: 1; } .note.bad { color: var(--bad); opacity: 1; } .note.live { color: var(--muted); }
+/* 待办的分组标题。**刻意不复用 `.th`**：`.th` 是面板级标题（大写化 + letter-spacing + mono），
+   组标题若长成那样，右栏里会连着出现「任务 / 甲 / 乙 / 丙 / 子代理」五个同款标题，
+   读起来像五个并列的面板，而它们其实是一个面板里的三段。做成更轻的一行。 */
+.todos .gh { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  margin: 6px 0 1px; font: 600 11.5px/1.5 var(--sans); color: var(--muted); }
+.todos .gh:first-of-type { margin-top: 2px; }
+.todos .gh > span:last-child { font: 500 10.5px/1.5 var(--mono); color: var(--faint); }
 /* Compaction summary: a collapsible card (collapsed by default, like a tool/think block). The
    body is the dimmed italic left-aligned summary; the head toggles it. */
 .note.summary { align-self: stretch; text-align: left; margin: 2px 0; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-2); }

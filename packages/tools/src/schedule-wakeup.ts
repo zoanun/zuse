@@ -10,6 +10,8 @@ export interface ScheduleWakeupDeps {
 export function createScheduleWakeupTool(deps: ScheduleWakeupDeps): Tool {
   return {
     name: 'ScheduleWakeup',
+    // 会话级：onSchedule 给**父会话**排唤醒、吃父会话的额度。见 Tool.sessionScoped。
+    sessionScoped: true,
     description:
       'Schedule a delayed self-wakeup. After delaySeconds, the message is injected as a ' +
       'user message and triggers a new agent turn. Use this to poll external state (CI, ' +

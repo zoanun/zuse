@@ -100,3 +100,58 @@ describe('hasVisibleTodos —— 谓词与组件渲染结果一致', () => {
     })
   }
 })
+
+/**
+ * 分组渲染（设计 §2.1）。
+ *
+ * 最重要的一条在最前：**全部无 group 时 DOM 必须与加这个功能之前一样**。
+ * 断言写成「`.todos` 的子节点序列恰好是 [.th, .ti × N]」而不是「渲染结果一致」——
+ * 后者无论实现对错都绿。这条同时钉死了「分组不得引入包裹元素」（用 Fragment）。
+ */
+describe('TodosPanel 分组', () => {
+  const childTags = (c: HTMLElement) =>
+    [...(c.querySelector('.todos')?.children ?? [])].map((e) => e.className)
+
+  it('全部无 group → 子节点恰好是 [th, ti×N]，不多出任何元素', () => {
+    const { container } = render(<TodosPanel todos={[
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'pending' },
+    ]} />)
+    expect(childTags(container)).toEqual(['th', 'ti done', 'ti todo'])
+  })
+
+  it('有 group → 每组一行组标题，顺序按首次出现（不是字典序）', () => {
+    const { container } = render(<TodosPanel todos={[
+      { content: 'z1', status: 'pending', group: '乙' },
+      { content: 'a1', status: 'pending', group: '甲' },
+      { content: 'z2', status: 'completed', group: '乙' },
+    ]} />)
+    // 乙 先出现 → 乙 在前；同名不连续（乙、甲、乙）必须归拢成一段。
+    expect(childTags(container)).toEqual([
+      'th', 'gh', 'ti todo', 'ti done', 'gh', 'ti todo',
+    ])
+    const heads = [...container.querySelectorAll('.gh')].map((e) => e.textContent)
+    expect(heads[0]).toContain('乙')
+    expect(heads[0]).toContain('1 / 2')   // 该组小计
+    expect(heads[1]).toContain('甲')
+    expect(heads[1]).toContain('0 / 1')
+  })
+
+  it('混合 → 未分组的在最前且不带组标题', () => {
+    const { container } = render(<TodosPanel todos={[
+      { content: 'g', status: 'pending', group: '甲' },
+      { content: 'plain', status: 'pending' },
+    ]} />)
+    expect(childTags(container)).toEqual(['th', 'ti todo', 'gh', 'ti todo'])
+  })
+
+  it('某组全完成、别组没完 → 该组仍然显示（刻意不做「做完就隐藏」）', () => {
+    // 设计 §2.2 明确不做这条。防后人「顺手优化」掉 —— 分组中途消失比多占几行更让人困惑。
+    const { container } = render(<TodosPanel todos={[
+      { content: 'a', status: 'completed', group: '甲' },
+      { content: 'b', status: 'pending', group: '乙' },
+    ]} />)
+    const heads = [...container.querySelectorAll('.gh')].map((e) => e.textContent)
+    expect(heads.some((h) => h?.includes('甲'))).toBe(true)
+  })
+})

@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto'
 
 const SUB_AGENT_MAX_TURNS = 10
 
-const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured. You are a leaf worker and CANNOT spawn further sub-agents.`
+const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured. You are a leaf worker and CANNOT spawn further sub-agents. You also have no TodoWrite or ScheduleWakeup — those belong to the session that dispatched you; do not try to call them.`
 
 export interface AgentToolDeps {
   registry: ToolRegistry
@@ -36,6 +36,10 @@ export interface AgentToolDeps {
 export function createAgentTool(deps: AgentToolDeps): Tool {
   return {
     name: 'Agent',
+    // 会话级：onBackground 登记到**父会话**的待投递表。此前靠 buildChildRegistry 里硬编
+    // `if (tool.name === 'Agent')` 排除，现在统一走标记 —— 少一条特例，也让新增的会话级
+    // 工具不会被漏掉（TodoWrite / ScheduleWakeup 正是这样漏了很久）。见 Tool.sessionScoped。
+    sessionScoped: true,
     // Each sub-agent runs in its own Conversation, its own cwd (its Bash `cd` never writes
     // back to the parent), and — see executeSubAgent — its OWN FileTracker, so a batch of
     // Agent calls carries no shared read-before-write state and is safe to run concurrently
@@ -261,7 +265,7 @@ export function createAgentTool(deps: AgentToolDeps): Tool {
   }
 }
 
-function buildChildRegistry(
+export function buildChildRegistry(
   parent: ToolRegistry,
   allowedTools: unknown,
 ): ToolRegistry {
@@ -271,7 +275,10 @@ function buildChildRegistry(
     : null
 
   for (const tool of parent.list()) {
-    if (tool.name === 'Agent') continue
+    // 会话级工具（Agent / TodoWrite / ScheduleWakeup）绑的是**父会话**的 sink，
+    // 子代理拿到的是同一个实例 —— 继承它们等于让子代理去改用户正在看的东西。
+    // 见 Tool.sessionScoped 的注释。
+    if (tool.sessionScoped) continue
     if (whitelist && !whitelist.has(tool.name)) continue
     child.register(tool)
   }

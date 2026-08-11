@@ -55,6 +55,7 @@ import type {
   SnapshotStore,
 } from './events.js'
 import { SESSION_CAPABILITY_TOOLS, type SessionCapabilityContext } from './sessionCapabilities.js'
+import { groupTodos } from '@zuse/protocol'
 import type { SnapshotPart, SnapshotMessage, UploadedImageRef, PastedTextInput, UploadedFileRef } from '@zuse/protocol'
 import type { CompactionMeta } from './sessionStore.js'
 import { stripUserStamp, applyUserStamp } from './userStamp.js'
@@ -907,8 +908,16 @@ export class SessionManager {
 
     // TodoWrite state injected into the summary prompt so Pending Items survives.
     const todoIcons: Record<TodoItemLite['status'], string> = { completed: '✓', in_progress: '●', pending: '○' }
+    // 分组必须进摘要，否则压缩之后模型就忘了分组，下一次 TodoWrite 退回平表 ——
+    // 用户看到的是「分了几组，聊着聊着组没了」。格式与 TodoWrite 的回显完全一致
+    // （同一个 groupTodos + 同样的 `[组名]` 分段），别在这儿另发明一套。
     const todoState = this.todos.length > 0
-      ? this.todos.map((t) => `${todoIcons[t.status]} ${t.content}`).join('\n')
+      ? groupTodos(this.todos)
+          .flatMap(({ group, items }) => [
+            ...(group === undefined ? [] : [`[${group}]`]),
+            ...items.map((t) => `${todoIcons[t.status]} ${t.content}`),
+          ])
+          .join('\n')
       : undefined
 
     // Iterative summary: fold only the NEW turns since the last summary (viewMessages[foldStart..

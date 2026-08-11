@@ -439,11 +439,15 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     var r = make('span'); r.textContent = done + ' / ' + todos.length; h.appendChild(r);
     p.appendChild(h);
     todos.forEach(function (t) {
+      // 应急页不做分组渲染（它不该跟着主界面演进），但组名要拼回正文 —— 让分组在这里
+      // **静默消失**，会让来排查问题的人看到一份与主界面不一致的数据，比样式土难受得多。
+      // 会落到这个页面的典型场景：ZUSE_WEBDIR 传错（CLAUDE.md 记着这个坑）。
+      var text = t.group ? '[' + t.group + '] ' + t.content : t.content;
       var cls = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'doing' : 'todo';
       var row = make('div', 'ti ' + cls);
       var ic = make('span', 'ic'); ic.textContent = t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '●' : '○';
       row.appendChild(ic);
-      var c = make('span'); c.textContent = t.content; row.appendChild(c);
+      var c = make('span'); c.textContent = text; row.appendChild(c);
       p.appendChild(row);
     });
   }

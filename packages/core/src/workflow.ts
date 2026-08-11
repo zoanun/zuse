@@ -55,7 +55,7 @@ function appendJournal(filePath: string, entry: JournalEntry): void {
 
 const DEFAULT_MAX_AGENTS = 100
 const SUB_AGENT_MAX_TURNS = 10
-const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured. You are a leaf worker and CANNOT spawn further sub-agents.`
+const SUB_AGENT_SUFFIX = `\n\nYou are a sub-agent dispatched to execute a specific task. Your final text reply is the return value — it will be handed back to the caller, not shown to the user. Act immediately — do not output a plan or ask for confirmation. Use your tools to complete the task, then report the result. Be concise and structured. You are a leaf worker and CANNOT spawn further sub-agents. You also have no TodoWrite or ScheduleWakeup — those belong to the session that dispatched you; do not try to call them.`
 
 export class Semaphore {
   private available: number
@@ -190,7 +190,10 @@ export function createWorkflow(ctx: WorkflowContext) {
         ? new Set(opts.allowedTools.filter((t) => t !== 'Agent'))
         : null
       for (const tool of ctx.registry.list()) {
-        if (tool.name === 'Agent') continue
+        // 与 agent-tool.ts 的 buildChildRegistry 保持同一套判据：会话级工具绑父会话 sink，
+        // 子代理继承就会改到用户正在看的东西。本文件目前没有生产调用方，但**照样要改** ——
+        // 留一份不一致的副本，等它哪天被接上，这个洞会以「只在 workflow 里复现」的形态回来。
+        if (tool.sessionScoped) continue
         if (whitelist && !whitelist.has(tool.name)) continue
         childRegistry.register(tool)
       }
