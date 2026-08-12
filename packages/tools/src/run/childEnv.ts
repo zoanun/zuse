@@ -72,6 +72,30 @@ const SEMANTIC = [
 const PREFIXES = ['npm_config_'] as const
 
 /**
+ * 前缀放行里的**排除词**：名字含这些子串的一律丢掉。
+ *
+ * `npm_config_*` 是本模块**唯一**一条整组放行的规则，也就唯一需要 deny 名单。
+ * 实测（本机 npm 10.9.4，`.npmrc` 里放假凭据，用 lifecycle script 倒 env）：
+ *
+ * ```
+ * npm_config_* 总数: 15
+ *   泄露 → npm_config_https_proxy = http://user:PROXYPWD-LEAK-9f3a@corp.proxy:8080/
+ *   泄露 → npm_config_proxy       = http://user:PROXYPWD-LEAK-9f3a@corp.proxy:8080/
+ * ```
+ *
+ * 代理 URL 里的 `user:password@` **明文**摊了出来。而 daemon 常常就是 `pnpm dev` /
+ * `npm start` 起的 —— 这些变量正躺在它的 `process.env` 里，再整组转给「用户点了运行、
+ * 可能来路不明的代码」，就直接违背了本文件开头写的定位（凭据过滤器）。
+ *
+ * （`//registry/:_authToken=…` 与 `:_password=…` **没有**被摊出来 —— npm 对 nerf-dart
+ * 的 auth 键做了过滤。所以这里防的是代理 URL，不是 authToken。别把没发生的事写进注释。）
+ *
+ * 代价：真用着认证代理的用户，子进程装不了包。这个代价是**刻意选的** ——
+ * 「装不上包」会立刻报错、看得见；「密码被跑出去」看不见。
+ */
+const PREFIX_DENY = ['auth', 'token', 'secret', 'password', 'passwd', 'proxy', 'key', 'cert', 'username'] as const
+
+/**
  * 无论如何都要摘掉的。
  *
  * `_VOLTA_TOOL_RECURSION` 是 Volta shim 的递归守卫。它一旦被继承，子 shell 里的
@@ -116,7 +140,13 @@ export function runEnv(
     if (value === undefined) continue          // 别给子进程塞一个空壳变量
     const probe = win ? key.toUpperCase() : key
     if (stripped.has(probe)) continue
-    if (!names.has(probe) && !PREFIXES.some((p) => probe.startsWith(win ? p.toUpperCase() : p))) continue
+    if (!names.has(probe)) {
+      const byPrefix = PREFIXES.some((p) => probe.startsWith(win ? p.toUpperCase() : p))
+      if (!byPrefix) continue
+      // 整组放行的那条规则必须自带 deny 名单，否则代理 URL 里的密码会原样流出去（实测，见上）。
+      const lower = key.toLowerCase()
+      if (PREFIX_DENY.some((d) => lower.includes(d))) continue
+    }
     out[key] = value
   }
   for (const [key, value] of Object.entries(declared)) out[key] = value

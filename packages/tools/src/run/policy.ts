@@ -25,7 +25,7 @@ export interface RunPolicy {
    * 预算是**每条流各自**的，不是两条流共享 —— 一个刷屏的 stderr 不该把 stdout 的额度吃光，
    * 那会让「进程报了个警告」表现成「看不到正常输出」。
    */
-  sink: { kind: 'truncate'; budget: number } | { kind: 'ring'; bytes: number }
+  sink: { kind: 'truncate'; budget: number } | { kind: 'ring'; chars: number }
 }
 
 /**
@@ -57,5 +57,5 @@ export const PROJECT_POLICY: RunPolicy = {
   idleMs: 30 * 60_000,
   killGraceMs: 3_000,
   onDetach: 'keep',
-  sink: { kind: 'ring', bytes: 400_000 },
+  sink: { kind: 'ring', chars: 400_000 },
 }

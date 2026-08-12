@@ -44,10 +44,29 @@
 |---|---|---|
 | `run/stream.ts` StreamDecoder | ✅ 已合 | 13 条测试；两次变异各杀 2/3 条（见下） |
 | `run/sink.ts` truncate + ring | ✅ 已合 | 10 条测试（ring 占 5 条）；两次变异各杀 1 条。**§4 有一处改主意，见下** |
-| `run/childEnv.ts` runEnv | ⬜ 未开始 | 断言**子进程真实环境**，并做变异验证，见 §5 |
-| `run/policy.ts` + `run/run.ts` | ⬜ 未开始 | 时长全部可注入，见 §7.1 |
-| `run/registry.ts` | ⬜ 未开始 | 注入不做单例，见 §2.2 |
-| HTTP 端点 | ⬜ 未开始 | isAuthed / cwd 服务端反查 / 409 可确认 / 路由插在 SPA 兜底前，见 §8 |
+| `run/childEnv.ts` runEnv | ✅ 已合 | 14 条；变异证明**对象断言抓不住真实泄露**；含 `npm_config_*` 的凭据 deny 名单 |
+| `run/policy.ts` + `run/run.ts` | ✅ 已合 | 21 条；三次变异各杀 4/2/2 条 |
+| `run/registry.ts` | ✅ 已合 | 14 条；变异逼出 zombie 的两条淘汰规则 |
+| HTTP 端点 | ✅ 已合 | 14 条；变异各杀 1 条（cwd 反查 / isAuthed / 安全闸） |
+
+**独立评审判出 2 条必须改，均已修并各配一条变异验证**：
+
+1. **`npm_config_*` 整组放行会泄代理密码。** 实测（npm 10.9.4，`.npmrc` 放假凭据、
+   lifecycle script 倒 env）：`npm_config_proxy` / `npm_config_https_proxy` 明文带着
+   `user:password@`。而 daemon 常常就是 `pnpm dev` 起的 —— 这两个变量正躺在它的
+   `process.env` 里。已加 deny 名单。（`_authToken` **没有**被摊出来，npm 自己过滤了，
+   别把没发生的事写进文档。）
+2. **`OEM_MOJIBAKE_RATIO` 在小首窗下退化。** 0.02 是按整份 body 调的；首窗在 300ms
+   那档可能只有十几字符，`1/11 = 0.09` 就过线 → 一个偶发坏字节把整条流**永久**锁成乱码。
+   实测同一串字节：首窗(11 字符) → OEM 0.0909，全量(2411 字符) → utf8 0.0004。
+   判据改成「密度 **且** 至少 2 个 U+FFFD」—— 真 OEM 的坏字符成片（ping 的 92 字节窗有
+   24 个），杂散坏字节恰好 1 个。代价：极短且只产生 1 个 FFFD 的真 OEM 命令会解错，
+   用几个字符的乱码换掉「整条流永久锁死」，值。
+
+顺带按评审改的：删掉零收益的 `unref()`（实测它在「进程正要退出」那个窄窗口会**静默吞掉**
+首窗）；`end()` 后再 `write` 一律丢弃；构造参数改用 `??` 逐项取默认值（显式传 `undefined`
+会顶掉默认值，而 `Required<...>` 编译期不报）；`ring` 的 `bytes` 改名 `chars`
+（sink 全程按 UTF-16 码元计，中文下 1 字符 ≈ 3 字节，名字对不上会让人把容量调错 3 倍）。
 
 **StreamDecoder 的变异验证记录**（别重做，也别以为它是纸糊的）：
 

@@ -59,16 +59,31 @@ export class StreamDecoder {
   private decoder: TextDecoder | null = null
   private label: Encoding = 'buffering'
   private disposed = false
+  /** 已收尾。之后再 `write` 一律无视 —— 见 `write()` 的注释。 */
+  private ended = false
 
   constructor(opts: StreamDecoderOptions) {
-    this.opts = { windowBytes: 4096, windowMs: 300, ...opts }
+    // 用 `??` 逐项取默认值，**不能写 `{ windowBytes: 4096, ...opts }`**：
+    // 调用方显式传一个 `undefined`（从可选配置里转发时最自然的写法）会把默认值顶掉，
+    // 而 `Required<...>` 在类型上看着安全、编译期一声不吭。实测后果：
+    // `windowBytes: undefined` → `10000 >= undefined` 恒 false，4096 那档彻底失效；
+    // `windowMs: undefined` → `setTimeout(fn, undefined)` 退化成 ~1ms，300ms 窗口没了。
+    this.opts = {
+      oemLabel: opts.oemLabel,
+      onText: opts.onText,
+      windowBytes: opts.windowBytes ?? 4096,
+      windowMs: opts.windowMs ?? 300,
+    }
   }
 
   /** 已定的编码；`'buffering'` = 还没定。 */
   get encoding(): Encoding { return this.label }
 
   write(chunk: Buffer): void {
-    if (this.disposed || chunk.length === 0) return
+    // `end()` 之后再来的字节一律丢。没有这道闸的话，run.ts 若收到一个迟到的 `'data'`
+    // （或接线顺序有误），SSE 那头会在 **end 事件之后**又收到 chunk —— 客户端已经按
+    // 「这次跑完了」收场了，再冒出内容只会表现成「莫名其妙多出一段」。
+    if (this.disposed || this.ended || chunk.length === 0) return
     if (this.decoder) { this.emit(this.decoder.decode(chunk, { stream: true })); return }
 
     this.buffered.push(chunk)
@@ -80,14 +95,19 @@ export class StreamDecoder {
       // 必须是**真定时器**，不能写成「下一个 chunk 到达时算 elapsed」：
       // 「吐一个字节然后沉默」的进程（等输入的 REPL、慢构建的第一行日志）
       // 在后一种写法下会永远卡在 buffering，一个字都不吐。
-      if (typeof this.timer === 'object' && this.timer && 'unref' in this.timer) this.timer.unref()
+      //
+      // **刻意不 `unref()`。** 早先写了，评审实测证明它净收益为负：daemon 里子进程的
+      // stdout 管道本来就是活 handle，unref 与否都不影响定时器触发（收益为零）；
+      // 而在「进程正要退出」那个窄窗口里，unref 掉的定时器**永远不会触发** ——
+      // 首窗那几 KB 被静默吞掉。零收益换一个静默丢数据的窗口，不划算。
     }
     if (this.bufferedLen >= this.opts.windowBytes) this.decide()
   }
 
   /** 流结束：还没定码就用手上的全部字节定，然后冲刷解码器缓着的尾字节。 */
   end(): void {
-    if (this.disposed) return
+    if (this.disposed || this.ended) return
+    this.ended = true
     if (!this.decoder) this.decide()
     if (this.decoder) this.emit(this.decoder.decode())
     this.clearTimer()
@@ -120,8 +140,22 @@ export class StreamDecoder {
     const probe = new TextDecoder('utf-8').decode(window, { stream: true })
     if (probe.length === 0) return 'utf-8'
     const fffd = probe.split('�').length - 1
-    // 阈值与 `proc/oem.ts` 同源，不另立门户 —— 两处判据漂移过一次就再也对不齐了。
-    if (fffd / probe.length < OEM_MOJIBAKE_RATIO) return 'utf-8'
+    // **两个条件都要满足**，密度之外还要至少 2 个坏字符。
+    //
+    // 只看密度在流式路径下会退化。`oem.ts` 的 0.02 是按**整份 body**（几千字符）调的，
+    // 作用是「一两个杂散坏字节不该把一份 UTF-8 构建日志整体翻成 OEM」。但首窗在 300ms
+    // 那一档可能只有十几个字符，`1/11 = 0.09` 就过线了 —— 同一串字节实测：
+    //
+    //   首窗只有一行(11 字符)   → ratio 0.0909 → OEM
+    //   全量(2411 字符)         → ratio 0.0004 → utf8
+    //
+    // 而定码后「永不回头」，于是一个偶发的坏字节就把整条流锁死成乱码。
+    // 真正的 OEM 输出坏字符是成片的（实测 ping 的 92 字节窗里有 24 个），而一个中文字
+    // 的 GBK 双字节解成 UTF-8 也是 2 个 FFFD —— 所以 `>= 2` 能把两者干净分开。
+    //
+    // 代价：输出**极短且恰好只产生 1 个 FFFD** 的真 OEM 命令会被解错。用几个字符的乱码，
+    // 换掉「整条流永久锁死」这个失败模式，值。
+    if (fffd < 2 || fffd / probe.length < OEM_MOJIBAKE_RATIO) return 'utf-8'
     try { new TextDecoder(this.opts.oemLabel) } catch { return 'utf-8' }
     return this.opts.oemLabel
   }

@@ -114,6 +114,32 @@ describe('runEnv —— 名单', () => {
     expect(e.npmfoo).toBeUndefined()          // 前缀要完整匹配，不是「以 npm 开头」
   })
 
+  /**
+   * `npm_config_*` 是唯一一条整组放行的规则，也就唯一需要 deny 名单。
+   * 实测（本机 npm 10.9.4，`.npmrc` 里放假凭据、用 lifecycle script 倒 env）：
+   *
+   * ```
+   * npm_config_* 总数: 15
+   *   泄露 → npm_config_https_proxy = http://user:PROXYPWD-LEAK-9f3a@corp.proxy:8080/
+   *   泄露 → npm_config_proxy       = http://user:PROXYPWD-LEAK-9f3a@corp.proxy:8080/
+   * ```
+   *
+   * 而 daemon 常常就是 `pnpm dev` / `npm start` 起的 —— 这两个变量正躺在它的
+   * `process.env` 里。整组转给「用户点了运行、可能来路不明的代码」= 明文交出代理密码。
+   */
+  it('npm_config_ 里带凭据的键不放行（代理 URL 明文含密码，实测复现过）', () => {
+    const e = runEnv({
+      npm_config_registry: 'https://r/',
+      npm_config_proxy: 'http://user:PWD@corp:8080/',
+      npm_config_https_proxy: 'http://user:PWD@corp:8080/',
+      npm_config__authToken: 'tok',
+      npm_config_cert: '-----BEGIN CERT-----',
+      npm_config_cache: '/c',
+    }, {})
+    expect(Object.keys(e).sort()).toEqual(['npm_config_cache', 'npm_config_registry'])
+    expect(JSON.stringify(e)).not.toContain('PWD')
+  })
+
   it('名单外一律丢掉', () => {
     const e = runEnv({ ANTHROPIC_API_KEY: 'k', AWS_SECRET_ACCESS_KEY: 'k', RANDOM_THING: 'k' }, {})
     expect(Object.keys(e)).toEqual([])

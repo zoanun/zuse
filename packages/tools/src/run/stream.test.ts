@@ -124,11 +124,17 @@ describe('StreamDecoder 定码后的解码', () => {
    * 构造函数只吃 `{fatal, ignoreBOM}`，传进去被静默忽略，于是每次 decode 都当一次完整
    * 刷新。实测（spec §1.4）：错写法把跨块的「你好世界」解成 "你�檬澜�"。
    */
+  /**
+   * 窗口取 5 字节而不是 3：判据要求**至少 2 个 U+FFFD**（见 pickLabel 的注释 ——
+   * 一个杂散坏字节不该把整条流锁成 OEM）。而 GBK 窗口太小时坏字符数也少：
+   * 实测 3 字节窗只有 1 个 FFFD，4 字节起才 ≥2。5 字节的切点落在「世」(CA C0) 的
+   * 两个字节之间，跨块解码这件事照样测到。
+   */
   it('GBK 双字节跨 chunk：定码之后到来的块也要接着解', () => {
-    const { d, text } = collect({ windowBytes: 3 })  // 头 3 字节就定码，剩下的走增量路径
-    d.write(GBK_NIHAO.subarray(0, 3))
+    const { d, text } = collect({ windowBytes: 5 })  // 头 5 字节就定码，剩下的走增量路径
+    d.write(GBK_NIHAO.subarray(0, 5))
     expect(d.encoding).toBe('gbk')
-    d.write(GBK_NIHAO.subarray(3))
+    d.write(GBK_NIHAO.subarray(5))
     d.end()
     expect(text()).toBe('你好世界')              // 错写法这里会是 "你�檬澜�"
   })

@@ -114,7 +114,7 @@ describe('Run —— 终止原因是结构化枚举', () => {
 
   it('ring 档永远不会因为输出多而被杀', () => {
     vi.useFakeTimers()
-    const { killed, out } = makeRun({ sink: { kind: 'ring', bytes: 5 } })
+    const { killed, out } = makeRun({ sink: { kind: 'ring', chars: 5 } })
     out(Buffer.from('abcdefghij'))
     vi.advanceTimersByTime(300)
     expect(killed).toEqual([])

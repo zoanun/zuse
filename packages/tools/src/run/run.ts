@@ -258,5 +258,5 @@ export class Run {
 function makeSink(policy: RunPolicy): OutputSink {
   return policy.sink.kind === 'truncate'
     ? new TruncateSink(policy.sink.budget)
-    : new RingSink(policy.sink.bytes)
+    : new RingSink(policy.sink.chars)
 }
