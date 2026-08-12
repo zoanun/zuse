@@ -19,6 +19,31 @@
 
 ---
 
+## 0.5 实施进度
+
+| # | 内容 | 状态 | 提交 |
+|---|---|---|---|
+| 1 | `planExec`（Python/Java → 命令 + 文件） | ✅ 合入 | `1a6b738` → 挪包 `5b15ce2` |
+| 2 | `TermBuffer`（CRLF/ANSI/增量，四个跨块边界） | ✅ 合入 | `1a6b738` |
+| 3 | 服务端 `exec` 形态 + 落盘 + 清理 + 路径约束 + 同意缓存 | ✅ 合入 | `5b15ce2` |
+| 4 | `detect.ts` 认 python/java（**今天 Python 代码块上没有运行按钮**） | ⬜ 待做 | |
+| 5 | store 双槽（`activeExec`）+ `Rail.tsx` 接线 + **`styles.css` 相邻选择器同步改** | ⬜ 待做 | |
+| 6 | `RailExec` 组件 + fetch 流订阅（**不用 EventSource**，见 §6）+ 错误文案（§7） | ⬜ 待做 | |
+| 7 | 确认框（复用 `ConfirmDialog`/`PermissionCard`，别新做） | ⬜ 待做 | |
+| 8 | 改 `CLAUDE.md` 的 `-Dfile.encoding` 那行 | ✅ 合入 | `2758462` |
+| 9 | rebuild + 重启 daemon + **真浏览器点一遍** | ⬜ 待做 | |
+| 10 | 合本地 master + 写 `docs/features.md` | ⬜ 待做 | |
+
+**接手提示**：4–7 是纯前端，彼此耦合（`detect` 决定按钮出不出来，store 决定右栏挂谁，
+`RailExec` 消费 `TermBuffer`）。第 9 步不能省——本仓四个真实缺陷全是「测试全绿之后真跑才暴露」的。
+
+**已知的坑（实施时会撞上）**：
+- web 包的测试**不在根 vitest 配置里**（根配置 `exclude: packages/web/**`）。
+  跑法：`npx vitest run --root E:/ai-study/zuse/packages/web src/exec/`
+- 同意缓存是模块级的，测试要 `__resetExecConsent()`，否则跨用例污染（踩过）
+
+---
+
 ## 0. 实测事实（本步设计的依据）
 
 > 本仓规矩：设计依据必须是实测结果，不是推断。本节以外的判断一律标注「未实测」。
