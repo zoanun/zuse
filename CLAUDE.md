@@ -71,7 +71,7 @@
 | server 包真名是 `@zouyj/zuse-server` | `pnpm --filter` 写错会「无匹配 + 退出 0」，门禁空跑还显示绿 |
 | 别在 git worktree 里验证跨包改动 | `@zuse/core` 软链指回主检出，会测到错误的分支代码 |
 | `export *` barrel 会撞名 | `core/index.ts` 用了 `export *`，同名导出会 TS2308。注册表里的导出名要带前缀（`anthropicProviderModule` 而不是 `providerModule`） |
-| Windows 子进程编码 | 中文输出要 `PYTHONIOENCODING=utf-8` / `-Dfile.encoding=UTF-8`，否则 OEM 代码页乱码 |
+| Windows 子进程编码 | Python 要 `PYTHONIOENCODING=utf-8`。**Java 不是 `-Dfile.encoding`**（JDK 18+ 起它默认就是 UTF-8，设了等于没设 —— 实测字节仍是 GBK），要的是 `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8`（JDK 19+）。编译错误走 stderr，所以第二个不能漏。别用 `JAVA_TOOL_OPTIONS`：它有效但会往 stderr 多打一行 `Picked up …` |
 | Python 管道输出是块缓冲 | 不加 `PYTHONUNBUFFERED=1`，「流式输出」是假的 |
 | 用 zuse 开发 zuse 时 | 聊天里点 revert/retry 会回滚工作区、抹掉 CLI 改的未提交代码。点之前先 commit |
 
