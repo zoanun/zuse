@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { ToolRegistry, type ResolvedSettings } from '@zuse/core'
 import { RunRegistry, SNIPPET_POLICY, type RunDeps } from '@zuse/tools'
-import { streamRun } from './runsRoutes.js'
+import { streamRun, __resetExecConsent } from './runsRoutes.js'
 import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
@@ -39,9 +39,14 @@ function newProc(): FakeProc {
 }
 
 let dir: string, srv: Server, base: string, service: SessionService, runs: RunRegistry, sessionId: string
+let killedPids: number[] = []
 
 beforeEach(async () => {
   spawned = []
+  killedPids = []
+  // 同意缓存是**模块级**的，跨测试活着。不清的话「不带 confirmed 该 409」这条会
+  // 因为前一个用例确认过同一段代码而拿到 201 —— 实际踩过一次。
+  __resetExecConsent()
   dir = mkdtempSync(join(tmpdir(), 'zuse-runs-'))
   const auth = new LocalPasswordAuth(new PasswordStore(dir), 3600)
   service = new SessionService({ dir: join(dir, 'web-sessions'), cwd: 'E:/proj-a', createSession: fakeCreateSession })
@@ -51,7 +56,7 @@ beforeEach(async () => {
       spawned.push({ command, cwd: opts.cwd, env: opts.env, proc })
       return proc as never
     },
-    killTree: () => {},
+    killTree: (pid: number) => { killedPids.push(pid) },
     oemLabel: null,
   }
   runs = new RunRegistry({ deps })
@@ -279,6 +284,115 @@ describe('run 端点 —— SSE 写失败必须退订', () => {
       // 补退订那行如果没了，订阅会留在 set 里，这里就是空数组。
       expect(killed).toEqual([proc.pid])
     } finally { reg.closeAll() }
+  })
+})
+
+describe('run 端点 —— exec 形态（跑一段代码，不是一条命令）', () => {
+  it('POST {exec:{kind:"python",code}} → 起 run，命令是 uv run --no-project', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    expect(r.status).toBe(201)
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0]!.command).toContain('uv run --no-project')
+    // cwd 仍然是**会话的** cwd，不是临时目录 —— 脚本里 open("data.csv") 该读到用户项目的文件
+    expect(spawned[0]!.cwd).toBe('E:/proj-a')
+  })
+
+  it('代码真的落到磁盘上了，内容一字不差', async () => {
+    const cookie = await authCookie()
+    const code = 'print("你好")\n# 中文注释'
+    const r = await post(cookie, { exec: { kind: 'python', code }, sessionId, confirmed: true })
+    const { dir } = await r.json() as { dir: string }
+    expect(readFileSync(join(dir, 'main.py'), 'utf8')).toBe(code)
+  })
+
+  /**
+   * **路径穿越的护栏。** 这个端点新开了「服务端按请求写文件」的能力，
+   * 文件名必须只来自 planExec 返回的常量，绝不能被请求体影响。
+   */
+  it('请求体里塞 kind 之外的东西不会影响落盘路径', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, {
+      exec: { kind: 'python', code: 'x', name: '../../evil.py', path: 'C:/evil' },
+      sessionId, confirmed: true,
+    })
+    const { dir } = await r.json() as { dir: string }
+    expect(existsSync(join(dir, 'main.py'))).toBe(true)
+    expect(dir).toContain('zuse-run-')
+    // 目录必须在系统临时目录下，不能是别处
+    expect(dir.replace(/\\/g, '/').toLowerCase()).toContain(tmpdir().replace(/\\/g, '/').toLowerCase())
+  })
+
+  it('未知 kind → 400，不落盘不起进程', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'ruby', code: 'puts 1' }, sessionId, confirmed: true })
+    expect(r.status).toBe(400)
+    expect(spawned).toHaveLength(0)
+  })
+
+  /**
+   * **清理用的订阅必须是 `internal: true`。**
+   *
+   * 不加的话它会算进「有没有人在看」，于是片段档的 `onDetach:'kill'` 永远触发不了 ——
+   * 用户关掉页面，进程照跑到 5 分钟墙钟。这个坑步骤 2 刚踩过一次（注册表自己的订阅），
+   * 这里是同一个坑的第二个入口。
+   */
+  it('清理订阅不算「有人在看」：唯一的外部订阅者退订后，进程被收掉', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'python', code: 'x' }, sessionId, confirmed: true })
+    const { runId } = await r.json() as { runId: string }
+    const run = runs.get(runId)!
+    const off = run.subscribe(() => {})
+    expect(killedPids).toEqual([])                 // 前置：有人看着的时候不许杀
+    off()
+    expect(killedPids).toEqual([spawned[0]!.proc.pid])
+  })
+
+  it('run 结束后临时目录被删掉', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'python', code: 'x' }, sessionId, confirmed: true })
+    const { dir } = await r.json() as { dir: string }
+    expect(existsSync(dir)).toBe(true)
+    spawned[0]!.proc.emit('close', 0)
+    await new Promise((r2) => setTimeout(r2, 50))
+    expect(existsSync(dir)).toBe(false)
+  })
+})
+
+describe('run 端点 —— 运行代码要先确认', () => {
+  /**
+   * 内容检测被实测排除了（误报可观、漏报 100%，见 step3 spec §0.1），
+   * 所以改成「运行前明确说一次这会在你电脑上真的执行」。
+   */
+  it('不带 confirmed → 409，且不起进程', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId })
+    expect(r.status).toBe(409)
+    const body = await r.json() as { error: { code: string } }
+    expect(body.error.code).toBe('exec_confirm')
+    expect(spawned).toHaveLength(0)
+  })
+
+  it('确认过一次之后，同一段代码不再问', async () => {
+    const cookie = await authCookie()
+    await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    const again = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId })
+    expect(again.status).toBe(201)
+  })
+
+  /** 代码是逐字执行的，改一个字符就是另一段程序。 */
+  it('改一个字符就重新问', async () => {
+    const cookie = await authCookie()
+    await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    const other = await post(cookie, { exec: { kind: 'python', code: 'print(2)' }, sessionId })
+    expect(other.status).toBe(409)
+  })
+
+  it('Java 的 hint 会带在 409 里（跑不起来的形态先说一声）', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'java', code: 'System.out.println(1);' }, sessionId })
+    const body = await r.json() as { hint?: string }
+    expect(body.hint).toContain('类')
   })
 })
 

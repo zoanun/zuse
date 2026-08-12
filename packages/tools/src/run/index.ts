@@ -12,6 +12,7 @@ export { StreamDecoder, type StreamDecoderOptions } from './stream.js'
 export { TruncateSink, RingSink, type OutputSink } from './sink.js'
 export { runEnv, type RunEnvOptions } from './childEnv.js'
 export { SNIPPET_POLICY, PROJECT_POLICY, type RunPolicy } from './policy.js'
+export { planExec, EXEC_DIR_PLACEHOLDER, type ExecKind, type ExecPlan } from './planExec.js'
 export {
   Run,
   type RunDeps,

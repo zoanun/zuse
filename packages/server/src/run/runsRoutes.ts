@@ -1,6 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { hasBlockingBashSecurityIssue } from '@zuse/core'
-import { RunLimitError, type RunPolicy, type RunRegistry, type RunEvent } from '@zuse/tools'
+import {
+  RunLimitError, planExec, EXEC_DIR_PLACEHOLDER,
+  type RunPolicy, type RunRegistry, type RunEvent, type ExecKind,
+} from '@zuse/tools'
 import type { SessionService } from '../session/SessionService.js'
 
 export interface RunsRouteDeps {
@@ -34,9 +41,30 @@ export function runnerDeclaredEnv(): Record<string, string> {
 export interface StartRunBody {
   command?: unknown
   sessionId?: unknown
-  /** 用户已看过安全提示并确认继续。见 §6.1 —— 不是同意缓存，只对**这一次**请求有效。 */
+  /** 用户已看过提示并确认继续。 */
   confirmed?: unknown
+  /** 步骤 3 的第二种形态：跑一段代码，而不是一条命令。 */
+  exec?: unknown
 }
+
+/**
+ * 「这段代码用户已经确认过」的缓存，键 = `sha256(cwd + '\0' + code)`。
+ *
+ * **为什么在服务端**：键里必须含 cwd，而 cwd 只有服务端有
+ * （见下面 startRun 的注释：绝不接受客户端传），且只在 201 响应里回 ——
+ * 那已经是跑起来之后了。前端算不出这个键。
+ *
+ * **为什么按代码正文而不是按语言/按会话**：代码是逐字执行的，改一个字符就是另一段程序。
+ * **为什么不写进 `permissions.allow`**：那是持久化的，一次点击换永久放行太重。
+ *
+ * 进程内存活，daemon 重启即清空 —— 这是刻意的，不是遗漏。
+ */
+const execConsent = new Set<string>()
+function consentKey(cwd: string, code: string): string {
+  return createHash('sha256').update(cwd).update('\0').update(code).digest('hex')
+}
+/** 仅供测试重置。 */
+export function __resetExecConsent(): void { execConsent.clear() }
 
 export type RunRouteResult =
   | { status: number; json: unknown }
@@ -70,14 +98,20 @@ export async function startRun(
   makePolicy: () => RunPolicy,
   buildEnv: (cwd: string) => NodeJS.ProcessEnv,
 ): Promise<RunRouteResult> {
-  const command = typeof body.command === 'string' ? body.command.trim() : ''
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
-  if (!command) return bad('command 不能为空')
   if (!sessionId) return bad('sessionId 不能为空')
+
+  const exec = parseExec(body.exec)
+  if (exec === 'bad-kind') return bad('不认识这种代码：本步只支持 python / java')
+
+  const command = typeof body.command === 'string' ? body.command.trim() : ''
+  if (!exec && !command) return bad('command 不能为空')
 
   const mgr = await deps.service.getOrLoad(sessionId)
   if (!mgr) return { status: 404, json: { error: { code: 'not_found', message: '找不到这个会话' } } }
   const cwd = mgr.getState().cwd
+
+  if (exec) return startExec(exec, cwd, sessionId, body.confirmed === true, deps, makePolicy, buildEnv)
 
   if (body.confirmed !== true) {
     const hit = hasBlockingBashSecurityIssue(command)
@@ -105,6 +139,81 @@ export async function startRun(
 
 function bad(message: string): RunRouteResult {
   return { status: 400, json: { error: { code: 'bad_request', message } } }
+}
+
+const EXEC_KINDS: ExecKind[] = ['python', 'java']
+
+/**
+ * 只从请求体里取 `kind` 和 `code` 两个字段，**其余一律无视**。
+ *
+ * 这不是防御式编程的洁癖：下面 `startExec` 要按这个结果**往磁盘写文件**。
+ * 请求体里多塞的 `name` / `path` 之类必须一个字都进不了路径 —— 否则就是路径穿越。
+ * 文件名只来自 `planExec` 返回的常量。
+ */
+function parseExec(raw: unknown): { kind: ExecKind; code: string } | null | 'bad-kind' {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as { kind?: unknown; code?: unknown }
+  if (typeof o.code !== 'string') return null
+  const kind = EXEC_KINDS.find((k) => k === o.kind)
+  return kind ? { kind, code: o.code } : 'bad-kind'
+}
+
+function startExec(
+  exec: { kind: ExecKind; code: string },
+  cwd: string,
+  sessionId: string,
+  confirmed: boolean,
+  deps: RunsRouteDeps,
+  makePolicy: () => RunPolicy,
+  buildEnv: (cwd: string) => NodeJS.ProcessEnv,
+): RunRouteResult {
+  const plan = planExec(exec.kind, exec.code)
+  const key = consentKey(cwd, exec.code)
+
+  // 内容检测被实测排除了（step3 spec §0.1：误报可观、漏报 100% —— 那个闸是按 shell
+  // 语法做的匹配，认不出 os.system("curl … | sh")，却会把带 `$` 的正则拦下来）。
+  // 所以这里不检测内容，只是**明确说一次「这会在你电脑上真的执行」**，把判断权交给
+  // 看得懂代码的人。确认过的按 hash(cwd+代码) 记住，改一个字符就重新问。
+  if (!confirmed && !execConsent.has(key)) {
+    return {
+      status: 409,
+      json: {
+        error: { code: 'exec_confirm', message: '这会在你的电脑上真的执行这段代码。' },
+        label: plan.label,
+        ...(plan.hint ? { hint: plan.hint } : {}),
+      },
+    }
+  }
+  execConsent.add(key)
+
+  // 每次一个全新目录。**文件名只用 plan 给的常量**，不拼任何来自请求体的字符串。
+  const dir = mkdtempSync(join(tmpdir(), 'zuse-run-'))
+  try {
+    for (const f of plan.files) writeFileSync(join(dir, f.name), f.content, 'utf8')
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true })
+    throw e                                    // 落盘失败就是 500，不降级往别处写
+  }
+
+  const command = plan.command.split(EXEC_DIR_PLACEHOLDER).join(dir.replace(/\\/g, '/'))
+  try {
+    // cwd 用**会话的** cwd，不是临时目录 —— 脚本里 open("data.csv") 该读到用户项目里的文件。
+    const run = deps.runs.start({ command, cwd, sessionId, policy: makePolicy(), env: buildEnv(cwd) })
+    // 清理挂在 run 的结束事件上。**必须 internal: true** —— 否则这个订阅会算进
+    // 「有没有人在看」，把片段档的 onDetach:'kill' 顶掉（步骤 2 刚踩过这个坑）。
+    // 故意不在进程退出前删：Windows 上文件被占用时删除会失败。
+    const off = run.subscribe((e) => {
+      if (e.type !== 'end') return
+      off()
+      // 删不掉不上报给用户 —— tmp 里的垃圾不是用户的问题。
+      try { rmSync(dir, { recursive: true, force: true }) } catch (err) { console.warn('[zuse-run] 临时目录没删掉', dir, err) }
+    }, { internal: true })
+    return { status: 201, json: { runId: run.id, cwd, dir, label: plan.label } }
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true })
+    if (e instanceof RunLimitError) return { status: 429, json: { error: { code: 'too_many_runs', message: e.message } } }
+    throw e
+  }
 }
 
 /**
