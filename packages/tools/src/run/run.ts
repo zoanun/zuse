@@ -1,4 +1,5 @@
 import { StreamDecoder } from './stream.js'
+import { winOemLabel } from '../proc/oem.js'
 import { RingSink, TruncateSink, type OutputSink } from './sink.js'
 import type { RunPolicy } from './policy.js'
 import type { ShellChildProcess } from '../proc/spawn.js'
@@ -185,7 +186,11 @@ export class Run {
 
   private makeDecoder(stream: 'out' | 'err'): StreamDecoder {
     return new StreamDecoder({
-      oemLabel: this.deps.oemLabel ?? null,
+      // **缺省要探测本机代码页，不能缺省成 null。** 早先写的是 `?? null`，
+      // 于是 startServer 那边没传时永远判 UTF-8 —— 真跑验证里 `ping 127.0.0.1`
+      // 出了 78 个 U+FFFD（"���� Ping ..."）。单测发现不了：测试自己传了 'gbk'。
+      // 用 `!== undefined` 而不是 `??`：显式传 null（非 Windows / 不想解 OEM）要被尊重。
+      oemLabel: this.deps.oemLabel !== undefined ? this.deps.oemLabel : winOemLabel(),
       ...(this.deps.windowBytes !== undefined ? { windowBytes: this.deps.windowBytes } : {}),
       ...(this.deps.windowMs !== undefined ? { windowMs: this.deps.windowMs } : {}),
       onText: (text) => this.onText(stream, text),
@@ -202,10 +207,17 @@ export class Run {
 
   private onText(stream: 'out' | 'err', text: string): void {
     const sink = this.sinks[stream]
+    // **溢出之后就不再往订阅者推了。** kill 是异步的（发信号 ≠ 进程立刻死），这中间
+    // 一个刷屏的进程还能吐很多。真跑验证里：预算 5000，实际推给订阅者 **1,020,000 字符** ——
+    // 预算形同虚设，SSE 那头照样收 1MB。单测发现不了：假子进程是我一次喂一小块的。
+    //
+    // 触发溢出的**那一块仍然全推**（用户要看得到出事前的最后一段），之后一块不推。
+    // 于是推出去的总量 ≈ 预算 + 一块，而不是「直到进程真死为止的全部输出」。
+    const wasOver = sink.overflowed
     sink.push(text)
-    this.emit({ type: 'chunk', stream, text })
+    if (!wasOver) this.emit({ type: 'chunk', stream, text })
     // truncate 档满了就杀；ring 档的 overflowed 恒 false，永远走不到这里（见 sink.ts）。
-    if (sink.overflowed) this.kill('output-cap')
+    if (sink.overflowed && !wasOver) this.kill('output-cap')
   }
 
   private armIdle(): void {

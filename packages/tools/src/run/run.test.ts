@@ -112,6 +112,24 @@ describe('Run —— 终止原因是结构化枚举', () => {
     expect(endOf(events)!.reason).toBe('output-cap')
   })
 
+  /**
+   * **真跑验证抓到的缺陷，单测原先照不出来。**
+   *
+   * kill 是异步的（发信号 ≠ 进程立刻死），这中间一个刷屏的进程还能吐很多。
+   * 真跑实测：预算 5000，实际推给订阅者 **1,020,000 字符** —— 预算形同虚设，
+   * SSE 那头照样收 1MB。假子进程发现不了，因为测试是我一次喂一小块的。
+   */
+  it('溢出之后不再往订阅者推（否则预算只管快照、不管推送量）', () => {
+    vi.useFakeTimers()
+    const { events, out } = makeRun({ sink: { kind: 'truncate', budget: 5 } }, { windowBytes: 1 })
+    out(Buffer.from('abcdefghij'))                         // 一次就溢出，这块仍全推
+    vi.advanceTimersByTime(1)
+    const afterFirst = textOf(events).length
+    out(Buffer.from('X'.repeat(1000)))                     // 溢出之后的，一个字符都不该推
+    vi.advanceTimersByTime(1)
+    expect(textOf(events).length).toBe(afterFirst)
+  })
+
   it('ring 档永远不会因为输出多而被杀', () => {
     vi.useFakeTimers()
     const { killed, out } = makeRun({ sink: { kind: 'ring', chars: 5 } })
