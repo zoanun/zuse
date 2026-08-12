@@ -1,6 +1,16 @@
 /** 可预览的产物种类。PR1 覆盖前四种；'vue' 由 PR2 接上（detect 已能识别，compile 会明确报未支持）。 */
 export type PreviewKind = 'html' | 'js' | 'ts' | 'jsx' | 'tsx' | 'vue'
 
+/**
+ * 可**真跑**的语言（步骤 3）。
+ *
+ * **和服务端 `@zuse/tools` 里的 `ExecKind` 是同一份契约，必须保持一致。**
+ * 这里重写一遍而不是 import，是因为 web 只依赖 `@zuse/protocol`，够不到 tools。
+ * 不一致的后果是可控的：服务端对未知 kind 直接 400（`parseExec` 有白名单），
+ * 也就是说**服务端是权威**，前端多写一个值只会得到一个明确的错误，不会静默跑错东西。
+ */
+export type ExecKind = 'python' | 'java'
+
 /** 一段待预览的代码。 */
 export interface PreviewSpec {
   kind: PreviewKind

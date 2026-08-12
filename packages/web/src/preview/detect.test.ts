@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectKind, kindFromLang, langFromNode, sniffHtml } from './detect.js'
+import { detectKind, detectExec, kindFromLang, langFromNode, sniffHtml } from './detect.js'
 
 /** 造一个 react-markdown v9 传给 `pre` 的 node 形状。 */
 const nodeWithLang = (lang: string) => ({
@@ -55,6 +55,30 @@ describe('sniffHtml —— 只在完全没有语言标注时兜底', () => {
     expect(sniffHtml('a < b && c > d')).toBe(false)
     expect(sniffHtml('const x: Array<string> = []')).toBe(false)
     expect(sniffHtml('<div>只是个片段</div>')).toBe(false)
+  })
+})
+
+describe('detectExec —— 可真跑的语言', () => {
+  it('python / py / python3 都认', () => {
+    for (const l of ['python', 'py', 'python3']) expect(detectExec(nodeWithLang(l))).toBe('python')
+  })
+
+  it('java 认', () => {
+    expect(detectExec(nodeWithLang('java'))).toBe('java')
+  })
+
+  /** 预览与执行是两套：能预览的不该被当成「在你机器上真跑」。 */
+  it('可预览的语言不算可执行（html/js/tsx 走预览那条路）', () => {
+    for (const l of ['html', 'js', 'tsx', 'vue']) expect(detectExec(nodeWithLang(l))).toBeNull()
+  })
+
+  /** bash 没进来是**刻意的**：一条 shell 命令的杀伤面比一段脚本大得多，留到步骤 4。 */
+  it('bash / sh 不认（刻意的，留到步骤 4 的命令输入框）', () => {
+    for (const l of ['bash', 'sh', 'powershell']) expect(detectExec(nodeWithLang(l))).toBeNull()
+  })
+
+  it('没有语言标注时不认（不做内容嗅探 —— 猜错就是在人家机器上跑错东西）', () => {
+    expect(detectExec({ children: [{ properties: {} }] })).toBeNull()
   })
 })
 

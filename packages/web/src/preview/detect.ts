@@ -1,4 +1,4 @@
-import type { PreviewKind } from './types.js'
+import type { PreviewKind, ExecKind } from './types.js'
 
 /**
  * fenced code block 的语言 → 可预览的 kind；不可预览返回 null。
@@ -32,10 +32,27 @@ export function langFromNode(node: unknown): string | null {
   return null
 }
 
-/** 语言字符串 → kind。未知语言（python/java/bash/...）返回 null —— 那些归 A2 或不可预览。 */
+/** 语言字符串 → kind。不可**预览**的语言返回 null（python/java 走 detectExec，见下）。 */
 export function kindFromLang(lang: string | null): PreviewKind | null {
   if (!lang) return null
   return LANG_TO_KIND[lang.toLowerCase()] ?? null
+}
+
+/**
+ * 可**真跑**的语言（步骤 3）。和 `PreviewKind` 是两套东西，不要合并：
+ * 预览是在 iframe 里跑给你看，执行是在**你的机器上真的跑**——
+ * 前者没有确认框，后者必须有。类型分开是为了让「忘了加确认」在编译期就不成立。
+ */
+const LANG_TO_EXEC: Record<string, ExecKind> = {
+  python: 'python', py: 'python', python3: 'python',
+  java: 'java',
+}
+
+/** 语言字符串 → 可执行的 kind。不认识返回 null。 */
+export function detectExec(node: unknown): ExecKind | null {
+  const lang = langFromNode(node)
+  if (!lang) return null
+  return LANG_TO_EXEC[lang] ?? null
 }
 
 /**

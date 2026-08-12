@@ -26,8 +26,9 @@
 | 1 | `planExec`（Python/Java → 命令 + 文件） | ✅ 合入 | `1a6b738` → 挪包 `5b15ce2` |
 | 2 | `TermBuffer`（CRLF/ANSI/增量，四个跨块边界） | ✅ 合入 | `1a6b738` |
 | 3 | 服务端 `exec` 形态 + 落盘 + 清理 + 路径约束 + 同意缓存 | ✅ 合入 | `5b15ce2` |
-| 4 | `detect.ts` 认 python/java（**今天 Python 代码块上没有运行按钮**） | ⬜ 待做 | |
-| 5 | store 双槽（`activeExec`）+ `Rail.tsx` 接线 + **`styles.css` 相邻选择器同步改** | ⬜ 待做 | |
+| 4 | `detect.ts` 认 python/java（`detectExec`，与 `PreviewKind` 分开的类型） | ✅ 合入 | |
+| 5a | store 第二槽 `activeExec.ts` + 「两槽互不挤占」测试 | ✅ 合入 | |
+| 5b | `Rail.tsx` 接线 + **`styles.css` 相邻选择器同步改** | ⬜ 待做 | |
 | 6 | `RailExec` 组件 + fetch 流订阅（**不用 EventSource**，见 §6）+ 错误文案（§7） | ⬜ 待做 | |
 | 7 | 确认框（复用 `ConfirmDialog`/`PermissionCard`，别新做） | ⬜ 待做 | |
 | 8 | 改 `CLAUDE.md` 的 `-Dfile.encoding` 那行 | ✅ 合入 | `2758462` |
