@@ -21,6 +21,28 @@ export {
   StreamShaper,
   type SpawnShellOptions,
 } from './proc/index.js'
+// run 服务（步骤 2）。**后端内部机制，本步没有任何界面变化。**
+// 建在 proc/ 之上：proc 是一次性、无身份的「跑一条命令收输出」，run 是「长跑、有 id、
+// 可重连、有策略」。server 依赖 tools（反过来不行），而步骤 5 要把 run 同时暴露成模型
+// 工具 —— 工具住在 tools 里，所以 run 也放这儿，免得那时整个搬家。
+export {
+  RunRegistry,
+  RunLimitError,
+  Run,
+  StreamDecoder,
+  TruncateSink,
+  RingSink,
+  runEnv,
+  SNIPPET_POLICY,
+  PROJECT_POLICY,
+  type RunPolicy,
+  type RunDeps,
+  type RunEvent,
+  type RunStatus,
+  type EndReason,
+  type RunSummary,
+  type OutputSink,
+} from './run/index.js'
 export {
   checkTmuxAvailable,
   ensureTmuxSocket,

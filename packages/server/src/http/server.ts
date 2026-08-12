@@ -9,6 +9,8 @@ import { isSecureRequest } from './requestSecurity.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
+import { SNIPPET_POLICY, runEnv, type RunRegistry } from '@zuse/tools'
+import { startRun, streamRun, runnerDeclaredEnv, type StartRunBody } from '../run/runsRoutes.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
@@ -27,6 +29,14 @@ import type { ProjectInfo, SkillItem } from '@zuse/protocol'
 export interface RequestHandlerDeps {
   auth: AuthProvider
   service: SessionService
+  /**
+   * run 服务的注册表（步骤 2）。**注入而不是模块级单例** —— 服务端这边所有服务都是注入的，
+   * 而模块级单例在本仓已经咬过人（web 的 `activePreview`：切会话时没人清它）。
+   * 服务端还多一层代价：同一个 vitest worker 里的用例会共享注册表、**把真子进程漏给下一个用例**。
+   *
+   * 可选：现有测试构造 deps 时不必都传；不传则这几条路由整体不挂载。
+   */
+  runs?: RunRegistry
   memory: MemoryService
   search: SearchService
   persona: PersonaService
@@ -992,6 +1002,44 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         return sendJson(res, 500, { error: { code: 'write_failed', message: err instanceof Error ? err.message : String(err) } })
       }
       return sendJson(res, 200, { ok: true })
+    }
+
+    // ── run 服务（步骤 2）─────────────────────────────────────────────────
+    // **这四条必须排在下面的 SPA 兜底之前。** 那条 `if (method === 'GET')` 是全兜底：
+    // 任何没被上面认领的 GET 都会回 index.html + **200**（不是 404）。
+    // `GET /api/runs` 掉进去的话，客户端拿到一坨 HTML 却是 200，比 404 难查得多。
+    if (deps.runs) {
+      const runsDeps = { runs: deps.runs, service: deps.service }
+
+      if (method === 'POST' && path === '/api/runs') {
+        if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
+        let body: StartRunBody
+        try { body = (await readJsonBody(req)) as StartRunBody } catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid body' } }) }
+        const r = await startRun(body, runsDeps, () => SNIPPET_POLICY, () => runEnv(process.env, runnerDeclaredEnv()))
+        if ('sse' in r) return
+        return sendJson(res, r.status, r.json)
+      }
+
+      if (method === 'GET' && path === '/api/runs') {
+        if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
+        return sendJson(res, 200, { runs: deps.runs.list() })
+      }
+
+      if (method === 'GET' && path.startsWith('/api/runs/') && path.endsWith('/stream')) {
+        if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
+        const id = path.slice('/api/runs/'.length, -'/stream'.length)
+        if (streamRun(req, res, id, runsDeps)) return
+        return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
+      }
+
+      if (method === 'DELETE' && path.startsWith('/api/runs/')) {
+        if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
+        const id = path.slice('/api/runs/'.length)
+        // 只发信号，**不等它死**、也不在这里删条目 —— 逐出只在收到 exit 时（run.ts 第一条规则）。
+        // 所以返回 202 而不是 204：这是「已受理」，不是「已完成」。
+        if (!deps.runs.stop(id)) return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
+        return sendJson(res, 202, { stopping: true })
+      }
     }
 
     // Static SPA (F4): serve webDir (built web/dist) + SPA fallback. Falls back to the dev page.

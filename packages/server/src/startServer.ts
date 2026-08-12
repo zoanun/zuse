@@ -26,7 +26,7 @@ import {
   getProviderConfig, createModelClient, setModelInSettings, McpManager, type ToolRegistry, type ModelClient,
 } from '@zuse/core'
 import { makeExpandAttachments } from './upload/imageExpand.js'
-import { LspManager, createLspTool, createLspInstallTool } from '@zuse/tools'
+import { LspManager, createLspTool, createLspInstallTool, RunRegistry, spawnShellCommand, killTree } from '@zuse/tools'
 
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
@@ -213,7 +213,17 @@ export async function startServer(
   // 语音 (V1/V2)：无状态,能力由 settings 的 sttModel/ttsModel 现读决定（未配置 → 前端隐藏按钮）。
   const voice = new VoiceService()
 
-  const handler = makeRequestHandler({ auth, service, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
+  // run 服务的注册表（步骤 2）。**在这里 new 一次、经 deps 传下去** —— 不做模块级单例，
+  // 理由见 RequestHandlerDeps.runs 的注释。`spawn`/`killTree` 从 proc 层原样接过来，
+  // 不在这里另写一套：那两个函数里压着一堆 Windows 的坑（怎么挑 shell、Volta 的递归守卫、
+  // 杀进程树的两条平台分支），重写一份必然漏掉一半。
+  const runs = new RunRegistry({
+    deps: {
+      spawn: (command, opts) => spawnShellCommand(command, { cwd: opts.cwd, ...(opts.env ? { env: opts.env } : {}) }),
+      killTree,
+    },
+  })
+  const handler = makeRequestHandler({ auth, service, runs, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
   // A2:配了证书对就起 https(WS 随之变 wss —— 同一个 server 的 upgrade 事件)。
   const { server: httpServer, scheme } = createAppServer(handler, { cert: cfg.tlsCert, key: cfg.tlsKey })
   const ws = attachWsServer(httpServer, { auth, service, sessionErr })
