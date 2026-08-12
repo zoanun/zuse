@@ -3,9 +3,10 @@ import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import { ToolRegistry, type ResolvedSettings } from '@zuse/core'
-import { RunRegistry, type RunDeps } from '@zuse/tools'
+import { RunRegistry, SNIPPET_POLICY, type RunDeps } from '@zuse/tools'
+import { streamRun } from './runsRoutes.js'
 import { PasswordStore } from '../auth/passwordStore.js'
 import { LocalPasswordAuth } from '../auth/authProvider.js'
 import { SessionService } from '../session/SessionService.js'
@@ -200,6 +201,31 @@ describe('run 端点 —— SSE', () => {
     expect(end).toEqual({ type: 'end', reason: 'exit', exitCode: 0 })
   })
 
+  /**
+   * **对一个已经结束的 run 开流。** 这条路径上 replay 会**同步**推出 end 事件 ——
+   * 也就是说订阅回调在 `const off = run.subscribe(...)` 赋值**之前**就跑了。
+   * 回调里引用 `off` 会撞上 TDZ（`Cannot access 'off' before initialization`），
+   * 后果是 `res.end()` 永远不执行、这条 SSE 连接一直挂着不收尾。
+   */
+  it('对已结束的 run 开流：补完历史后必须收尾，连接不能挂住', async () => {
+    const cookie = await authCookie()
+    const started = await post(cookie, { command: 'echo hi', sessionId })
+    const { runId } = await started.json() as { runId: string }
+    const proc = spawned[0]!.proc
+    proc.stdout.emit('data', Buffer.from('跑完了', 'utf8'))
+    proc.emit('close', 0)                                  // 先结束，再开流
+
+    const res = await fetch(`${base}/api/runs/${runId}/stream`, { headers: { cookie } })
+    // res.text() 只有在服务端 res.end() 之后才会 resolve；挂住的话这里会一直等到超时。
+    const raw = await Promise.race([
+      res.text(),
+      new Promise<string>((_, rej) => setTimeout(() => rej(new Error('SSE 没有收尾，连接挂住了')), 3000)),
+    ])
+    expect(raw).toContain('跑完了')
+    const events = raw.split('\n\n').filter(Boolean).map((f) => JSON.parse(f.replace(/^data: /, '')))
+    expect(events.find((e) => e.type === 'end')).toBeDefined()
+  })
+
   /** 中途接进来的必须先拿到已有输出，否则只看得到「从现在起」的部分。 */
   it('中途接入时补历史（replay）', async () => {
     const cookie = await authCookie()
@@ -213,6 +239,46 @@ describe('run 端点 —— SSE', () => {
     proc.emit('close', 0)
     const raw = await res.text()
     expect(raw).toContain('早就打过的内容')
+  })
+})
+
+/**
+ * 走真 HTTP 测不到「`res.write` 同步抛」—— Node 对已断开的 socket 是异步报错。
+ * 所以这条直接调 `streamRun`，喂一个会抛的假 res。
+ */
+describe('run 端点 —— SSE 写失败必须退订', () => {
+  it('replay 阶段写失败 → 退订 → 片段档把进程收掉（不退订的话它以为还有人在看）', async () => {
+    const killed: number[] = []
+    let proc!: FakeProc
+    const reg = new RunRegistry({
+      deps: {
+        spawn: () => { proc = newProc(); return proc as never },
+        killTree: (pid: number) => { killed.push(pid) },
+        oemLabel: null,
+      },
+    })
+    try {
+      const run = reg.start({ command: 'x', cwd: 'E:/proj-a', sessionId: 's', policy: SNIPPET_POLICY })
+      proc.stdout.emit('data', Buffer.from('abc'))
+      await new Promise((r) => setTimeout(r, 350))         // 等首窗定码，让 snapshot 非空
+      expect(killed).toEqual([])                           // 前置：这时还没人喊杀
+
+      const req = new EventEmitter() as unknown as IncomingMessage
+      let writes = 0
+      const res = {
+        writeHead: () => {}, flushHeaders: () => {},
+        write: () => { writes++; throw new Error('socket 已断') },  // replay 的第一次写就炸
+        end: () => {}, destroy: () => {},
+      } as unknown as ServerResponse
+      const handled = streamRun(req, res, run.id, { runs: reg, service })
+      // 前置条件先自证，否则下面那条断言可能是「replay 压根没推东西」而不是「退订成功」。
+      expect(handled).toBe(true)
+      expect(writes).toBe(1)
+
+      // 退订成功 → 订阅者归零 → 片段档 onDetach:'kill' 触发。
+      // 补退订那行如果没了，订阅会留在 set 里，这里就是空数组。
+      expect(killed).toEqual([proc.pid])
+    } finally { reg.closeAll() }
   })
 })
 

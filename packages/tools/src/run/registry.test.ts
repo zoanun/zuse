@@ -33,6 +33,37 @@ function harness(opts: { maxConcurrent?: number; maxFinished?: number } = {}) {
   return { reg, start, procs, killed, close: (i: number, code = 0) => procs[i]!.emit('close', code) }
 }
 
+/**
+ * 「没人看了就杀」这条**必须在注册表层测**，不能只在 Run 层测。
+ *
+ * Run 层直接 `new Run(...)` 的测试里没有注册表那个常驻订阅，`subs.size === 0` 轻松成立，
+ * 测出来永远是绿的 —— 而真实接线里注册表在 `start()` 就订阅了、一直挂到 end。
+ * 这个差异让 `onDetach:'kill'` 在**真实路径上是死代码**（用户关掉页面，片段进程照跑到
+ * 300 秒墙钟），却在单测里看不出来。这条测试就是补上那个盲区。
+ */
+describe('RunRegistry —— 片段档「没人看就杀」在真实接线下也要成立', () => {
+  it('最后一个外部订阅者退订 → 进程被杀；注册表自己的订阅不算「有人在看」', () => {
+    const { reg, killed, procs } = harness()
+    const run = reg.start({
+      command: 'x', cwd: 'E:/tmp', sessionId: 's1',
+      policy: { ...POLICY, onDetach: 'kill' },
+    })
+    const off = run.subscribe(() => {})
+    expect(killed).toEqual([])                             // 前置：有人在看的时候不许杀
+    off()
+    expect(killed).toEqual([procs[0]!.pid])
+    reg.closeAll()
+  })
+
+  it('项目档（onDetach:keep）退订后不杀，留着可重连', () => {
+    const { reg, killed } = harness()
+    const run = reg.start({ command: 'x', cwd: 'E:/tmp', sessionId: 's1', policy: { ...POLICY, onDetach: 'keep' } })
+    run.subscribe(() => {})()
+    expect(killed).toEqual([])
+    reg.closeAll()
+  })
+})
+
 describe('RunRegistry —— 注册与查找', () => {
   it('start 返回带唯一 id 的 run，get 能拿回同一个', () => {
     const { reg, start } = harness()

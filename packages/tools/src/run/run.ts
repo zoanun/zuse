@@ -83,6 +83,15 @@ export class Run {
   private readonly deps: RunDeps
   private readonly child: ShellChildProcess
   private readonly subs = new Set<(e: RunEvent) => void>()
+  /**
+   * **内部订阅者**（注册表用来知道「什么时候结束」的那种），不计入「有没有人在看」。
+   *
+   * 分成两个集合不是洁癖：注册表在 `start()` 里就订阅了、一直挂到 end 才退，
+   * 所以只要用一个集合，运行期间 `subs.size` 永远 ≥ 1，片段档的 `onDetach:'kill'`
+   * **就是一段死代码** —— 用户关掉页面，进程不会被收，一路跑到 300 秒墙钟。
+   * 这个矛盾原先只写在 registry.ts 的注释里，没有在代码上解决。
+   */
+  private readonly internalSubs = new Set<(e: RunEvent) => void>()
   private readonly sinks: Record<'out' | 'err', OutputSink>
   private readonly decoders: Record<'out' | 'err', StreamDecoder>
 
@@ -140,19 +149,26 @@ export class Run {
    * `replay` = 先把已有输出当成 chunk 事件补给这个订阅者。SSE 的 GET 接进来时要用它，
    * 否则中途接入的人只看得到「从现在起」的输出，前面跑过的全丢。
    */
-  subscribe(fn: (e: RunEvent) => void, opts: { replay?: boolean } = {}): () => void {
-    this.subs.add(fn)
+  subscribe(fn: (e: RunEvent) => void, opts: { replay?: boolean; internal?: boolean } = {}): () => void {
+    const set = opts.internal ? this.internalSubs : this.subs
+    set.add(fn)
     if (opts.replay) {
+      // 这里也走 deliver。**理由和 emit 那条不一样**：replay 是同步跑在 HTTP 请求栈里的，
+      // `http/server.ts` 的 `void handle(...).catch(...)` 会接住它，最坏是 500，不会打死进程。
+      // 包起来是为了「一个订阅者的毛病不该改变别人看到的东西」—— 半截 replay 之后
+      // 订阅仍然留在 set 里，后续事件照收，那才是最难查的状态。
       for (const stream of ['out', 'err'] as const) {
         const text = this.sinks[stream].snapshot()
-        if (text) fn({ type: 'chunk', stream, text })
+        if (text) this.deliver(fn, { type: 'chunk', stream, text })
       }
-      if (this.ended && this._endReason) fn({ type: 'end', reason: this._endReason, exitCode: this._exitCode })
+      if (this.ended && this._endReason) this.deliver(fn, { type: 'end', reason: this._endReason, exitCode: this._exitCode })
     }
     return () => {
-      if (!this.subs.delete(fn)) return
+      if (!set.delete(fn)) return
       // 没人看了 → 片段档杀掉（跑给谁看？），项目档留着（v4 §1 的两档差异之一）。
       // 已经结束的 run 不走这条：没什么可杀的，硬杀会给注册表发一次假的终止。
+      // **判据只看 `subs`，不看 `internalSubs`** —— 见 internalSubs 的注释，
+      // 把注册表那个常驻订阅算进来的话这个分支永远进不去。
       if (this.subs.size === 0 && this.policy.onDetach === 'kill' && !this.ended) this.kill('detach')
     }
   }
@@ -182,6 +198,7 @@ export class Run {
     this.decoders.out.dispose()
     this.decoders.err.dispose()
     this.subs.clear()
+    this.internalSubs.clear()          // 漏掉这个 = 注册表的回调随 run 一起泄漏
   }
 
   private makeDecoder(stream: 'out' | 'err'): StreamDecoder {
@@ -257,7 +274,35 @@ export class Run {
 
   private emit(e: RunEvent): void {
     // 复制一份再遍历：订阅者的回调里退订自己是完全合法的（SSE 连接断开就会这么干）。
-    for (const fn of [...this.subs]) fn(e)
+    for (const fn of [...this.subs, ...this.internalSubs]) this.deliver(fn, e)
+  }
+
+  /**
+   * 投递一个事件给一个订阅者，**异常一律就地拦住**。
+   *
+   * 这不是防御式编程的洁癖，是真跑复现过的：订阅者 throw 一次，整个 daemon
+   * （用户的所有会话）退出码 1 死掉。堆栈：
+   * `ChildProcess.close → finish → settle → decoder.end → StreamDecoder.emit → onText → emit → 订阅者`。
+   * 这条栈上**没有任何 catch**，而本仓没有 process 级 uncaughtException 兜底
+   * （`http/server.ts` 的注释也这么写着，它为 HTTP 那条路径专门加过同样的防护）。
+   * 唯一的真实订阅者是 SSE 的 `res.write()` —— 一个写坏的响应能带走用户所有会话。
+   *
+   * **try/catch 必须在循环体内、每个订阅者一个，不能包整个 for。** `settle()` 里
+   * `decoders.end()` 会先触发一轮 chunk 投递，**然后**才 `emit({type:'end'})`；
+   * 包整个循环的话，前面一个订阅者在 chunk 上抛，后面所有人连 end 都收不到 ——
+   * SSE 那头就是一条永远不收尾的连接。
+   *
+   * 不做「抛异常就自动退订」：throw 不是「订阅者死了」的证据，而 SSE 真正的断连信号
+   * 本来就有（`req.on('close')`）。自动退订会把一次瞬时错误变成永久静默丢数据；
+   * 更糟的是片段档 `onDetach:'kill'` 下踢掉最后一个订阅者会直接把进程杀了。
+   */
+  private deliver(fn: (e: RunEvent) => void, e: RunEvent): void {
+    try {
+      fn(e)
+    } catch (err) {
+      // 静默吞 = 「某个订阅者收不到事件」变成查无线索的怪事，正是本仓明令要消灭的失效方式。
+      console.error(`[zuse-run] 订阅者回调抛异常 run=${this.id} event=${e.type}`, err)
+    }
   }
 
   private clearTimer(which: 'wall' | 'idle' | 'grace'): void {

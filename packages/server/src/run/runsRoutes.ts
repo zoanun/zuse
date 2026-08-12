@@ -139,13 +139,41 @@ export function streamRun(
 
   // `replay: true` —— 中途接进来的必须先拿到已有输出，否则只看得到「从现在起」的部分。
   // 已结束的 run 还会补一条 end，那头才不会一直等一个永不到来的收尾。
-  const off = run.subscribe((e: RunEvent) => {
-    res.write(`data: ${JSON.stringify(e)}\n\n`)
-    if (e.type === 'end') { off(); res.end() }
-  }, { replay: true })
+  //
+  // **绝不能写成 `const off = run.subscribe(cb)` 再在 `cb` 里引用 `off`。**
+  // replay 会**同步**调用 `cb`（对一个已经结束的 run，第一次调用就是 end），
+  // 那一刻 `off` 还在 TDZ 里，`off()` 抛 `Cannot access 'off' before initialization`。
+  // 实测过这个后果：对已结束的 run 开流，`res.end()` 永远不执行、连接一直挂着，
+  // 测试直接卡到超时。所以用「可变引用 + 补退订」这个绕法，别图好看改回去。
+  let off: (() => void) | null = null
+  let done = false
+  const stop = (): void => {
+    done = true
+    if (off) { off(); off = null }
+  }
+
+  const cb = (e: RunEvent): void => {
+    if (done) return                                    // 收尾之后来的一律不写（replay 同步阶段也可能已经收尾）
+    // **写失败必须自己退订。** 库那边会拦住订阅者抛出的异常（否则整个 daemon 死 ——
+    // 真跑复现过），但拦住之后订阅仍然留在 set 里：不在这里退订的话，一条写坏的响应
+    // 会在之后**每一个**事件上再抛一次，日志被刷屏，而且片段档还会因为「还有订阅者」
+    // 而误以为有人在看。写失败就是断连，按断连处理。
+    try {
+      res.write(`data: ${JSON.stringify(e)}\n\n`)
+    } catch {
+      stop()
+      res.destroy()
+      return
+    }
+    if (e.type === 'end') { stop(); res.end() }
+  }
+
+  off = run.subscribe(cb, { replay: true })
+  // replay 同步阶段就收尾了 → 那时 `off` 还是 null，`stop()` 退不掉，这里补一次。
+  if (done) { off(); off = null }
 
   // 客户端断开（关页面 / 切走）→ 退订。片段档的 onDetach:'kill' 会因此把进程收掉，
   // 项目档则保留可重连 —— 两档的差异全在 policy 里，这里一视同仁。
-  req.on('close', () => { off() })
+  req.on('close', stop)
   return true
 }

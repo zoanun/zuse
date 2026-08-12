@@ -288,3 +288,57 @@ describe('Run —— 订阅与 detach', () => {
     expect(endOf(seen)!.reason).toBe('exit')               // 否则 SSE 那头会一直等一个永不到来的收尾
   })
 })
+
+/**
+ * 订阅者的异常**不许溢出到投递方**。
+ *
+ * 这不是防御式编程的洁癖，是真跑复现过的：一个订阅者 throw，整个 daemon（所有会话）
+ * 退出码 1 死掉。堆栈是
+ * `ChildProcess.close → finish → settle → decoder.end → StreamDecoder.emit → Run.onText → Run.emit → 订阅者`，
+ * 而本仓**没有任何 process 级 uncaughtException 兜底**（server.ts 的注释也这么写着），
+ * 所以 Node 的默认行为就是终止进程。
+ *
+ * 唯一的真实订阅者是 SSE 推流里的 `res.write()` —— 一个写坏的响应能带走用户所有会话。
+ */
+describe('Run —— 订阅者异常不得掀掉投递方', () => {
+  /** 坏订阅者排在前面：它不但不能带走进程，也不能挡住排在后面的人。 */
+  it('一个订阅者抛异常，事件仍然送达其余订阅者，且不传播给调用方', () => {
+    const { run, out, close } = makeRun()
+    const seen: RunEvent[] = []
+    run.subscribe(() => { throw new Error('订阅者炸了') })
+    run.subscribe((e) => seen.push(e))
+    expect(() => { out(Buffer.from('abc')); close(0) }).not.toThrow()
+    expect(textOf(seen, 'out')).toBe('abc')
+    expect(endOf(seen)!.reason).toBe('exit')
+  })
+
+  /** replay 分支是**另一条**同步调用路径，单独守：它在 HTTP 请求线程里跑。 */
+  it('replay 时抛异常也不传播（这条走的是 subscribe 里另一处 fn 调用）', () => {
+    const { run, out, close } = makeRun()
+    out(Buffer.from('abc'))
+    close(0)
+    expect(() => run.subscribe(() => { throw new Error('replay 炸了') }, { replay: true })).not.toThrow()
+  })
+
+  /**
+   * **不许静默吞。** 吞掉异常等于把「某个订阅者收不到事件」变成没有任何线索的怪事，
+   * 正是本仓 CLAUDE.md 点名要消灭的「运行期神秘失效」。
+   *
+   * 为什么是裸 `console.error` 而不是可注入的钩子（评审拍板）：全仓没有 logger 抽象，
+   * server 包的房规就是裸 `console.warn('[zuse-server] …')`；而可选钩子在只有一个消费者时
+   * 是投机性抽象，且「忘了注入 = 退回静默」恰好就是它要避免的失效。它是纯加法字段，
+   * 真出现第二个消费者时零成本补上。
+   */
+  it('异常写到 console.error 并带上 run id，不静默吞掉', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const { run, out, close } = makeRun()
+      run.subscribe(() => { throw new Error('订阅者炸了') })
+      out(Buffer.from('abc'))
+      close(0)
+      expect(spy).toHaveBeenCalled()
+      // 带 run id 才查得出是哪一条运行出的事；只打一个 Error 对象等于让人对着堆栈猜。
+      expect(spy.mock.calls.map((c) => c.join(' ')).join('\n')).toContain('r1')
+    } finally { spy.mockRestore() }
+  })
+})

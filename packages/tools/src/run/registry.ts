@@ -86,13 +86,16 @@ export class RunRegistry {
     this.runs.set(id, run)
     // 订阅只为了知道它什么时候结束。**这个订阅不能算进「有没有人在看」** ——
     // 否则片段档的 `onDetach:'kill'` 永远触发不了（注册表自己永远在订阅）。
-    // Run 那边的 detach 判据是 `subs.size === 0`，所以这里退订后才可能触发；
-    // 而我们在 end 到来后立刻退订，那时 run 已经结束、detach 分支本来就跳过。
+    //
+    // 这条约束原先只写在注释里、代码并没有实现它：Run 的 detach 判据是 `subs.size === 0`，
+    // 而这个订阅一直挂到 end 才退，于是运行期间 size 永远 ≥ 1 —— **`onDetach:'kill'` 是死代码**。
+    // 后果是用户关掉页面后片段进程照跑，一直到 300 秒墙钟。`internal: true` 把它放进
+    // 单独的集合，判据才真的成立（有测试守着，别改回去）。
     const off = run.subscribe((e) => {
       if (e.type !== 'end') return
       off()
       this.onFinished(id)
-    })
+    }, { internal: true })
     return run
   }
 
