@@ -416,8 +416,12 @@ button.head:hover .caret { opacity: 0.9; }
   box-shadow: 0 8px 28px rgb(0 0 0 / 18%); padding: 4px; }
 .run-menu-head { padding: 6px 8px; font-size: 11px; color: var(--muted); word-break: break-all; }
 .run-menu-empty { padding: 8px; font-size: 12px; color: var(--muted); }
+/* **`color` 不能省。** 这是个 `<button>`，不设的话会继承全局按钮样式的**白色** ——
+   而菜单背景也是白的，脚本名就是白字白底、对比度 1.00:1，肉眼完全看不见。
+   而 `.rm-cmd` 恰好自己设了灰色，所以「只看得到命令、看不到脚本名」。
+   单测抓不到：`allTextContents()` 查的是 DOM 里有没有这段文字，不查你能不能看见它。 */
 .run-menu-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-  background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
+  color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
 .run-menu-item:hover { background: var(--hover, rgb(0 0 0 / 6%)); }
 .rm-name { font-weight: 600; flex: none; }
 .rm-badge { flex: none; font-size: 10px; padding: 1px 5px; border-radius: 4px;
