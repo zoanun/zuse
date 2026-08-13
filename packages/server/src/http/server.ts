@@ -6,6 +6,7 @@ import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resol
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { isSecureRequest } from './requestSecurity.js'
+import { guardRequest, type HostPolicy, type GuardReject } from './originGuard.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
@@ -26,6 +27,24 @@ import { UnsupportedMediaError, TooLargeError, InvalidUploadIdError, UploadNotFo
 import { MEMORY_TYPES, cwdSlug, type MemoryType } from '@zuse/tools'
 import type { ProjectInfo, SkillItem } from '@zuse/protocol'
 
+/**
+ * 被闸门拒绝时往 stderr 打一行 —— 这是用户排错的**主要**线索（尤其是隧道用户
+ * 突然全 403 的时候）。按 `code + host` 去重，并且总量封顶：不去重的话，
+ * 一个被扫描器盯上的端口会把日志刷爆，真正有用的那一行反而被淹掉。
+ */
+const guardWarned = new Set<string>()
+function warnGuardOnce(r: GuardReject, host: string | undefined): void {
+  const k = r.code + '|' + (host ?? '')
+  if (guardWarned.size > 64 || guardWarned.has(k)) return
+  guardWarned.add(k)
+  console.warn(`[zuse-server] ${r.message}`)
+}
+
+/** 极小的 HTML 转义 —— 只用于把闸门的错误文案放进 403 页面。 */
+function escapeHtmlText(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 export interface RequestHandlerDeps {
   auth: AuthProvider
   service: SessionService
@@ -37,6 +56,14 @@ export interface RequestHandlerDeps {
    * 可选：现有测试构造 deps 时不必都传；不传则这几条路由整体不挂载。
    */
   runs?: RunRegistry
+  /**
+   * Host / Origin 白名单（见 `originGuard.ts`）。**可选** —— 不传则整个闸门不挂，
+   * 现有构造 deps 的测试一行不用改。生产路径由 `startServer` 无条件传入。
+   *
+   * 做成可选是刻意的取舍：这道闸是**拒绝**语义，默认关闭意味着「忘了传」的后果是
+   * 少一层防护而不是整个服务不可用。而生产只有一个构造点，漏不掉。
+   */
+  hostPolicy?: HostPolicy
   memory: MemoryService
   search: SearchService
   persona: PersonaService
@@ -244,6 +271,31 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     // GET /healthz
     if (method === 'GET' && path === '/healthz') {
       return sendJson(res, 200, { status: 'ok', version: VERSION })
+    }
+
+    // DNS rebinding / 跨站写入的总闸（见 originGuard.ts 的「两把锁」说明）。
+    //
+    // **位置有两条讲究，都别动**：
+    // 1. 在 `/healthz` **之后** —— 探活要能被任意监控用任意 Host 打到，而它只泄露
+    //    `{status, version}`，没有可利用面。
+    // 2. 在所有路由**之前** —— 将来新加的路由自动受保护，不靠人记得在每处加一行。
+    //
+    // Origin 闸只对 `/api/*` 开：`/preview-vendor/*` 是沙箱 iframe 取的，它摘掉了
+    // `allow-same-origin`，Origin 恒为 `"null"`，加 Origin 闸会**当场打死预览**；
+    // SPA 静态资源同理没必要（Host 闸已经让 rebinding 页面连 SPA 都拿不到）。
+    const rejected = deps.hostPolicy
+      ? guardRequest(req, deps.hostPolicy, { checkOrigin: path.startsWith('/api/') })
+      : null
+    if (rejected) {
+      warnGuardOnce(rejected, req.headers.host)
+      if (path.startsWith('/api/')) return sendJson(res, 403, { error: rejected })
+      // 导航请求给人看得懂的 HTML —— 否则用户看到的是「页面能开、所有接口 403」这种假 bug
+      res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' })
+      return void res.end(
+        `<!doctype html><meta charset="utf-8"><title>zuse — 请求被拒绝</title>` +
+          `<body style="font:14px/1.6 system-ui;padding:40px;max-width:640px">` +
+          `<h2>请求被 zuse 拒绝</h2><p>${escapeHtmlText(rejected.message)}</p></body>`,
+      )
     }
 
     // GET /api/auth/status

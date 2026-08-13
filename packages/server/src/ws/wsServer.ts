@@ -9,12 +9,15 @@ import type { ServerMessage } from '@zuse/protocol'
 import { parseCookies } from '../http/cookies.js'
 import { SESSION_COOKIE, DEFAULT_SESSION_ID } from '../config.js'
 import { applyClientMessage } from './clientMessage.js'
+import { guardRequest, type HostPolicy } from '../http/originGuard.js'
 
 export interface WsServerDeps {
   auth: AuthProvider
   service: SessionService
   /** Set when session-service construction failed at startup; connections get an error frame. */
   sessionErr?: string
+  /** Host / Origin 白名单。可选（不传则不挂闸）；理由同 `RequestHandlerDeps.hostPolicy`。 */
+  hostPolicy?: HostPolicy
 }
 
 function sendJson(ws: WebSocket, msg: ServerMessage): void {
@@ -34,6 +37,27 @@ export function attachWsServer(httpServer: http.Server | https.Server, deps: WsS
     const url = new URL(req.url ?? '/', 'http://localhost')
     // Only handle /ws; leave other paths for any other upgrade handlers.
     if (url.pathname !== '/ws') return
+
+    // **upgrade 事件不经过 HTTP 的 `handle()`**（那是 requestListener），
+    // 所以 Host/Origin 闸必须在这里重复一遍 —— 漏了的话 rebinding 页面照样能开 WS，
+    // 而 WS 那头是整个会话流（发消息、跑工具）。放在 cookie 校验**之前**：
+    // 先判「你是谁家的页面」，再判「你有没有票」。
+    //
+    // 这里 `checkOrigin` 恒为 true，但**不要求 Origin 必须存在**：浏览器在 WS 握手时
+    // 总是发 Origin，所以「缺 Origin」只可能来自非浏览器客户端 —— 而非浏览器伪造
+    // Origin 是零成本的，强制要求它存在换不到任何安全性，只会打死脚本客户端和现有测试。
+    // 挡 rebinding 的是同一次调用里的 Host 闸。
+    if (deps.hostPolicy) {
+      const rejected = guardRequest(req, deps.hostPolicy, { checkOrigin: true })
+      if (rejected) {
+        socket.write(
+          'HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n' +
+            rejected.message,
+        )
+        socket.destroy()
+        return
+      }
+    }
 
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE]
     if (!deps.auth.verifyToken(token ?? '')) {

@@ -19,6 +19,13 @@ export interface ServerConfig {
   tlsKey?: string
   /** 信任前置代理/隧道的 X-Forwarded-Proto(A2)。默认 false。 */
   trustProxy?: boolean
+  /**
+   * 允许的 Host / Origin 域名（见 `http/originGuard.ts`）。回环名与 IP 字面量始终允许。
+   * 也可用环境变量 `ZUSE_ALLOWED_HOSTS`（逗号分隔）—— 本仓的 `/restart` 技能、cron
+   * 这类场景改环境变量比改命令行方便。**CLI 给了就整体覆盖 env，不做合并**：
+   * 合并语义（是并集还是覆盖？重复怎么办？）没人猜得中，而猜错的后果是安全策略比预期宽。
+   */
+  allowedHosts?: string[]
 }
 
 export function defaultConfig(): ServerConfig {
@@ -29,5 +36,9 @@ export function defaultConfig(): ServerConfig {
     tokenTtlSec: 60 * 60 * 24 * 30,
     cwd: process.cwd(),
     webDir: process.env.ZUSE_WEBDIR,
+    allowedHosts: (process.env.ZUSE_ALLOWED_HOSTS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   }
 }

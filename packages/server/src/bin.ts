@@ -49,6 +49,8 @@ async function main(): Promise<void> {
     ...(args.tlsCert !== undefined ? { tlsCert: args.tlsCert } : {}),
     ...(args.tlsKey !== undefined ? { tlsKey: args.tlsKey } : {}),
     ...(args.trustProxy ? { trustProxy: true } : {}),
+    // CLI 给了就**整体覆盖** env（不合并）—— 理由见 ServerConfig.allowedHosts
+    ...(args.allowedHosts !== undefined ? { allowedHosts: args.allowedHosts } : {}),
   }
 
   // A2:TLS 配置 fail fast —— 安全配置绝不静默降级。

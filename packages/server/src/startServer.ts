@@ -4,6 +4,7 @@ import { dirname, resolve, join } from 'node:path'
 import { PasswordStore } from './auth/passwordStore.js'
 import { LocalPasswordAuth } from './auth/authProvider.js'
 import { makeRequestHandler } from './http/server.js'
+import { buildHostPolicy } from './http/originGuard.js'
 import { attachWsServer } from './ws/wsServer.js'
 import { SessionService } from './session/SessionService.js'
 import { MemoryService } from './memory/MemoryService.js'
@@ -223,10 +224,16 @@ export async function startServer(
       killTree,
     },
   })
-  const handler = makeRequestHandler({ auth, service, runs, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false })
+  // Host / Origin 白名单：挡 DNS rebinding 与跨站写入（见 http/originGuard.ts 的「两把锁」）。
+  // 证书路径也喂进去 —— DNS SAN 自动进白名单，否则 docs/remote-access.md 里两条直连 TLS
+  // 的配方会当场坏掉（用户没配 --allowed-host 却本该能用）。
+  const hostPolicy = buildHostPolicy({ host: cfg.host, allowedHosts: cfg.allowedHosts, tlsCertPath: cfg.tlsCert })
+  const handler = makeRequestHandler({ auth, service, runs, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false, hostPolicy })
   // A2:配了证书对就起 https(WS 随之变 wss —— 同一个 server 的 upgrade 事件)。
   const { server: httpServer, scheme } = createAppServer(handler, { cert: cfg.tlsCert, key: cfg.tlsKey })
-  const ws = attachWsServer(httpServer, { auth, service, sessionErr })
+  // hostPolicy 不能漏：upgrade 事件不经过 HTTP handler，漏了的话 rebinding 页面
+  // 开不了 HTTP 却开得了 WS —— 而 WS 那头是整个会话流（发消息、跑工具）。
+  const ws = attachWsServer(httpServer, { auth, service, sessionErr, hostPolicy })
   await new Promise<void>((resolve) => httpServer.listen(cfg.port, cfg.host, () => resolve()))
   const addr = httpServer.address()
   const port = typeof addr === 'object' && addr ? addr.port : cfg.port
@@ -239,6 +246,13 @@ export async function startServer(
   } else if (cfg.host !== '127.0.0.1' && cfg.host !== 'localhost') {
     console.warn(`[zuse-server] bound to ${cfg.host}:${port} — plaintext HTTP on a network interface. ` +
       'Use TLS (--tls-cert/--tls-key) or a tunnel (+ --trust-proxy); see docs/remote-access.md')
+  }
+  // Host 白名单的状态必须打出来 —— 被闸门拒绝的用户（尤其隧道用户）只有这一行和
+  // 403 里的提示两个线索。裸 `*` 是把这次防护整个关掉，必须是 warn 不是 log。
+  if (hostPolicy.anyName) {
+    console.warn('[zuse-server] ⚠ --allowed-host * :已关闭 Host 白名单，任何域名都能打到这个端口（DNS rebinding 防护失效）')
+  } else if (hostPolicy.names.length > 0) {
+    console.log(`[zuse-server] 允许的域名:${hostPolicy.names.join(', ')}（回环名与 IP 字面量始终允许）`)
   }
   return {
     url,
