@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { RunRegistry, RunLimitError } from './registry.js'
 import type { RunDeps } from './run.js'
-import type { RunPolicy } from './policy.js'
+import { PROJECT_POLICY, SNIPPET_POLICY, type RunPolicy } from './policy.js'
 import type { ShellChildProcess } from '../proc/spawn.js'
 
 afterEach(() => { vi.useRealTimers() })
@@ -61,6 +61,28 @@ describe('RunRegistry —— 片段档「没人看就杀」在真实接线下也
     run.subscribe(() => {})()
     expect(killed).toEqual([])
     reg.closeAll()
+  })
+})
+
+/**
+ * 项目档的两条「不许自动杀」—— 它们守的是同一件事：
+ * **dev server 不吐字节是正常状态，不是卡死。**
+ *
+ * 实测依据：`pnpm -F @zuse/web dev` 启动完 1 秒就彻底安静，之后 24 秒零输出。
+ * 原来 `idleMs` 是 30 分钟，那会把一个健康的 dev server 在午饭时间杀掉。
+ */
+describe('PROJECT_POLICY —— 不许自动杀掉长跑的东西', () => {
+  it('没有空闲超时（dev server 安静下来不该被当成卡死）', () => {
+    expect(PROJECT_POLICY.idleMs).toBeNull()
+  })
+
+  it('没有墙钟（dev server 本来就该一直跑）', () => {
+    expect(PROJECT_POLICY.wallClockMs).toBeNull()
+  })
+
+  /** 对照：片段档那边这两条都开着 —— 误判风险高的是那一侧，不是这一侧。 */
+  it('对照：片段档有墙钟（说明机制活着，项目档是刻意豁免的）', () => {
+    expect(SNIPPET_POLICY.wallClockMs).toBeGreaterThan(0)
   })
 })
 
