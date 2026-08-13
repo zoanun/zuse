@@ -1,4 +1,5 @@
-import { resolve, relative, sep } from 'node:path'
+import { resolve, relative, sep, join, dirname, basename } from 'node:path'
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionDecision, PermissionMode } from './types.js'
@@ -249,14 +250,91 @@ const ABSOLUTE_PATH = /^(?:[A-Za-z]:)?\//
  * 注：判逃逸必须是 `rel === '..'` 或以 `../` 开头，不能用 `startsWith('..')` ——
  * 后者会把 `..foo/` 这种合法目录名误判成逃逸。
  */
+/**
+ * 剥掉 Windows 的扩展长度前缀（`\\?\C:\x` → `C:\x`，`\\?\UNC\srv\share` → `\\srv\share`）。
+ *
+ * 这不是「顺手规整一下」—— 不剥它，路径 deny 规则可以被一个前缀整体绕过（见 matchPath 里的
+ * 引用处）。**只处理 `\\?\`，不碰普通 UNC（`\\srv\share`）** —— 后者是合法的正常路径写法，
+ * 规则里也能照常写出来，没有「同一个文件两种拼法」的歧义。
+ *
+ * 无条件生效、不按平台门控：这类路径在 posix 上不合法，剥了也没有真实路径会受影响；
+ * 而按 `sep` 门控意味着在 posix 上跑的测试覆盖不到它 —— 本仓的 CI 只在 Windows 上跑，
+ * 但依赖「跑在哪个平台」来决定安全判据是否生效，本身就是个坑。
+ */
+/**
+ * 尽力而为地解开符号链接 / junction：对**已存在的最长父路径**做 realpath，
+ * 把尚不存在的尾段原样接回去。
+ *
+ * **为什么必须做。** 本函数原先是纯词法的，于是 cwd 里一个指向外部的链接，在它眼里就是
+ * 一条普普通通的 cwd 内路径。实跑（真 `decide()` + 真读文件）：
+ *
+ * ```
+ * deny: Read(<root>/project/secretdir/**)   allow: Read(./**), Write(./**)
+ *   直接读   <root>/project/secretdir/id_rsa  → DENY
+ *   经 junction 读 <root>/project/link/id_rsa → ALLOW，且**真读到**私钥内容
+ *   经 junction 写 同上                        → ALLOW（命中 Write(./**)）
+ * ```
+ *
+ * **不需要模型先建链接** —— clone 一个不可信仓库即可（git 能携带符号链接）；
+ * 此后 `Write(./**)` 这种「仅限本项目」的规则可以写到 `~/.ssh/authorized_keys`。
+ * 而下面 matchPath 的文档把那道 cwd 围栏称作「本函数的安全核心」—— 它此前对任何
+ * 含链接的仓库都是无效的。
+ *
+ * **为什么要往上找父目录**：`Write` 的目标通常**还不存在**（就是要新建它）。只对存在的
+ * 路径 realpath、不存在就放弃，等于留下「写一个新文件」这个万能绕过口。
+ *
+ * **代价**：每次判定多一次（最多几次）syscall。`decide()` 因此不再是纯函数 —— 它现在是
+ * (入参, 文件系统状态) 的函数。TUI 的规则预览等「只想问问结果」的调用方仍可用，
+ * 只是结果会随磁盘变化，这正是安全判据应有的性质。
+ *
+ * 解不开就返回原值（路径根本不存在、权限不足、竞态被删）——**宁可回到纯词法判定，
+ * 也不能因为 realpath 失败就放行**：调用方拿到的仍是一个能参与 deny 比对的路径。
+ */
+function realpathBestEffort(p: string): string {
+  let cur = p
+  const tail: string[] = []
+  // 上溯到根就停：`dirname('/')==='/'`、`dirname('C:\\')==='C:\\'`，用不动点判据而不是数层数。
+  for (;;) {
+    try {
+      const real = realpathSync.native(cur)
+      return tail.length === 0 ? real : join(real, ...tail.reverse())
+    } catch {
+      const parent = dirname(cur)
+      if (parent === cur) return p
+      tail.push(basename(cur))
+      cur = parent
+    }
+  }
+}
+
+function stripWinLongPrefix(p: string): string {
+  if (!p.startsWith('\\\\?\\') && !p.startsWith('//?/')) return p
+  const rest = p.slice(4)
+  // UNC 变体：`\\?\UNC\srv\share` 的实体是 `\\srv\share`
+  if (/^UNC[\\/]/i.test(rest)) return '\\\\' + rest.slice(4)
+  return rest
+}
+
 function matchPath(spec: string, rawPath: string, rawCwd: string): boolean {
   // cwd 也 resolve 一遍：调用方目前传的都是绝对路径,但相对 cwd 会让 relative() 静默
   // 回落到 process.cwd(),围栏就锚在了错误的目录上。一行成本换掉一整类难查的错。
-  const cwd = resolve(rawCwd)
+  // **cwd 也要解链接。** 只解目标不解 cwd，围栏就会把「cwd 本身位于某个链接之下」的
+  // 正常情况误判成逃逸（macOS 的 `/var` → `/private/var`、Windows 上把项目放在
+  // 一个 junction 里都会踩到）。两边同时解，`relative()` 才是在同一个坐标系里比。
+  const cwd = realpathBestEffort(resolve(rawCwd))
   // 无条件 resolve（而不是 `isAbsolute(raw) ? raw : resolve(...)`）：resolve 会把
   // `.` / `..` 段规整掉。少了这步，走绝对规则那条分支时 `deny: Read(/etc/passwd)`
   // 能被 `/etc/./passwd` 绕过 —— 相对分支的 relative() 自带规整，绝对分支没有。
-  const abs = resolve(cwd, rawPath)
+  //
+  // **先剥掉 Windows 的扩展长度前缀 `\\?\`，否则它是一个绕过一切路径规则的万能钥匙。**
+  // `resolve('\\\\?\\C:\\x')` 得到的是 `//?/C:/x`，与规则 `C:/**` **永不相交**；
+  // 而 `resolvePath`（tool.ts）把原路径直接交给 fs，Node 认这种写法、能正常打开。
+  // 实跑：`deny: Read(<dir>/**)` 下直接读是 DENY，加个前缀就掉到 ASK ——
+  // default 档还会问一次，**bypass（全自主）档下 deny 是仅剩的兜底之一，那里就是静默放行**。
+  // `\\?\UNC\srv\share` 是同一个东西的 UNC 写法，还原成 `\\srv\share`。
+  // 顺序：先剥 `\\?\` 前缀 → 再 resolve 掉 `.`/`..` → 最后解链接。
+  // 解链接必须在最后：realpath 只认真实存在的路径，先把写法规整好它才找得到。
+  const abs = realpathBestEffort(resolve(cwd, stripWinLongPrefix(rawPath)))
 
   // Windows 文件系统大小写不敏感（实测 `C:/Users/nhn/.zuse` 与 `c:/users/nhn/.zuse`
   // 是同一个目录），所以路径比对也必须不敏感 —— 否则 `deny: Read(~/.ssh/**)` 只要

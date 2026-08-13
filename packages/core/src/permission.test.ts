@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { homedir } from 'node:os'
-import { sep, resolve } from 'node:path'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { homedir, tmpdir } from 'node:os'
+import { sep, resolve, join } from 'node:path'
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { buildRule, parseRule, matchesRule, decide, splitBashCommand, normalizePermissionMode, MATCHED_BYPASS } from './permission.js'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionMode } from './types.js'
@@ -495,5 +497,113 @@ describe('MATCHED_BYPASS —— 与 agent.ts 的跨文件字符串契约', () =>
     expect(decide(Bash, 'ls -la', settings({ mode: 'bypass' }), [], cwd).matched).toBe(MATCHED_BYPASS)
     // 非全自主档不许回填这个值，否则计数会把本来就免问的调用也算进去。
     expect(decide(Read, '/repo/a.ts', settings({ mode: 'default' }), [], cwd).matched).not.toBe(MATCHED_BYPASS)
+  })
+})
+
+// ── 以下两组补的是回溯审计 D3 / D4：路径 deny 的两种绕过，都有实跑反例 ──
+
+/**
+ * **`\\?\` 扩展长度前缀不许绕过路径规则。**
+ *
+ * `matchPath` 拿 `resolve()` 的结果做字面 glob 比对，而 `\\?\C:\…` 被 `resolve` 归一化后
+ * 仍是 `//?/C:/…`，与规则 `C:/…/**` **永不相交**；可 `resolvePath`（tool.ts）把它原样交给
+ * fs，Node 能正常打开。于是加一个前缀就绕过了规则。
+ *
+ * 实跑（真 decide()）：直接读 `DENY` → 加前缀 `ASK`。default 档下用户还会被问一次，
+ * **但 bypass（全自主）档下 deny 是仅剩的兜底之一，那里就是静默放行**。
+ * 而 `deny: Read(~/.ssh/**)` 正是本模块注释自己推荐的护私钥写法。
+ */
+describe.skipIf(sep !== '\\')('matchPath —— \\\\?\\ 扩展长度前缀（回溯审计 D3）', () => {
+  const winCwd = 'E:/ai-study/test'
+  it('带前缀的路径仍然命中同一条 deny 规则', () => {
+    expect(matchesRule('Read(E:/secrets/**)', 'Read', 'E:/secrets/k.txt', winCwd)).toBe(true)
+    expect(matchesRule('Read(E:/secrets/**)', 'Read', '\\\\?\\E:\\secrets\\k.txt', winCwd)).toBe(true)
+  })
+  it('UNC 形态的扩展前缀同样归一', () => {
+    expect(matchesRule('Read(//srv/share/**)', 'Read', '\\\\?\\UNC\\srv\\share\\k.txt', winCwd)).toBe(true)
+  })
+  it('归一不能把 cwd 围栏放松', () => {
+    // 前缀剥掉之后仍在 cwd 外 —— `./**` 这种「仅限本项目」的规则不许命中
+    expect(matchesRule('Write(./**)', 'Write', '\\\\?\\C:\\Users\\nhn\\.ssh\\id_rsa', winCwd)).toBe(false)
+  })
+})
+
+/**
+ * **符号链接 / junction 不许绕过 deny，也不许逃出 cwd 围栏。**
+ *
+ * `matchPath` 原先是纯词法的（全仓非测试代码 `realpath` 零命中），所以 cwd 里一个指向外部的
+ * 链接，在它眼里就是一条普普通通的 cwd 内路径。实跑（真 `decide()` + 真读文件）：
+ *
+ * ```
+ * deny: Read(<root>/project/secretdir/**)   allow: Read(./**), Write(./**)
+ *   直接读 <root>/project/secretdir/id_rsa          → DENY
+ *   经 junction 读 <root>/project/link/id_rsa       → ALLOW，且**真读到** "PRIVATE-KEY-CONTENT-DO-NOT-LEAK"
+ *   经 junction 写 <root>/project/link/id_rsa       → ALLOW（命中 Write(./**)）
+ * ```
+ *
+ * **不需要模型先建链接** —— clone 一个不可信仓库即可（git 能携带符号链接）；此后
+ * `Write(./**)` 这种「仅限本项目」的规则可以写到 `~/.ssh/authorized_keys`。
+ * 而 `matchPath` 的文档把那道 cwd 围栏称作「本函数的安全核心」。
+ *
+ * 修法：判定前对**已存在的最长父路径**做 realpath，用真实路径过围栏与 deny；
+ * 不存在的新建路径按其父目录的真实路径判（否则「写一个还不存在的文件」永远绕过检查）。
+ */
+describe('matchPath —— 符号链接 / junction（回溯审计 D4）', () => {
+  let root: string, proj: string, secret: string, link: string
+  let linkOk = false
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'zuse-perm-link-'))
+    proj = join(root, 'project')
+    secret = join(proj, 'secretdir')
+    mkdirSync(secret, { recursive: true })
+    writeFileSync(join(secret, 'id_rsa'), 'PRIVATE-KEY-CONTENT-DO-NOT-LEAK')
+    link = join(proj, 'link')
+    try {
+      // Windows 上 junction 不需要管理员；posix 上直接 symlink
+      if (sep === '\\') execFileSync('cmd', ['/c', 'mklink', '/J', link, secret], { stdio: 'ignore' })
+      else symlinkSync(secret, link, 'dir')
+      linkOk = true
+    } catch {
+      linkOk = false   // 建不了就让下面的用例显式跳过（跳过必须可见）
+    }
+  })
+  afterAll(() => { try { rmSync(root, { recursive: true, force: true }) } catch { /* 清不掉不影响结论 */ } })
+
+  it('经链接读被 deny 的目录 —— 必须仍然 deny', (ctx) => {
+    if (!linkOk) return ctx.skip()
+    const denyGlob = resolve(secret).replace(/\\/g, '/') + '/**'
+    // 对照：直接写绝对路径本来就命中
+    expect(matchesRule(`Read(${denyGlob})`, 'Read', join(secret, 'id_rsa'), proj)).toBe(true)
+    // 本体：经链接进去也必须命中同一条规则
+    expect(matchesRule(`Read(${denyGlob})`, 'Read', join(link, 'id_rsa'), proj)).toBe(true)
+  })
+
+  it('cwd 围栏按真实路径判 —— 指向 cwd 外的链接不算「项目内」', (ctx) => {
+    if (!linkOk) return ctx.skip()
+    // 让链接指向 cwd **之外**（root 下、project 之外）
+    const outside = join(root, 'outside')
+    mkdirSync(outside, { recursive: true })
+    writeFileSync(join(outside, 'secret.txt'), 'x')
+    const outLink = join(proj, 'outlink')
+    try {
+      if (sep === '\\') execFileSync('cmd', ['/c', 'mklink', '/J', outLink, outside], { stdio: 'ignore' })
+      else symlinkSync(outside, outLink, 'dir')
+    } catch { return ctx.skip() }
+    expect(matchesRule('Write(./**)', 'Write', join(outLink, 'secret.txt'), proj)).toBe(false)
+  })
+
+  /** 还不存在的文件按父目录的真实路径判 —— 否则「写一个新文件」就是万能绕过。 */
+  it('目标文件还不存在时，按父目录的真实路径判', (ctx) => {
+    if (!linkOk) return ctx.skip()
+    const denyGlob = resolve(secret).replace(/\\/g, '/') + '/**'
+    expect(matchesRule(`Write(${denyGlob})`, 'Write', join(link, '还不存在.txt'), proj)).toBe(true)
+  })
+
+  /** 普通路径不许被 realpath 改变判定结果（回归：别把正常情况弄坏了）。 */
+  it('不含链接的普通路径判定不变', () => {
+    const g = resolve(proj).replace(/\\/g, '/') + '/src/**'
+    expect(matchesRule(`Read(${g})`, 'Read', join(proj, 'src', 'a.ts'), proj)).toBe(true)
+    expect(matchesRule(`Read(${g})`, 'Read', join(proj, 'other', 'a.ts'), proj)).toBe(false)
   })
 })
