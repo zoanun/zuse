@@ -60,8 +60,17 @@ export interface StartRunBody {
  * 进程内存活，daemon 重启即清空 —— 这是刻意的，不是遗漏。
  */
 const execConsent = new Set<string>()
-function consentKey(cwd: string, code: string): string {
-  return createHash('sha256').update(cwd).update('\0').update(code).digest('hex')
+/**
+ * **sessionId 必须进键。** v4 §9 要的是「存 `sessionAllow`（**会话**内存层）」，
+ * 而这里是个模块级 Set —— 键里不带 sessionId 就等于全局放行：
+ * 会话 A 确认过的代码，会话 B（同一个项目目录，这是常态）点同一个按钮**不再问**。
+ * 会话在这里本来就是一条真实边界（`registry.killSession()` 就是按它切的）。
+ *
+ * cwd 也必须在（v4 §9 的原始理由）：本仓会话的 cwd 是活的，模型 `cd ../other-project`
+ * 之后同一条 `python check.py` 命中缓存、**跑的是另一个项目里的那个文件**。
+ */
+function consentKey(sessionId: string, cwd: string, code: string): string {
+  return createHash('sha256').update(sessionId).update('\0').update(cwd).update('\0').update(code).digest('hex')
 }
 /** 仅供测试重置。 */
 export function __resetExecConsent(): void { execConsent.clear() }
@@ -168,7 +177,7 @@ function startExec(
   buildEnv: (cwd: string) => NodeJS.ProcessEnv,
 ): RunRouteResult {
   const plan = planExec(exec.kind, exec.code)
-  const key = consentKey(cwd, exec.code)
+  const key = consentKey(sessionId, cwd, exec.code)
 
   // 内容检测被实测排除了（step3 spec §0.1：误报可观、漏报 100% —— 那个闸是按 shell
   // 语法做的匹配，认不出 os.system("curl … | sh")，却会把带 `$` 的正则拦下来）。

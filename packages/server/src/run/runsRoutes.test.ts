@@ -168,7 +168,7 @@ describe('run 端点 —— GET 不被 SPA 兜底吃掉', () => {
   it('GET /api/runs 返回 JSON 列表而不是 HTML', async () => {
     const cookie = await authCookie()
     await post(cookie, { command: 'echo hi', sessionId })
-    const res = await fetch(`${base}/api/runs`, { headers: { cookie } })
+    const res = await fetch(`${base}/api/runs?sessionId=${sessionId}`, { headers: { cookie } })
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('application/json')
     const body = await res.json() as { runs: { command: string; cwd: string; status: string }[] }
@@ -193,7 +193,7 @@ describe('run 端点 —— SSE', () => {
     const { runId } = await started.json() as { runId: string }
     const proc = spawned[0]!.proc
 
-    const res = await fetch(`${base}/api/runs/${runId}/stream`, { headers: { cookie } })
+    const res = await fetch(`${base}/api/runs/${runId}/stream?sessionId=${sessionId}`, { headers: { cookie } })
     expect(res.headers.get('content-type')).toContain('text/event-stream')
 
     proc.stdout.emit('data', Buffer.from('你好', 'utf8'))
@@ -220,7 +220,7 @@ describe('run 端点 —— SSE', () => {
     proc.stdout.emit('data', Buffer.from('跑完了', 'utf8'))
     proc.emit('close', 0)                                  // 先结束，再开流
 
-    const res = await fetch(`${base}/api/runs/${runId}/stream`, { headers: { cookie } })
+    const res = await fetch(`${base}/api/runs/${runId}/stream?sessionId=${sessionId}`, { headers: { cookie } })
     // res.text() 只有在服务端 res.end() 之后才会 resolve；挂住的话这里会一直等到超时。
     const raw = await Promise.race([
       res.text(),
@@ -240,7 +240,7 @@ describe('run 端点 —— SSE', () => {
 
     proc.stdout.emit('data', Buffer.from('早就打过的内容', 'utf8'))
     await new Promise((r) => setTimeout(r, 350))          // 让首窗定码（300ms）
-    const res = await fetch(`${base}/api/runs/${runId}/stream`, { headers: { cookie } })
+    const res = await fetch(`${base}/api/runs/${runId}/stream?sessionId=${sessionId}`, { headers: { cookie } })
     proc.emit('close', 0)
     const raw = await res.text()
     expect(raw).toContain('早就打过的内容')
@@ -396,17 +396,72 @@ describe('run 端点 —— 运行代码要先确认', () => {
   })
 })
 
+/**
+ * **会话隔离。** 这几条守的是「一个会话看不见/动不了另一个会话的 run」。
+ *
+ * 单槽时看不出来（前端只挂一个），但 API 早就暴露了：`list()` 返回全部、
+ * DELETE 和 stream 都只按 runId。步骤 4 的在飞列表会把它直接摆到界面上。
+ * runId 是 uuid 猜不到 —— 但「猜不到」不是授权。
+ */
+describe('run 端点 —— 会话隔离', () => {
+  async function twoSessions(cookie: string) {
+    const other = (await service.create({ cwd: 'E:/proj-b' })).id
+    const a = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    const b = await post(cookie, { exec: { kind: 'python', code: 'print(2)' }, sessionId: other, confirmed: true })
+    return { other, aId: (await a.json() as { runId: string }).runId, bId: (await b.json() as { runId: string }).runId }
+  }
+
+  it('列表只给本会话的 run（否则右栏会列出别处正在干什么）', async () => {
+    const cookie = await authCookie()
+    const { aId, bId } = await twoSessions(cookie)
+    const r = await fetch(`${base}/api/runs?sessionId=${sessionId}`, { headers: { cookie } })
+    const { runs } = await r.json() as { runs: { id: string }[] }
+    expect(runs.map((x) => x.id)).toContain(aId)
+    expect(runs.map((x) => x.id)).not.toContain(bId)
+  })
+
+  it('不带 sessionId 的列表请求 → 400，不返回全部', async () => {
+    const cookie = await authCookie()
+    const r = await fetch(`${base}/api/runs`, { headers: { cookie } })
+    expect(r.status).toBe(400)
+  })
+
+  it('停不掉别的会话的 run', async () => {
+    const cookie = await authCookie()
+    const { bId } = await twoSessions(cookie)
+    const r = await fetch(`${base}/api/runs/${bId}?sessionId=${sessionId}`, { method: 'DELETE', headers: { cookie } })
+    expect(r.status).toBe(404)
+    expect(runs.get(bId)!.status).toBe('running')       // 真的没被停
+  })
+
+  it('订阅不到别的会话的输出流', async () => {
+    const cookie = await authCookie()
+    const { bId } = await twoSessions(cookie)
+    const r = await fetch(`${base}/api/runs/${bId}/stream?sessionId=${sessionId}`, { headers: { cookie } })
+    expect(r.status).toBe(404)
+    expect(r.headers.get('content-type')).not.toContain('text/event-stream')
+  })
+
+  it('同一段代码在另一个会话里要重新确认（同意缓存按会话隔离）', async () => {
+    const cookie = await authCookie()
+    const other = (await service.create({ cwd: 'E:/proj-a' })).id   // **同一个 cwd**
+    await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    const again = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId: other })
+    expect(again.status).toBe(409)
+  })
+})
+
 describe('run 端点 —— DELETE', () => {
   it('DELETE 返回 202（已受理），条目仍在 —— 逐出只在收到 exit 时', async () => {
     const cookie = await authCookie()
     const started = await post(cookie, { command: 'sleep 100', sessionId })
     const { runId } = await started.json() as { runId: string }
 
-    const res = await fetch(`${base}/api/runs/${runId}`, { method: 'DELETE', headers: { cookie } })
+    const res = await fetch(`${base}/api/runs/${runId}?sessionId=${sessionId}`, { method: 'DELETE', headers: { cookie } })
     expect(res.status).toBe(202)                          // 不是 204：这是「已受理」不是「已完成」
     expect(runs.get(runId)!.status).toBe('killing')       // 还没死，条目还在
 
-    const list = await (await fetch(`${base}/api/runs`, { headers: { cookie } })).json() as { runs: { status: string }[] }
+    const list = await (await fetch(`${base}/api/runs?sessionId=${sessionId}`, { headers: { cookie } })).json() as { runs: { status: string }[] }
     expect(list.runs[0]!.status).toBe('killing')
   })
 

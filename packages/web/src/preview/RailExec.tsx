@@ -106,7 +106,9 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
 
       // ── SSE 分帧自己解 ──────────────────────────────────────────────
       try {
-        const res = await fetch(`/api/runs/${runId}/stream`, { signal: ac.signal })
+        // sessionId 是**归属校验**用的，不是可选参数：服务端不认就 404。
+        // 见 server.ts 那两处注释 —— 订阅别人的输出流比停掉它更隐蔽。
+        const res = await fetch(`/api/runs/${runId}/stream?sessionId=${encodeURIComponent(exec.sessionId)}`, { signal: ac.signal })
         const reader = res.body?.getReader()
         if (!reader) return
         const dec = new TextDecoder()
@@ -149,7 +151,7 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
 
   const stop = (): void => {
     const id = runIdRef.current
-    if (id) void fetch(`/api/runs/${id}`, { method: 'DELETE' })
+    if (id) void fetch(`/api/runs/${id}?sessionId=${encodeURIComponent(exec.sessionId)}`, { method: 'DELETE' })
   }
 
   const running = phase.k === 'running' || phase.k === 'starting'

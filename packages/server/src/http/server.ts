@@ -1022,12 +1022,24 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
 
       if (method === 'GET' && path === '/api/runs') {
         if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
-        return sendJson(res, 200, { runs: deps.runs.list() })
+        // **必须按会话过滤。** 不过滤的话，一个会话的右栏会列出**别的会话**的命令和 cwd
+        // ——那是别处正在干什么的泄露。单槽时看不出来（前端只挂一个），
+        // 步骤 4 的在飞列表会把它直接摆到界面上。
+        const sid = url.searchParams.get('sessionId')
+        if (!sid) return sendJson(res, 400, { error: { code: 'bad_request', message: 'sessionId 不能为空' } })
+        return sendJson(res, 200, { runs: deps.runs.list().filter((r) => r.sessionId === sid) })
       }
 
       if (method === 'GET' && path.startsWith('/api/runs/') && path.endsWith('/stream')) {
         if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
         const id = path.slice('/api/runs/'.length, -'/stream'.length)
+        // 归属校验，理由同 DELETE —— 订阅别人的输出流比停掉它更隐蔽：
+        // 那是持续地把另一个会话的命令输出往这边推。
+        const sid = url.searchParams.get('sessionId')
+        const target = deps.runs.get(id)
+        if (!sid || !target || target.sessionId !== sid) {
+          return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
+        }
         if (streamRun(req, res, id, runsDeps)) return
         return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
       }
@@ -1035,6 +1047,14 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       if (method === 'DELETE' && path.startsWith('/api/runs/')) {
         if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
         const id = path.slice('/api/runs/'.length)
+        // **归属校验：不校验的话，一个会话能停掉另一个会话的 run。** runId 是 uuid、猜不到，
+        // 但「猜不到」不是授权 —— 列表接口过滤了、这里不校验的话就是个不对称的洞。
+        // 找不到和不属于你，一律 404（不区分，免得 404/403 的差别本身变成探测手段）。
+        const sid = url.searchParams.get('sessionId')
+        const target = deps.runs.get(id)
+        if (!sid || !target || target.sessionId !== sid) {
+          return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
+        }
         // 只发信号，**不等它死**、也不在这里删条目 —— 逐出只在收到 exit 时（run.ts 第一条规则）。
         // 所以返回 202 而不是 204：这是「已受理」，不是「已完成」。
         if (!deps.runs.stop(id)) return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个运行' } })
