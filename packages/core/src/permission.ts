@@ -70,7 +70,12 @@ function matchCommand(spec: string, command: string): boolean {
  * 裸 `&`(后台执行)同样是顶层命令分隔符：`a & rm -rf /` 会把 `a` 丢后台再跑 `rm`,
  * 故必须拆,否则危险子命令整条逃过逐子命令校验(deny/allow 都看不见它)。但重定向里
  * 的 `&` 不拆 —— `2>&1` / `>&2`(前一字符是 `>`/`<`)、`&>file`(后一字符是 `>`)。
- * 这是尽力而为的词法拆分,不处理转义/命令替换 —— 后者由 hasUnanalyzableShell 兜底。
+ * 这是尽力而为的词法拆分。**转义要处理**（见循环里的 `\\` 分支，那是补一个真实越权洞）；
+ * 命令替换不处理 —— 由 hasUnanalyzableShell 兜底。
+ *
+ * 原注释写的是「不处理转义/命令替换 —— **后者**由 hasUnanalyzableShell 兜底」，
+ * 读起来像是两样都有兜底，其实 `hasUnanalyzableShell` 只查 `$(` 和反引号、**不查反斜杠**。
+ * 转义那一半当时既没实现、也没有兜底。
  */
 export function splitBashCommand(command: string): string[] {
   const parts: string[] = []
@@ -78,6 +83,24 @@ export function splitBashCommand(command: string): string[] {
   let quote: "'" | '"' | null = null
   for (let i = 0; i < command.length; i++) {
     const c = command[i]!
+    // **反斜杠转义：连同下一个字符整体吞掉，它不可能是分隔符、也不可能开关引号。**
+    //
+    // 这里原先没有这个分支，是一个可实际利用的越权洞：bash 里引号外的 `\"` 是**字面量
+    // 双引号字符**、不进入引号态，而本函数看到 `"` 就置 `quote`，于是后面的 `;` 被当成
+    // 「引号内的分隔符」不拆 —— 整条命令被当成一个子命令，逐子命令的 deny/allow 一起失效。
+    //
+    // 实跑（git-bash，本仓真正用的 shell）：`ls package.json \"; echo X` 会**执行两条**，
+    // 而 decide() 只看到一条 —— `Bash(echo*)` 明明在 deny 表里也照样 ALLOW；
+    // 纯默认配置（0 条 deny）下 `cat README.md \"; rm -rf /tmp/x` 同样 ALLOW。
+    // 23 项安全检查不会响：它们查的是混淆特征，不是「拆分器与 bash 看法不一致」。
+    //
+    // **单引号内不转义**（bash 语义：`'\'` 里的反斜杠是字面量），所以这个分支要排除它；
+    // 双引号内要吞，否则 `"a\"; b"` 会在 `\"` 处误判引号闭合，后面的 `;` 又被拆开。
+    if (c === '\\' && quote !== "'" && i + 1 < command.length) {
+      cur += c + command[i + 1]!
+      i++
+      continue
+    }
     if (quote) {
       cur += c
       if (c === quote) quote = null
