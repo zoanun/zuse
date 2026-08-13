@@ -26,16 +26,49 @@ describe('sandbox token 集 —— 安全锁', () => {
    * 所以「BashTool 本来就能执行任意命令，沙箱挡不住任何本来挡得住的东西」是错的：
    * 沙箱挡住的正是「绕过权限提示的无人值守提权」。加回来 = 把这个洞重新打开。
    */
-  it('绝不能含 allow-same-origin —— 有它预览代码就能免权限提示打已认证 API', () => {
-    expect(SANDBOX_TOKENS).not.toContain('allow-same-origin')
+  /**
+   * **断言必须落在真 iframe 的 `sandbox` 属性上，不能落在 `SANDBOX_TOKENS` 常量上。**
+   *
+   * 初版三条断言的都是那个模块常量。而全仓 `sandbox` 只有三处命中：这个 describe、
+   * `PreviewFrame.tsx:8` 的注释、以及 `PreviewFrame.tsx:213` 的 `sandbox={SANDBOX_TOKENS}`
+   * —— **没有任何地方读过 iframe 真实的属性**。于是把 213 行那个 `sandbox=` 整个删掉
+   *（也就是权限最大化、上面描述的提权洞全开），三条「安全锁」测试**照样全绿**。
+   * 常量锁住了，应用常量的那一行没锁。
+   *
+   * 这条测试还有第二层保险失效过：它所在的 48 个 web 测试文件**从来没进过「全量测试」命令**
+   *（根 vitest 配置双重排除 web，见 `vitest.workspace.ts` 的文件头）。测得不对 + 跑都没跑，
+   * 是同一个洞能一直隐形的两个原因。
+   */
+  const sandboxOf = (): string[] => {
+    const h = harness({ kind: 'jsx', code: JSX_A })
+    return (h.iframe.getAttribute('sandbox') ?? '').split(/\s+/).filter(Boolean)
+  }
+
+  it('iframe 真实属性上绝不能有 allow-same-origin —— 有它预览代码就能免权限提示打已认证 API', () => {
+    expect(sandboxOf()).not.toContain('allow-same-origin')
   })
 
-  it('仍要有 allow-scripts —— 没有它预览根本跑不起来', () => {
-    expect(SANDBOX_TOKENS).toContain('allow-scripts')
+  it('iframe 真实属性上仍要有 allow-scripts —— 没有它预览根本跑不起来', () => {
+    expect(sandboxOf()).toContain('allow-scripts')
   })
 
-  it('不含 allow-top-navigation —— guest 不该能把整个页面导航走', () => {
-    expect(SANDBOX_TOKENS).not.toContain('allow-top-navigation')
+  it('iframe 真实属性上不含 allow-top-navigation —— guest 不该能把整个页面导航走', () => {
+    expect(sandboxOf()).not.toContain('allow-top-navigation')
+  })
+
+  /**
+   * **属性必须存在。** 上面三条里有两条是「不含 X」——`sandbox` 属性整个消失时它们全都成立
+   *（空数组不含任何东西），而属性消失恰恰是权限最大化。所以要有这一条正面兜底。
+   */
+  it('sandbox 属性本身必须在 —— 属性消失 = 权限最大化，而两条「不含」断言拦不住它', () => {
+    const h = harness({ kind: 'jsx', code: JSX_A })
+    expect(h.iframe.getAttribute('sandbox')).not.toBeNull()
+    expect(sandboxOf().length).toBeGreaterThan(0)
+  })
+
+  /** 常量与真实属性不许脱钩 —— 有人改常量却漏改渲染处时，这条会红。 */
+  it('常量与 iframe 实际属性一致', () => {
+    expect(sandboxOf().join(' ')).toBe(SANDBOX_TOKENS)
   })
 })
 

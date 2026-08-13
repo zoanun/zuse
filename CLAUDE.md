@@ -81,7 +81,11 @@
 - Windows 11 + PowerShell（PowerShell 侧串接用 `;`）；Bash 工具走 git bash
 - 跑 Python 用 `uv run` —— **本机没有裸 `python`**
 - Node 由 Volta 管。子进程要剥掉 `_VOLTA_TOOL_RECURSION`，否则子进程里 `node` 找不到
-- 全量测试：`npx vitest run --root E:/ai-study/zuse`
+- 全量测试：`npx vitest run --root E:/ai-study/zuse`（190 文件 / 2506 用例）。
+  **靠 `vitest.workspace.ts` 才是全量的** —— 根 `vitest.config.ts` 的 `include` 不含 `.tsx`、
+  `exclude` 又显式排掉 `packages/web/**`，两道口子叠在一起曾让这条命令只跑 142/190 个文件，
+  web 的 48 个文件、545 条用例**从来没进过门禁**（回溯审计正是在那里面找到一条假绿的安全测试）。
+  改测试配置前先读 `vitest.workspace.ts` 的文件头。
 
 ## 六、代码风格
 
