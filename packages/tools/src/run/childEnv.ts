@@ -113,8 +113,15 @@ export interface RunEnvOptions {
 /**
  * 按名单从 `base` 里挑，再叠加 runner 自己声明的变量。
  *
- * `declared`（`PYTHONUNBUFFERED` / `PYTHONIOENCODING` / `JAVA_TOOL_OPTIONS` 之类）
+ * `declared`（`PYTHONUNBUFFERED` / `PYTHONIOENCODING` 之类）
  * **不受名单限制**：它不是继承来的，是我们主动注入的，谈不上泄露。
+ *
+ * **`JAVA_TOOL_OPTIONS` 曾经列在上面当例子，已删 —— 它是反例。** 它确实有效，
+ * 但会让 JVM 每次都往 stderr 多打一行 `Picked up JAVA_TOOL_OPTIONS: …`，
+ * 而 Java 片段最常见的用户可见输出恰恰是走 stderr 的编译错误。实测与取舍见
+ * `server/src/run/runsRoutes.ts` 的 `runnerDeclaredEnv()`；Java 要的是
+ * `-Dstdout.encoding` / `-Dstderr.encoding` 命令行参数（见 `planExec.ts`），不是这条环境变量。
+ * 照着旧例子把它塞进 `declared` 是本仓 CLAUDE.md 坑表里明令禁止的写法。
  * 它也**覆盖** base 里的同名项 —— runner 比用户环境更知道这次要怎么跑
  * （比如强制 UTF-8 输出，那是流式解码能少走 OEM 路径的前提）。
  */
