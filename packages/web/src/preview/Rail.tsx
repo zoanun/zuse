@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { TodoItemLite } from '@zuse/protocol'
 import { closeRun, type ActiveRun } from './activePreview.js'
+import { type ActiveExec } from './activeExec.js'
+import { RailExec } from './RailExec.js'
 import { PreviewFrame } from './PreviewFrame.js'
 import { ConsolePanel } from './ConsolePanel.js'
 import type { ConsoleEntry } from './types.js'
@@ -69,8 +71,10 @@ function RailRun({ run }: { run: ActiveRun }) {
  * 「让任务一直挂到全部完成再消失」也是用户拍的板 —— 而它本来就是这个行为
  * （`hasVisibleTodos` = 有任何一条没完成就显示），不需要改。
  */
-export function Rail({ run, todos, messages, backgroundAgents, steps, selectedTurn, onSelectTurn }: {
+export function Rail({ run, exec, todos, messages, backgroundAgents, steps, selectedTurn, onSelectTurn }: {
   run: ActiveRun | null
+  /** 正在真跑的那段代码。**和 `run` 是两个独立的槽**，可以同时非空（见 activeExec.ts）。 */
+  exec: ActiveExec | null
   todos: TodoItemLite[]
   messages: Message[]
   backgroundAgents: string[]
@@ -83,6 +87,12 @@ export function Rail({ run, todos, messages, backgroundAgents, steps, selectedTu
       <TodosPanel todos={todos} />
       <AgentsPanel messages={messages} backgroundAgents={backgroundAgents} />
       {run ? <RailRun run={run} /> : null}
+      {/* **排在 `RailRun` 之后、`StepsDrawer` 之前。** 这一插会切断
+          `.rail > .preview-console + .steps` 那条相邻选择器（预览的控制台不再紧邻步骤区），
+          styles.css 里已经同步加了 `.rail > .rail-exec + .steps` 走同一套高度分配 ——
+          两边必须一起改，只改一边的话步骤区会拿回 180px 下限，把上面挤成一条缝
+          （styles.css 里记着的「预览只剩 33px」那个坑）。 */}
+      {exec ? <RailExec exec={exec} /> : null}
       {/* 无条件渲染（turns 为空时它自己 `return null`），排在 `RailRun` 之后。
           理由见上面的注释 —— **不是**因为下标会跳变（那条已被最小复现证伪），
           而是用户定的上下顺序 + `.preview-console + .steps` 那条 CSS 依赖这个顺序。 */}

@@ -5,8 +5,9 @@ import remarkBreaks from 'remark-breaks'
 import rehypeHighlight from 'rehype-highlight'
 import { taskMarker, type TaskStatus } from './taskMarker.js'
 import { useCopy } from '../state/useCopy.js'
-import { detectKind } from '../preview/detect.js'
+import { detectKind, detectExec } from '../preview/detect.js'
 import { closeRun, openRun, useIsRunOpen } from '../preview/activePreview.js'
+import { closeExec, openExec, useIsExecOpen } from '../preview/activeExec.js'
 
 /**
  * 本条消息是否仍在流式输出。
@@ -127,36 +128,44 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
   // 代码正文只在需要判定时取一次；DOM 尚未挂载时（首帧）拿不到，故也接受 undefined。
   const [code, setCode] = useState('')
   const kind = detectKind(node, code)
+  // 可预览与可执行是**互斥的两条路**：前者在 iframe 里跑给你看，后者在**你的机器上真的跑**。
+  // 一个代码块只可能是其中一种（detect 的两张表没有交集）。
+  const execKind = kind ? null : detectExec(node)
   // 序号 = 本 <Markdown> 之前的存量 + 本块之前的围栏数。offset 拿不到时（理论上不会：
   // react-markdown v9 的 hast 节点带 position，已实测）退化成只用 base —— 同一条消息里
   // 会撞号，但绝不会崩，也不会跨 share/非 share 漂移。
   const off = nodeOffset(node)
   const ordinal = base + (off === undefined ? 0 : countCodeFences(source.slice(0, off)))
   const runId = `${messageId}#${ordinal}`
-  const open = useIsRunOpen(runId)
+  const previewOpen = useIsRunOpen(runId)
+  const execOpen = useIsExecOpen(runId)
+  const open = previewOpen || execOpen
   // 预览已展开时按钮常驻（否则鼠标一移开就找不到「停止」）。
   // 原来靠 CSS 的 `.code-wrap:has(.preview)`，预览搬去右栏后那个选择器永不命中、会**静默失效**，
   // 所以改由 React 打这个类（设计 §5.3 / P1-6）。`kind` 也要判：无语言的缩进代码块没有
   // 运行按钮，却可能和相邻围栏算出同一个序号。
-  const running = open && !!kind
+  const running = open && (!!kind || !!execKind)
 
   return (
     <div className={'code-wrap' + (running ? ' running' : '')}>
       <div className="code-actions">
-        {kind ? (
+        {kind || execKind ? (
           <button
             type="button"
             className="code-run"
             // 流式中禁用而非隐藏：隐藏会让按钮在流结束瞬间跳出来，造成布局抖动。
+            // **执行那条路更需要它**：半截的 Python 跑起来只会报语法错，白白在用户机器上起一个进程。
             disabled={streaming}
-            title={streaming ? '等模型写完再运行' : undefined}
-            onClick={() => (open
-              ? closeRun(runId)
-              // code 是**快照**：点下去这一刻的正文冻进 store，之后代码再变预览也不跟
+            title={streaming ? '等模型写完再运行' : execKind ? '在你的电脑上真的运行这段代码' : undefined}
+            onClick={() => {
+              if (open) return execKind ? closeExec(runId) : closeRun(runId)
+              // code 是**快照**：点下去这一刻的正文冻进 store，之后代码再变也不跟
               // （设计 §3.2）。活推会把流式抖动广播给每一个订阅者，反而制造重渲染风暴。
-              : openRun({ id: runId, kind, code, sessionId }))}
+              if (execKind) openExec({ id: runId, kind: execKind, code, sessionId })
+              else if (kind) openRun({ id: runId, kind, code, sessionId })
+            }}
           >
-            {open ? '停止' : '运行'}
+            {open ? '停止' : execKind ? '在本机运行' : '运行'}
           </button>
         ) : null}
         <button type="button" className="code-copy" onClick={() => copy(ref.current?.textContent ?? '')} aria-label="复制代码">

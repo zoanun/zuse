@@ -27,14 +27,14 @@ const steps = (n: number): TurnSteps[] =>
 describe('Rail 的固定槽位：StepsDrawer 出现/消失不该重挂 PreviewFrame', () => {
   it('steps 从空变成非空 —— iframe 必须是同一个 DOM 节点', () => {
     const { container, rerender } = render(
-      <Rail run={run} todos={[]} messages={[]} backgroundAgents={[]} steps={[]} selectedTurn={null} onSelectTurn={() => {}} />,
+      <Rail run={run} exec={null} todos={[]} messages={[]} backgroundAgents={[]} steps={[]} selectedTurn={null} onSelectTurn={() => {}} />,
     )
     const before = container.querySelector('iframe')
     expect(before).not.toBeNull()
     expect(container.querySelector('.steps')).toBeNull()
 
     rerender(
-      <Rail run={run} todos={[]} messages={[]} backgroundAgents={[]} steps={steps(3)} selectedTurn={null} onSelectTurn={() => {}} />,
+      <Rail run={run} exec={null} todos={[]} messages={[]} backgroundAgents={[]} steps={steps(3)} selectedTurn={null} onSelectTurn={() => {}} />,
     )
     expect(container.querySelector('.steps')).not.toBeNull()
     expect(container.querySelector('iframe')).toBe(before)
@@ -42,11 +42,11 @@ describe('Rail 的固定槽位：StepsDrawer 出现/消失不该重挂 PreviewFr
 
   it('steps 从非空变回空 —— iframe 仍是同一个 DOM 节点', () => {
     const { container, rerender } = render(
-      <Rail run={run} todos={[]} messages={[]} backgroundAgents={[]} steps={steps(3)} selectedTurn={null} onSelectTurn={() => {}} />,
+      <Rail run={run} exec={null} todos={[]} messages={[]} backgroundAgents={[]} steps={steps(3)} selectedTurn={null} onSelectTurn={() => {}} />,
     )
     const before = container.querySelector('iframe')
     rerender(
-      <Rail run={run} todos={[]} messages={[]} backgroundAgents={[]} steps={[]} selectedTurn={null} onSelectTurn={() => {}} />,
+      <Rail run={run} exec={null} todos={[]} messages={[]} backgroundAgents={[]} steps={[]} selectedTurn={null} onSelectTurn={() => {}} />,
     )
     expect(container.querySelector('iframe')).toBe(before)
   })

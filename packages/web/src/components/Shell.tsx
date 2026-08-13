@@ -21,6 +21,7 @@ import { persistModel } from '../state/manageApi.js'
 import { SessionContext } from './Markdown.js'
 import { Rail } from '../preview/Rail.js'
 import { closeRun, useActiveRun } from '../preview/activePreview.js'
+import { closeExec, useActiveExec } from '../preview/activeExec.js'
 import { getCleanView, setCleanView } from '../cleanViewPref.js'
 import { turnStepsOf } from './turnSteps.js'
 import { StepsDrawer } from './StepsDrawer.js'
@@ -85,10 +86,13 @@ export function Shell() {
 
   // 右栏：只认属于当前会话的 run（选择器同步比对，切会话那一帧不会闪上一个会话的预览）。
   const activeRun = useActiveRun(currentSessionId)
+  const activeExec = useActiveExec(currentSessionId)
   // 真正把 store 清干净。选择器已经保证了显示正确，这条 effect 负责不让旧 run 长期驻留
   // ——`activePreview` 是模块级单例，**在此之前没有任何人在切会话时清它**（设计 §3.3 / P0-2）。
   // `/clear`（newSession）、revert、switchSession 都会换掉 currentSessionId，走的是同一条路。
-  useEffect(() => { closeRun() }, [currentSessionId])
+  // **两个槽都要清。** 只清预览的话，切会话后右栏会继续挂着上一个会话的运行输出 ——
+  // 而它背后还连着一条 SSE。这正是 activePreview 当初踩过的坑，新槽会原样复发。
+  useEffect(() => { closeRun(); closeExec() }, [currentSessionId])
 
   // 右栏的显示条件（设计 §8）：**有预览 或 有待办 或 有在跑的子代理**。
   // 判据**一律来自面板自己导出的谓词**，Shell 不复刻 —— `hasVisibleTodos` 里「全完成也消失」
@@ -103,10 +107,14 @@ export function Shell() {
   // 步骤区并进右栏后，`hasRail` **必须**把它算进来：否则「看完回复想翻工具调用」时
   // 前三个条件通常一个都不成立（没预览、待办全完成、没子代理），整栏不渲染 →
   // 步骤跟着一起消失，而主画面已经把工具卡片收走了 = 两边都没有。
-  const hasRail = !!activeRun || showTodos || runningAgents > 0 || visibleSteps.length > 0
+  // `activeExec` 同理**必须**算进来，理由和上面步骤区那条一模一样：点「运行」时通常
+  // 没预览、待办可能全完成、可能没子代理 —— 整栏不渲染的话，用户点完运行**什么都看不到**，
+  // 而进程已经在他机器上跑起来了。这比「看不到输出」更糟。
+  const hasRail = !!activeRun || !!activeExec || showTodos || runningAgents > 0 || visibleSteps.length > 0
   // 只有待办/子代理、没有预览时右栏收窄（设计 §3 的 320px）。
   // 收窄**只能把聊天区变宽**，所以正文列（--col=736px 上限）一格不动 —— PR1 的核心承诺。
-  const railNarrow = hasRail && !activeRun
+  // 真跑输出区和预览一样要宽度（终端文本 320px 一行放不下几个字），所以它也排除收窄。
+  const railNarrow = hasRail && !activeRun && !activeExec
 
   const historyRef = useRef<Map<string, string[]>>(new Map())
   const dirPickerRef = useRef<DirPickerHandle>(null)
@@ -423,6 +431,7 @@ export function Shell() {
         {hasRail ? (
           <Rail
             run={activeRun}
+            exec={activeExec}
             todos={state.todos}
             messages={state.messages}
             backgroundAgents={state.backgroundAgents}

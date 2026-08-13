@@ -365,10 +365,44 @@ button.head:hover .caret { opacity: 0.9; }
    todos 166 / preview **33** / steps 180 —— 33px 高的 iframe 等于没有。
    现在改成：预览拿下限，步骤按内容给、可压缩、且不超过四成高。 */
 .rail > .preview-fill { min-height: 160px; }
-.rail > .preview-console + .steps {
+/* **两个选择器必须并列列出，别只留一个。** 右栏里「预览」和「真跑」是两个独立槽位，
+   紧挨着步骤区的可能是 `.preview-console`（只开了预览）也可能是 `.rail-exec`（开了真跑，
+   它排在预览之后）。只写前者的话，一旦用户开着 exec，这条规则**静默失配** ——
+   步骤区拿回上面那条 180px 下限，把上面的东西挤成一条缝。
+   这是 Rail.tsx 里那句「顺序真要改，先把这条 CSS 一起改」所指的东西。 */
+.rail > .preview-console + .steps,
+.rail > .rail-exec + .steps {
   border-top: 1px solid var(--line);
   flex: 0 1 auto; max-height: 40%; min-height: 0;
 }
+
+/* ── 真跑输出区（`.rail` 的执行槽位）─────────────────────────────────────
+   和预览一样拿一个下限：它同样是用户**主动点「运行」**打开的东西，
+   两块抢高度时该让位的是步骤。 */
+.rail > .rail-exec { min-height: 160px; flex: 1 1 0%; }
+.rail-exec { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); }
+.rail-exec-bar {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 5px 10px; font-size: 11px; color: var(--muted); background: var(--surface);
+}
+.rail-exec-bar .rx-spacer { flex: 1; }
+.rail-exec-bar button { background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; }
+.rail-exec-bar button:hover { color: var(--fg); }
+.rx-title { font-weight: 600; }
+/* 「还在跑」的指示。用动画而不是文字：文字会跟着输出一起滚走。 */
+.rx-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #4a9); animation: rx-pulse 1.2s ease-in-out infinite; }
+@keyframes rx-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+.rail-exec-body { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 8px; }
+.rail-exec-body pre {
+  margin: 6px 0; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5;
+}
+.rx-err-head { font-size: 11px; color: var(--danger, #c55); margin-top: 8px; }
+.rx-err { color: var(--danger, #c55); }
+.rx-note { font-size: 12px; color: var(--muted); padding: 6px 0; }
+.rx-note.bad { color: var(--danger, #c55); }
+.rx-note button { font-size: 12px; cursor: pointer; }
+.rx-hint { margin-bottom: 6px; }
 
 /* 标题整行是按钮 = **宽屏唯一的逃生口**。上一版只有窄屏能收，宽屏想让步骤别占地方
    就只能去 Header 关掉整个精简视图（顺带改变主画面的过滤），等于没有逃生口。 */
