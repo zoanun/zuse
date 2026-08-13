@@ -28,12 +28,30 @@
 | 3 | 服务端 `exec` 形态 + 落盘 + 清理 + 路径约束 + 同意缓存 | ✅ 合入 | `5b15ce2` |
 | 4 | `detect.ts` 认 python/java（`detectExec`，与 `PreviewKind` 分开的类型） | ✅ 合入 | |
 | 5a | store 第二槽 `activeExec.ts` + 「两槽互不挤占」测试 | ✅ 合入 | |
-| 5b | `Rail.tsx` 接线 + **`styles.css` 相邻选择器同步改** | ⬜ 待做 | |
-| 6 | `RailExec` 组件 + fetch 流订阅（**不用 EventSource**，见 §6）+ 错误文案（§7） | ⬜ 待做 | |
-| 7 | 确认框（复用 `ConfirmDialog`/`PermissionCard`，别新做） | ⬜ 待做 | |
+| 5b | `Rail.tsx` 接线 + **`styles.css` 相邻选择器同步改** + `hasRail` 加 exec | ✅ 合入 | `cdb92af` |
+| 6 | `RailExec` 组件 + fetch 流订阅（**不用 EventSource**，见 §6）+ 错误文案（§7） | ✅ 合入 | `cdb92af` |
+| 7 | 确认框（复用 `ConfirmDialog`） | ✅ 合入 | `cdb92af` |
+| — | 真跑验证 `e2e-run-step3.mts`（6 组）：planExec 的命令此前从没真跑过 | ✅ 合入 | `cdb92af` |
+| — | daemon 关停收子进程（评估步骤 4 时查出的真缺陷） | ✅ 合入 | `6d45d3b` |
 | 8 | 改 `CLAUDE.md` 的 `-Dfile.encoding` 那行 | ✅ 合入 | `2758462` |
-| 9 | rebuild + 重启 daemon + **真浏览器点一遍** | ⬜ 待做 | |
-| 10 | 合本地 master + 写 `docs/features.md` | ⬜ 待做 | |
+| 9 | rebuild + 重启 daemon | ✅ 已做（daemon PID 41252 起在 4180） | |
+| 9b | **真浏览器点一遍** | ⚠️ **没做** —— 本会话没有 playwright MCP（CLAUDE.md 说有，实际不可用）。**按本仓铁律这一步还欠着，需要人工点一遍。** | |
+| 10 | 合本地 master + 写 `docs/features.md` | ✅ 合入 | |
+
+### 实现时否决掉的两条自己的设计
+
+1. **§4.4 说 stdout/stderr 合并成一条时间线、err 标红 —— 没这么做。**
+   两条流各有各的 `TermBuffer` 状态（`\r` 覆盖本行、半截转义序列），合并要让 `\r`
+   跨 segment 往回吃，那是错的。改成上下两块。代价：看不出两条流的时间先后。
+2. **§2.3 说要解析 Java 的 public class 名给文件命名 —— 删掉了。**
+   评审实测推翻：单文件模式不校验文件名。见 §0.0 认账表第 1 条。
+
+### 接线时撞到的两个坑（都不在设计里，是写的时候才发现的）
+
+- **`Shell.tsx` 的 `hasRail` 不含 `activeExec`** → 点了运行右栏根本不出现，
+  而进程已经在用户机器上跑起来了。这个坑注释里记过一次（步骤区并进来时），换个槽位又来一遍。
+- **`.rail > .preview-console + .steps`** 会被 `RailExec` 插进去切断 → 步骤区拿回 180px
+  下限。两个选择器并列列出才对。
 
 **接手提示**：4–7 是纯前端，彼此耦合（`detect` 决定按钮出不出来，store 决定右栏挂谁，
 `RailExec` 消费 `TermBuffer`）。第 9 步不能省——本仓四个真实缺陷全是「测试全绿之后真跑才暴露」的。
