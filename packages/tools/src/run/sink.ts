@@ -30,6 +30,24 @@ export interface OutputSink {
   readonly totalChars: number
   /** 「该杀进程了」。ring 档恒 false，见文件头。 */
   readonly overflowed: boolean
+  /**
+   * 快照第一个字符在「**累计产生**」坐标系里的绝对位置。
+   * 持有区间 = `[firstChar, firstChar + snapshot().length)`。
+   *
+   * **为什么必须由 sink 自己给，而不是调用方用 `totalChars - snapshot().length` 算**：
+   * 那个公式假定「丢的一定是前缀」，只对 ring 成立。truncate 留的是**最先来的**、
+   * 丢的是尾巴（见下面两个类的 `push`），两档方向相反。
+   *
+   * 用错的后果特别隐蔽（步骤 5 spec §5.1 推演过）：片段档下按那个公式算出的偏移量，
+   * 内容索引**恰好还是连续的**，所以「读到的内容对不对」那类断言全绿；错的只是
+   * 「缺口在哪一头」这个说法。于是读的人以为自己读完了全部输出，实际漏掉的是
+   * `output-cap` 杀进程之前的收尾 —— 恰恰是「它到底怎么了」的答案所在。
+   *
+   * 也不要在调用方按 sink 种类 `if/else`：`policy.ts` 的文件头明写这个类型
+   * 「不许长出 `kind: 'snippet' | 'project'` 这种判别字段」，那会让读侧知道策略层的实现。
+   * 放在接口上，将来第三种 sink 自动正确。
+   */
+  readonly firstChar: number
   /** 当前可见文本；中途接入的订阅者拿它补历史。 */
   snapshot(): string
 }
@@ -44,6 +62,8 @@ export class TruncateSink implements OutputSink {
 
   get totalChars(): number { return this.total }
   get overflowed(): boolean { return this.over }
+  /** 恒 0 —— 它留的是最先来的那一段，开头一个字都没丢。缺口在**尾部**。 */
+  get firstChar(): number { return 0 }
   snapshot(): string { return this.buf }
 
   push(text: string): void {
@@ -67,6 +87,11 @@ export class RingSink implements OutputSink {
   get totalChars(): number { return this.total }
   /** 恒 false —— ring 丢字符是它正常工作的样子，不是「该杀了」。 */
   get overflowed(): boolean { return false }
+  /**
+   * 丢了多少前缀就前进多少。`capacity: 0` 时 `buf` 恒空、于是 `firstChar === total`，
+   * 持有区间退化成空区间 —— 语义仍自洽（「产生的全丢了」），不用特判。
+   */
+  get firstChar(): number { return this.total - this.buf.length }
   snapshot(): string { return this.buf }
 
   push(text: string): void {
