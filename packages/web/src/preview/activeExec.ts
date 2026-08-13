@@ -20,6 +20,14 @@ export interface ActiveExec {
   code: string
   /** 归属哪个会话：切会话时右栏要清场，否则会挂着上一个会话的东西（预览侧踩过）。 */
   sessionId: string
+  /**
+   * 跑完没有。**代码块上那个按钮的文案要靠它**。
+   *
+   * 真浏览器点一遍才发现的：只有「开着/没开」两态时，跑完之后按钮仍然写着「停止」，
+   * 而点下去的实际行为是关掉面板 —— 文案和行为对不上，还让人以为进程还在跑。
+   * 单测照不出来，因为没人问过「跑完之后按钮该写什么」。
+   */
+  done?: boolean
 }
 
 let active: ActiveExec | null = null
@@ -63,9 +71,22 @@ export function useActiveExec(sessionId: string): ActiveExec | null {
   return useSyncExternalStore(subscribe, get, get)
 }
 
-/** 代码块用的选择器：返回布尔（按值比较，安全）。 */
-export function useIsExecOpen(id: string): boolean {
-  const get = (): boolean => active?.id === id
+/** 跑完了：右栏收到 end 之后调。只改标志，**不关面板** —— 输出得留着给人看。 */
+export function markExecDone(id: string): void {
+  if (!active || active.id !== id || active.done) return
+  active = { ...active, done: true }
+  emit()
+}
+
+/**
+ * 代码块用的选择器：返回**三态字符串**（按值比较，安全）。
+ *
+ * 不是布尔：布尔只能表达「开着/没开」，而代码块按钮需要区分「正在跑」和「跑完了」——
+ * 两态时跑完之后按钮仍写着「停止」，点下去却是关面板。真浏览器点一遍才发现的。
+ */
+export function useExecState(id: string): 'idle' | 'running' | 'done' {
+  const get = (): 'idle' | 'running' | 'done' =>
+    active?.id !== id ? 'idle' : active.done ? 'done' : 'running'
   return useSyncExternalStore(subscribe, get, get)
 }
 

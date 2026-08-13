@@ -1,6 +1,6 @@
 import { describe, expect, it, afterEach } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { __resetActiveExec, closeExec, openExec, useActiveExec, useIsExecOpen, type ActiveExec } from './activeExec.js'
+import { __resetActiveExec, closeExec, openExec, markExecDone, useActiveExec, useExecState, type ActiveExec } from './activeExec.js'
 import { __resetActivePreview, openRun, useActiveRun } from './activePreview.js'
 
 afterEach(() => { act(() => { __resetActiveExec(); __resetActivePreview() }) })
@@ -26,11 +26,33 @@ describe('activeExec', () => {
     expect(h.result.current).toBeNull()
   })
 
-  it('useIsExecOpen 返回布尔', () => {
-    const h = renderHook(() => useIsExecOpen('m1#0'))
-    expect(h.result.current).toBe(false)
+  /**
+   * **三态，不是布尔。** 真浏览器点一遍才发现的：只有「开着/没开」两态时，
+   * 跑完之后代码块上的按钮仍写着「停止」，而点下去的实际行为是关掉面板 ——
+   * 文案和行为对不上，还让人以为进程还在跑。
+   */
+  it('useExecState 三态：没开 / 正在跑 / 跑完了', () => {
+    const h = renderHook(() => useExecState('m1#0'))
+    expect(h.result.current).toBe('idle')
     act(() => openExec(execIn('sess-a')))
-    expect(h.result.current).toBe(true)
+    expect(h.result.current).toBe('running')
+    act(() => markExecDone('m1#0'))
+    expect(h.result.current).toBe('done')
+  })
+
+  it('markExecDone 只改标志，**不关面板** —— 输出得留着给人看', () => {
+    const h = renderHook(() => useActiveExec('sess-a'))
+    act(() => openExec(execIn('sess-a')))
+    act(() => markExecDone('m1#0'))
+    expect(h.result.current).not.toBeNull()
+    expect(h.result.current?.done).toBe(true)
+  })
+
+  it('markExecDone 认错 id 不生效（免得关掉/标记了别人那条）', () => {
+    const h = renderHook(() => useExecState('m1#0'))
+    act(() => openExec(execIn('sess-a')))
+    act(() => markExecDone('m2#0'))
+    expect(h.result.current).toBe('running')
   })
 })
 

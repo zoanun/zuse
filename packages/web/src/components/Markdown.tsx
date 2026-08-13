@@ -7,7 +7,7 @@ import { taskMarker, type TaskStatus } from './taskMarker.js'
 import { useCopy } from '../state/useCopy.js'
 import { detectKind, detectExec } from '../preview/detect.js'
 import { closeRun, openRun, useIsRunOpen } from '../preview/activePreview.js'
-import { closeExec, openExec, useIsExecOpen } from '../preview/activeExec.js'
+import { closeExec, openExec, useExecState } from '../preview/activeExec.js'
 
 /**
  * 本条消息是否仍在流式输出。
@@ -138,8 +138,8 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
   const ordinal = base + (off === undefined ? 0 : countCodeFences(source.slice(0, off)))
   const runId = `${messageId}#${ordinal}`
   const previewOpen = useIsRunOpen(runId)
-  const execOpen = useIsExecOpen(runId)
-  const open = previewOpen || execOpen
+  const execState = useExecState(runId)
+  const open = previewOpen || execState !== 'idle'
   // 预览已展开时按钮常驻（否则鼠标一移开就找不到「停止」）。
   // 原来靠 CSS 的 `.code-wrap:has(.preview)`，预览搬去右栏后那个选择器永不命中、会**静默失效**，
   // 所以改由 React 打这个类（设计 §5.3 / P1-6）。`kind` 也要判：无语言的缩进代码块没有
@@ -165,7 +165,12 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
               else if (kind) openRun({ id: runId, kind, code, sessionId })
             }}
           >
-            {open ? '停止' : execKind ? '在本机运行' : '运行'}
+            {/* **跑完之后不能还写「停止」** —— 点下去的实际行为是关掉面板，
+                文案和行为对不上，还让人以为进程还在跑。真浏览器点一遍才发现的。 */}
+            {execState === 'running' ? '停止'
+              : execState === 'done' ? '收起输出'
+              : previewOpen ? '停止'
+              : execKind ? '在本机运行' : '运行'}
           </button>
         ) : null}
         <button type="button" className="code-copy" onClick={() => copy(ref.current?.textContent ?? '')} aria-label="复制代码">

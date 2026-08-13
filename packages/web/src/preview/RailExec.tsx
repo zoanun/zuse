@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { closeExec, type ActiveExec } from './activeExec.js'
+import { closeExec, markExecDone, type ActiveExec } from './activeExec.js'
 import { TermBuffer } from '../exec/termText.js'
 import { ConfirmDialog } from '../components/ConfirmDialog.js'
 
@@ -131,6 +131,9 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
             } else {
               setOut(bufs.out.flush()); setErr(bufs.err.flush())
               setPhase({ k: 'ended', ...endText(ev.reason, ev.exitCode, hadOutput) })
+              // 告诉 store 跑完了 —— 代码块上那个按钮要从「停止」变成「收起输出」。
+              // **只标记、不关面板**：输出得留着给人看。
+              markExecDone(exec.id)
               // 读到 end 就主动断开 —— 不 abort 的话这条连接会一直挂着。
               ac.abort()
               return
