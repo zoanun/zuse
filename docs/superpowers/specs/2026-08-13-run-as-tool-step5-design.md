@@ -354,8 +354,32 @@ v1 写的是 `dropped = totalChars - snapshot().length`，**这个公式只对 r
 于是持有区间统一为 `[firstChar, firstChar + snapshot().length)`，两个缺口各自可判：
 
 - `firstChar > 0` → 前面缺了 `[0, firstChar)`
-- `firstChar + snapshot().length < totalChars` → 后面缺了，且这一档必然伴随
-  `endReason === 'output-cap'`（`run.ts` 的 `EndReason` 已有这一档，不用新造）
+- `firstChar + snapshot().length < totalChars` → 后面缺了
+
+**尾部缺口的判据只能是那个算术式，`endReason` 绝不能当条件。**
+初稿写的是「这一档必然伴随 `endReason === 'output-cap'`」——**这句是假的**：
+
+```
+$ sed -n '180,181p' packages/tools/src/run/run.ts
+  kill(reason: EndReason): void {
+    if (this.ended || this._status !== 'running') return
+$ grep -n "this.kill('wall-clock')\|this.kill('detach')\|this.kill('idle')\|this.kill('output-cap')" packages/tools/src/run/run.ts
+132:      this.wallTimer = setTimeout(() => this.kill('wall-clock'), init.policy.wallClockMs)
+172:      if (this.subs.size === 0 && this.policy.onDetach === 'kill' && !this.ended) this.kill('detach')
+237:    if (sink.overflowed && !wasOver) this.kill('output-cap')
+243:    this.idleTimer = setTimeout(() => this.kill('idle'), this.policy.idleMs)
+```
+
+`kill()` 对**已经在 `killing`** 的 run 是 no-op，`pendingReason` 保持先前那个。
+可达序列（片段档，`onDetach:'kill'` + 3 秒宽限）：用户关页面 → 172 行 `kill('detach')` →
+`_status='killing'` → 宽限期内 `onText` 照跑、sink 照收 → 撑爆预算 → 237 行
+`kill('output-cap')` **撞上第 181 行直接返回**。最终 `endReason === 'detach'`。
+
+把提示挂在 `endReason` 上的后果：detach / wall-clock / idle 抢跑时模型**拿不到尾部缺口提示**，
+就是本节要消灭的那个「模型以为自己读完了」的 bug 换扇门原样复活 —— 而 §10.2 的变异测试
+（测的是干净的超预算场景）**是绿的**。这正是初稿那个 bug 的特征。
+
+`endReason` 只作为附加说明打印（多数情况确实是 `output-cap`），不参与判定。
 
 **按 sink 种类 `if/else` 是错的做法**：那会让「工具层知道策略层的实现」，
 而 `policy.ts` 的文件头明写这个类型「**不许长出 `kind: 'snippet' | 'project'` 这种判别字段**」。
@@ -368,7 +392,7 @@ v1 写的是 `dropped = totalChars - snapshot().length`，**这个公式只对 r
 | `since >= totalChars` | 「暂无新输出」（**不是空字符串**） |
 | `since >= firstChar` | 从 `snapshot()[since - firstChar]` 起给 |
 | `since < firstChar` | **明说** `[since, firstChar)` 已丢弃，从 `firstChar` 起给 |
-| 给完后仍 `< totalChars` 且是 truncate 档 | **明说**尾部 N 字符已丢弃、进程因 `output-cap` 被终止 |
+| 右端 `firstChar + snapshot().length < totalChars` | **明说**尾部 N 字符已丢弃（附带打印 `endReason`，但不拿它当条件） |
 
 第三、四行的「明说」是重点。**静默地跳过，模型会以为读到的是连续的输出**，
 然后对着一段中间（或尾部）缺了几万字符的日志做推断。宁可让它知道自己漏了。
@@ -435,14 +459,81 @@ wantOut = min(可给的 out 长度, CAP);  wantErr = min(可给的 err 长度, C
 
 **游标是原始（未净化）坐标系** —— 先按原始 offset 切片，再净化。所以：
 
-- 取原始区间 `[a, b)` 后，若有一段 CSI 从 `s < b` 起、到 `b` 还没结束 → **把 `b` 收回到 `s`**，
-  `nextSince` 报收回后的值，下一段正好从序列开头接上。
-- 若收回会导致 `b == a`（这一段整个就是一条超长序列的开头）→ 反向**前伸**到序列结束，
-  否则游标永远不前进，模型会无限循环。这条边界要有测试。
-- 起点 `a` 由归纳法保证在边界上（我们只发出安全的 `nextSince`）；但模型可以传任意负数，
-  所以切片开头若挂着一截**孤儿序列尾巴**，直接剥掉。
+**规则 (a) 右边界收回**：取原始区间 `[a, b)` 后，若有一段 CSI 从 `s < b` 起、到 `b` 还没结束 →
+**把 `b` 收回到 `s`**，`nextSince` 报收回后的值，下一段正好从序列开头接上。
+
+**规则 (b) 退化时前伸**：若收回会导致 `b == a`（这一段整个就是一条超长序列的开头）→
+反向**前伸**到**序列结束、或可给区间末尾，取先到者**，否则游标永远不前进。
+「或可给区间末尾」不能漏：**进程可以死在半截序列上**（sink 里最后三个字符就是 `\x1b[3`，
+之后再也不会有输出）。写成「前伸到序列结束」而序列没有结束时，`nextSince` 永远停在原地、
+尾部提示永远说「还有 3 字符未读」，**模型对着一个已经 `exited` 的 run 无限轮询**。
+补充：`status === 'exited'` 时末尾挂着的半截序列**直接消费掉并丢弃**，
+`nextSince` 推进到 `totalChars`。仓库里已有同样的判断 —— `termText.ts` 的 `flush()` 注释：
+「悬挂的 `\r` 直接丢弃（它后面永远不会有东西了），半截转义序列也丢弃（那不是给人看的）
+——但**正文必须留着**」。
+
+**规则 (c) 起点归位：往回看，不要猜。** 起点 `a` 由归纳法保证在边界上（我们只发出安全的
+`nextSince`），但模型可以传任意负数，归纳链就断了。
+
+> 初稿写的是「切片开头若挂着一截**孤儿序列尾巴**，直接剥掉」。**这条会大面积误删正文。**
+> 孤儿尾巴从切片本身**不可识别** —— `termText.ts` 之所以永不认错，是因为它从头顺着流走、
+> 用 `pendingEsc` 把状态带过来，它**知道**前面有没有 `\x1b[`；而本工具是无状态的（§5 的刻意
+> 取舍），`31m` 和 `main` 在它眼里长得一模一样。唯一能写的判据是把 `ANSI_FULL` 去掉被切走的
+> `\x1b[` 前缀，得到 `^[0-9;?]*[ -/]*[@-~]`。实测（`scratchpad/probe-orphan.mjs`）：
+>
+> ```
+> EATS "31m"      <- "31mRED"                            =>  "RED"          ← 唯一一条是对的
+> EATS "T"        <- "Traceback (most recent call last):" =>  "raceback …"
+> EATS "E"        <- "ERROR: build failed"                =>  "RROR: …"
+> EATS "m"        <- "main.py\", line 7"                  =>  "ain.py\", …"
+> EATS "  a"      <- "  at Object.<anonymous>"            =>  "t Object.…"
+> keeps           <- "2026-08-13 10:27 build ok"
+>
+> 6/7 被吃掉（其中只有第 1 条是该吃的）
+> ```
+>
+> 原因很直白：`[@-~]` 是 0x40–0x7E，**囊括全部大小写字母**，而前两个组都允许匹配空 ——
+> 只要切片第一个字符是字母就被吃。而 §5.3 说负数 `since` 是「模型 90% 的实际需求」，
+> 落点是任意字符。于是绝大多数 `since: -5000` 的读取，第一个字符被无声吃掉，
+> `Traceback` 变成 `raceback` —— 少一个字母，review 时几乎看不出来，
+> 而模型会对着被篡改的第一行做推断。
+
+**正确做法**：`snapshot()` 整个字符串就在手里，`a` 在其中的下标是 `a - firstChar`。
+从该下标**向前扫一个有界距离**（CSI 很短，64 字符封顶）找 `\x1b`；找到、且它开的序列跨过了
+`a`，就把 **`a` 前推到序列结束**，并在「本次读取 [a, b)」里报前推后的 `a`。
+找不到 `\x1b` 就说明 `a` 本来就在边界上，什么都不做。这与规则 (a) 收回右边界是同一个操作的
+镜像：**确定性、零误删、不需要「孤儿尾巴」这个概念。**
 
 另外要向模型说明：「本次 [a, b)」是**原始**区间，净化后字符数会少于 `b - a`，这是正常的。
+
+### 5.6 已知代价：分段净化 ≠ 整份净化
+
+**`\r`「覆盖本行」的作用域是整行，跨读取边界时前一段的残行抹不掉。**
+用**真的** `TermBuffer` 实测（`scratchpad/probe-seg.mts`，`node --experimental-strip-types`
+直接 import `packages/web/src/exec/termText.ts`）：
+
+```
+"aaaa\rbbbb"       cut@4 | whole="bbbb"     | seg1+seg2="aaaabbbb"   *** DIFFERENT ***
+"10%\r20%\r100%"   cut@4 | whole="100%"     | seg1+seg2="10%100%"    *** DIFFERENT ***
+"done\nA\rB"       cut@6 | whole="done\nB"  | seg1+seg2="done\nAB"   *** DIFFERENT ***
+"a\r\nb"           cut@2 | whole="a\nb"     | seg1+seg2="a\nb"         SAME
+"x\x1b[31mRED"     cut@4 | whole="xRED"     | seg1+seg2="x1mRED"     *** DIFFERENT ***
+
+4/5 组分段净化 != 整份净化
+```
+
+根因是 `overwriteLine()` 抹的是**累计文本**里最后一个 `\n` 之后的内容 —— 落在段 2 开头的 `\r`，
+要抹的字符长在**段 1 的尾巴上**。这是个负增量，跨段表达不了；而本工具每次调用独立、无状态。
+（第 4 行 `\r\n` 跨段之所以 SAME，是 `pendingCR` 那条路径碰巧对上了，不能推广。
+第 5 行 DIFFERENT 反而是好消息：它证明 §5.5 规则 (a) 的收回是必需的。）
+
+**代价：模型轮询一个带进度条的构建时，每个读取边界会残留一行过期的进度条。**
+**不修** —— 修它要么让工具有状态（违反 §5「服务端不记状态」这条核心取舍，模型就再也回不去
+重读了），要么每次重新净化整份（O(n²)）。写下来，不留白。
+
+这条直接决定了 §10 的测试怎么写：**不许**断言「两段拼起来 == 整份净化的结果」，那条按字面写
+必然红；而实现者为了让它绿，会挑一份不含 `\r` 的夹具 —— 于是它退化成「测了个不会失败的东西」，
+正是本仓最该防的那类假绿。拆成两条，见 §10.6a/6b。
 
 ## 6. 会话隔离
 
@@ -518,19 +609,33 @@ HTTP 层三个路由都补了，工具层是**第四个入口**，漏了等于�
 1. **[变异]** 会话隔离：A 会话的工具读 B 会话的 runId → 报「没有这个运行」。
    变异：去掉 sessionId 过滤 → 必须红。
 2. **[变异]** **truncate 档缺的是尾巴**：超预算的片段 run，读到底之后输出里**必须**出现
-   「末尾…已丢弃」+ `output-cap`，且**不得**出现「开头…已丢弃」。
+   「末尾…已丢弃」，且**不得**出现「开头…已丢弃」。
    变异：把 `TruncateSink.firstChar` 改成 `total - buf.length` → 必须红。
-   （这条守的就是 §5.1 那个 v1 错误。）
+   （这条守的就是 §5.1 那个 v1 错误。**已做**，见 `sink.test.ts` 的 `firstChar` 一组。）
+2b. **[变异]** **尾部缺口不许挂在 `endReason` 上**：先 `kill('detach')`（run 进入 `killing`）
+   **再**撑爆 sink，最终 `endReason === 'detach'` 而非 `'output-cap'` —— 尾部缺口提示
+   **仍必须出现**。变异：把判据改成 `endReason === 'output-cap'` → 必须红。
+   （§5.1 实测过 `kill()` 第 181 行的 early return；不加这条，2 号测试是绿的而 bug 已复活。）
 3. **[变异]** ring 档缺的是前缀：丢了前 100 字符、`since: 50` → 必须出现「已丢弃」且内容从
    第 100 字符起。变异：静默从 100 起给 → 必须红。
 4. **[变异]** `RunOutput` **在**子代理的注册表里。变异：加上 `sessionScoped: true` → 必须红。
    （§4.1：这条是**反向**的 —— 防的是有人照着邻居顺手标上。）
 5. **`both` 档下 stderr 读得到**：out 远长于 err，一次调用后 err 的内容必须出现在结果里。
    这条直接守 §5.2 那个 v1 错误。
-6. `nextSince` 严丝合缝：把返回的 `{out, err}` 原样传回，**两段拼起来 == 整份净化的结果**
-   （不重不漏）。必须落在 `both` 档，单流档测不出 §5.2 的洞。
-7. 切片切断转义序列：构造一条 CSI 正好跨 30_000 边界的输出 → 结果里无 ESC 残片，
-   且下一段接得上。再构造「整段就是一条超长序列开头」的退化情形 → 游标必须前进，不能卡死。
+6a. **游标严丝合缝（在 `both` 档，断言落在原始坐标上）**：把返回的 `{out, err}` 原样传回，
+   各流的原始区间**首尾相接、无重叠无空洞**，最终覆盖到 `[firstChar, firstChar+len)` 的右端。
+   这条守的是 §5.2 那个洞，**与净化无关**。
+6b. **净化是纯函数单测**（整份输入 → 整份输出，覆盖 ANSI / `\r` / CRLF），
+   就是现有 `termText.test.ts` 那套，跟着下沉一起走。
+   **绝不许写成「两段拼起来 == 整份净化」** —— §5.6 实测 4/5 组不成立；按字面写必然红，
+   而为了让它绿去挑一份不含 `\r` 的夹具，就退化成假绿。
+7. 切片切断转义序列：构造一条 CSI 正好跨 CAP 边界的输出 → 结果里无 ESC 残片，且下一段接得上。
+   再构造「整段就是一条超长序列开头」的退化情形 → 游标必须前进，不能卡死。
+   **再加一条**：run 已 `exited`、末尾是**永远不会结束**的半截 CSI → `nextSince` 必须推进到
+   `totalChars`，第二次调用得到「暂无新输出」（§5.5 规则 (b)；写成「前伸到序列结束」会无限轮询）。
+7b. **起点归位不许误删正文**：`since` 为负数、落点是字母（`Traceback…` / `ERROR:` / `  at `）
+   → 输出**一个字符都不许少**。这条直接守 §5.5 规则 (c) 那个「6/7 被吃掉」的错误做法。
+   **CAP 必须可注入**，否则这几条要造 3 万字符的夹具。
 8. 裸 `\r` 折叠：几百次重绘的进度条 → 结果只剩最后一版。
 9. 边界：`since == firstChar`；`totalChars == 0`；`-999999`；ring 从没丢过字符；
    单次 push 就超过整个容量（`sink.ts` 有这个分支）。
@@ -544,10 +649,20 @@ HTTP 层三个路由都补了，工具层是**第四个入口**，漏了等于�
 
 ## 11. 落地顺序
 
-1. **净化函数下沉**到 `@zuse/protocol`（剥 ANSI + 折 `\r` 的纯变换 + 一次性切片版），
-   `termText.ts` 改为复用它。单独提交，行为不变（既有测试必须全绿）。
-2. **`OutputSink` 加 `firstChar`** + `Run` 加带 `firstChar`/`totalChars`/**每流各自**计数的读取口。
-   单独提交。
+1a. **先补测试再动 `termText.ts`。** 现有 9 条 `feed([...])` 用例**全部避开**了「裸 `\r` 落在
+   **后一块开头**、要抹掉前一块已定稿内容」这条路径（最接近的 `feed(['aaa\r','b'])` 是 `\r` 在
+   前一块结尾，走 `pendingCR` 分支，完全不同的代码）。补上
+   `feed(['aaa','\rb']) === 'b'` 和 `feed(['done\nA','\rB']) === 'done\nB'`。单独提交。
+
+   **为什么这一步不能跳**：第 1b 步「复用一份纯函数」最省事的写法就是「每块自己净化再拼接」
+   —— 而 §5.6 实测那正是错的。做了之后 `['aaa','\rb']` 会变成 `'aaab'`，
+   **现有 9 条用例一条都不会红**，右栏进度条从此不折叠，没人会发现。
+1b. **净化下沉**到 `@zuse/protocol`。**下沉的必须是有状态的 `TermBuffer` 本体**，
+   一次性切片版只能是它之上的薄封装（`new TermBuffer().push(s)` + `flush()`）——
+   **不能反过来拿一次性版拼出增量版**，那会丢掉 `pendingCR`/`pendingEsc`。
+   `termText.ts` 改为复用，行为不变（1a 补完的测试必须全绿）。
+2. **`OutputSink` 加 `firstChar`**（✅ 已完成，commit `e36e1f7`，含变异验证）
+   + `Run` 加带 `firstChar`/`totalChars`/**每流各自**计数的读取口。
 3. **`StartRunInit`/`RunSummary` 加 `label`**，`runsRoutes.ts` 传 `plan.label`。
 4. **`RunOutput` 工具本体** + 单测（§10 的 1–12）。
 5. **接线**：能力面加字段 + `startServer` 上移 `new RunRegistry`。
@@ -574,3 +689,23 @@ HTTP 层三个路由都补了，工具层是**第四个入口**，漏了等于�
 
 **评审顺带发现的、与本步无关的洞**（另记欠账）：`RunRegistry.killSession` 全仓只有定义、
 **没有生产调用方** —— 删会话不杀 run，会留下孤儿进程。
+
+## 13. 修订记录（v2 → v3）
+
+二轮评审只审「我自己发明的修法」。5 个点里 2 个复核无问题（`firstChar` 抽象本身、
+§5.4 的额度分配 —— 它跑了 16 组数据，含我点名的两条边界），**3 个有真洞，且都跑出了反例**。
+我用命令逐条复现过才动手。
+
+| # | 二轮指出 | 改动 |
+|---|---|---|
+| 1 | §5.1「尾部缺口**必然伴随** `output-cap`」**是假的**：`kill()` 对已在 `killing` 的 run 是 no-op（`run.ts:181`），detach/wall-clock/idle 会抢跑。照这句写，v1 那个 bug 换扇门复活，**而 §10.2 是绿的** | §5.1 改成「判据只看算术式，`endReason` 只作附注」；§10 加 **2b**（先 detach 再撑爆 sink） |
+| 2 | §5.1 表格「**且是 truncate 档**」自相矛盾（三行前刚禁止按种类分支），而且多余 —— ring 档下该条件恒 false，算术自己就分开了 | 删掉那四个字 |
+| 3 | §5.5「剥掉孤儿序列尾巴」**6/7 条正文被吃**（`Traceback`→`raceback`）：`[@-~]` 囊括全部字母，而负数 `since` 落点是任意字符 | 改成「往回看、前推 `a`」（规则 (c)），与规则 (a) 对称 |
+| 4 | §5.5 规则 (b)「前伸到序列结束」在**序列永远不结束**时未定义 → 已 `exited` 的 run 无限轮询 | 补「或可给区间末尾，取先到者」+ `exited` 时丢弃半截序列；§10.7 加这条 |
+| 5 | §10.6「两段拼起来 == 整份净化」**不成立**，真 `TermBuffer` 跑出 4/5 组反例（`\r` 的作用域是整行，跨段抹不掉） | 新增 §5.6 写下这个代价；§10.6 拆成 **6a**（原始坐标的游标测试）+ **6b**（整份净化纯函数单测） |
+| 6 | §11 第 1 步「行为不变」有测试守，但**恰好漏了重构最可能撞坏的那条**：现有 9 条用例全部避开「裸 `\r` 落在后一块开头」 | §11 拆成 **1a**（先补那两条测试）/ **1b**（下沉必须是有状态的 `TermBuffer` 本体） |
+
+两个探针脚本留在
+`C:\Users\nhn\AppData\Local\Temp\…\scratchpad\{probe-orphan.mjs, probe-seg.mts}`，
+`probe-seg.mts` 直接 import 真的 `termText.ts`（`node --experimental-strip-types`），
+不是我另写一份 —— 另写一份只能验证我的理解，验证不了实现。
