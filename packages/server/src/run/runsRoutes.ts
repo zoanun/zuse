@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { hasBlockingBashSecurityIssue } from '@zuse/core'
@@ -36,6 +36,29 @@ export interface RunsRouteDeps {
  */
 export function runnerDeclaredEnv(): Record<string, string> {
   return { PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }
+}
+
+/**
+ * 一个项目里有哪些可跑的脚本。
+ *
+ * **只读当前 cwd 的 `package.json`，不向上找祖先、不枚举 workspace 子包。**
+ * 向上找会让「我在哪个目录」变得不可预测（本仓 cwd 是活的，模型 `cd` 会改它）；
+ * 枚举子包则是另一套 monorepo 逻辑，第一版不碰。想跑子包的脚本，`cd` 过去。
+ *
+ * 读不到 / 不是 JSON / 没有 scripts 一律给**空列表，不报错** ——
+ * 大把项目不是 Node 的，那不是错误状态。
+ */
+export function readScripts(cwd: string): { name: string; command: string }[] {
+  try {
+    const raw = readFileSync(join(cwd, 'package.json'), 'utf8')
+    const pkg = JSON.parse(raw) as { scripts?: Record<string, unknown> }
+    if (!pkg.scripts || typeof pkg.scripts !== 'object') return []
+    return Object.entries(pkg.scripts)
+      .filter(([, v]) => typeof v === 'string')
+      .map(([name, command]) => ({ name, command: command as string }))
+  } catch {
+    return []
+  }
 }
 
 export interface StartRunBody {

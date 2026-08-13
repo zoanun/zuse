@@ -9,8 +9,8 @@ import { isSecureRequest } from './requestSecurity.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
-import { SNIPPET_POLICY, runEnv, type RunRegistry } from '@zuse/tools'
-import { startRun, streamRun, runnerDeclaredEnv, type StartRunBody } from '../run/runsRoutes.js'
+import { SNIPPET_POLICY, PROJECT_POLICY, runEnv, type RunRegistry } from '@zuse/tools'
+import { startRun, streamRun, runnerDeclaredEnv, readScripts, type StartRunBody } from '../run/runsRoutes.js'
 import type { MemoryService } from '../memory/MemoryService.js'
 import type { SearchService } from '../search/SearchService.js'
 import type { PersonaService } from '../persona/PersonaService.js'
@@ -1015,9 +1015,36 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
         let body: StartRunBody
         try { body = (await readJsonBody(req)) as StartRunBody } catch { return sendJson(res, 400, { error: { code: 'bad_request', message: 'invalid body' } }) }
-        const r = await startRun(body, runsDeps, () => SNIPPET_POLICY, () => runEnv(process.env, runnerDeclaredEnv()))
+        // **档位按请求形态推导，绝不接受客户端传 `policy`。**
+        // 让客户端选档 = 任何客户端都能给**任意命令**要来「无墙钟 + 断连不杀」，
+        // 也就是一个永远跑着、没人看着、没有上限的进程。
+        //
+        // `exec:{kind,code}` 是「跑一段模型写的片段」→ 片段档（有墙钟、断连就杀、超预算就杀）
+        // `command` 字符串是「在项目里跑一条长命令」→ 项目档（无墙钟、断连保留、环形缓冲不杀）
+        //
+        // 代价：以后想「用命令形态跑一条短命令并要片段档」没有办法。可以接受 ——
+        // 短命令跑完就退出了，项目档对它没坏处（无墙钟只对不退出的进程有意义）。
+        const isExec = !!body.exec
+        const r = await startRun(
+          body, runsDeps,
+          () => (isExec ? SNIPPET_POLICY : PROJECT_POLICY),
+          () => runEnv(process.env, runnerDeclaredEnv()),
+        )
         if ('sse' in r) return
         return sendJson(res, r.status, r.json)
+      }
+
+      // GET /api/scripts?sessionId= —— 当前会话 cwd 下有哪些可跑的脚本。
+      // **cwd 只能服务端反查**（同 POST /api/runs 的理由：客户端指定目录 = 任意目录）。
+      // 而且 cwd 是活的（模型 `cd` 会改它），所以每次请求都重新取、不缓存。
+      if (method === 'GET' && path === '/api/scripts') {
+        if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'auth required' } })
+        const sid = url.searchParams.get('sessionId')
+        if (!sid) return sendJson(res, 400, { error: { code: 'bad_request', message: 'sessionId 不能为空' } })
+        const mgr = await deps.service.getOrLoad(sid)
+        if (!mgr) return sendJson(res, 404, { error: { code: 'not_found', message: '找不到这个会话' } })
+        const cwd = mgr.getState().cwd
+        return sendJson(res, 200, { cwd, scripts: readScripts(cwd) })
       }
 
       if (method === 'GET' && path === '/api/runs') {

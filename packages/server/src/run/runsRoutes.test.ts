@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -403,6 +403,86 @@ describe('run 端点 —— 运行代码要先确认', () => {
  * DELETE 和 stream 都只按 runId。步骤 4 的在飞列表会把它直接摆到界面上。
  * runId 是 uuid 猜不到 —— 但「猜不到」不是授权。
  */
+/**
+ * **档位由服务端按请求形态推导，绝不让客户端传。**
+ *
+ * 让客户端传 `policy` 等于：任何客户端都能给**任意命令**要来「无墙钟 + 断连不杀」——
+ * 一个永远跑着、没人看着、没有上限的进程。档位是服务端从请求形态得出的结论，不是输入。
+ */
+describe('run 端点 —— 选档', () => {
+  it('{command} → 项目档：无墙钟、无空闲超时、断连保留', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { command: 'pnpm dev', sessionId, confirmed: true })
+    expect(r.status).toBe(201)
+    const run = runs.get((await r.json() as { runId: string }).runId)!
+    expect(run.policy.wallClockMs).toBeNull()
+    expect(run.policy.idleMs).toBeNull()               // dev server 安静下来不该被当成卡死
+    expect(run.policy.onDetach).toBe('keep')
+    expect(run.policy.sink.kind).toBe('ring')
+  })
+
+  it('{exec} → 片段档：有墙钟、断连就杀、超预算就杀', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, { exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true })
+    const run = runs.get((await r.json() as { runId: string }).runId)!
+    expect(run.policy.wallClockMs).toBeGreaterThan(0)
+    expect(run.policy.onDetach).toBe('kill')
+    expect(run.policy.sink.kind).toBe('truncate')
+  })
+
+  it('客户端塞 policy 字段被无视（不能自己要一个不受限的档）', async () => {
+    const cookie = await authCookie()
+    const r = await post(cookie, {
+      exec: { kind: 'python', code: 'print(1)' }, sessionId, confirmed: true,
+      policy: { wallClockMs: null, idleMs: null, onDetach: 'keep', sink: { kind: 'ring', chars: 9_000_000 } },
+    })
+    const run = runs.get((await r.json() as { runId: string }).runId)!
+    expect(run.policy.wallClockMs).toBeGreaterThan(0)   // 仍是片段档，客户端说了不算
+    expect(run.policy.onDetach).toBe('kill')
+  })
+})
+
+describe('scripts 端点 —— 项目里有哪些可跑的脚本', () => {
+  it('读当前会话 cwd 的 package.json，回 scripts 列表', async () => {
+    const cookie = await authCookie()
+    const proj = mkdtempSync(join(tmpdir(), 'zuse-proj-'))
+    writeFileSync(join(proj, 'package.json'), JSON.stringify({ scripts: { dev: 'vite', build: 'tsc && vite build' } }))
+    const sid = (await service.create({ cwd: proj })).id
+    const r = await fetch(`${base}/api/scripts?sessionId=${sid}`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    const body = await r.json() as { cwd: string; scripts: { name: string; command: string }[] }
+    expect(body.cwd).toBe(proj)
+    expect(body.scripts).toEqual([
+      { name: 'dev', command: 'vite' },
+      { name: 'build', command: 'tsc && vite build' },
+    ])
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  /** 没有 package.json 不是错误 —— 大把项目不是 Node 的。给空列表，别让前端崩。 */
+  it('没有 package.json → 空列表，不是 500', async () => {
+    const cookie = await authCookie()
+    const r = await fetch(`${base}/api/scripts?sessionId=${sessionId}`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    expect((await r.json() as { scripts: unknown[] }).scripts).toEqual([])
+  })
+
+  it('package.json 是坏 JSON → 空列表，不是 500', async () => {
+    const cookie = await authCookie()
+    const proj = mkdtempSync(join(tmpdir(), 'zuse-proj-'))
+    writeFileSync(join(proj, 'package.json'), '{ 这不是 json')
+    const sid = (await service.create({ cwd: proj })).id
+    const r = await fetch(`${base}/api/scripts?sessionId=${sid}`, { headers: { cookie } })
+    expect(r.status).toBe(200)
+    expect((await r.json() as { scripts: unknown[] }).scripts).toEqual([])
+    rmSync(proj, { recursive: true, force: true })
+  })
+
+  it('未登录 → 401', async () => {
+    expect((await fetch(`${base}/api/scripts?sessionId=${sessionId}`)).status).toBe(401)
+  })
+})
+
 describe('run 端点 —— 会话隔离', () => {
   async function twoSessions(cookie: string) {
     const other = (await service.create({ cwd: 'E:/proj-b' })).id
