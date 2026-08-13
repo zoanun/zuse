@@ -89,10 +89,19 @@ async function main(): Promise<void> {
   // **SIGTERM 也要收**（原来只有 SIGINT）：`server.close()` 里现在负责把在跑的子进程
   // 收掉，只挂 SIGINT 的话，只有「前台 Ctrl+C」这一条路会清场。
   //
-  // **已知限制，别以为这样就万无一失**：Windows 上 `taskkill /F`（以及本仓 restart 技能
-  // 用的就是它）**不发信号、直接终止进程**，这两个处理器一个都不会跑 —— 那种情况下
-  // 在跑的子进程仍会变孤儿。片段档有 300 秒墙钟兜底；项目档（步骤 4，无墙钟 +
-  // 断连不杀）真到那时得另想办法（比如把 pid 落盘、启动时回收）。
+  // **已知限制，别以为这样就万无一失**：Windows 上 `taskkill /F` **不发信号、直接终止进程**，
+  // 这两个处理器一个都不会跑 —— 那种情况下在跑的子进程会变孤儿。
+  //
+  // **别写「片段档有墙钟兜底」——那是错的**（这里原先就是这么写的，评审实测推翻）：
+  // 墙钟是本进程内的 `setTimeout`，本进程被强杀，墙钟跟着没了，孙进程照跑。
+  // 实测：只杀父进程，4 秒后孙进程的心跳仍在推进。
+  //
+  // 真正的兜底在**杀的那一侧**：`taskkill` 必须带 `/T`（本仓 `.claude/skills/restart`
+  // 已经加上）。而且**只能在杀之前带**——父进程一死进程树就断了，事后补跑 `/T`
+  // 只会得到 `process not found`，孤儿只能按命令行去捞。
+  //
+  // 「pid 落盘 + 启动时回收」不要照做：落的是 cmd.exe 包装器的 pid，它先死、
+  // pid 可能被系统回收，重启时对它 `taskkill /T /F` 会误杀无辜进程。
   const shutdown = (): void => { void server.close().then(() => process.exit(0)) }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
