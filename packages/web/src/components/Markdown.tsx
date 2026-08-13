@@ -161,7 +161,7 @@ function CodeBlock({ node, ...rest }: ComponentPropsWithoutRef<'pre'> & { node?:
               if (open) return execKind ? closeExec(runId) : closeRun(runId)
               // code 是**快照**：点下去这一刻的正文冻进 store，之后代码再变也不跟
               // （设计 §3.2）。活推会把流式抖动广播给每一个订阅者，反而制造重渲染风暴。
-              if (execKind) openExec({ id: runId, kind: execKind, code, sessionId })
+              if (execKind) openExec({ id: runId, source: 'snippet', kind: execKind, code, sessionId })
               else if (kind) openRun({ id: runId, kind, code, sessionId })
             }}
           >

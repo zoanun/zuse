@@ -403,6 +403,29 @@ button.head:hover .caret { opacity: 0.9; }
 .rx-note.bad { color: var(--danger, #c55); }
 .rx-note button { font-size: 12px; cursor: pointer; }
 .rx-hint { margin-bottom: 6px; }
+/* 「这里没有键盘输入」—— 常驻，不做检测。理由见 RailExec.tsx：
+   实测本仓自己的 dev 脚本是个终端界面程序，点了不崩不退出、正常画界面，
+   然后永远等你打字。而 dev server 的正常状态和它长得一模一样，猜不准。 */
+.rx-hint-bar { flex: none; padding: 4px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px dashed var(--line); }
+.rx-links { flex: none; padding: 6px 10px; display: flex; flex-wrap: wrap; gap: 10px; }
+.rx-links a { font-size: 12px; }
+
+/* ── 运行菜单（Header 里那个「▶ 运行 ▾」的下拉）──────────────────── */
+.run-menu { min-width: 300px; max-width: 460px; max-height: 60vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%); padding: 4px; }
+.run-menu-head { padding: 6px 8px; font-size: 11px; color: var(--muted); word-break: break-all; }
+.run-menu-empty { padding: 8px; font-size: 12px; color: var(--muted); }
+.run-menu-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
+  background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
+.run-menu-item:hover { background: var(--hover, rgb(0 0 0 / 6%)); }
+.rm-name { font-weight: 600; flex: none; }
+.rm-badge { flex: none; font-size: 10px; padding: 1px 5px; border-radius: 4px;
+  background: var(--accent, #4a9); color: #fff; }
+/* 命令正文用等宽、灰、可截断：它是给人确认「这条到底跑什么」的，不是主角。
+   **不能省** —— 脚本名（dev/start）说明不了它实际干什么，而这里跑的是真命令。 */
+.rm-cmd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; color: var(--muted); }
 
 /* 标题整行是按钮 = **宽屏唯一的逃生口**。上一版只有窄屏能收，宽屏想让步骤别占地方
    就只能去 Header 关掉整个精简视图（顺带改变主画面的过滤），等于没有逃生口。 */

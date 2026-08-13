@@ -21,7 +21,8 @@ import { persistModel } from '../state/manageApi.js'
 import { SessionContext } from './Markdown.js'
 import { Rail } from '../preview/Rail.js'
 import { closeRun, useActiveRun } from '../preview/activePreview.js'
-import { closeExec, useActiveExec } from '../preview/activeExec.js'
+import { closeExec, openExec, useActiveExec } from '../preview/activeExec.js'
+import type { ScriptItem } from './RunMenu.js'
 import { getCleanView, setCleanView } from '../cleanViewPref.js'
 import { turnStepsOf } from './turnSteps.js'
 import { StepsDrawer } from './StepsDrawer.js'
@@ -93,6 +94,42 @@ export function Shell() {
   // **两个槽都要清。** 只清预览的话，切会话后右栏会继续挂着上一个会话的运行输出 ——
   // 而它背后还连着一条 SSE。这正是 activePreview 当初踩过的坑，新槽会原样复发。
   useEffect(() => { closeRun(); closeExec() }, [currentSessionId])
+
+  // 当前在跑哪些命令 —— 只用来把运行菜单里的「运行」显示成「重启」。
+  // 轮询而不是订阅：这是个低频的展示信息，为它多开一条 SSE 不值（HTTP/1.1 只有 6 个连接，
+  // 实测过；那 6 个要留给真正在流的输出）。菜单没打开时不轮询。
+  const [runningCommands, setRunningCommands] = useState<Set<string>>(new Set())
+  const refreshRunning = useCallback(async (): Promise<Set<string>> => {
+    try {
+      const r = await fetch(`/api/runs?sessionId=${encodeURIComponent(currentSessionId)}`)
+      if (!r.ok) return new Set()
+      const { runs } = await r.json() as { runs: { command: string; status: string }[] }
+      const live = new Set(runs.filter((x) => x.status === 'running' || x.status === 'killing').map((x) => x.command))
+      setRunningCommands(live)
+      return live
+    } catch { return new Set() }
+  }, [currentSessionId])
+
+  const onRunScript = useCallback(async (s: ScriptItem) => {
+    const live = await refreshRunning()
+    if (live.has(s.command)) {
+      // **已经在跑 → 先真正停掉再起。**
+      // 停止接口返回的是 202「已受理」而不是「已完成」（它只发信号、不等进程死），
+      // 所以必须**轮询到它真的不在 live 列表里**再起新的 —— 不等的话，
+      // 两个 vite 抢同一个端口，第二个 EADDRINUSE 秒退，而用户只看到一闪而过的失败。
+      const r = await fetch(`/api/runs?sessionId=${encodeURIComponent(currentSessionId)}`)
+      const { runs } = await r.json() as { runs: { id: string; command: string; status: string }[] }
+      const target = runs.find((x) => x.command === s.command && (x.status === 'running' || x.status === 'killing'))
+      if (target) {
+        await fetch(`/api/runs/${target.id}?sessionId=${encodeURIComponent(currentSessionId)}`, { method: 'DELETE' })
+        for (let i = 0; i < 40; i++) {                 // 最多等 4 秒
+          await new Promise((res) => setTimeout(res, 100))
+          if (!(await refreshRunning()).has(s.command)) break
+        }
+      }
+    }
+    openExec({ id: `script:${s.name}`, source: 'command', command: s.command, label: s.name, sessionId: currentSessionId })
+  }, [currentSessionId, refreshRunning])
 
   // 右栏的显示条件（设计 §8）：**有预览 或 有待办 或 有在跑的子代理**。
   // 判据**一律来自面板自己导出的谓词**，Shell 不复刻 —— `hasVisibleTodos` 里「全完成也消失」
@@ -332,7 +369,7 @@ export function Shell() {
           onOpenCron={() => { setShareSel(null); setMainView('cron'); setMenuOpen(false) }}
         />
       <div className="main">
-        <Header state={state} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} cleanView={cleanView} onToggleCleanView={toggleCleanView} dirPickerRef={dirPickerRef} />
+        <Header state={state} sessionId={currentSessionId} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} onRunScript={onRunScript} runningCommands={runningCommands} cleanView={cleanView} onToggleCleanView={toggleCleanView} dirPickerRef={dirPickerRef} />
         {/* Header 正下方、聊天区之上 —— 横跨整个主区，看不见它需要主动无视。 */}
         <BypassBanner mode={state.permissionMode} count={state.autoAllowedCount} onExit={() => onCyclePermissionMode('default')} />
         {/*

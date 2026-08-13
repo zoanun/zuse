@@ -57,6 +57,28 @@ function endText(reason: EndReason, exitCode: number | null, hadOutput: boolean)
  * 代价：看不出两条流的时间先后 —— 对「跑一段脚本」这个场景可以接受，
  * stderr 基本就是最后那段报错。
  */
+/** 工作内容的指纹，给 effect 依赖用（对象引用每渲染一轮都变，不能直接放依赖里）。 */
+function workKey(e: ActiveExec): string {
+  return e.source === 'snippet' ? `s:${e.kind}:${e.code}` : `c:${e.command}`
+}
+
+/** 标题栏那行字：片段显示语言，命令显示脚本名（`dev`），比显示整条命令易读。 */
+function execTitle(e: ActiveExec): string {
+  return e.source === 'snippet' ? (e.kind === 'python' ? 'Python' : 'Java') : e.label
+}
+
+/**
+ * 输出里认出 dev server 的地址，给一个「打开」链接。
+ *
+ * **必须跑在 strip 掉 ANSI 之后的文本上。** 实测 vite 的原始字节是
+ * `localhost:` `ESC[1m` `5173` —— **端口被 SGR 序列从中间劈开了**，
+ * 在原始流上跑 URL 正则一个都匹配不到。
+ */
+function findUrls(text: string): string[] {
+  const m = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?[^\s"'<>]*/g)
+  return m ? [...new Set(m)] : []
+}
+
 export function RailExec({ exec }: { exec: ActiveExec }) {
   const [phase, setPhase] = useState<Phase>({ k: 'starting' })
   const [out, setOut] = useState('')
@@ -82,7 +104,15 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
         const res = await fetch('/api/runs', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ exec: { kind: exec.kind, code: exec.code }, sessionId: exec.sessionId, confirmed }),
+          // **形态决定档位**（服务端推导，不是我们说了算）：
+          // exec → 片段档（有墙钟、断连就杀）；command → 项目档（无墙钟、断连保留）。
+          body: JSON.stringify({
+            ...(exec.source === 'snippet'
+              ? { exec: { kind: exec.kind, code: exec.code } }
+              : { command: exec.command }),
+            sessionId: exec.sessionId,
+            confirmed,
+          }),
           signal: ac.signal,
         })
         if (res.status === 409) {
@@ -150,7 +180,9 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
       // 卸载 = 断连 = 服务端退订 = 片段档把进程收掉。这是设计意图（v4 §1），不是遗漏。
       ac.abort()
     }
-  }, [exec.id, exec.kind, exec.code, exec.sessionId, confirmed])
+    // 依赖里放的是**工作内容的指纹**，不是整个 exec 对象：对象每次都是新引用，
+    // 放进去会让 effect 每渲染一轮就重来一次 —— 而重来 = 把在跑的进程掐了重新起。
+  }, [exec.id, workKey(exec), exec.sessionId, confirmed])
 
   const stop = (): void => {
     const id = runIdRef.current
@@ -158,16 +190,34 @@ export function RailExec({ exec }: { exec: ActiveExec }) {
   }
 
   const running = phase.k === 'running' || phase.k === 'starting'
+  // 只在命令形态下找地址：片段跑在临时目录里，不会起服务。
+  const urls = exec.source === 'command' ? findUrls(out) : []
 
   return (
     <section className="rail-exec" aria-label="运行输出">
       <div className="rail-exec-bar">
-        <span className="rx-title">{exec.kind === 'python' ? 'Python' : 'Java'}</span>
+        <span className="rx-title">{execTitle(exec)}</span>
         {running ? <span className="rx-dot" aria-hidden="true" /> : null}
         <span className="rx-spacer" />
         {running ? <button type="button" onClick={stop}>停止</button> : null}
         <button type="button" onClick={() => closeExec(exec.id)} aria-label="关闭运行面板">关闭</button>
       </div>
+
+      {/* **常驻，不做检测。** 实测本仓自己的 `dev` 脚本是个终端界面程序：点了它
+          不崩、不退出、正常画出欢迎界面，然后永远停在等你打字 —— 而这里没有键盘输入。
+          「猜哪些命令需要输入」猜不准（dev server 正常状态和卡住时长得一模一样），
+          维护成本还无穷。老实写一句话，永远正确。 */}
+      {exec.source === 'command'
+        ? <div className="rx-hint-bar">这里没有键盘输入 —— 需要打字的程序会停在这儿</div>
+        : null}
+
+      {urls.length ? (
+        <div className="rx-links">
+          {urls.map((u) => (
+            <a key={u} href={u} target="_blank" rel="noreferrer noopener">打开 {u}</a>
+          ))}
+        </div>
+      ) : null}
 
       <div className="rail-exec-body">
         {out ? <pre className="rx-out">{out}</pre> : null}

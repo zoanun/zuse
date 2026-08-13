@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { DirPicker } from './DirPicker.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { ModelPicker } from './ModelPicker.js'
+import { RunMenu, type ScriptItem } from './RunMenu.js'
 import { modeInfo, nextMode } from './permissionMode.js'
 
 function fmt(n: number | undefined): string {
@@ -12,8 +13,21 @@ function fmt(n: number | undefined): string {
   return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
 }
 
-export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel, onCyclePermissionMode, cleanView, onToggleCleanView, dirPickerRef }: { state: AppState; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; onCyclePermissionMode: (mode: import('@zuse/protocol').PermissionMode) => void; cleanView: boolean; onToggleCleanView: () => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
+export function Header({ state, sessionId, onMenu, onOpenManage, onChangeCwd, onSwitchModel, onCyclePermissionMode, onRunScript, runningCommands, cleanView, onToggleCleanView, dirPickerRef }: { state: AppState; sessionId: string; onMenu: () => void; onOpenManage: () => void; onChangeCwd: (cwd: string) => void; onSwitchModel: (providerId: string, model: string, persist: boolean) => void; onCyclePermissionMode: (mode: import('@zuse/protocol').PermissionMode) => void; onRunScript: (s: ScriptItem) => void; runningCommands: Set<string>; cleanView: boolean; onToggleCleanView: () => void; dirPickerRef?: React.Ref<DirPickerHandle> }) {
   const [, force] = useState(0)
+  // 运行菜单：和下面的模型选择器同一套 portal 范式（锚点只在 closed→open 时量一次）。
+  const [runOpen, setRunOpen] = useState(false)
+  const runBtnRef = useRef<HTMLButtonElement>(null)
+  const [runPos, setRunPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const openRunMenu = () => {
+    setRunOpen((o) => {
+      if (!o) {
+        const r = runBtnRef.current?.getBoundingClientRect()
+        if (r) setRunPos({ top: r.bottom + 4, left: r.left })
+      }
+      return !o
+    })
+  }
   // Model picker popover: anchored under the model chip, portaled so it escapes the header's overflow.
   const [modelOpen, setModelOpen] = useState(false)
   const modelBtnRef = useRef<HTMLButtonElement>(null)
@@ -43,6 +57,24 @@ export function Header({ state, onMenu, onOpenManage, onChangeCwd, onSwitchModel
         <button className="icon-btn menu-btn" aria-label="打开侧边栏" onClick={onMenu}>☰</button>
         <div className="brand mh-brand"><span className="mark">Z</span> zuse</div>
         <DirPicker ref={dirPickerRef} cwd={state.cwd ?? ''} onChange={onChangeCwd} />
+        {/* 「运行」紧挨目录 chip：脚本列表是 **cwd 作用域**的，而 cwd 是活的
+            （模型 `cd` 会改它）。挨着放，「现在跑的是哪个项目」就是肉眼可见的。
+            为什么不放右栏：见 RunMenu.tsx 的注释（右栏在没在跑东西时整个不渲染）。 */}
+        <button ref={runBtnRef} className="chip chip-btn" title="跑项目里的脚本" onClick={openRunMenu}>▶ 运行 ▾</button>
+        {runOpen ? createPortal(
+          <>
+            <div className="dirpick-backdrop" onClick={() => setRunOpen(false)} />
+            <div className="model-pop-anchor" style={{ top: runPos.top, left: runPos.left }}>
+              <RunMenu
+                sessionId={sessionId}
+                runningCommands={runningCommands}
+                onPick={onRunScript}
+                onClose={() => setRunOpen(false)}
+              />
+            </div>
+          </>,
+          document.body,
+        ) : null}
         {state.model ? (
           <button ref={modelBtnRef} className="chip chip-btn" title="切换模型" onClick={openModelPicker}>模型 {state.model} ▾</button>
         ) : null}

@@ -6,13 +6,13 @@ import { __resetActivePreview, openRun, useActiveRun } from './activePreview.js'
 afterEach(() => { act(() => { __resetActiveExec(); __resetActivePreview() }) })
 
 const execIn = (sessionId: string, id = 'm1#0'): ActiveExec =>
-  ({ id, kind: 'python', code: 'print(1)', sessionId })
+  ({ id, source: 'snippet', kind: 'python', code: 'print(1)', sessionId })
 
 describe('activeExec', () => {
   it('只认属于本会话的：切到别的会话就看不见了', () => {
     const h = renderHook(() => useActiveExec('sess-a'))
     act(() => openExec(execIn('sess-a')))
-    expect(h.result.current?.code).toBe('print(1)')
+    expect(h.result.current?.source === 'snippet' && h.result.current.code).toBe('print(1)')
     const other = renderHook(() => useActiveExec('sess-b'))
     expect(other.result.current).toBeNull()
   })
@@ -68,7 +68,7 @@ describe('两个槽互不挤占', () => {
     const prev = renderHook(() => useActiveRun('s'))
     const exec = renderHook(() => useActiveExec('s'))
     act(() => openRun({ id: 'p1', kind: 'html', code: '<b>x</b>', sessionId: 's' }))
-    act(() => openExec({ id: 'e1', kind: 'python', code: 'print(1)', sessionId: 's' }))
+    act(() => openExec({ id: 'e1', source: 'snippet', kind: 'python', code: 'print(1)', sessionId: 's' }))
     expect(prev.result.current).not.toBeNull()
     expect(exec.result.current).not.toBeNull()
   })
@@ -76,7 +76,7 @@ describe('两个槽互不挤占', () => {
   it('反过来也一样：开 preview 不会关掉正跑着的 exec', () => {
     const prev = renderHook(() => useActiveRun('s'))
     const exec = renderHook(() => useActiveExec('s'))
-    act(() => openExec({ id: 'e1', kind: 'python', code: 'print(1)', sessionId: 's' }))
+    act(() => openExec({ id: 'e1', source: 'snippet', kind: 'python', code: 'print(1)', sessionId: 's' }))
     act(() => openRun({ id: 'p1', kind: 'html', code: '<b>x</b>', sessionId: 's' }))
     expect(exec.result.current).not.toBeNull()
     expect(prev.result.current).not.toBeNull()

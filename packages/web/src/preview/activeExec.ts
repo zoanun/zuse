@@ -12,12 +12,25 @@ import type { ExecKind } from './types.js'
  * （执行侧要 runId、状态、输出，预览侧要 kind/code 快照），过早抽公共层只会让两边
  * 互相牵制。真到了三个槽再说。
  */
-export interface ActiveExec {
-  /** 代码块的身份，跨挂载稳定（同 `ActiveRun.id`）。 */
+/**
+ * 右栏正在跑的东西。**两种来源共用一个槽**：
+ *
+ * - `snippet`：聊天里的代码块（Python/Java），跑在临时目录 → 服务端给**片段档**
+ * - `command`：项目里的一条命令（`pnpm dev`…），跑在会话 cwd → 服务端给**项目档**
+ *
+ * 共用一个槽是刻意的：第一版**不做在飞列表**。多槽会立刻撞上「切焦点 = 最后一个
+ * 订阅者退订 = 片段档当场被杀」那个未决问题（步骤4 spec §8.5(b)），
+ * 而单槽根本不产生它。推后是免费的。
+ */
+export type ActiveExec = ActiveExecBase & (
+  | { source: 'snippet'; kind: ExecKind; code: string }
+  /** `label` 是给人看的（脚本名，如 `dev`）；`command` 是真正要跑的那条。 */
+  | { source: 'command'; command: string; label: string }
+)
+
+interface ActiveExecBase {
+  /** 身份，跨挂载稳定。代码块用 `messageId#序号`，脚本用 `script:<名字>`。 */
   id: string
-  kind: ExecKind
-  /** 点「运行」那一刻冻结的代码快照 —— 之后代码再变，跑的还是这一份。 */
-  code: string
   /** 归属哪个会话：切会话时右栏要清场，否则会挂着上一个会话的东西（预览侧踩过）。 */
   sessionId: string
   /**
@@ -35,14 +48,24 @@ const listeners = new Set<() => void>()
 
 function emit(): void { for (const l of listeners) l() }
 
+/**
+ * 「跑的是不是同一件事」。
+ *
+ * 用途只有一个：重复 `openExec` 同一份东西时**不要 emit** —— 一次无意义的通知会让
+ * 右栏白跑一轮，而右栏里挂着的是一条正在流的 SSE 连接，重挂等于**把在跑的进程掐了重来**。
+ * 所以比的是「工作内容」，不是对象引用。
+ */
+function sameWork(a: ActiveExec, b: ActiveExec): boolean {
+  if (a.source !== b.source) return false
+  if (a.source === 'snippet' && b.source === 'snippet') return a.kind === b.kind && a.code === b.code
+  if (a.source === 'command' && b.source === 'command') return a.command === b.command
+  return false
+}
+
 export function openExec(next: ActiveExec): void {
   // 同一份重复打开就不 emit：一次无意义的通知会让右栏白跑一轮，
   // 而右栏里挂着的是一条正在流的 SSE 连接。
-  if (active
-    && active.id === next.id
-    && active.kind === next.kind
-    && active.code === next.code
-    && active.sessionId === next.sessionId) return
+  if (active && active.id === next.id && active.sessionId === next.sessionId && sameWork(active, next)) return
   active = next
   emit()
 }

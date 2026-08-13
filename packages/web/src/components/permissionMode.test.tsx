@@ -10,7 +10,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const noop = () => {}
 function headerProps(state: AppState, onCycle = noop as (m: never) => void) {
-  return { state, onMenu: noop, onOpenManage: noop, onChangeCwd: noop, onSwitchModel: noop, onCyclePermissionMode: onCycle as never, cleanView: true, onToggleCleanView: noop }
+  return { state, sessionId: 's1', onMenu: noop, onOpenManage: noop, onChangeCwd: noop, onSwitchModel: noop, onCyclePermissionMode: onCycle as never, onRunScript: noop, runningCommands: new Set<string>(), cleanView: true, onToggleCleanView: noop }
 }
 
 describe('nextMode —— 点击 chip 的循环顺序', () => {
