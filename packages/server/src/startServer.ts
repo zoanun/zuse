@@ -246,6 +246,11 @@ export async function startServer(
       void mcp?.disconnectAll().catch(() => {})
       void lsp.dispose().catch(() => {})
       cronScheduler.close()
+      // **不能漏。** 漏了的话 daemon 关停会留下**孤儿子进程**：片段档还有 300 秒墙钟兜底，
+      // 而项目档（步骤 4）是 `wallClockMs: null` + `onDetach: 'keep'` —— 一个 dev server
+      // 会永远活着占着端口，而本仓每次改 web 都要重启 daemon。
+      // 这条是评估「跑整个项目」时顺带查出来的：`closeAll()` 此前全仓只有测试在调。
+      runs.closeAll()
       httpServer.close(() => resolve())
       ws.closeAll()
       httpServer.closeAllConnections()

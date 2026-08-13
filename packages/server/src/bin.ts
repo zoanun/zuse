@@ -86,9 +86,16 @@ async function main(): Promise<void> {
 
   const server = await startServer(cfg)
   console.log('zuse-server listening at ' + server.url)
-  process.on('SIGINT', () => {
-    void server.close().then(() => process.exit(0))
-  })
+  // **SIGTERM 也要收**（原来只有 SIGINT）：`server.close()` 里现在负责把在跑的子进程
+  // 收掉，只挂 SIGINT 的话，只有「前台 Ctrl+C」这一条路会清场。
+  //
+  // **已知限制，别以为这样就万无一失**：Windows 上 `taskkill /F`（以及本仓 restart 技能
+  // 用的就是它）**不发信号、直接终止进程**，这两个处理器一个都不会跑 —— 那种情况下
+  // 在跑的子进程仍会变孤儿。片段档有 300 秒墙钟兜底；项目档（步骤 4，无墙钟 +
+  // 断连不杀）真到那时得另想办法（比如把 pid 落盘、启动时回收）。
+  const shutdown = (): void => { void server.close().then(() => process.exit(0)) }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 }
 
 main().catch((err) => {
