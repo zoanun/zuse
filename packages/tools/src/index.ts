@@ -18,6 +18,7 @@ export {
   buildChildEnv,
   ProcOutputDecoder,
   killTree,
+  killTreeHard,
   StreamShaper,
   type SpawnShellOptions,
 } from './proc/index.js'

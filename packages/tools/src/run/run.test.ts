@@ -34,9 +34,12 @@ function makeRun(policy: Partial<RunPolicy> = {}, depsOver: Partial<RunDeps> = {
   proc.pid = 4242
 
   const killed: number[] = []
+  // 记录每次杀的强度：第二轮宽限必须是 hard（SIGKILL），重发 SIGTERM 不算升级。
+  const killLog: Array<'soft' | 'hard'> = []
   const deps: RunDeps = {
     spawn: () => proc as unknown as ShellChildProcess,
-    killTree: (pid: number) => { killed.push(pid) },
+    killTree: (pid: number) => { killed.push(pid); killLog.push('soft') },
+    killTreeHard: (pid: number) => { killed.push(pid); killLog.push('hard') },
     oemLabel: 'gbk',
     ...depsOver,
   }
@@ -47,7 +50,7 @@ function makeRun(policy: Partial<RunPolicy> = {}, depsOver: Partial<RunDeps> = {
   const events: RunEvent[] = []
   const off = run.subscribe((e) => events.push(e))
   return {
-    run, killed, events, off,
+    run, killed, killLog, events, off,
     out: (b: Buffer) => stdout.emit('data', b),
     err: (b: Buffer) => stderr.emit('data', b),
     close: (code: number | null) => proc.emit('close', code),
@@ -213,6 +216,49 @@ describe('Run —— kill 的兑现（spec §7.3）', () => {
   })
 
   /**
+   * 设计审计（2026-08-14）：「升级重杀」调的是**同一个** `killTree`（POSIX = SIGTERM），
+   * 而它的注释写着「POSIX 的 SIGTERM 可能被忽略」—— 自陈要防的东西，手段上防不住。
+   * 对 trap / ignore 掉 SIGTERM 的进程，重发 N 次与发 1 次完全等效。
+   *
+   * WSL Ubuntu 上用**本仓 kill-tree.ts 的产品代码**实测（不是等价脚本）：
+   *   killTree 第 1 次之后: ALIVE / 第 2 次之后: ALIVE / SIGKILL 之后: DEAD(ESRCH)
+   * vite / webpack / nodemon 都 trap SIGTERM，所以这不是边角情况。
+   */
+  it('第二轮宽限必须是硬杀（重发 SIGTERM 不算升级）', () => {
+    vi.useFakeTimers()
+    const { run, killLog } = makeRun({ killGraceMs: 50 })
+    run.kill('killed')
+    expect(killLog).toEqual(['soft'])       // 第一刀给 graceful shutdown 留机会
+    vi.advanceTimersByTime(50)
+    expect(killLog).toEqual(['soft', 'hard'])
+  })
+
+  /**
+   * **zombie 曾经是不可逆终态。** `_status` 全文件只有三个写点，回到 `'exited'` 那条
+   * 在 `finish()` 里、而 `finish()` 开头是 `if (this.ended) return`，`toZombie()`
+   * 已经把 ended 置真 —— 于是进程后来真死了，状态也回不去。
+   * 而 `isLive()` 把 zombie 算成活的、直接卡 `maxConcurrent`（默认 8）。
+   * 链条：POSIX 上一个 trap 了 SIGTERM 的 dev server → 两轮 SIGTERM 无效 → zombie
+   * → 永久占额度 → 攒够 8 个，run 服务对整个 daemon 失效，只能重启。
+   *
+   * 自愈点放在 `onProcessExit()` 而不是探活定时器：`settle()` 不 cancel settleHandle
+   *（那只在 dispose 里），所以 zombie 之后 `child.on('exit')` 仍然挂着。
+   */
+  it('zombie 会自愈：进程后来真死了 → 状态降级成 exited，原因保留 zombie', () => {
+    vi.useFakeTimers()
+    const { run, exit } = makeRun({ killGraceMs: 50 })
+    run.kill('killed')
+    vi.advanceTimersByTime(50)
+    vi.advanceTimersByTime(50)
+    expect(run.status).toBe('zombie')
+
+    exit(137)                                // 进程终于死了
+    expect(run.status).toBe('exited')
+    // 原因**不改写**：它确实是从 zombie 恢复的，不是一次正常退出。
+    expect(run.endReason).toBe('zombie')
+  })
+
+  /**
    * 收尾改判 `exit` 之后新出现的一个窗口，**必须堵住**。
    *
    * 对外的 end 事件推迟到 `exit + drainMs`（等 close 冲刷）。若「进程死了」这件事也
@@ -261,23 +307,34 @@ describe('Run —— kill 的兑现（spec §7.3）', () => {
   })
 
   /**
-   * **反面，也是一条已知限制**：两个宽限都过完了 `exit` 才姗姗来迟，
-   * 那时已经发过 `zombie` 的 end 事件，记录**不会**被回改成 exited。
+   * **这条以前是「已知限制」，2026-08-14 设计审计之后修掉了。**
    *
-   * 这是刻意的:end 事件已经发出去了，收回来会让订阅者看到「结束了两次」。
-   * 代价是这条 run 会一直被 `isLive()` 算成活的、占一个额度 ——
-   * 那属于回溯审计 F P5「zombie 是终态、无人复核」，不在本次范围内。
-   * 写成测试是为了让这条限制**有据可查**，而不是下次被当成新 bug 重查一遍。
+   * 原来的说法：两个宽限都过完 `exit` 才姗姗来迟时，状态**不会**被回改成 exited，
+   * 理由是「end 事件已经发出去了，收回来会让订阅者看到『结束了两次』」。
+   *
+   * 那个理由只对**事件**成立，不对**状态**成立 —— 而真正咬人的是状态：
+   * `isLive()` 把 zombie 算成活的、直接卡 `maxConcurrent`（默认 8），
+   * 于是每个 zombie 永久吃掉一个额度，攒够 8 个 run 服务对整个 daemon 失效。
+   *
+   * 现在的契约：进程真死了 → `status` 降级成 `exited`，
+   * 但**不补发任何事件**（订阅者仍然只看到一次 end），`endReason` 也保持 `zombie`
+   *（它确实是从 zombie 恢复的，这个事实要留给 UI 和排查）。
+   * 两全：不重复发事件，也不永久吃额度。
    */
-  it('【已知限制】宽限都过完 exit 才到 → 仍然停在 zombie（F P5）', () => {
+  it('宽限都过完 exit 才到 → 状态自愈成 exited，但不补发事件', () => {
     vi.useFakeTimers()
-    const { run, exit } = makeRun({ killGraceMs: 50 })
+    const { run, events, exit } = makeRun({ killGraceMs: 50 })
     run.kill('killed')
     vi.advanceTimersByTime(100)      // 两个宽限都过完 → 已判 zombie
     expect(run.status).toBe('zombie')
+    const endCount = events.filter((e) => e.type === 'end').length
+    expect(endCount).toBe(1)
+
     exit(0)
     vi.advanceTimersByTime(3000)
-    expect(run.status).toBe('zombie')
+    expect(run.status).toBe('exited')                       // 额度还回去了
+    expect(run.endReason).toBe('zombie')                    // 但事实不抹掉
+    expect(events.filter((e) => e.type === 'end')).toHaveLength(1)  // 没有「结束了两次」
   })
 
   /**

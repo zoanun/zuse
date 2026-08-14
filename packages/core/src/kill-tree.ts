@@ -51,6 +51,44 @@ export function killTree(pid: number | undefined): void {
 }
 
 /**
+ * **硬杀**整棵进程树：POSIX 发 `SIGKILL` 而不是 `SIGTERM`。Windows 无差别
+ *（`taskkill /F` 本来就是硬杀），保留这个入口只为让两边调用点写法一致。
+ *
+ * ## 存在理由：`killTree` 重发两次不构成「升级」
+ *
+ * `run.ts` 的 kill 宽限本来写着「宽限到点仍没 close → 升级再杀一次
+ *（POSIX 的 SIGTERM 可能被忽略）」，而那一下调的还是 `killTree` = 同一个 SIGTERM。
+ * 对 trap / ignore 掉 SIGTERM 的进程，重发 N 次与发 1 次完全等效。
+ *
+ * WSL Ubuntu 上用**本文件的产品代码**实测（不是等价脚本）：
+ *
+ *     spawned pid 5469 ALIVE
+ *     killTree 第 1 次之后: ALIVE
+ *     killTree 第 2 次之后: ALIVE   ← run.ts 两轮宽限的终点就在这里
+ *     SIGKILL 之后:        DEAD(ESRCH)
+ *
+ * vite / webpack / nodemon 都 trap SIGTERM，所以这不是边角情况。
+ *
+ * ## 为什么是独立函数而不是 `killTree(pid, {hard})`
+ *
+ * 「谁在硬杀」应当是**可 grep 的事实**。可选布尔会让 `bash.ts` / `lsp/client.ts`
+ * 那几个语义上也该硬杀的调用点静默保持软杀 —— 缺省值会替它们做决定。
+ * 命名也与既有的 `killTreeSync` 成体系。
+ *
+ * 与 `killTreeSync` 的关系：那个（退出阶段用）本来就发 SIGKILL，
+ * 等价于本函数的同步版。两处刻意保持一致，不要「统一」成 SIGTERM。
+ */
+export function killTreeHard(pid: number | undefined): void {
+  if (pid === undefined) return
+  if (process.platform === 'win32') { killTree(pid); return }
+  try {
+    process.kill(-pid, 'SIGKILL')
+  } catch {
+    try { process.kill(pid, 'SIGKILL') } catch { /* 已经死了 */ }
+  }
+}
+
+/**
  * **同步**杀树 —— 只给 `process.on('exit')` 这一类「没有下一轮事件循环」的地方用。
  *
  * ## 为什么必须有它

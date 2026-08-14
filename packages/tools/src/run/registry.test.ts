@@ -26,11 +26,16 @@ function harness(opts: { maxConcurrent?: number; maxFinished?: number } = {}) {
       return p as unknown as ShellChildProcess
     },
     killTree: (pid: number) => { killed.push(pid) },
+    killTreeHard: (pid: number) => { killed.push(pid) },
     oemLabel: null,
   }
   const reg = new RunRegistry({ deps, ...opts })
   const start = (sessionId = 's1') => reg.start({ command: 'x', cwd: 'E:/tmp', sessionId, policy: POLICY })
-  return { reg, start, procs, killed, close: (i: number, code = 0) => procs[i]!.emit('close', code) }
+  return {
+    reg, start, procs, killed,
+    close: (i: number, code = 0) => procs[i]!.emit('close', code),
+    exit: (i: number, code: number | null = 0) => procs[i]!.emit('exit', code, null),
+  }
 }
 
 /**
@@ -235,5 +240,34 @@ describe('RunRegistry —— 清场', () => {
     const { reg, start } = harness()
     reg.closeAll()
     expect(() => start()).toThrow()
+  })
+
+  /**
+   * **这是 zombie 那条缺陷的核心用例**（设计审计 子进程-1.1）。
+   *
+   * zombie 被 `isLive()` 算成活的，而它曾经是**不可逆终态** —— 进程后来真死了状态也回不去。
+   * 于是每出一个 zombie 就永久少一个并发额度；攒够 `maxConcurrent`（默认 8），
+   * run 服务对整个 daemon 失效，除重启外无解（`disposeAll()` 是唯一出口 = 关停 daemon）。
+   *
+   * 用 `maxConcurrent: 1` 而不是建满 8 条：证明的是同一件事，而且不会因为 8 条假 child
+   * 的时序变脆。**必须写成红→绿一对** —— 只断言「自愈后能再建一条」的话，
+   * 假如有人把 `isLive()` 里的 `|| status === 'zombie'` 删了，这条测试照样绿。
+   */
+  it('zombie 自愈后归还并发额度（先证明它确实占着）', () => {
+    vi.useFakeTimers()
+    const { reg, start, exit } = harness({ maxConcurrent: 1 })
+    const r1 = reg.get(start().id)!
+    r1.kill('killed')
+    vi.advanceTimersByTime(PROJECT_POLICY.killGraceMs)
+    vi.advanceTimersByTime(PROJECT_POLICY.killGraceMs)
+    expect(r1.status).toBe('zombie')
+
+    // 红的那一半：zombie 确实占着额度。
+    expect(() => start()).toThrow(RunLimitError)
+
+    // 绿的那一半：进程终于死了 → 自愈 → 额度回来。
+    exit(0)
+    expect(r1.status).toBe('exited')
+    expect(() => start()).not.toThrow()
   })
 })

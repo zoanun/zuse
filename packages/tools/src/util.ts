@@ -35,7 +35,7 @@ export function findOnPath(exe: string): string | undefined {
  * 是 `cmd.exe → npx → node`，`proc.kill()` 只打第一层），而 `tools` 依赖 `core`，
  * 反向引不到。**一份实现，不分叉。**
  */
-export { killTree, killTreeSync } from '@zuse/core'
+export { killTree, killTreeHard, killTreeSync } from '@zuse/core'
 
 /**
  * 把可选数值夹取为正整数：是数字且 > 0 时向下取整，否则回落到 fallback。

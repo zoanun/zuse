@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { BashTool } from '../bash.js'
 import { getShellLabel } from './shell.js'
 import { spawnShellCommand } from './spawn.js'
-import { killTree } from '../util.js'
+import { killTree, killTreeHard } from '../util.js'
 import { Run } from '../run/run.js'
 import { PROJECT_POLICY } from '../run/policy.js'
 import { createFileTracker, type ToolContext } from '@zuse/core'
@@ -153,6 +153,7 @@ describe.skipIf(!isBash)(`收尾改判 exit —— 端到端（shell=${getShellL
       deps: {
         spawn: (command, opts) => spawnShellCommand(command, { cwd: opts.cwd }),
         killTree,
+        killTreeHard,
       },
     })
     const t0 = Date.now()

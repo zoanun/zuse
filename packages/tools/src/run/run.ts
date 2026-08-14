@@ -60,6 +60,12 @@ export type RunEvent =
 export interface RunDeps {
   spawn: (command: string, opts: { cwd: string; env?: NodeJS.ProcessEnv }) => ShellChildProcess
   killTree: (pid: number) => void
+  /**
+   * 硬杀（POSIX 发 SIGKILL）。第二轮宽限用它 —— 重发一次 SIGTERM 不是「升级」，
+   * 对 trap 掉它的进程（vite / webpack / nodemon 都 trap）完全无效。
+   * 与 `killTree` 分成两个注入点而不是加参数：让「谁在硬杀」是可 grep 的事实。
+   */
+  killTreeHard: (pid: number) => void
   /** 传给 StreamDecoder；null = 非 Windows / 代码页未知。默认由 StreamDecoder 那边探测。 */
   oemLabel?: string | null
   /** 首窗参数，仅供测试注入（默认见 StreamDecoder）。 */
@@ -255,9 +261,13 @@ export class Run {
     this.clearTimer('wall')
     this.clearTimer('idle')
     this.signal()
-    // 宽限到点仍没 close → 升级再杀一次（POSIX 的 SIGTERM 可能被忽略）。
+    // 宽限到点仍没 close → **真的升级**：POSIX 改发 SIGKILL。
+    //
+    // 这里原来调的是同一个 `signal()`（= SIGTERM），而注释写着「POSIX 的 SIGTERM
+    // 可能被忽略」—— 也就是说它自陈要防的东西，用的手段结构上防不住。
+    // WSL Ubuntu 上用产品代码实测：两次 killTree 之后目标仍 ALIVE，SIGKILL 才 DEAD。
     this.graceTimer = setTimeout(() => {
-      this.signal()
+      this.signal(true)
       // 第二个宽限还不死，就认了：转 zombie 并明确报出去，不静默消失。
       this.graceTimer = setTimeout(() => this.toZombie(), this.policy.killGraceMs)
     }, this.policy.killGraceMs)
@@ -317,9 +327,9 @@ export class Run {
     this.idleTimer = setTimeout(() => this.kill('idle'), this.policy.idleMs)
   }
 
-  private signal(): void {
+  private signal(hard = false): void {
     const pid = this.child.pid
-    if (typeof pid === 'number') this.deps.killTree(pid)
+    if (typeof pid === 'number') (hard ? this.deps.killTreeHard : this.deps.killTree)(pid)
   }
 
   /**
@@ -342,6 +352,18 @@ export class Run {
   private onProcessExit(): void {
     this.processExited = true
     this.clearTimer('grace')
+    // **zombie 的自愈点。** 进程后来还是死了 —— 把状态降级，把并发额度还回去。
+    //
+    // 为什么放在这里而不是挂一个探活定时器（我第一版就是那么设计的，被评审否掉）：
+    // `settle()` 只清 wall/idle/grace 三个表，**没有** `settleHandle.cancel()`
+    //（那只在 `dispose()` 里），所以进 zombie 之后 `child.on('exit')` **仍然挂着**，
+    // 这个回调照样会被调到。轮询是在重新发明一个已经存在的事件。
+    // 顺带消掉三个只有轮询才会有的风险：`process.kill(pid,0)` 的 EPERM 误判、
+    // 定时器泄漏（unref 只保证不挡退出、不保证不泄漏）、以及 pid 复用。
+    //
+    // **不改写 `_endReason`**：它确实是从 zombie 恢复来的，不是一次正常退出，
+    // 这个事实要留给 UI 和排查。
+    if (this._status === 'zombie') this._status = 'exited'
   }
 
   private toZombie(): void {

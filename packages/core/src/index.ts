@@ -11,7 +11,7 @@ export * from './tool.js'
 export * from './settings.js'
 export * from './proxy.js'
 export * from './permission.js'
-export { killTree, killTreeSync } from './kill-tree.js'
+export { killTree, killTreeHard, killTreeSync } from './kill-tree.js'
 export {
   trackChild, untrackChild, reapTrackedChildren, armChildReaper,
   // 测试专用，但必须从 barrel 出去：tools 包够不着 core 的内部文件路径

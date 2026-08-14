@@ -29,7 +29,7 @@ import {
   getProviderConfig, createModelClient, setModelInSettings, McpManager, type ToolRegistry, type ModelClient,
 } from '@zuse/core'
 import { makeExpandAttachments } from './upload/imageExpand.js'
-import { LspManager, createLspTool, createLspInstallTool, RunRegistry, spawnShellCommand, killTree, createDefaultRegistry } from '@zuse/tools'
+import { LspManager, createLspTool, createLspInstallTool, RunRegistry, spawnShellCommand, killTree, killTreeHard, createDefaultRegistry } from '@zuse/tools'
 
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
@@ -210,6 +210,8 @@ export async function startServer(
     deps: {
       spawn: (command, opts) => spawnShellCommand(command, { cwd: opts.cwd, ...(opts.env ? { env: opts.env } : {}) }),
       killTree,
+      // 第二轮宽限用它。重发 SIGTERM 不算升级 —— dev server 基本都 trap 它。
+      killTreeHard,
     },
   })
 

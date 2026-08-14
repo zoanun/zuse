@@ -57,6 +57,7 @@ beforeEach(async () => {
       return proc as never
     },
     killTree: (pid: number) => { killedPids.push(pid) },
+      killTreeHard: (pid: number) => { killedPids.push(pid) },
     oemLabel: null,
   }
   runs = new RunRegistry({ deps })
@@ -146,7 +147,7 @@ describe('run 端点 —— 安全闸可确认（不是硬拒）', () => {
 describe('run 端点 —— 并发上限', () => {
   it('超限 → 429（不是 500：这是「稍后再试」不是「坏了」）', async () => {
     const cookie = await authCookie()
-    const small = new RunRegistry({ deps: { spawn: () => newProc() as never, killTree: () => {} }, maxConcurrent: 1 })
+    const small = new RunRegistry({ deps: { spawn: () => newProc() as never, killTree: () => {}, killTreeHard: () => {} }, maxConcurrent: 1 })
     const s2 = createServer(makeRequestHandler({ auth: new LocalPasswordAuth(new PasswordStore(dir), 3600), service, runs: small, devPage: false, tokenTtlSec: 3600 } as unknown as RequestHandlerDeps))
     await new Promise<void>((r) => s2.listen(0, '127.0.0.1', () => r()))
     const addr = s2.address(); const port = typeof addr === 'object' && addr ? addr.port : 0
@@ -261,6 +262,7 @@ describe('run 端点 —— SSE 写失败必须退订', () => {
       deps: {
         spawn: () => { proc = newProc(); return proc as never },
         killTree: (pid: number) => { killed.push(pid) },
+        killTreeHard: (pid: number) => { killed.push(pid) },
         oemLabel: null,
       },
     })
