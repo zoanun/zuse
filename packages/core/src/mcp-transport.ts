@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface, type Interface } from 'node:readline'
 import { killTree } from './kill-tree.js'
+import { trackChild, untrackChild } from './child-reaper.js'
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -71,6 +72,9 @@ export class StdioTransport implements McpTransport {
       cwd: this.cwd,
       shell: true,
     })
+    // 登记进兜底册子：daemon 崩溃（未捕获异常 / 未处理 rejection）时 close() 根本不会被调，
+    // MCP server 会变孤儿。回溯审计在本机数出过 10 个残留的 MCP node 进程。
+    trackChild(this.proc.pid)
 
     this.rl = createInterface({ input: this.proc.stdout! })
 
@@ -94,6 +98,9 @@ export class StdioTransport implements McpTransport {
     })
 
     this.proc.on('exit', () => {
+      // 在 'exit'（不是 'close'）注销：进程一退出 pid 就可能被系统回收给别人，
+      // 留在册子里等于让退出时那一发 taskkill /T /F 去误杀无辜进程。
+      untrackChild(this.proc?.pid)
       if (this.closeHandler) this.closeHandler()
     })
   }

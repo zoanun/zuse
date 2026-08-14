@@ -7,6 +7,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
+import { trackChild, untrackChild } from '@zuse/core'
 import { resolvedShell } from './shell.js'
 
 /**
@@ -59,7 +60,7 @@ export function spawnShellCommand(
   command: string,
   opts: SpawnShellOptions,
 ): ShellChildProcess {
-  return spawn(command, {
+  const child = spawn(command, {
     cwd: opts.cwd,
     shell: resolvedShell(),
     detached: process.platform !== 'win32',
@@ -67,4 +68,18 @@ export function spawnShellCommand(
     stdio: [opts.stdin ?? 'ignore', 'pipe', 'pipe'],
     ...(opts.env ? { env: opts.env } : {}),
   }) as ShellChildProcess
+
+  // 进程级兜底登记（回溯审计 F P2）。daemon 崩溃时 —— 未捕获异常、未处理的 rejection ——
+  // `server.close()` 和各处 dispose 一个都不会跑，在跑的命令会全变孤儿。
+  // `run.ts` 的注释里记着一次真跑复现：一个 SSE 订阅者 throw，整个 daemon 退出码 1 死掉。
+  //
+  // 登记放在**这里**而不是各个调用点：这是 run 服务和 Bash 工具起子进程的唯一入口，
+  // 新增调用点自动就有兜底；写在调用点上则是「第三个调用点出现时没人会想起来加那一行」。
+  trackChild(child.pid)
+  // **必须在 'exit' 注销，不能是 'close'。** 进程一退出 pid 就可能被系统回收给别人，
+  // 留在册子里等于让退出时那一发 taskkill /T /F 去误杀无辜进程。
+  // 代价：shell 已退出但它起的后台孙进程还活着时，那个孙进程放弃收割 ——
+  // 它本来就已经不可达（父进程一死进程树就断了，事后补 /T 只会得到 process not found）。
+  child.once('exit', () => untrackChild(child.pid))
+  return child
 }
