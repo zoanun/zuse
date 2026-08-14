@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface, type Interface } from 'node:readline'
+import { killTree } from './kill-tree.js'
 
 // ── JSON-RPC types ──────────────────────────────────────────────────
 
@@ -122,7 +123,11 @@ export class StdioTransport implements McpTransport {
       this.rl = null
     }
     if (this.proc) {
-      this.proc.kill()
+      // **杀整棵树，不是 `proc.kill()`。** `npx <server>` 在 Windows 上的真实后代树是
+      // `cmd.exe → npx → node`，`proc.kill()` 只打第一层，孙进程留下来当孤儿。
+      // 今天没出事是因为 MCP server 恰好实现了 stdin EOF 自退 —— 那是**它**做对了，
+      // 不是这段代码做对了；换一个不自退的 server 就会留孤儿。
+      killTree(this.proc.pid)
       this.proc = null
     }
   }

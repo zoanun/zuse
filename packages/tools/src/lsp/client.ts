@@ -296,6 +296,12 @@ export class LspClient {
   }
 
   /** 优雅关闭：shutdown 请求 + exit 通知，短宽限后 killTree 兜底，最后释放连接。 */
+  /**
+   * 语言服务器进程的 pid。**给退出兜底用** —— 那条路上只能同步杀
+   * （exit 阶段定时器不跑，见 `LspManager.armCleanup`），拿不到 `dispose()` 那套异步流程。
+   */
+  get pid(): number | undefined { return this.child.pid }
+
   async dispose(): Promise<void> {
     try {
       // ShutdownRequest.type 是 ProtocolRequestType0（无参），exit 同理无参。

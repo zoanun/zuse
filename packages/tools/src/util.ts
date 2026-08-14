@@ -29,40 +29,13 @@ export function findOnPath(exe: string): string | undefined {
 }
 
 /**
- * 杀掉整棵进程树。child 是被 spawn 的进程，真正干活的命令可能是它的子进程。
- * 只 kill 父进程会留下占着管道的孙进程。Windows 用 taskkill /T 杀树，POSIX 杀进程组。
+ * 杀进程树 —— **实现搬到了 `@zuse/core`**，这里原样转出，所有既有引入点不受影响。
+ *
+ * 搬家的理由：`core` 的 MCP 传输层也需要它（`npx <server>` 在 Windows 上的真实后代树
+ * 是 `cmd.exe → npx → node`，`proc.kill()` 只打第一层），而 `tools` 依赖 `core`，
+ * 反向引不到。**一份实现，不分叉。**
  */
-export function killTree(pid: number | undefined): void {
-  if (pid === undefined) return
-  if (process.platform === 'win32') {
-    // **`'error'` 必须有监听者，否则一次 spawn 失败会打死整个 daemon。**
-    //
-    // `spawn()` 在启动失败时（PATH 里找不到 taskkill、权限不足…）**同步不抛**，
-    // 而是异步 emit `'error'`；无监听者时 Node 直接 throw。而本函数的调用点全在
-    // 定时器 / abort 回调里（`bash.ts` 的超时、`run.ts` 的 kill 宽限），那条栈上
-    // **没有任何 catch**，本仓也没有 process 级 uncaughtException 兜底
-    //（`run.ts` 的 deliver 与 `http/server.ts` 的注释都记着这件事）。
-    // 于是后果是整机级：所有会话一起没。触发频率低，代价上限却是最高的那一档。
-    //
-    // 在调用点包 try/catch 是没用的 —— 它同步不抛，try/catch 接不住异步事件。
-    // POSIX 分支一直有 try/catch，只有这一支裸奔。
-    //
-    // `stdio: 'ignore'` + `windowsHide` 顺带抄自 `snapshot.ts`：不占管道、不闪黑框。
-    const p = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    p.on('error', () => {
-      // 杀不掉就杀不掉 —— 这里没有更好的补救，但绝不能把整个进程带走。
-    })
-  } else {
-    try {
-      process.kill(-pid, 'SIGTERM') // 负 pid = 整个进程组
-    } catch {
-      process.kill(pid, 'SIGTERM')
-    }
-  }
-}
+export { killTree, killTreeSync } from '@zuse/core'
 
 /**
  * 把可选数值夹取为正整数：是数字且 > 0 时向下取整，否则回落到 fallback。

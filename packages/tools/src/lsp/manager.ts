@@ -1,5 +1,6 @@
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { killTreeSync } from '@zuse/core'
 import { LspClient } from './client.js'
 import type { LanguageServerConfig } from './servers.js'
 
@@ -77,16 +78,31 @@ export class LspManager {
 
   /**
    * 进程退出兜底：主进程退出或收到 SIGINT 时，强制关闭所有存活 client。
-   * 避免语言服务器进程成为孤儿。只注册一次。
+   *
+   * ## `exit` 与 `SIGINT` **必须走不同的路**（原来两条都调 `dispose()`，那是空操作）
+   *
+   * `exit` 阶段**定时器与 nextTick 都不跑**，只有 microtask 跑。实测（node v22）：
+   * 在 exit handler 里排的 `setTimeout` / `process.nextTick` 一个都不执行，
+   * 而 `spawnSync` 正常返回。
+   *
+   * 而 `LspClient.dispose()` 真正的杀进程动作是
+   * `setTimeout(() => killTree(pid), KILL_DELAY)` —— **那一刀在 exit 阶段永远不会落**。
+   * 回溯审计在本机实测到 3 个残留的 tsserver。
+   *
+   * 所以 `exit` 走**同步**杀树；`SIGINT` 那条事件循环还活着，仍走优雅 `dispose()`
+   *（先发 LSP shutdown/exit 握手，给它自己退的机会）。
+   *
+   * 同款先例：`tmux-isolation.ts` 用的就是 `spawnSync`。
    */
   private armCleanup(): void {
     if (this.cleanupArmed) return
     this.cleanupArmed = true
-    const kill = (): void => {
+    process.once('exit', () => {
+      for (const c of this.clients.values()) killTreeSync(c.pid)
+    })
+    process.once('SIGINT', () => {
       for (const c of this.clients.values()) void c.dispose()
-    }
-    process.once('exit', kill)
-    process.once('SIGINT', kill)
+    })
   }
 
   /** 优雅关闭所有 client（会话结束时调用）。 */
