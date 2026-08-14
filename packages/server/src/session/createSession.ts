@@ -3,6 +3,7 @@ import {
   loadSettings,
   loadTighteningRules,
   findProjectRoot,
+  isTrustedRoot,
   installProxy,
   resolveModelSelection,
   resolveSmallModelSelection,
@@ -105,6 +106,32 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
       `[zuse-server] 会话 ${sessionId} 采用了 ${sessionRoot} 的收紧规则：` +
       `deny +${tightening.deny.length}，ask +${tightening.ask.length}`,
     )
+  }
+
+  // **放宽**的那一半：只有这个目录被**显式信任过**才读。
+  // 未信任时这里什么都不做 —— 会话照常跑，只是不吃那个项目的 allow / model / providers。
+  // `loadSettings({ root })` 走的是与 daemon 根完全相同的三层合并，
+  // 所以「信任之后」的语义就是「像在那个项目里跑 daemon 一样」，没有第二套规则要记。
+  const rootTrusted = sessionRoot !== findProjectRoot() && isTrustedRoot(sessionRoot)
+  if (rootTrusted) {
+    try {
+      const projectSettings = loadSettings({ root: sessionRoot })
+      Object.assign(settings, projectSettings)
+      // 收紧规则在上面已经并过；重新赋值 settings 会把它们冲掉，这里补回来。
+      settings.permissions = {
+        ...projectSettings.permissions,
+        deny: [...projectSettings.permissions.deny, ...tightening.deny],
+        ask: [...projectSettings.permissions.ask, ...tightening.ask],
+      }
+      console.log(`[zuse-server] 会话 ${sessionId} 采用了受信目录 ${sessionRoot} 的完整配置`)
+    } catch (err) {
+      // 与上面同理：受信目录里一份写坏的配置不该让建会话 500，也不该静默回退成
+      // 「daemon 的配置」—— 那会让「写坏配置」变成一条改变生效配置的路。
+      console.warn(
+        `[zuse-server] 受信目录 ${sessionRoot} 的配置读不了，本会话沿用全局配置：` +
+        `${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
   }
   try {
     installProxy(settings)

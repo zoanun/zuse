@@ -284,6 +284,16 @@ export interface LoadSettingsOptions {
   userPath?: string
   projectPath?: string
   localPath?: string
+  /**
+   * 项目层的根目录。缺省 = `findProjectRoot()`，即**从 daemon 进程 cwd 往上找** ——
+   * 与从前完全一致，不传就没有任何行为变化。
+   *
+   * 会话侧传自己的 root，好让「在别的项目里开的会话」读那个项目的配置。
+   * **但只在那个目录被显式信任过时才这么传**（见 `trusted-roots.ts`）：
+   * `.zuse/settings.json` 不在 .gitignore 里、是随仓库分发的，无条件读它等于让
+   * 「clone 一个仓库」就能设 `defaultMode:"bypass"` 和 `providers.default.baseURL`。
+   */
+  root?: string
 }
 
 /**
@@ -396,7 +406,8 @@ function dedupe(items: string[]): string[] {
 
 /** 三层加载 + 合并。优先级 用户 < 项目 < 本地。 */
 export function loadSettings(opts: LoadSettingsOptions = {}): ResolvedSettings {
-  const root = findProjectRoot()
+  // 缺省仍是「从 daemon 进程 cwd 往上找」—— 不传 root 时行为与从前一字不差。
+  const root = opts.root ?? findProjectRoot()
   const userPath = opts.userPath ?? join(homedir(), '.zuse', 'settings.json')
   const projectPath = opts.projectPath ?? join(root, '.zuse', 'settings.json')
   const localPath = opts.localPath ?? join(root, '.zuse', 'settings.local.json')

@@ -2,7 +2,7 @@ import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename, sep } from 'node:path'
-import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
+import { VERSION, loadSettings, loadTrustedRoots, trustRoot, untrustRoot, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { isSecureRequest } from './requestSecurity.js'
@@ -979,6 +979,40 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     // /api/mcp — MCP server management (M4), all auth-gated.
     // Config changes take effect on daemon restart (connections are established at startup).
     // -----------------------------------------------------------------------
+
+    // GET /api/trusted-roots — 列出被显式信任的目录。
+    //
+    // 「信任一个目录」= 允许它的 `.zuse/settings.json` **放宽**本会话的配置
+    //（allow / defaultMode / providers / model）。**收紧**的 deny/ask 不需要信任，
+    // 无条件生效。这条分界的理由见 core 的 `trusted-roots.ts`：那个文件不在
+    // .gitignore 里、随仓库分发，无条件读它等于「clone 一个仓库就能关掉你的护栏」。
+    if (method === 'GET' && path === '/api/trusted-roots') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      return sendJson(res, 200, { roots: loadTrustedRoots() })
+    }
+
+    // POST /api/trusted-roots — body {root, trusted}. trusted:false 即撤销。
+    if (method === 'POST' && path === '/api/trusted-roots') {
+      if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
+      const body = (await readJsonBody(req)) as { root?: unknown; trusted?: unknown } | null
+      const root = body?.root
+      if (typeof root !== 'string' || root.trim() === '') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'root is required' } })
+      }
+      // 只接受**已存在的目录**：信任一个不存在的路径没有意义，而且会让表里堆垃圾。
+      try {
+        if (!(await stat(root)).isDirectory()) {
+          return sendJson(res, 400, { error: { code: 'bad_request', message: 'root is not a directory' } })
+        }
+      } catch {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: 'root does not exist' } })
+      }
+      if (body?.trusted === false) untrustRoot(root)
+      else trustRoot(root)
+      // 已经开着的会话**不受影响** —— 配置每会话只读一次（本仓既有约定）。
+      // 说清楚，否则用户点了信任却发现没变化。
+      return sendJson(res, 200, { roots: loadTrustedRoots(), note: '新开的会话才生效' })
+    }
 
     // GET /api/mcp — McpServerInfo[] (configured + live status + tools).
     if (method === 'GET' && path === '/api/mcp') {
