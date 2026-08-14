@@ -524,7 +524,61 @@ async function gateAndRunTool(
   // （这里曾有 pre/postToolUse hooks 的调用 —— 2026-08-14 随整个 hooks 子系统一起删。
   //   它从未接上过：`ResolvedSettings.hooks` 恒为 undefined，因为 `mergeLayers` 从来
   //   没拷贝过这个字段。理由见 types.ts 里那段留档。）
-  return await runOneTool(registry, tu, ctx)
+
+  // 工具执行到一半的权限复检口（目前唯一用户：WebFetch 的跨主机重定向）。
+  // 在这里而不是 buildCtx() 里装：这一层才手里有 `tool` 对象和 `deps`，闭包捕获它俩比
+  // 让工具把自己的名字传回来更直接 —— 也断掉「某个工具冒用别人的名字去过闸」这条路。
+  const runCtx: ToolContext = {
+    ...ctx,
+    checkSpecifier: (spec: string) => recheckSpecifier(tool, spec, deps),
+  }
+  return await runOneTool(registry, tu, runCtx)
+}
+
+/**
+ * 工具执行中途的二次过闸。与首次过闸**共用 decide()、共用 canUseTool、共用 verdict 处理** ——
+ * 少了最后一项，用户点「本会话允许」在这条路上不生效、每跳都会重弹（`Tool.specifierKind`
+ * 注释里记录过的同类缺陷：会话规则匹配不上它自己，于是永远重问）。
+ *
+ * 并发安全：`sessionAllow` 的 `if (!includes) push` 和 `appendAllowRule` 全程没有 await，
+ * 是同步的读-改-写，事件循环插不进第二个 checkSpecifier。并发最坏只造成「同一主机弹两次框」，
+ * 而这在首次过闸上今天就存在（Agent 工具 parallelizable，多个子代理共享同一个 sessionAllow）。
+ * **别出于恐惧在这里加锁。**
+ *
+ * 已知差异：首次过闸时 canUseTool 抛错会一路抛出、中止整个回合；从工具 run 里抛则被
+ * runOneTool 的 catch 吞成一条 isError 结果。可接受（一次抓取失败 < 整个回合炸掉）。
+ */
+async function recheckSpecifier(
+  tool: Tool,
+  specifier: string,
+  deps: GateDeps,
+): Promise<'allow' | 'deny'> {
+  const { decision, rule, matched, reason } = decide(
+    tool, specifier, deps.settings, deps.sessionAllow, deps.cwd,
+  )
+  if (decision === 'deny') return 'deny'
+  if (decision === 'ask') {
+    const verdict = deps.canUseTool
+      ? await deps.canUseTool({
+          toolName: tool.name,
+          // input 给的是**真正被裁决的那个限定符**，不是原始 tool_use 的参数：对话框上
+          // 「问的是什么」必须和规则串（如 `WebFetch(b.example)`）说的是同一件事。
+          input: { specifier },
+          specifier,
+          rule,
+          reason: reason ?? `${tool.name} 执行中途要访问 ${specifier}`,
+        })
+      : 'deny'
+    if (verdict === 'deny') return 'deny'
+    if (verdict === 'allow_session' || verdict === 'allow_persist') {
+      if (!deps.sessionAllow.includes(rule)) deps.sessionAllow.push(rule)
+    }
+    if (verdict === 'allow_persist') deps.onPersistAllow(rule)
+    return 'allow'
+  }
+  // 全自主档决定性放行也要计数，否则常驻横幅的「已自动放行 N 次」漏掉跨主机跳。
+  if (matched === MATCHED_BYPASS) deps.onAutoAllow?.(tool.name, specifier)
+  return 'allow'
 }
 
 /**

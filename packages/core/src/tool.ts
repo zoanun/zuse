@@ -78,6 +78,22 @@ export interface ToolContext {
    * 可选：无头/测试场景构造的 ctx 可不提供（此时 cd 不持久,但命令照常执行）。
    */
   setCwd?(absPath: string): void
+  /**
+   * 工具**执行到一半**才知道自己要碰哪个资源时，回头再过一次权限闸。
+   *
+   * 目前唯一用户：WebFetch 的跨主机重定向 —— 入口闸只看得到入口主机名，
+   * 而跳到哪儿去是**对方站点**用 `Location` 单方面决定的。实测：配了
+   * `deny: WebFetch(127.0.0.1)`，从 localhost 302 过去照样把内容取回来了。
+   *
+   * 返回 `'allow' | 'deny'`：`ask` 已在闸门内部经 `canUseTool` 问过用户、折叠掉了
+   *（连同 allow_session / allow_persist 的落库），工具侧不该也不必知道那一层。
+   *
+   * **可选字段，缺席时调用方必须 fail closed。** 现存三条 `tool.run` 路径里，
+   * 另外两条（SessionManager / TUI 的记忆冲刷）硬编码只取 Memory 工具、够不着 WebFetch，
+   * 所以缺席只会出现在将来新加的 ctx 构造点上 —— 让它表现为「跨站重定向抓不了」这种
+   * 看得见的报错，而不是权限闸静默失效。
+   */
+  checkSpecifier?(specifier: string): Promise<'allow' | 'deny'>
 }
 
 /**

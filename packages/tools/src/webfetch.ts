@@ -11,8 +11,32 @@ import { gfm } from 'turndown-plugin-gfm'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
 import { shapeHeadTail } from './truncate.js'
 
-/** 抓取超时（毫秒）。 */
+/** 单跳抓取超时（毫秒）。注意是**每一跳**各自一个，不是整条重定向链共用一个。 */
 const FETCH_TIMEOUT_MS = 30_000
+/**
+ * 单跳超时的可覆盖读取。存在的唯一理由是让「超时是不是每跳新建」这条能被测到 ——
+ * 共用一个 signal 的错误实现下，用户在权限弹框上答慢了，下一跳会以「网络超时」失败，
+ * 把锅甩给网络。要测它就得让超时短到秒级以下，否则用例要跑 30 秒。
+ */
+function fetchTimeoutMs(): number {
+  const n = Number(process.env['ZUSE_WEBFETCH_TIMEOUT_MS'])
+  return Number.isFinite(n) && n > 0 ? n : FETCH_TIMEOUT_MS
+}
+/**
+ * 会跟随的重定向状态码。**写死这个集合，不要写「是 3xx 就跳」。**
+ * 实测（node v22）：现行的 `redirect: 'follow'` 对 300 / 304 **即使带 Location 也不跟随**，
+ * 而 301/302/303/307/308 跟随。自己实现循环时写宽了，等于凭空多一条现行实现根本不会走的
+ * 出站请求路径 —— 那不是这次改动想要的。
+ * （303 会改方法、307/308 保持方法；本工具只发 GET，两者对我们都无影响。）
+ */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308])
+/**
+ * 一次调用最多跟随几跳。取 10 而不是浏览器/undici 的 20：够用，且超限报错而不是
+ * 静默停在中途。**别按「每多一跳多一次弹窗」去压这个数** —— 同主机跳一次都不弹，
+ * 弹窗数由链上不同主机的个数决定，与跳数没有单调关系；压到 5 会误伤
+ * `http→https→www→尾斜杠→地区→同意页→登录` 这类真实存在的长链。
+ */
+const MAX_REDIRECTS = 10
 /** 缓存存活时间（毫秒）：15 分钟，进程重启即清空。 */
 const CACHE_TTL_MS = 15 * 60_000
 /** 输出字符上限（约 1.2 万~2.5 万 token），超出截断。 */
@@ -146,10 +170,51 @@ export function __clearCache(): void {
 // 一组当作正文原样返回的非 HTML 文本类型。
 const PLAIN_TYPES = new Set(['text/plain', 'application/json', 'text/markdown'])
 
-/** 组装最终输出：有标题则「# 标题 + 来源 URL」抬头，否则仅 URL。 */
-function formatOutput(title: string, url: string, content: string): string {
+/**
+ * 组装最终输出：有标题则「# 标题 + 来源 URL」抬头，否则仅 URL。
+ * `note` 用来说明「这内容其实来自重定向后的另一个地址」—— 只在真跳过时给，
+ * 不给无重定向的常见情况增加噪声。
+ */
+function formatOutput(title: string, url: string, content: string, note?: string): string {
   const header = title ? `# ${title}\n${url}` : url
-  return `${header}\n\n${content}`
+  return `${header}${note === undefined ? '' : `\n${note}`}\n\n${content}`
+}
+
+/**
+ * 主机名等价写法归一。**只做 URL 层可判定、无歧义、无副作用的两件事。**
+ *
+ * 权限规则的限定符匹配是**字面 glob**（permission.ts 的 `globToRegExp(...).test(...)`），
+ * 而 `new URL().hostname` 的归一并不完整。实测（node v22）：
+ *
+ *   http://localhost./          → hostname = 'localhost.'      ← 尾点保留
+ *   http://[::ffff:127.0.0.1]/  → hostname = '[::ffff:7f00:1]' ← 且被压成十六进制
+ *
+ * 而这两个写法**真的连得到**只监听 127.0.0.1 的服务器（实测取到了 payload）。
+ * 于是 `deny: WebFetch(localhost)` 挡不住 `http://localhost./` —— 这个洞今天在**入口闸**
+ * 上就存在，不需要重定向；重定向路径上更是对方站点用 Location 单方面就能触发。
+ *
+ * 大小写、IDN、十进制/十六进制 IP、**IPv4 的**尾点，`new URL()` 已经归一好了
+ *（实测：EXAMPLE.com→example.com、中国.com→xn--fiqs8s.com、2130706433→127.0.0.1、
+ * 0x7f.1→127.0.0.1、127.1→127.0.0.1、127.0.0.1.→127.0.0.1）——
+ * **不要再 toLowerCase()，也不要担心大小写绕过。**
+ *
+ * 其余 IPv6 一律原样返回：自己写通用 IPv6 归一是另一个能出 bug 的坑，而收益是零。
+ */
+export function canonicalHost(hostname: string): string {
+  let h = hostname
+  // 末尾单点：'example.com.' 与 'example.com' 是同一台机器，规则却分得开。
+  if (h.length > 1 && h.endsWith('.')) h = h.slice(0, -1)
+  // IPv4-mapped IPv6 的压缩十六进制形式（Node 实际给出的就是这个形状）。
+  const hex = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/i.exec(h)
+  if (hex !== null) {
+    const hi = parseInt(hex[1]!, 16)
+    const lo = parseInt(hex[2]!, 16)
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+  }
+  // 字面点分形式：Node 目前不会产出，但别人构造的 URL 字符串里可能有。
+  const dotted = /^\[::ffff:(\d{1,3}(?:\.\d{1,3}){3})\]$/.exec(h)
+  if (dotted !== null) return dotted[1]!
+  return h
 }
 
 /**
@@ -195,7 +260,9 @@ export const WebFetchTool: Tool = {
     const u = (input as { url?: unknown }).url
     if (typeof u !== 'string') return null
     try {
-      return new URL(u).hostname
+      // 走 canonicalHost 而不是裸 hostname：否则 `http://localhost./` 逃得掉
+      // `deny: WebFetch(localhost)`，且它真连得到本机（见 canonicalHost 注释）。
+      return canonicalHost(new URL(u).hostname)
     } catch {
       return null
     }
@@ -224,26 +291,100 @@ export const WebFetchTool: Tool = {
     const cached = cache.get(cacheKey)
     if (cached !== undefined) return { output: cached, isError: false }
 
-    // 超时与用户中断合并：任一触发都中止抓取。
-    const timeoutSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    const signal = AbortSignal.any([ctx.signal, timeoutSignal])
-
+    // --- 重定向循环 -------------------------------------------------------
+    // 用 redirect:'manual' 自己跳，因为 'follow' 之下「跳到哪儿去了」没有任何人再看一眼：
+    // 实测配了 deny: WebFetch(127.0.0.1)，从 localhost 302 过去照样把内容取回来了。
+    //
+    // 地基（必须知道，否则会有人把它「修」回浏览器语义）：WHATWG fetch 规范规定 manual
+    // 模式返回 opaque-redirect filtered response（status 0 / header 空 / body null），
+    // 照规范读这个方案根本不可能实现。**Node/undici 不是这样** —— 实测 type='basic'、
+    // header 全在、Location 读得到、无 Location 时是 null（不是 undefined）。
+    let current = parsed
+    const hops: URL[] = []
+    // 本次调用内已放行过的主机名。没有它，a→b→a→b 会为 b 弹两次框
+    //（「仅此一次」不进 sessionAllow，第二次照样问）。
+    const approved = new Set([canonicalHost(parsed.hostname)])
+    let crossedHost = false
     let res: Response
-    try {
-      res = await fetchImpl(parsed.href, {
-        redirect: 'follow',
-        signal,
-        headers: { 'user-agent': USER_AGENT },
-      })
-    } catch (err) {
-      // 判定顺序有意为之：用户中断（ctx.signal）优先于超时。两者同刻触发时，
-      // 优先报「已取消」更贴合用户意图。改动这里的顺序前请保留此优先级。
-      if (ctx.signal.aborted) return { output: 'WebFetch cancelled.', isError: true }
-      if (timeoutSignal.aborted) {
-        return { output: `WebFetch timed out after ${FETCH_TIMEOUT_MS}ms.`, isError: true }
+
+    for (;;) {
+      // 每一跳新建超时，只度量**网络**时间。共用一个的话，用户盯着权限弹框想 40 秒，
+      // 下一跳会立刻以「WebFetch timed out」失败 —— 用户点了「允许」却看到网络超时。
+      const timeoutMs = fetchTimeoutMs()
+      const timeoutSignal = AbortSignal.timeout(timeoutMs)
+      const signal = AbortSignal.any([ctx.signal, timeoutSignal])
+      try {
+        res = await fetchImpl(current.href, {
+          redirect: 'manual',
+          signal,
+          headers: { 'user-agent': USER_AGENT },
+        })
+      } catch (err) {
+        // 判定顺序有意为之：用户中断（ctx.signal）优先于超时。两者同刻触发时，
+        // 优先报「已取消」更贴合用户意图。改动这里的顺序前请保留此优先级。
+        if (ctx.signal.aborted) return { output: 'WebFetch cancelled.', isError: true }
+        if (timeoutSignal.aborted) {
+          return { output: `WebFetch timed out after ${timeoutMs}ms (${current.href}).`, isError: true }
+        }
+        const msg = err instanceof Error ? err.message : String(err)
+        return { output: `WebFetch failed: ${msg}`, isError: true }
       }
-      const msg = err instanceof Error ? err.message : String(err)
-      return { output: `WebFetch failed: ${msg}`, isError: true }
+
+      // 非重定向状态码、或重定向状态码但没有 Location → 这就是终态响应，交给下面处理。
+      const loc = REDIRECT_STATUS.has(res.status) ? res.headers.get('location') : null
+      if (loc === null) break
+
+      if (hops.length >= MAX_REDIRECTS) {
+        return {
+          output: `WebFetch 跟随重定向超过上限（${MAX_REDIRECTS} 跳），停在 ${current.href}。`,
+          isError: true,
+        }
+      }
+
+      let next: URL
+      try {
+        // base 必须是**当前跳**，不是入口 —— 相对 Location 在第二跳之后就会解析到错误的源。
+        next = new URL(loc, current.href)
+      } catch {
+        return { output: `WebFetch 收到无法解析的 Location：${loc}`, isError: true }
+      }
+      // 入口的 scheme 检查只查了入口。改成 manual 之后 `Location: file:///…`、`data:`
+      // 不再有 undici 兜着，必须每跳自己查。
+      if (next.protocol !== 'http:' && next.protocol !== 'https:') {
+        return {
+          output: `WebFetch 拒绝跟随到非 http(s) 的重定向：${next.protocol}//… （来自 ${current.href}）`,
+          isError: true,
+        }
+      }
+
+      const host = canonicalHost(next.hostname)
+      if (host !== canonicalHost(current.hostname)) {
+        crossedHost = true
+        if (!approved.has(host)) {
+          if (ctx.checkSpecifier === undefined) {
+            // fail closed：宁可「跨站重定向抓不了」这种看得见的报错，也不要权限闸静默失效。
+            return {
+              output:
+                `WebFetch 拒绝跟随跨主机重定向（${current.hostname} → ${host}）：` +
+                '当前运行环境没有提供权限复检口，无法确认该主机是否被允许。请直接抓取目标 URL。',
+              isError: true,
+            }
+          }
+          const verdict = await ctx.checkSpecifier(host)
+          if (verdict !== 'allow') {
+            return {
+              output:
+                `WebFetch 跟随重定向到 ${host} 被权限规则拒绝（起自 ${parsed.href}）。` +
+                '不要重试同一调用；如确需该主机的内容，请让用户放行它。',
+              isError: true,
+            }
+          }
+          approved.add(host)
+        }
+      }
+
+      hops.push(next)
+      current = next
     }
 
     if (!res.ok) {
@@ -253,22 +394,32 @@ export const WebFetchTool: Tool = {
     const contentType = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
     const body = await res.text()
 
+    // 抬头和 jsdom 的 base URL 都必须是**最终** URL。原来用的是入口 URL —— 输出会告诉
+    // 模型「这内容来自 A」而它其实来自 B，页面里的相对链接也会解析到错误的源上。
+    const finalUrl = current.href
+    const note =
+      hops.length === 0 ? undefined : `（经 ${hops.length} 次重定向，起自 ${parsed.href}）`
+
     let output: string
     if (contentType === 'text/html' || contentType === 'application/xhtml+xml') {
-      const { title, markdown } = extractContent(body, parsed.href)
+      const { title, markdown } = extractContent(body, finalUrl)
       const content =
         markdown.trim() === ''
           ? '正文为空，页面可能为 JS 客户端渲染（SPA）；可尝试其数据接口或直接粘贴内容。'
           : markdown
-      output = formatOutput(title, parsed.href, content)
+      output = formatOutput(title, finalUrl, content, note)
     } else if (PLAIN_TYPES.has(contentType)) {
-      output = formatOutput('', parsed.href, body)
+      output = formatOutput('', finalUrl, body, note)
     } else {
       return { output: `Unsupported content type: ${contentType || 'unknown'}`, isError: true }
     }
 
     output = truncate(output)
-    cache.set(cacheKey, output)
+    // 跨过主机就不写缓存。这**不是**安全必需项 —— 入口闸今天就是宽的（点「仅此一次」的
+    // 结果照样进缓存，15 分钟内第二次不再弹）。这里选更保守的一边，理由是重定向链的目标
+    // 主机是**对方站点**用 Location 选的，而入口 URL 是模型自己写的，两者可信度不同。
+    // 代价：短链接一类每次真抓，多一次网络往返。入口闸那条已知、本次不改。
+    if (!crossedHost) cache.set(cacheKey, output)
     return { output, isError: false }
   },
 }
