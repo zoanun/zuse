@@ -2,7 +2,7 @@ import { existsSync, readFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { Tool, ToolContext, ToolResult, JSONSchema } from '@zuse/core'
-import { killTree } from './util.js'
+import { killTree, killTreeHard } from './util.js'
 import { ensureShellSnapshot } from './shell-snapshot.js'
 import { ensureTmuxSocket, getZuseTmuxEnv, isTmuxCommand } from './tmux-isolation.js'
 import { StreamShaper } from './truncate.js'
@@ -47,10 +47,16 @@ const KILLED_DRAIN_MS = 1_500
 /**
  * killTree 之后的**硬截止**：到点无论如何 resolve。
  *
- * 比 run 那边的两段 grace（3s+3s）短，因为这里没有「升级重杀」那一步。
- * **已知代价**：POSIX 上 `killTree` 只发 SIGTERM、没有 SIGKILL 升级（`util.ts`），
- * 所以一个 trap 掉 SIGTERM 的进程在这 5 秒后仍然活着，我们只是不再等它。
- * 那时输出文案会点破「进程没有退出，可能还在跑」——见 `stuck`。
+ * 比 run 那边的两段 grace（3s+3s）短，因为这里没有那一整套宽限阶梯。
+ *
+ * **到点之前会先硬杀一次**（`killTreeHard`）。这段注释原来写的是
+ * 「**已知代价**：POSIX 上 killTree 只发 SIGTERM、没有 SIGKILL 升级，所以一个 trap 掉
+ * SIGTERM 的进程在这 5 秒后仍然活着，我们只是不再等它」—— 那条代价现在不必付了：
+ * 这 5 秒本来就是「软杀之后还没退」的等待窗口，是个天然的升级点。
+ * WSL 实测（本仓产品代码）：两次 killTree 之后目标仍 ALIVE，SIGKILL 才 DEAD。
+ *
+ * 硬杀之后仍然可能有杀不掉的进程（不可中断状态），那时输出文案照旧点破
+ * 「进程没有退出，可能还在跑」——见 `stuck`。
  */
 const KILL_HARD_DEADLINE_MS = 5_000
 /**
@@ -261,6 +267,11 @@ export const BashTool: Tool = {
         if (hardTimer !== null) return
         hardTimer = setTimeout(() => {
           gaveUp = true
+          // **放弃之前先硬杀一次。** 这 5 秒本来就是「软杀之后还没退」的等待窗口，
+          // 是个天然的升级点 —— 而在此之前这条路只发过 SIGTERM，
+          // 一个 trap 掉它的进程（dev server 基本都 trap）到点仍然活着。
+          // WSL 实测：两次 killTree 之后仍 ALIVE，SIGKILL 才 DEAD。
+          killTreeHard(child.pid)
           // **必须先停止收集，再组装。** 只 resolve 不停收集的话，进程还在刷屏，
           // `shaper.append` 继续被调 —— 而 `finalize()` 之后再 append 会
           // **新开一个永远不会被关闭的 spill 文件**（实测：finalize 后继续灌 1MB，

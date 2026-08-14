@@ -158,7 +158,21 @@ describe('崩溃路径端到端', () => {
       // 心跳真的起来过：没有这条，「心跳停了」可能只是因为它压根没跑起来（阴性对照）。
       // 把子进程输出带进断言消息 —— 否则脚本起不来时只看到一句 "expected false to be true"。
       expect(existsSync(beatFile), `心跳文件没出现；子进程输出：\n${childLog}`).toBe(true)
-      const readBeat = (): number => Number(readFileSync(beatFile, 'utf8').trim())
+      // **心跳进程每 150ms 整份重写这个文件，所以读到「正在写的空文件」是可能的。**
+      // 实测踩过一次：`Number('')` 是 0，断言变成 `expected 0 to be greater than 0`。
+      // 这里保留上一次读到的非零值 —— 我们要判断的是「还在不在涨」，
+      // 一次读空不代表心跳停了。
+      let lastBeat = 0
+      const readBeat = (): number => {
+        const raw = readFileSync(beatFile, 'utf8').trim()
+        const n = raw === '' ? NaN : Number(raw)
+        if (Number.isFinite(n) && n > 0) lastBeat = n
+        return lastBeat
+      }
+      // 起来得慢也不算失败：轮询到第一个心跳（上限 3 秒）。
+      for (let i = 0; i < 30 && readBeat() === 0; i++) {
+        await new Promise((r) => setTimeout(r, 100))
+      }
       expect(readBeat()).toBeGreaterThan(0)
 
       // **断言心跳，不断言 pid。** `spawn(..., {shell:true})` 拿到的是 shell 包装器的

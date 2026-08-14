@@ -38,7 +38,12 @@ function endText(reason: EndReason, exitCode: number | null, hadOutput: boolean)
     case 'detach': return { text: '你关掉了运行面板，已停止', bad: false }
     case 'killed': return { text: '已停止', bad: false }
     // 杀不掉的进程必须显眼说出来：这是需要用户自己去任务管理器处理的情况。
-    case 'zombie': return { text: '进程没能杀掉，可能还在后台跑 —— 需要你自己去任务管理器结束它', bad: true }
+    //
+    // **措辞是过去时，这是刻意的。** end 事件只发一次，而进程后来可能自己退出了
+    //（服务端会把状态自愈成 exited 并归还并发额度，但**不补发事件** ——
+    // 补发会让订阅者看到「结束了两次」）。所以这里不能断言「它现在还在跑」，
+    // 只能说「我们放弃的时候它还活着」。写成现在时就会变成一句会过期的假话。
+    case 'zombie': return { text: '两次停止都没能让它退出 —— 放弃等待时它还活着，可能仍在后台跑，必要时去任务管理器确认', bad: true }
   }
 }
 
