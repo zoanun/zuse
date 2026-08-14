@@ -336,6 +336,16 @@ export interface SessionSnapshot {
   /** Provider id of the active model — lets the UI disambiguate same-named models across providers. */
   modelProviderId: string
   cwd: string
+  /**
+   * 本会话读配置用的项目根（从 cwd 往上找 `.zuse` / `.git` / `pnpm-workspace.yaml`）。
+   * 与 `cwd` 不同：cwd 可能是项目的子目录，而配置读的是根。
+   */
+  sessionRoot?: string
+  /**
+   * 这个根被**显式信任**过吗？未信任时只有它的 `deny`/`ask`（收紧）生效，
+   * `allow`/`defaultMode`/`providers`（放宽）一律不读 —— 界面据此提示用户。
+   */
+  rootTrusted?: boolean
   totalUsage: Usage | undefined
   contextTokens: number | undefined
   contextWindow: number | undefined

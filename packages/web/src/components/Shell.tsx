@@ -16,6 +16,7 @@ import { CronPanel } from './CronPanel.js'
 import { SLASH_COMMANDS, type SlashCommand, type CommandContext } from './commands.js'
 import { nextMode } from './permissionMode.js'
 import { BypassBanner } from './BypassBanner.js'
+import { TrustNotice } from './TrustNotice.js'
 import type { DirPickerHandle } from './DirPicker.js'
 import { persistModel } from '../state/manageApi.js'
 import { SessionContext } from './Markdown.js'
@@ -372,6 +373,13 @@ export function Shell() {
         <Header state={state} sessionId={currentSessionId} onMenu={() => setMenuOpen((o) => !o)} onOpenManage={() => setDrawerOpen(true)} onChangeCwd={startNewChat} onSwitchModel={onSwitchModel} onCyclePermissionMode={onCyclePermissionMode} onRunScript={onRunScript} runningCommands={runningCommands} cleanView={cleanView} onToggleCleanView={toggleCleanView} dirPickerRef={dirPickerRef} />
         {/* Header 正下方、聊天区之上 —— 横跨整个主区，看不见它需要主动无视。 */}
         <BypassBanner mode={state.permissionMode} count={state.autoAllowedCount} onExit={() => onCyclePermissionMode('default')} />
+        {/* 与 BypassBanner 同一位置：这也是一条「你的护栏现在是什么状态」的说明，
+            该和它长在一起，而不是藏进设置抽屉里等人去翻。 */}
+        <TrustNotice
+          root={state.sessionRoot}
+          trusted={state.rootTrusted}
+          onTrusted={() => startNewChat(state.cwd ?? '')}
+        />
         {/*
           `.main-body` **永远渲染**，只有 `.rail` 子节点是条件的（设计 §4.1 / P0-1）。
           写成 `hasRail ? <div className="main-body">{chat}{rail}</div> : <main className="chat">…</main>`

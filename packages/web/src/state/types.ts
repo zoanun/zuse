@@ -49,6 +49,10 @@ export interface AppState {
   modelProviderId?: string
   /** Active session's working directory (S3) — root for the dir picker / file browser. */
   cwd?: string
+  /** 本会话读配置用的项目根（可能是 cwd 的上级）。 */
+  sessionRoot?: string
+  /** 这个根被显式信任过吗？未信任 = 它的「放宽」类配置不生效，界面要提示。 */
+  rootTrusted?: boolean
   contextTokens?: number
   contextWindow?: number
   totalUsage?: Usage

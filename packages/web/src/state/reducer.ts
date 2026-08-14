@@ -80,6 +80,8 @@ function applySnapshot(state: AppState, s: SessionSnapshot): AppState {
     model: s.model,
     modelProviderId: s.modelProviderId,
     cwd: s.cwd,
+    sessionRoot: s.sessionRoot,
+    rootTrusted: s.rootTrusted,
     contextTokens: s.contextTokens,
     contextWindow: s.contextWindow,
     totalUsage: s.totalUsage,

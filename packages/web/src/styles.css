@@ -958,6 +958,23 @@ button.head:hover .caret { opacity: 0.9; }
 
    放在文件末尾是必须的：`@media` 不贡献特异性，与上面那些同特异性的规则相比只能靠源序取胜。
    ───────────────────────────────────────────────────────────────────────────── */
+
+/* 「这个目录的配置只生效了一半」提示条。与 BypassBanner 同一位置、同一类语义
+   （你的护栏现在是什么状态），所以视觉上也贴着它走：整条横跨主区、看得见但不刺眼。 */
+.trust-notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; font-size: 12.5px; line-height: 1.5;
+  color: var(--text); background: var(--surface-2); border-bottom: 1px solid var(--line);
+}
+.trust-notice-text { flex: 1; min-width: 260px; }
+.trust-notice code { font-family: var(--mono); font-size: 12px; }
+.trust-notice-btn {
+  flex: none; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  color: var(--on-accent); background: var(--accent); border: 0; font-size: 12.5px;
+}
+.trust-notice-btn:disabled { opacity: 0.6; cursor: default; }
+.trust-notice-err { flex: none; color: var(--bad); }
+
 @media (any-hover: hover) {
   .session-del, .msg-revert, .msg-copy, .code-copy, .code-run { opacity: 0; pointer-events: none; }
   .code-actions { pointer-events: none; }

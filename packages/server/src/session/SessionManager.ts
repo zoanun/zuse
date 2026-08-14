@@ -3,6 +3,8 @@ import {
   Conversation,
   ToolRegistry,
   appendAllowRule,
+  findProjectRoot,
+  isTrustedRoot,
   decide,
   isMustConfirm,
   runAgent,
@@ -616,6 +618,16 @@ export class SessionManager {
       model: this.client.getModel(),
       modelProviderId: this.currentProviderId,
       cwd: this.cwd,
+      // 「这个会话读的是哪个项目的配置、那个目录信不信得过」——
+      // 界面要据此决定要不要提示用户「这个目录的配置没有生效（放宽的那半边）」。
+      // 现算而不是构造时定死：用户可能刚在别处点了信任，下次打开面板就该看到变化。
+      sessionRoot: findProjectRoot(this.cwd),
+      // **daemon 自己的项目根一律算「已信任」。** 那是它本来就在读的那一份，
+      // 没有「要不要信任」这个问题 —— 报 false 会让提示条在最常见的场景下常驻，
+      // 而用户点了也什么都不改变。真浏览器验收时就是这么红的：
+      // 探针本想开一个别的目录的会话，实际落在 daemon 根上，提示条照样出现。
+      rootTrusted: findProjectRoot(this.cwd) === findProjectRoot()
+        || isTrustedRoot(findProjectRoot(this.cwd)),
       totalUsage: this.totalUsage,
       contextTokens: this.contextTokens,
       contextWindow: this.ctxWindow(),

@@ -198,7 +198,11 @@ const ROOT_MARKERS = ['.zuse', '.git', 'pnpm-workspace.yaml'] as const
  * **`from` 参数是给会话用的** —— 不传时行为与从前完全一致（锚在 daemon 进程的 cwd）。
  */
 export function findProjectRoot(from?: string): string {
-  const start = from ?? cwd()
+  // **必须 resolve。** 会话的 cwd 是 `E:/ai-study/zuse`（正斜杠，来自 API/配置），
+  // 而 `cwd()` 给的是 `E:\ai-study\zuse` —— 两者字符串不相等，于是
+  // 「会话根 === daemon 根」这类判断会全部误判。实测踩到：daemon 自己的项目根
+  // 被当成「别的受信目录」走了完整加载那条路。
+  const start = resolve(from ?? cwd())
   let dir = start
   while (dir !== resolve(dir, '..')) {
     for (const m of ROOT_MARKERS) if (existsSync(resolve(dir, m))) return dir
