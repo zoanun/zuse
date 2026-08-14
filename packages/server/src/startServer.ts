@@ -238,6 +238,8 @@ export async function startServer(
   const sessionsDir = join(cfg.authDir, 'web-sessions')
   const service = new SessionService({
     dir: sessionsDir, cwd: cfg.cwd, registerExtraTools,
+    // 透传给每个会话 —— RunOutput 工具靠它读本会话的 run（工具自己按 sessionId 过滤）。
+    runs,
     imageClient, imageModel, readImageBase64, expandAttachments,
     // 删会话时把它起的 run 一起收掉，否则留永生孤儿：项目档无墙钟、断连保留，
     // 一个 dev server 会永远占着端口，而 UI 里再也看不到它（会话没了）。

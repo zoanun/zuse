@@ -1,4 +1,5 @@
 import { Conversation, type ToolRegistry, type ModelClient, type Message } from '@zuse/core'
+import type { RunRegistry } from '@zuse/tools'
 import { SessionRegistry } from './SessionRegistry.js'
 import { createSession as defaultCreateSession } from './createSession.js'
 import type { SessionManager } from './SessionManager.js'
@@ -22,6 +23,13 @@ export interface SessionServiceOpts {
   createSession?: typeof defaultCreateSession
   /** forwarded into every createSession so daemon-owned MCP tools (B4) register per session. */
   registerExtraTools?: (registry: ToolRegistry) => void
+  /**
+   * run 注册表，透传给每个会话 —— `RunOutput` 工具靠它读**本会话**的 run。
+   *
+   * 与 `onDelete` 用回调的理由不同：那个只需要「删了通知一声」，注入 registry 会让
+   * 会话层从此能对 run 做任何事。而这里就是要把读取能力交下去，工具自己按 sessionId 过滤。
+   */
+  runs?: RunRegistry
   /** I2 图片:下面四项由 startServer 建好后透传给每个 createSession(→ SessionManager)。 */
   imageClient?: ModelClient
   imageModel?: string
@@ -59,6 +67,7 @@ export class SessionService {
   private readonly registry = new SessionRegistry()
   private readonly createSession: typeof defaultCreateSession
   private readonly registerExtraTools?: (registry: ToolRegistry) => void
+  private readonly runs?: RunRegistry
   /** I2 图片:透传给每个 createSession 的注入项(startServer 提供)。 */
   private readonly imageClient?: ModelClient
   private readonly imageModel?: string
@@ -83,6 +92,7 @@ export class SessionService {
     this.cwd = opts.cwd
     this.createSession = opts.createSession ?? defaultCreateSession
     this.registerExtraTools = opts.registerExtraTools
+    this.runs = opts.runs
     this.imageClient = opts.imageClient
     this.imageModel = opts.imageModel
     this.readImageBase64 = opts.readImageBase64
@@ -121,6 +131,7 @@ export class SessionService {
       // manually titled) → don't auto-generate a title again on its next message.
       titleAlreadySet: rec.messages.length > 0 || !!rec.titleManual || !!rec.titleGenerated,
       registerExtraTools: this.registerExtraTools,
+      ...(this.runs ? { runs: this.runs } : {}),
       imageClient: this.imageClient,
       imageModel: this.imageModel,
       readImageBase64: this.readImageBase64,
@@ -151,6 +162,7 @@ export class SessionService {
       permissionMode: opts?.permissionMode,
       kind: opts?.kind,
       registerExtraTools: this.registerExtraTools,
+      ...(this.runs ? { runs: this.runs } : {}),
       imageClient: this.imageClient,
       imageModel: this.imageModel,
       readImageBase64: this.readImageBase64,

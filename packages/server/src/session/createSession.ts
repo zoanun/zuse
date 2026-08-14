@@ -24,6 +24,7 @@ import {
   scanSkills,
   createSnapshotStore,
   cwdSlug,
+  type RunRegistry,
 } from '@zuse/tools'
 import { SessionManager } from './SessionManager.js'
 import { loadActivePersonaSync } from '../persona/personaStore.js'
@@ -53,6 +54,8 @@ export interface CreateSessionOpts {
    * MCP server 工具（B4）注册进每个会话的 registry —— 连接生命周期由 daemon 持有,这里只注册。
    */
   registerExtraTools?: (registry: ToolRegistry) => void
+  /** run 注册表；给了才注册 `RunOutput` 工具（TUI 那条路径不给）。 */
+  runs?: RunRegistry
   /**
    * I2 图片:视觉兜底用的辅助 client + model(主模型不支持视觉时,把图片描述成文本)。
    * 由 startServer 从 settings.imageModel 软降级构建;缺省 → 非视觉主模型无法处理图片。
@@ -204,6 +207,8 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
 
   const mgr = new SessionManager({
     sessionId,
+    // 有 run 注册表才注册 RunOutput（TUI 那条路径没有 run 服务）。
+    ...(opts.runs ? { runs: opts.runs } : {}),
     cwd,
     client,
     registry,
