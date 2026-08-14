@@ -7,6 +7,7 @@ import { getUsage } from '../state/manageApi.js'
 import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, rawDownloadUrl, searchFiles } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
+import { useFocusTrap } from './useFocusTrap.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
 import { MemoryPanel, useDebounced } from './MemoryPanel.js'
 import { PersonasPanel } from './PersonasPanel.js'
@@ -227,6 +228,11 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose, guardLeave])
 
+  // aria-modal="true" 是对辅助技术下的承诺（背景不可达）；没有围栏的话 Tab 照样
+  // 能跑到抽屉后面的页面上，而读屏软件已经按这个属性把背景当「不存在」在播报了。
+  const drawerRef = useRef<HTMLElement>(null)
+  useFocusTrap(open, drawerRef)
+
   // Drag the left edge to resize; the chosen width persists across sessions.
   const [width, setWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem('zuse-drawer-w'))
@@ -249,7 +255,8 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
   return (
     <div className={'manage-root' + (open ? ' open' : '')} aria-hidden={!open}>
       <div className="manage-backdrop" onClick={() => guardLeave(onClose)} />
-      <aside className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true" style={{ width }}>
+      {/* tabIndex={-1}：焦点围栏要能把焦点先落在抽屉本身，再由 Tab 进入内部控件。 */}
+      <aside ref={drawerRef} tabIndex={-1} className="manage-drawer" role="dialog" aria-label="管理" aria-modal="true" style={{ width }}>
         <div className="manage-resizer" aria-label="拖拽调整宽度" onPointerDown={onResizeStart} />
         <div className="manage-head">
           <span className="manage-title">管理</span>
