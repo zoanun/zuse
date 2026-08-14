@@ -89,6 +89,15 @@ export type RuleProblem =
   | 'unparsable'
   /** 形状对，但没有叫这个名字的工具 —— 大小写写错、拼错，或者来自尚未连上的 MCP server。 */
   | 'unknown-tool'
+  /**
+   * Bash 规则里用了 glob 语法，而 Bash 限定符**不是 glob** —— 只支持「全 `*`」和
+   * 「尾 `*` 前缀匹配」（见 `matchCommand`）。于是 `Bash(*curl*)` / `Bash(* --force)`
+   * 是一条**合法、能过前两道校验、但永远不可能命中**的规则。
+   *
+   * 用户可见症状与「静默丢弃的 deny」完全一样：配了、看得见、没生效、没提示。
+   * 区别在于这次是**语言设计**造成的（用户以为自己在用另一套通配语义），不是手滑。
+   */
+  | 'bash-glob-noop'
 
 /**
  * 找出一组规则里有问题的那些。**纯函数，绝不抛。**
@@ -138,7 +147,13 @@ export function validateRules(
   for (const rule of rules) {
     const p = parseRule(rule)
     if (!p) { out.push({ rule, problem: 'unparsable' }); continue }
-    if (known && !known.has(p.tool)) out.push({ rule, problem: 'unknown-tool' })
+    if (known && !known.has(p.tool)) { out.push({ rule, problem: 'unknown-tool' }); continue }
+    // Bash 限定符里的 glob 元字符：`?` 和「非结尾的 `*`」都永远命不中。
+    // 结尾的单个 `*`（`ls *`）和整条 `*` 是合法形态，不报。
+    if (p.tool === 'Bash' && p.specifier !== null && p.specifier !== '*') {
+      const body = p.specifier.endsWith('*') ? p.specifier.slice(0, -1) : p.specifier
+      if (body.includes('*') || body.includes('?')) out.push({ rule, problem: 'bash-glob-noop' })
+    }
   }
   return out
 }

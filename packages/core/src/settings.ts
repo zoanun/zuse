@@ -75,6 +75,13 @@ export const DEFAULT_ALLOW_RULES: readonly string[] = [
   'Bash(head *)',
   'Bash(tail *)',
   'Bash(wc *)',
+  // Memory 的**读**类 action。以前它们靠 `Memory.readOnly = true` 走 decide 的兜底
+  // （`readOnly ? allow : ask`）自动放行 —— 那条路是 **fail-open**：任何不在
+  // DEFAULT_ASK_RULES 里的 action 都自动放行，包括将来新加的写类 action。
+  // 现在改成显式 allow，未知 action 落到兜底的 ask 上（fail-closed）。
+  'Memory(search)',
+  'Memory(recall)',
+  'Memory(list)',
 ]
 
 /**
@@ -123,6 +130,20 @@ export const DEFAULT_DENY_RULES: readonly string[] = [
   'Edit(**/.zuse/settings*.json*)',
   'Write(~/.zuse/settings*.json*)',
   'Edit(~/.zuse/settings*.json*)',
+  // **整个 ~/.zuse 一律不许模型写**，不再逐个列文件名。
+  //
+  // 上面那几条 `settings*.json*` 漏了一个更直接的口子：`~/.zuse/cron/tasks.json`。
+  // glob 的 `*` 编译成 `[^/]*`，**跨不过斜杠**，所以那条路径一条都不命中。
+  // 而 cron 任务的 `permissionMode` **默认就是 bypass**
+  // （CronService.ts 的 `?? 'bypass'` 与 cronStore.ts 的落盘补默认，两处）——
+  // 写一份 tasks.json 比改 settings 更直接：后者要等下一个会话，前者自带执行器，
+  // 调度器会起一个**非交互 + 全自主**的会话去跑里面的 prompt。
+  //
+  // 用目录通配而不是继续列文件名，是因为清单必然漂移（第七个文件出现时没人会想起来加）；
+  // 而这个目录里每一个文件都直接或间接影响 agent 自身的行为。
+  // 代价说清楚：模型从此不能帮用户整理 `~/.zuse/` 下的任何东西，包括 SYSTEM.md 和 skills。
+  'Write(~/.zuse/**)',
+  'Edit(~/.zuse/**)',
 ]
 
 /**

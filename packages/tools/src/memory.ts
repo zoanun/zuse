@@ -175,7 +175,22 @@ Save sparingly: durable facts only (preferences, constraints, corrections). Do N
      * 同轮工具的并发批（`agent.ts` 用 `readOnly || parallelizable` 决定能否并发）——
      * 那与安全性毫无关系。所以改用**限定符 + 内置 ask 规则**，只管住写的两个 action。
      */
-    readOnly: true,
+    // **2026-08-14 设计审计翻掉了这里原来的 `readOnly: true`。**
+    //
+    // 原来的理由有两半，现在两半都不成立：
+    //   ①「翻成 false 会把 Memory 踢出同轮并发批」—— `parallelizable` 这个字段就是
+    //      为了解耦这件事而存在的（tool.ts 注释原话：「与 readOnly 正交，仍照常过权限闸」），
+    //      所以并发用 parallelizable 表达，不该借 readOnly。
+    //   ②「翻成 false 会让读类 action 也弹框」—— 改用三条显式 allow 规则解决
+    //      （DEFAULT_ALLOW_RULES 里的 Memory(search/recall/list)），噪音完全一样。
+    //
+    // 而 `readOnly: true` 的形状是 **fail-open**：`decide()` 的兜底是
+    // `readOnly ? 'allow' : 'ask'`，于是**任何不在 DEFAULT_ASK_RULES 里的 action 自动放行**。
+    // 今天 action 枚举 5 个、ask 表 2 个；明天加第 6 个写类 action ——
+    // 编译不报错、测试不变红、界面不弹框。这正是 CLAUDE.md 那条「用标记不用清单」
+    // 要防的形状（`sessionScoped` 已经用标记解决过一次，这里当时退回了清单）。
+    readOnly: false,
+    parallelizable: true,
     /**
      * 限定符 = action，配合 `DEFAULT_ASK_RULES` 里的 `Memory(save)` / `Memory(delete)`。
      *

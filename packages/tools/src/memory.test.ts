@@ -30,8 +30,17 @@ afterEach(() => {
 })
 
 describe('Memory 工具', () => {
-  it('readOnly: true(写入面 = zuse 自有库,default 模式免确认)', () => {
-    expect(tool.readOnly).toBe(true)
+  /**
+   * 2026-08-14 设计审计翻掉了原来的 `readOnly: true`。
+   *
+   * `readOnly` 的形状是 fail-open：`decide()` 兜底是 `readOnly ? 'allow' : 'ask'`，
+   * 于是**任何不在 DEFAULT_ASK_RULES 里的 action 自动放行** —— 包括将来新增的写类 action。
+   * 「读类免确认」现在由三条显式 allow 规则表达（Memory(search/recall/list)），
+   * 「能进同轮并发批」由 `parallelizable` 表达（它就是为解耦这件事存在的）。
+   */
+  it('readOnly: false + parallelizable: true（未知 action 要 fail-closed）', () => {
+    expect(tool.readOnly).toBe(false)
+    expect(tool.parallelizable).toBe(true)
   })
 
   it('save 保存并重建 MEMORY.md 投影', async () => {
