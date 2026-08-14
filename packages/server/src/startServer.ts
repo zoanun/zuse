@@ -197,6 +197,22 @@ export async function startServer(
   // Built before SessionService so its readBase64 can back the per-session image hooks below.
   const upload = new UploadService(join(cfg.authDir, 'uploads'))
 
+  // run 服务的注册表（步骤 2）。**在这里 new 一次、经 deps 传下去** —— 不做模块级单例，
+  // 理由见 RequestHandlerDeps.runs 的注释。`spawn`/`killTree` 从 proc 层原样接过来，
+  // 不在这里另写一套：那两个函数里压着一堆 Windows 的坑（怎么挑 shell、Volta 的递归守卫、
+  // 杀进程树的两条平台分支），重写一份必然漏掉一半。
+  //
+  // **必须建在 `new SessionService` 之前**：下面要把 `runs.killSession` 传进它的
+  // `onDelete`。写在后面的话那是个 TDZ 捕获 —— 运行期能用（调用总在构造之后），
+  // 但谁把这块再往后挪一点、或者在启动路径上提前 delete 一次，就会炸。
+  // RunRegistry 的构造只依赖模块级 import，放这里没有前置依赖问题。
+  const runs = new RunRegistry({
+    deps: {
+      spawn: (command, opts) => spawnShellCommand(command, { cwd: opts.cwd, ...(opts.env ? { env: opts.env } : {}) }),
+      killTree,
+    },
+  })
+
   // Auxiliary vision model for the PARSED fallback (I2): when the main model can't see images, each
   // upload is described by this client and the text is baked into the prompt. Soft-degrade like the
   // small/title model — any failure (missing config, bad key) disables the fallback, never crashes.
@@ -221,6 +237,14 @@ export async function startServer(
   const service = new SessionService({
     dir: sessionsDir, cwd: cfg.cwd, registerExtraTools,
     imageClient, imageModel, readImageBase64, expandAttachments,
+    // 删会话时把它起的 run 一起收掉，否则留永生孤儿：项目档无墙钟、断连保留，
+    // 一个 dev server 会永远占着端口，而 UI 里再也看不到它（会话没了）。
+    // **只接 delete，不接 release** —— 后者是 cron 的纯归还，那时会话还在。
+    onDelete: (id) => {
+      const n = runs.killSession(id)
+      // 排查孤儿类问题时这行是唯一线索：删了会话、收了几个 run。
+      if (n > 0) console.log(`[zuse-server] 会话 ${id} 删除，收掉 ${n} 条在跑的命令`)
+    },
   })
   let sessionErr: string | undefined
   try {
@@ -282,16 +306,6 @@ export async function startServer(
   // 语音 (V1/V2)：无状态,能力由 settings 的 sttModel/ttsModel 现读决定（未配置 → 前端隐藏按钮）。
   const voice = new VoiceService()
 
-  // run 服务的注册表（步骤 2）。**在这里 new 一次、经 deps 传下去** —— 不做模块级单例，
-  // 理由见 RequestHandlerDeps.runs 的注释。`spawn`/`killTree` 从 proc 层原样接过来，
-  // 不在这里另写一套：那两个函数里压着一堆 Windows 的坑（怎么挑 shell、Volta 的递归守卫、
-  // 杀进程树的两条平台分支），重写一份必然漏掉一半。
-  const runs = new RunRegistry({
-    deps: {
-      spawn: (command, opts) => spawnShellCommand(command, { cwd: opts.cwd, ...(opts.env ? { env: opts.env } : {}) }),
-      killTree,
-    },
-  })
   // Host / Origin 白名单：挡 DNS rebinding 与跨站写入（见 http/originGuard.ts 的「两把锁」）。
   // 证书路径也喂进去 —— DNS SAN 自动进白名单，否则 docs/remote-access.md 里两条直连 TLS
   // 的配方会当场坏掉（用户没配 --allowed-host 却本该能用）。

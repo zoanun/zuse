@@ -34,7 +34,10 @@
    现状：`buildProviderIndex` 建表 + 查表，协议集在 `packages/core/src/builtin-providers.ts`，`ProviderProtocol` 放宽为 `string`。
    详见 [R4 设计](2026-08-06-R4-provider-registry-design.md)。
 
-已有的可插拔件（重构要复用、不重造）：`ToolRegistry`（`tool.ts:127`，工具即纯对象）、`registerExtraTools` 缝、`SessionManager.subscribe/emit`（但只出站 UI 事件、改不了回合行为）、配置式 shell hooks（`preToolUse/postToolUse`，exec 式，硬接在 `gateAndRunTool`）。
+已有的可插拔件（重构要复用、不重造）：`ToolRegistry`（`tool.ts:127`，工具即纯对象）、`registerExtraTools` 缝、`SessionManager.subscribe/emit`（但只出站 UI 事件、改不了回合行为）。
+（原来这里还列了「配置式 shell hooks（`preToolUse/postToolUse`）」当作**已有可复用件** ——
+**那是错的，它从未接上过**，2026-08-14 整个删掉了。理由见
+`2026-08-14-dead-code-cleanup-design.md`。）
 
 ## 4. 分解（4 块）
 
@@ -55,7 +58,9 @@
 - **接口契约草案（最小集，按真实需求裁剪，不照搬 LangChain 6 钩子）**：
   - `onTurnStart / onTurnEnd`、`onModelCallStart / onModelCallEnd`、`onToolCallStart / onToolResult`、`onError`、`onStreamEvent`。
   - 中间件 = 一个对象实现若干可选钩子；`runAgent` 收 `middleware: Middleware[]`，**before 正序、after 逆序**触发；钩子是**观察/改写**语义，先支持观察 + 有限改写（如改 system prompt / 改 messages），**暂不做 `wrap_*` 洋葱**（YAGNI，日后需要再加）。
-  - 现有 `canUseTool` / shell `preToolUse/postToolUse` 作为**内置中间件**收编，语义不变。
+  - 现有 `canUseTool` 作为**内置中间件**收编，语义不变。
+    （shell `preToolUse/postToolUse` 原写「一并收编」—— 它已于 2026-08-14 删除，
+    要做就是**重做**：异步、有沙箱边界、项目层要显式授权。）
 - **依赖**：R2（能力上下文稳定后再动循环，避免循环签名反复变）。
 - **验收**：日志/遥测能以中间件形式注册、不改循环体；`canUseTool` 与 shell hooks 迁为内置中间件后 TUI+Web **双端回归全绿**（Playwright + TUI 单测）。
 

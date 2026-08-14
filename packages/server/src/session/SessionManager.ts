@@ -420,9 +420,13 @@ export class SessionManager {
     this.contextTokens = n
   }
 
-  setPermissionPolicy(p: PermissionPolicy): void {
-    this.policy = p
-  }
+  // （曾有 `setPermissionPolicy(p) { this.policy = p }` —— 2026-08-14 删。零调用方，
+  //   连测试都没有，而且它是个**陷阱**：`createSession` 写的是 `config: settings.permissions`
+  //   （无 spread），所以 `policy.config` 与 `this.settings.permissions` 是**同一个对象**；
+  //   紧邻的 `setPermissionMode` 注释专门论证了「为什么必须就地写、不能替换对象」——
+  //   判定链两条入口（runAgent 捕获的 this.settings / canUseTool 读的 this.policy.config）
+  //   都得看到新值。而这个方法干的恰恰是整个替换 `this.policy`，一调别名就断，
+  //   表现为「权限档改了一半」。删的是一个名字看起来最该用的错误 API。）
 
   /** 当前权限档。交互式会话下 policy.config **就是** settings.permissions，两者恒同。 */
   getPermissionMode(): PermissionMode {
@@ -569,10 +573,8 @@ export class SessionManager {
     })()
   }
 
-  /** Test/seed hook: mark the title as already set so submit() won't auto-generate. */
-  markTitleSettled(): void {
-    this.titleSettled = true
-  }
+  // （曾有 `markTitleSettled()` —— 2026-08-14 删。注释写着「Test/seed hook」但**零调用方**，
+  //   连测试都没有 —— 注释在说谎。它的职责已经被 `createSession` 的 `titleAlreadySet` 接管。）
 
   getState(): SessionSnapshot {
     const pendingPermissions: PendingPermissionLite[] = [...this.pending.entries()].map(([id, p]) => ({

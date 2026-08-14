@@ -1041,7 +1041,7 @@ Swarm 模式的 Team 注册/通信留给未来真正需要时再做。
 | 功能 | 状态 | 日期 |
 |------|------|------|
 | **MCP 协议** | ✅ McpClient + McpManager + TUI 启动连接 | 2026-06-18 |
-| **Hooks 系统** | ✅ pre/postToolUse + settings 配置 + agent loop 集成 | 2026-06-17 |
+| ~~**Hooks 系统**~~ | ❌ **2026-08-14 已删除**。当年记的「settings 配置」其实**从未接上**（`RawSettings` 没这个字段、`mergeLayers` 也没拷它），用户写了不生效也不报错。且实现用 `execSync`（一条 hook 同步阻塞整个 daemon 最多 10 秒）、项目层配置进 git（clone 不可信仓库即可执行任意命令）。方向要重做，不是接线。 | ~~2026-06-17~~ |
 | **TodoWrite** | ✅ 模型自用任务追踪 + TUI 渲染 | 2026-06-17 |
 | **记忆容量硬限** | ✅ Phase 13 已实现（MEMORY_INDEX_CAP 投影检查） | 既有 |
 

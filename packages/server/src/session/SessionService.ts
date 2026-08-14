@@ -27,6 +27,17 @@ export interface SessionServiceOpts {
   imageModel?: string
   readImageBase64?: (id: string) => Promise<{ data: string; mediaType: string }>
   expandAttachments?: (messages: Message[]) => Promise<Message[]>
+  /**
+   * 会话被**删除**时通知一声（`startServer` 传 `(id) => runs.killSession(id)`）。
+   *
+   * **只挂在 `delete()` 上，绝不能挂 `release()`。** `release()` 的另外两个调用方是
+   * cron 的**纯归还**（`CronScheduler.fire()` 的 finally、`CronService.getRunDetail()`）
+   * —— 那时会话还在、用户还会再打开它，把它的 run 杀掉是错的。
+   *
+   * 用回调而不是直接注入 registry：会话层只需要「删了之后通知一声」，
+   * 注入 registry 会让它从此能对 run 做任何事。形态与 `registerExtraTools` 一致。
+   */
+  onDelete?: (sessionId: string) => void
 }
 
 /**
@@ -76,7 +87,10 @@ export class SessionService {
     this.imageModel = opts.imageModel
     this.readImageBase64 = opts.readImageBase64
     this.expandAttachments = opts.expandAttachments
+    this.onDelete = opts.onDelete
   }
+
+  private readonly onDelete: ((sessionId: string) => void) | undefined
 
   /**
    * Registry hit → return it. Else try to load from disk; if found, rebuild a
@@ -181,6 +195,16 @@ export class SessionService {
     // delete = release（让会话离开内存）+ 删盘。复用 release() 而非再抄一遍那几步：
     // 「会话离开 registry 时要清理什么」将来加第二项时，只该改一个地方。
     this.release(id)
+    // **位置与 try/catch 都是刻意的。**
+    // 位置：在 `release()` 之后、删盘之前 —— 会话确实要走了，它起的 run 必须先收
+    //（否则留下永生孤儿：项目档无墙钟、断连保留，一个 dev server 会永远占着端口，
+    //  而 UI 里再也看不到它，因为会话没了）。
+    // try/catch：kill 失败**不能**阻止删盘，否则用户永远删不掉这个会话。而且这条链
+    // 是 await 在 HTTP 请求栈上的 —— 本轮审计刚修过一条同型的（killTree 的 spawn 失败
+    // 没挂 'error'，把整个 daemon 带走）。
+    try { this.onDelete?.(id) } catch (err) {
+      console.warn(`[zuse-server] 删会话时收 run 失败(${id}):${err instanceof Error ? err.message : String(err)}`)
+    }
     // Tombstone the id: any persist already awaiting saveSession() early-returns
     // before the write, closing the in-flight-persist resurrection race.
     this.tombstones.add(id)

@@ -8,7 +8,6 @@ import { createFileTracker } from './tool.js'
 import { decide, MATCHED_BYPASS } from './permission.js'
 import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
-import { runHooks } from './hooks.js'
 import { steerFoldSuffix } from './steer.js'
 import type { Conversation } from './conversation.js'
 import { genMsgId } from './conversation.js'
@@ -522,18 +521,10 @@ async function gateAndRunTool(
   // 在里面记副作用会把预览也算进去。
   if (decision === 'allow' && matched === MATCHED_BYPASS) deps.onAutoAllow?.(tu.name, specifier)
 
-  const hookEnv = { toolName: tu.name, toolInput: tu.input, cwd: deps.cwd }
-  const preWarnings = runHooks(deps.settings.hooks?.preToolUse, hookEnv).warnings
-
-  const result = await runOneTool(registry, tu, ctx)
-
-  const postWarnings = runHooks(deps.settings.hooks?.postToolUse, hookEnv).warnings
-  const allWarnings = [...preWarnings, ...postWarnings]
-  if (allWarnings.length > 0) {
-    result.output += `\n[Hook warnings: ${allWarnings.join('; ')}]`
-  }
-
-  return result
+  // （这里曾有 pre/postToolUse hooks 的调用 —— 2026-08-14 随整个 hooks 子系统一起删。
+  //   它从未接上过：`ResolvedSettings.hooks` 恒为 undefined，因为 `mergeLayers` 从来
+  //   没拷贝过这个字段。理由见 types.ts 里那段留档。）
+  return await runOneTool(registry, tu, ctx)
 }
 
 /**

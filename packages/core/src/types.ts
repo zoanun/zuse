@@ -227,24 +227,17 @@ export interface ResolvedSettings {
   providers: Record<string, RawProviderConfig>
   /** WebSearch 原始配置;由 getWebSearchConfig 按需解析(同 providers 的处理方式)。 */
   webSearch?: RawWebSearchConfig
-  /** 工具调用前后的钩子。 */
-  hooks?: HooksConfig
+  /**
+   * （曾有 `hooks?: HooksConfig` —— 2026-08-14 删。它**从未接上过**：`RawSettings`
+   * 没有这个字段、`mergeLayers` 是逐字段显式拷贝也没有它，所以用户写了不生效也不报错。
+   * 不是「补一行就能用」：实现用 `execSync`，一条 hook 最多**同步阻塞整个 daemon 10 秒**
+   * （单进程单事件循环，冻的是所有会话，实测两种形态都在 10s 返回，不会退化成无限）；
+   * 且项目层 `.zuse/settings.json` **不在 .gitignore 里**，接上之后 clone 一个不可信仓库
+   * 就可能在工具调用前后自动执行任意命令。方向要重做，不是接线。留档见
+   * `docs/superpowers/specs/2026-08-14-dead-code-cleanup-design.md`。）
+   */
   /** MCP servers 配置。key 是 server 名，value 是启动配置。 */
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string }>
-}
-
-/** 单条 hook 规则。 */
-export interface HookRule {
-  /** 匹配的工具名（'*' 匹配全部）。 */
-  tool: string
-  /** 要执行的 shell 命令。 */
-  command: string
-}
-
-/** hooks 配置。 */
-export interface HooksConfig {
-  preToolUse?: HookRule[]
-  postToolUse?: HookRule[]
 }
 
 /** 判定结果三态。 */
