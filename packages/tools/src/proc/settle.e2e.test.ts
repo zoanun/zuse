@@ -174,6 +174,75 @@ describe.skipIf(!isBash)(`收尾改判 exit —— 端到端（shell=${getShellL
   }, 20_000)
 })
 
+describe.skipIf(!isBash)(`超时路径（shell=${getShellLabel()}）`, () => {
+  /**
+   * **这条是评审抓出来的真回归的护栏。**
+   *
+   * 「Δ=0ms 所以 drain 代价为零」只对正常退出成立。killTree 之后 Δ 实测可达 694ms，
+   * 且 exit+250ms 时手上**一个字节都没有**——全部 105832B 在 exit+1000ms 才到。
+   * 用 250ms 的话，超时命令的 partial output 会**整个丢掉**，而模型看到的是
+   * 「[timed out ...; partial output above]」上面什么都没有 ——
+   * 最需要日志判断卡在哪的时刻，日志正好没了，且是静默的。
+   *
+   * 现有的 `bash.test.ts` 只断言文案里有 "timed out"，**不断言 partial output 非空**，
+   * 所以这条退化会全绿通过。
+   *
+   * **诚实说明这条测试锁不住什么。** 我自己复现同一批命令时，数据在 exit+250ms
+   * 就到齐了（`npm view`：exit 时 0B、+250ms 已 105832B），而评审那台/那次是
+   * +250ms 仍 0B、+1000ms 才到。**同一个形态在不同时刻结论相反** —— 这恰恰说明
+   * 250ms 不是一条可靠的界，所以宽限要给 1500ms。
+   * 但也意味着这条 e2e **区分不了两种实现**（把分档去掉它照样绿，实测过）。
+   * 真正锁住「kill 路径用更宽的值」的是 `settle.test.ts` 的
+   * 「drainMs 可以是函数」+ `run.test.ts` 里那条 250ms 不够、1500ms 才够的断言。
+   * 这条留着是锁**用户可见的性质**（超时了得有日志），不是锁实现。
+   */
+  it('超时后 partial output 必须非空', async () => {
+    const script = join(dir, 'chatty.cjs')
+    writeFileSync(script, [
+      'process.stdout.write("BEFORE-TIMEOUT-MARKER\\n")',
+      'setInterval(() => process.stdout.write("x".repeat(2000) + "\\n"), 30)',
+    ].join('\n'), 'utf8')
+    const r = await BashTool.run({ command: `node '${posix(script)}'`, timeout: 1200 }, makeCtx())
+    expect(r.isError).toBe(true)
+    expect(r.output).toMatch(/timed out/i)
+    expect(r.output).toContain('BEFORE-TIMEOUT-MARKER')   // ← 回归锁
+  }, 30_000)
+
+  /**
+   * 病根是「收尾寄托在一个可能永不到达的事件上」。exit 改判之后孙进程那一类解决了，
+   * 但一个**扛得住 taskkill 的前台进程**照样让 promise 永远挂着。硬截止是那条退路。
+   *
+   * POSIX 上 `killTree` 只发 SIGTERM、没有 SIGKILL 升级，所以 trap 掉 SIGTERM
+   * 就是这个形态。Windows 上 taskkill /F 杀得掉，所以这里直接注入一个**不可能被
+   * 常规手段收掉**的形态很难；改用注入短硬截止 + 一个 trap 掉信号的脚本。
+   */
+  it('killTree 之后进程不退 → 硬截止到点仍然 resolve，并点破「可能还在跑」', async () => {
+    const script = join(dir, 'stubborn.cjs')
+    writeFileSync(script, [
+      'const fs = require("fs")',
+      `fs.writeFileSync(${JSON.stringify(gcPidFile(dir))}, String(process.pid))`,
+      'process.on("SIGTERM", () => {})',   // POSIX：扛住
+      'process.stdout.write("STUBBORN\\n")',
+      'setInterval(() => {}, 1000)',
+    ].join('\n'), 'utf8')
+    const prev = process.env.ZUSE_BASH_KILL_DEADLINE_MS
+    process.env.ZUSE_BASH_KILL_DEADLINE_MS = '600'
+    try {
+      const t0 = Date.now()
+      const r = await BashTool.run({ command: `node '${posix(script)}'`, timeout: 500 }, makeCtx())
+      expect(Date.now() - t0).toBeLessThan(8000)
+      expect(r.isError).toBe(true)
+      expect(r.output).toContain('STUBBORN')
+      // Windows 上 taskkill /F 通常真能杀掉 → 走正常收尾，没有这句；两种都算通过，
+      // 但**不能两种都不成立**（那就是又挂住了，而上面的耗时断言已经拦住了）。
+      expect(r.output).toMatch(/timed out|did not exit/)
+    } finally {
+      if (prev === undefined) delete process.env.ZUSE_BASH_KILL_DEADLINE_MS
+      else process.env.ZUSE_BASH_KILL_DEADLINE_MS = prev
+    }
+  }, 30_000)
+})
+
 describe('收尾改判 exit —— 与 shell 无关的部分', () => {
   /**
    * ENOENT 的真实形态（实测）：`error` + `close(-4058)`，**没有 `exit`**。

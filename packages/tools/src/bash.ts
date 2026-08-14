@@ -29,11 +29,38 @@ export { buildChildEnv, getShellLabel, redecodeOemIfMojibake }
  */
 const DRAIN_MS = 250
 /**
+ * **被 kill 之后**的 drain 宽限，比正常退出宽得多。
+ *
+ * 「Δ=0ms 所以代价为零」只对正常退出成立。评审实测 kill 路径（400ms 时 taskkill /T /F）：
+ *
+ * ```
+ * npm view   exit@840ms  close@1534ms  Δ=694ms
+ *   3 次采样：exit+250ms 手上 0 字节，exit+500ms 仍 0 字节，
+ *             全部 105832B 在 exit+1000ms 才到
+ * ```
+ *
+ * 用 250ms 的话，超时命令的 partial output 会**整个丢掉** —— 而那正是模型最需要
+ * 日志判断「卡在哪」的时刻，且是静默的。1500ms 对实测的 694ms 有一倍余量，
+ * 而那条路上用户已经在等超时了，多等 1 秒不改变体验。
+ */
+const KILLED_DRAIN_MS = 1_500
+/**
  * killTree 之后的**硬截止**：到点无论如何 resolve。
  *
- * 比 run 那边的两段 grace（3s+3s）短，因为这里没有「升级重杀」那一步，等下去不会有转机。
+ * 比 run 那边的两段 grace（3s+3s）短，因为这里没有「升级重杀」那一步。
+ * **已知代价**：POSIX 上 `killTree` 只发 SIGTERM、没有 SIGKILL 升级（`util.ts`），
+ * 所以一个 trap 掉 SIGTERM 的进程在这 5 秒后仍然活着，我们只是不再等它。
+ * 那时输出文案会点破「进程没有退出，可能还在跑」——见 `stuck`。
  */
 const KILL_HARD_DEADLINE_MS = 5_000
+/**
+ * 测试注入口（与本文件已有的 `ZUSE_TOOL_OUTPUT_DIR` 同款）：硬截止是 5 秒，
+ * 不给注入口的话那条路径要么没测试、要么每次门禁多花 5 秒。
+ */
+function killHardDeadlineMs(): number {
+  const v = Number(process.env.ZUSE_BASH_KILL_DEADLINE_MS)
+  return Number.isFinite(v) && v > 0 ? v : KILL_HARD_DEADLINE_MS
+}
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
 /** 超时上限（毫秒）。 */
@@ -227,13 +254,22 @@ export const BashTool: Tool = {
        */
       let hardTimer: ReturnType<typeof setTimeout> | null = null
       let gaveUp = false
+      let orphanNote = ''
+      // 在下面赋值 —— 硬截止（可能先跑）要用它，所以声明提到这里。
+      let settleHandle: { stopNow(): void }
       const armHardDeadline = (): void => {
         if (hardTimer !== null) return
         hardTimer = setTimeout(() => {
           gaveUp = true
+          // **必须先停止收集，再组装。** 只 resolve 不停收集的话，进程还在刷屏，
+          // `shaper.append` 继续被调 —— 而 `finalize()` 之后再 append 会
+          // **新开一个永远不会被关闭的 spill 文件**（实测：finalize 后继续灌 1MB，
+          // 目录里多出第二个文件并一直长）。那正好是这个 bug 自己列的危害之一，
+          // 修了主路却在兜底路上原样留着。
+          settleHandle.stopNow()
           // 走和正常收尾同一条组装路径，别在这里另写一套输出拼接 —— 那必然和主路分叉。
           settleNow(null, null)
-        }, KILL_HARD_DEADLINE_MS)
+        }, killHardDeadlineMs())
       }
 
       const timer = setTimeout(() => {
@@ -271,7 +307,13 @@ export const BashTool: Tool = {
        *（实测：timeout=2000ms 的调用 15 秒硬闸到点仍挂着），
        * 期间 StreamShaper 的 spill 文件还在无上界地长。
        */
+      let settled = false
       const settleNow = (code: number | null, signal: NodeJS.Signals | null): void => {
+        // **幂等闸。** 硬截止到点之后进程若真的退了，helper 的回调还会来一次 ——
+        // 不挡的话会第二次 `applyCapturedCwd`（在工具**已经返回之后**改会话 cwd）
+        // 和第二次 `finalize()`（再开一个 spill 文件）。
+        if (settled) return
+        settled = true
         // 冲刷 decoder 里可能缓着的尾字节（已封顶则丢弃）。
         append(decoder.endStdout())
         append(decoder.endStderr())
@@ -315,13 +357,24 @@ export const BashTool: Tool = {
             isError: true,
           })
         } else if (code !== 0) {
-          finish({ output: `${body}\n[exit code: ${code}]`, isError: true })
+          finish({ output: `${body}\n[exit code: ${code}]${orphanNote}`, isError: true })
         } else {
-          finish({ output: body === '' ? '(no output)' : body, isError: false })
+          finish({ output: (body === '' ? '(no output)' : body) + orphanNote, isError: false })
         }
       }
 
-      onChildSettled(child, { drainMs: DRAIN_MS }, (r) => settleNow(r.code, r.signal))
+      // drainMs 在 `exit` 事件里求值 —— 所以这里能按「是不是被我们杀的」给不同的值。
+      settleHandle = onChildSettled(
+        child,
+        { drainMs: () => (timedOut || aborted ? KILLED_DRAIN_MS : DRAIN_MS) },
+        (r) => {
+          // `drained:false` = 进程退了但管道还被别人握着 = **有东西还在后台跑**。
+          // 不说的话用户看到的是「成功、退出码 0」，而那个 server 还占着端口。
+          // 「刻意选的代价」也得是用户知道的代价。
+          if (!r.drained) orphanNote = '\n[the command exited, but something it started is still running and holding the output pipe]'
+          settleNow(r.code, r.signal)
+        },
+      )
     })
   },
 }

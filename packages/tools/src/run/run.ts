@@ -10,6 +10,12 @@ import { onChildSettled } from '../proc/settle.js'
  * 代价为零：正常命令的 close 在 Δ=0ms 就到，这个计时器轮不到触发。
  */
 const DRAIN_MS = 250
+/**
+ * **被 kill 之后**的 drain 宽限。「Δ=0ms」只对正常退出成立 —— 评审实测
+ * `killTree` 之后 Δ 可达 694ms，且 exit+250ms 时手上**一个字节都没有**，
+ * 全部输出在 exit+1000ms 才到。给 250ms 就是把「被停止那一刻的现场」整个丢掉。
+ */
+const KILLED_DRAIN_MS = 1_500
 
 /**
  * 终止原因。**必须是枚举，不能是自由文本。**
@@ -118,6 +124,20 @@ export class Run {
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private graceTimer: ReturnType<typeof setTimeout> | null = null
   private readonly settleHandle: { cancel(): void }
+  /**
+   * 进程本体已经退出（`exit` 到了）。与 `ended` 不同 —— `ended` 是**对外**结束，
+   * 它要等 drain 窗口过完。这两件事之间那段窗口里，进程已经死了但状态还是 running。
+   */
+  private processExited = false
+  /**
+   * 进程退了、但管道还被别人握着 = **有东西还在后台跑**。
+   *
+   * 不报出来的话，用户看到的是「运行结束，退出码 0」，而那个 dev server 还占着端口
+   * ——「刻意选的代价」也得是用户知道的代价。
+   */
+  private orphaned = false
+  /** 前台进程退出后，是否还有孙进程握着管道（= 后台还有东西在跑）。 */
+  get hasOrphan(): boolean { return this.orphaned }
 
   constructor(init: RunInit) {
     this.id = init.id
@@ -145,8 +165,15 @@ export class Run {
     // 否则 exit 落在第二个 grace 窗口里会被判成 zombie，而 zombie 永久占并发额度。
     this.settleHandle = onChildSettled(
       this.child,
-      { drainMs: DRAIN_MS, onExit: () => this.onProcessExit() },
-      (r) => this.finish(r.code),
+      {
+        // 被我们杀掉的那条路上 Δ 不是 0（见常量注释），给宽得多的值。
+        drainMs: () => (this._status === 'killing' ? KILLED_DRAIN_MS : DRAIN_MS),
+        onExit: () => this.onProcessExit(),
+      },
+      (r) => {
+        this.orphaned = !r.drained
+        this.finish(r.code)
+      },
     )
     // spawn 本身失败（ENOENT 之类）走 error 而不是 close。当成一次退出收场，
     // exitCode 记 null —— 调用方能从「没有任何输出 + exitCode null」看出来。
@@ -204,6 +231,15 @@ export class Run {
    */
   kill(reason: EndReason): void {
     if (this.ended || this._status !== 'running') return
+    // **进程已经退出、只是还在 drain 窗口里** —— 那时状态仍是 `running`、`ended` 仍是
+    // false，于是 `registry.stop()` / `closeAll()` / `killSession()` / output-cap /
+    // detach 任一路径都还能进这道门。进来的后果有两个，都是错的：
+    // ① `signal()` 打在**已死的 pid** 上（POSIX 是 `process.kill(-pid)`，
+    //    进程组空了之后 pgid 可复用 → 误杀无关进程组）；
+    // ② 一条正常退出的 run 的 endReason 被记成 `killed`。
+    // **也不记原因**：进程是自己退出的，原因就是 `exit`。记成 `killed` 是把
+    // 「我们晚了一步」写成「是我们杀的」，UI 上就成了假信息。收尾照常由 drain 走完。
+    if (this.processExited) return
     this._status = 'killing'
     this.pendingReason = reason
     this.clearTimer('wall')
@@ -294,15 +330,25 @@ export class Run {
    * 杀不掉。语义比原来准：原来孙进程握管道会让一个已经死掉的进程被判成 zombie。
    */
   private onProcessExit(): void {
+    this.processExited = true
     this.clearTimer('grace')
   }
 
   private toZombie(): void {
-    // **这里不再加「进程是不是已经退出」的二道守卫。** 加过，实测是**不可达**的：
-    // `onProcessExit()` 已经把 grace 表停了，而 `toZombie` 只可能从那张表上被调起来。
-    // 不可达的守卫看着像防护、实际是死代码 —— 变异掉它一条测试都不会红，
-    // 那种「纸糊的护栏」正是本仓回溯审计在清的东西。
-    if (this.ended) return
+    // **这道守卫不是冗余的 —— 我先删过一次，评审用可配的 killGraceMs 打回来了。**
+    //
+    // 「`onProcessExit` 已经清了 grace 表，所以 toZombie 不可能在 exit 之后跑」
+    // 这个论断只在 `DRAIN_MS < 2 × killGraceMs` 时成立，而 `killGraceMs` 是
+    // `RunPolicy` 的**可配字段**。实测（真 Run + 假 child）：
+    //
+    //   killGraceMs=3000 → exited / killed / exitCode 0     ✓
+    //   killGraceMs= 100 → zombie / zombie / exitCode null  ✗ 退出码 0 的正常退出被判 zombie
+    //   killGraceMs=  50 → zombie / zombie / exitCode null  ✗
+    //
+    // 而 zombie 被 `isLive()` 算成活的 → 永久占一个并发额度，正是这次要修的失效模式。
+    // 两档默认策略的 3000ms 有 12 倍余量，但下一个人加第三档（片段档的 3s 已经最短，
+    // 再短很自然）就会把它带回来。
+    if (this.ended || this.processExited) return
     this._status = 'zombie'
     this.settle('zombie', null)
   }

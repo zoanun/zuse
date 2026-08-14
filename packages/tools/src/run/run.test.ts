@@ -233,10 +233,86 @@ describe('Run —— kill 的兑现（spec §7.3）', () => {
     exit(0)                          // 进程此刻真的退出了（close 被孙进程压着，不来）
     vi.advanceTimersByTime(1)        // 原来的实现会在这一刻 toZombie()
     expect(run.status).not.toBe('zombie')
-    vi.advanceTimersByTime(250)      // drainMs 到点，真正收尾
+    // **被 kill 的路径用的是更宽的 drain（1500ms，不是 250ms）。** 实测 killTree 之后
+    // Δ 可达 694ms，且 exit+250ms 时手上一个字节都没有 —— 给 250ms 等于把「被停止那
+    // 一刻的现场」整个丢掉。这条断言顺带锁住了那个分档。
+    vi.advanceTimersByTime(250)
+    expect(run.status).not.toBe('exited')   // 250ms 还不够
+    vi.advanceTimersByTime(1250)
     expect(run.status).toBe('exited')
     expect(endOf(events)!.reason).toBe('killed')   // 原因仍是先前记下的那个
     expect(endOf(events)!.exitCode).toBe(0)
+  })
+
+  /**
+   * `killGraceMs` 很小时，两个宽限都排在 drain 窗口之内 —— 只要 `exit` 在它们之前到，
+   * 就不能判 zombie。（`onProcessExit` 清表是主机制；`toZombie` 里那道
+   * `processExited` 守卫是第二道，两道都在。）
+   */
+  it('killGraceMs 很小时，exit 先到就不得判成 zombie', () => {
+    vi.useFakeTimers()
+    const { run, events, exit } = makeRun({ killGraceMs: 50 })
+    run.kill('killed')
+    vi.advanceTimersByTime(40)       // 第一个宽限还没到
+    exit(0)
+    vi.advanceTimersByTime(3000)
+    expect(run.status).toBe('exited')
+    expect(endOf(events)!.exitCode).toBe(0)
+  })
+
+  /**
+   * **反面，也是一条已知限制**：两个宽限都过完了 `exit` 才姗姗来迟，
+   * 那时已经发过 `zombie` 的 end 事件，记录**不会**被回改成 exited。
+   *
+   * 这是刻意的:end 事件已经发出去了，收回来会让订阅者看到「结束了两次」。
+   * 代价是这条 run 会一直被 `isLive()` 算成活的、占一个额度 ——
+   * 那属于回溯审计 F P5「zombie 是终态、无人复核」，不在本次范围内。
+   * 写成测试是为了让这条限制**有据可查**，而不是下次被当成新 bug 重查一遍。
+   */
+  it('【已知限制】宽限都过完 exit 才到 → 仍然停在 zombie（F P5）', () => {
+    vi.useFakeTimers()
+    const { run, exit } = makeRun({ killGraceMs: 50 })
+    run.kill('killed')
+    vi.advanceTimersByTime(100)      // 两个宽限都过完 → 已判 zombie
+    expect(run.status).toBe('zombie')
+    exit(0)
+    vi.advanceTimersByTime(3000)
+    expect(run.status).toBe('zombie')
+  })
+
+  /**
+   * drain 窗口里进程已经死了，但状态还是 `running`、`ended` 还是 false ——
+   * 那时 `registry.stop()` / `closeAll()` / output-cap / detach 都还能调 `kill()`。
+   * 进来的后果:① `signal()` 打在**已死的 pid** 上（POSIX 是 `process.kill(-pid)`，
+   * 组空了 pgid 可复用 → 误杀无关进程组）;② 正常退出被记成 `killed`。
+   */
+  it('drain 窗口里再调 kill：不发信号、不改原因', () => {
+    vi.useFakeTimers()
+    const { run, killed, events, exit } = makeRun()
+    exit(0)
+    expect(run.status).toBe('running')   // 还没对外收尾
+    run.kill('killed')
+    expect(killed).toEqual([])           // **没有对着死 pid 发信号**
+    vi.advanceTimersByTime(250)
+    expect(run.status).toBe('exited')
+    expect(endOf(events)!.reason).toBe('exit')   // 不是 'killed'
+  })
+
+  /**
+   * 「孙进程还握着管道」= 后台还有东西在跑。不报出来的话用户看到的是
+   * 「运行结束、退出码 0」，而那个 dev server 还占着端口。
+   */
+  it('close 没来、靠 drain 收尾 → 标记出「后台还有东西在跑」', () => {
+    vi.useFakeTimers()
+    const { run, exit, close } = makeRun()
+    exit(0)
+    vi.advanceTimersByTime(250)
+    expect(run.hasOrphan).toBe(true)
+
+    const b = makeRun()
+    b.close(0)                            // 正常收尾（close 到了）
+    expect(b.run.hasOrphan).toBe(false)
+    void close
   })
 
   /** 反面：进程**真的**杀不掉（exit 一直不来）时，zombie 这一档必须仍然生效。 */

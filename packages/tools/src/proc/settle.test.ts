@@ -130,6 +130,70 @@ describe('onChildSettled', () => {
   })
 
   /**
+   * **这两条才是 `cancel()` 的真实时序。** 第一版只 `clearTimeout`，于是只有
+   * 「先 exit 再 cancel」那一种能过 —— 而 `cancel()` 的存在理由是 `Run.dispose()`，
+   * 真实的 dispose 时机是 **run 还在跑的时候**，也就是 cancel 在 exit **之前**。
+   * 那时计时器还没起，clear 了个空，随后 exit/close 照样回调，
+   * 「dispose 之后不再产出任何事件」的承诺在真实时机上不成立。
+   */
+  it('cancel() 在 exit 之前 —— 之后的 exit 也不得回调', () => {
+    vi.useFakeTimers()
+    const c = fakeChild()
+    const cb = vi.fn()
+    onChildSettled(c, { drainMs: 250 }, cb).cancel()
+    c.exit(0)
+    vi.advanceTimersByTime(1000)
+    expect(cb).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
+
+  it('cancel() 之后 close 到达也不得回调', () => {
+    const c = fakeChild()
+    const cb = vi.fn()
+    onChildSettled(c, { drainMs: 250 }, cb).cancel()
+    c.close(0)
+    expect(cb).not.toHaveBeenCalled()
+  })
+
+  /**
+   * `drainMs` 在 `exit` 事件里求值，所以调用方能按「是不是被我们杀的」分档。
+   * **必须分档**：实测 killTree 之后 Δ 可达 694ms，且 exit+250ms 时手上一个字节都没有 ——
+   * 给 250ms 等于把超时命令的 partial output 整个丢掉，而那正是最需要它的时刻。
+   */
+  it('drainMs 可以是函数，在 exit 那一刻求值', () => {
+    vi.useFakeTimers()
+    const c = fakeChild()
+    const cb = vi.fn()
+    let wide = false
+    onChildSettled(c, { drainMs: () => (wide ? 1500 : 250) }, cb)
+    wide = true                      // 求值发生在 exit 时，所以这个改动要生效
+    c.exit(0)
+    vi.advanceTimersByTime(250)
+    expect(cb).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1250)
+    expect(cb).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  /**
+   * 这套判据成立的前提是消费者一直 flowing。有人 `pause()` 过就意味着
+   * **收尾那一刀会静默丢一截输出** —— 全仓今天没人这么干，但这是本次改动里唯一一条
+   * 「违反了全部测试都绿、后果是静默丢数据」的约束，不能只活在注释里。
+   */
+  it('流被 pause 过 → 收尾时告警（唯一一条违反后果是静默丢数据的约束）', async () => {
+    const c = fakeChild()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    c.stdout.on('data', () => {})
+    c.stdout.pause()
+    onChildSettled(c, { drainMs: 10 }, () => {})
+    c.exit(0)
+    await new Promise((r) => setTimeout(r, 40))
+    expect(warn).toHaveBeenCalled()
+    expect(String(warn.mock.calls[0]?.[0])).toContain('pause')
+    warn.mockRestore()
+  })
+
+  /**
    * **方向极其容易写反。** v1 的设计写的是 `destroy()`，实测那会让孙进程写 stdout
    * 拿 EPIPE **自杀** —— `pnpm dev &` 起的后台进程会在 exit+250ms 无声死掉，
    * 而用户看到的是「done」秒回。所以这里断言的是**没有被 destroy**。

@@ -45,15 +45,26 @@ export interface SettleResult {
 
 export interface SettleOptions {
   /**
-   * `exit` 之后等 `close` 的宽限。**这个 grace 的代价为零**：正常命令的 `close`
-   * 在 Δ=0ms 就到，计时器根本轮不到触发；它只影响「有孙进程握管道」那一种情况，
-   * 而那种情况在修之前是**永不返回**。所以宁可给宽一点。
+   * `exit` 之后等 `close` 的宽限。**在 `exit` 事件里求值**，所以可以传函数 ——
+   * 调用方据此对「正常退出」和「被 kill」给不同的值，理由见下。
    *
-   * **已知没有上界**：消费者若把事件循环堵住，这个计时器和 `close` 会一起被堵，
-   * 250ms 会变成任意长。堵住的时候任何判据都不管用，但「秒回」的承诺在重负载下
-   * 不成立 —— 写在这里免得下次有人拿它当硬保证。
+   * **「代价为零」只对正常退出成立。** 正常退出时 `close` 在 Δ=0ms 就到，
+   * 计时器轮不到触发。但**被 `killTree` 杀掉的那条路径上 Δ 不是 0**（评审实测）：
+   *
+   * ```
+   * npm view（400ms 时 taskkill /T /F）  exit@840ms  close@1534ms  Δ=694ms
+   *   3 次采样：exit+250ms 手上 0 字节，exit+500ms 仍 0 字节，
+   *             全部 105832B 在 exit+1000ms 才到
+   * ```
+   *
+   * 也就是说：给 kill 路径用 250ms，超时命令的 partial output 会**整个丢掉** ——
+   * 而那正是模型最需要日志判断卡在哪的时刻。所以 kill 之后要给显著更宽的值
+   *（`KILLED_DRAIN_MS`），反正那条路上用户已经在等超时了。
+   *
+   * **已知没有上界**：消费者若把事件循环堵住，这个计时器和 `close` 会一起被堵。
+   * 堵住时任何判据都不管用，但「秒回」的承诺在重负载下不成立。
    */
-  drainMs: number
+  drainMs: number | (() => number)
   /**
    * `'exit'` 事件里**同步**触发，早于 `cb`。
    *
@@ -65,6 +76,13 @@ export interface SettleOptions {
    * 那正是本模块要修的失效模式，从另一个门回来。
    */
   onExit?: (code: number | null, signal: NodeJS.Signals | null) => void
+}
+
+export interface SettleHandle {
+  /** 彻底停掉：计时器 + 监听。`Run.dispose()` 用。 */
+  cancel(): void
+  /** 停止收集但不回调 —— 调用方自己兜底 resolve 的路径用（`bash.ts` 的硬截止）。 */
+  stopNow(): void
 }
 
 /**
@@ -82,7 +100,7 @@ export function onChildSettled(
   child: ShellChildProcess,
   opts: SettleOptions,
   cb: (r: SettleResult) => void,
-): { cancel(): void } {
+): SettleHandle {
   let done = false
   let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -90,7 +108,15 @@ export function onChildSettled(
     if (timer !== null) { clearTimeout(timer); timer = null }
   }
 
-  const settle = (code: number | null, signal: NodeJS.Signals | null, drained: boolean): void => {
+  const onClose = (code: number | null, signal: NodeJS.Signals | null): void => settle(code, signal, true)
+  const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+    opts.onExit?.(code, signal)
+    if (done || timer !== null) return
+    const ms = typeof opts.drainMs === 'function' ? opts.drainMs() : opts.drainMs
+    timer = setTimeout(() => settle(code, signal, false), ms)
+  }
+
+  function settle(code: number | null, signal: NodeJS.Signals | null, drained: boolean): void {
     if (done) return
     done = true
     clear()
@@ -98,15 +124,38 @@ export function onChildSettled(
     cb({ code, signal, drained })
   }
 
-  child.on('close', (code: number | null, signal: NodeJS.Signals | null) => settle(code, signal, true))
+  child.on('close', onClose)
+  child.on('exit', onExit)
 
-  child.on('exit', (code: number | null, signal: NodeJS.Signals | null) => {
-    opts.onExit?.(code, signal)
-    if (done || timer !== null) return
-    timer = setTimeout(() => settle(code, signal, false), opts.drainMs)
-  })
-
-  return { cancel: clear }
+  return {
+    /**
+     * 停止一切 —— 计时器**和监听**。
+     *
+     * **只 `clearTimeout` 是不够的**（第一版就是那样，评审实测抓出来）：
+     * `cancel()` 的存在理由是 `Run.dispose()`，而真实的 dispose 时机是
+     * **run 还在跑的时候**，也就是 `cancel` 在 `exit` **之前**。那时计时器还没起，
+     * clear 了个空，随后 exit/close 照样触发回调 —— §2.5 承诺的
+     * 「dispose 之后不再产出任何事件」在真实时机上不成立。
+     */
+    cancel(): void {
+      done = true
+      clear()
+      child.off('close', onClose)
+      child.off('exit', onExit)
+    },
+    /**
+     * 收尾但不触发回调 —— 给调用方自己兜底的路径用（`bash.ts` 的硬截止）。
+     * 那条路径自己 resolve 了 promise，但**必须**同时停止收集：
+     * 不停的话 `StreamShaper` 会继续 append，而 `finalize()` 之后再 append
+     * 会**新开一个永远不会被关闭的 spill 文件**（实测复现），fd 挂到 daemon 退出。
+     */
+    stopNow(): void {
+      if (done) return
+      done = true
+      clear()
+      stopCollecting(child)
+    },
+  }
 }
 
 /**
@@ -132,6 +181,17 @@ export function onChildSettled(
 function stopCollecting(child: ShellChildProcess): void {
   for (const s of [child.stdout, child.stderr]) {
     if (!s) continue
+    // **护栏,不是洁癖。** 这套判据成立的前提是消费者一直 flowing（见文件头）。
+    // `readableFlowing === false` 意味着有人 `pause()` 过这条流 —— 那时 node 还没把
+    // 管道里的字节冲出来，我们这一刀下去就是**静默丢一截输出**。
+    // 全仓今天没有人这么干，但这是本次改动里唯一一条「违反了全部测试都绿、
+    // 后果是静默丢数据」的约束，所以它不能只活在注释里。
+    if (s.readableFlowing === false) {
+      console.warn(
+        '[zuse] 子进程的输出流被 pause 过（readableFlowing === false）—— 收尾时可能丢输出。' +
+        '见 packages/tools/src/proc/settle.ts 的文件头：这条流上绝不能加 pause()/背压。',
+      )
+    }
     s.removeAllListeners('data')
     s.on('error', () => { /* 管道错误在这里已经无人关心，但没有监听者 node 会 throw */ })
     s.resume()
