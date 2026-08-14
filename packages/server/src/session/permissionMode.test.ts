@@ -357,3 +357,4 @@ describe('权限模式开关 —— §1.1 非交互会话拒绝切换', () => {
     expect(mgr.getState().permissionMode).toBe('acceptEdits')
   })
 })
+

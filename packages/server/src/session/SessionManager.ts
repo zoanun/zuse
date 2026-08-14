@@ -4,6 +4,7 @@ import {
   ToolRegistry,
   appendAllowRule,
   decide,
+  isMustConfirm,
   runAgent,
   resolveContextWindow,
   resolveVision,
@@ -208,6 +209,11 @@ export interface SessionManagerOptions {
 interface Pending {
   req: PermissionRequest
   resolve: (v: PermissionVerdict) => void
+  /**
+   * 这张卡是「必须确认」档的吗？切全自主时**不能**替用户按掉它。
+   * 见下面 setPermissionMode 里那段。
+   */
+  mustConfirm?: boolean
 }
 
 /** `[]` → `undefined`, else the array — collapses the "empty means omit this arg" dance at the
@@ -466,14 +472,25 @@ export class SessionManager {
     // 已经放行跑掉的调用追不回来，也不该把新的确认凭空补出来。
     if (mode === 'bypass') {
       for (const [id, p] of this.pending) {
+        // **「必须确认」档的卡片不能被这次切换按掉。**
+        //
+        // `decide()` 那边已经把这一档排在 bypass 之前了，但那只挡住**新**的调用；
+        // 屏上**已经在等**的卡片走的是这条路 —— 上层替用户按了「允许」，
+        // 于是只测 `decide()` 的用例会绿、而真系统漏。这正是本仓那句
+        // 「测试绿 ≠ 能用」的教科书形状，独立评审就是这么抓出来的。
+        if (p.mustConfirm === true) continue
         p.resolve('allow')
         this.emit({ type: 'permission-resolved', id, verdict: 'allow' })
         // 这些也要计入横幅：它们**正在**问你，是这次切换替你按掉的 —— 恰恰是「你少点了
         // 多少次确认」里最实在的那几次。它们走不到 onAutoAllow（闸门早已放行进了 ask
         // 分支、在这里等结果），漏加的话真浏览器上会看到「按下全自主、卡片消失、数字不动」。
         this.autoAllowedCount++
+        // **逐条删，不能 `clear()`。** 原来这里是循环后一把 clear —— 加了上面那条
+        // `continue` 之后，被跳过的卡会**既不被结算、又被清出待决表**：
+        // 那个回合从此永远挂在 canUseTool 的 await 上，而用户再也点不到那张卡。
+        // 我的测试就是这么抓到的（「卡片被移出了待决表 —— 用户再也点不到它」）。
+        this.pending.delete(id)
       }
-      this.pending.clear()
     }
     this.emit({ type: 'permission-mode-changed', mode, autoAllowedCount: this.autoAllowedCount })
   }
@@ -743,7 +760,7 @@ export class SessionManager {
     // intentionally deferred to the session-lifecycle / transport layer.
     const id = `perm-${++this.permSeq}`
     return new Promise<PermissionVerdict>((resolve) => {
-      this.pending.set(id, { req, resolve })
+      this.pending.set(id, { req, resolve, mustConfirm: isMustConfirm(req.toolName, req.specifier, this.cwd) })
       this.emit({ type: 'permission-request', id, req })
     })
   }

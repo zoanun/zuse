@@ -5,7 +5,7 @@ import { emptyUsage } from './types.js'
 import type { ModelClient } from './model-client.js'
 import type { ToolContext, ToolRegistry, FileReadTracker, Tool } from './tool.js'
 import { createFileTracker } from './tool.js'
-import { decide, MATCHED_BYPASS } from './permission.js'
+import { decide, MATCHED_BYPASS, MATCHED_CONFIRM_PREFIX } from './permission.js'
 import { appendAllowRule } from './settings.js'
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js'
 import { steerFoldSuffix } from './steer.js'
@@ -510,10 +510,22 @@ async function gateAndRunTool(
         isError: true,
       }
     }
-    if (verdict === 'allow_session' || verdict === 'allow_persist') {
+    // **必须确认档：把「本会话允许」/「始终允许」降级成「仅这一次」。**
+    //
+    // 兜底必须在**服务端**，不能靠 UI 藏按钮：协议层只校验 verdict 是四个字面量之一，
+    // 任何客户端（web / TUI / devPage 里那个纯 JS 界面 / 直接发 WS 的脚本）都能送
+    // `allow_persist` 上来。
+    //
+    // 而如果照单全收，写下去的是一条**永远不生效**的规则：`sessionAllow` 只并进
+    // `decide()` 的第 4 步 allow，而这一档在 3.2 就返回了 —— 下次照样弹框、没有任何提示，
+    // 规则还永久留在盘上。**那正是本仓最恨的失败形状**（「配了、看得见、没生效、没提示」），
+    // 不堵住的话这个特性会自己造一个出来。
+    if (matched?.startsWith(MATCHED_CONFIRM_PREFIX) === true) {
+      // 什么都不记：既不进 sessionAllow，也不落盘。放行仅限这一次。
+    } else if (verdict === 'allow_session' || verdict === 'allow_persist') {
       if (!deps.sessionAllow.includes(rule)) deps.sessionAllow.push(rule)
+      if (verdict === 'allow_persist') deps.onPersistAllow(rule)
     }
-    if (verdict === 'allow_persist') deps.onPersistAllow(rule)
   }
 
   // 全自主档决定性地放行了这一次 —— 报给调用方计数。放在这里（闸门通过之后、真正执行之前）
@@ -570,10 +582,12 @@ async function recheckSpecifier(
         })
       : 'deny'
     if (verdict === 'deny') return 'deny'
-    if (verdict === 'allow_session' || verdict === 'allow_persist') {
+    // 与首次过闸同一条规则：必须确认档不许被任何持久化 verdict 消解（见那边的长注释）。
+    if (matched?.startsWith(MATCHED_CONFIRM_PREFIX) !== true
+      && (verdict === 'allow_session' || verdict === 'allow_persist')) {
       if (!deps.sessionAllow.includes(rule)) deps.sessionAllow.push(rule)
+      if (verdict === 'allow_persist') deps.onPersistAllow(rule)
     }
-    if (verdict === 'allow_persist') deps.onPersistAllow(rule)
     return 'allow'
   }
   // 全自主档决定性放行也要计数，否则常驻横幅的「已自动放行 N 次」漏掉跨主机跳。

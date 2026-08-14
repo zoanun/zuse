@@ -16,6 +16,71 @@ import { hasBlockingBashSecurityIssue } from './bash-security.js'
 export const MATCHED_BYPASS = 'bypass'
 
 /**
+ * 「必须确认」档命中时 `matched` 的前缀。下游靠它分辨这一档：
+ * `agent.ts` 要把 `allow_session` / `allow_persist` **降级成 `allow`**，
+ * `SessionManager` 切全自主时要**跳过**这一档的待决卡片。
+ *
+ * 用前缀常量而不是字面量比对：这个字符串是跨三个文件的契约，
+ * 改一边不报错、症状离病因很远（同 `MATCHED_BYPASS` 的教训）。
+ */
+export const MATCHED_CONFIRM_PREFIX = 'confirm:'
+
+/**
+ * **必须确认档**：`allow` 压不过、`bypass` 也压不过的一档。
+ *
+ * ## 为什么需要它（设计审计判为「权限格的病根」）
+ *
+ * `decide()` 里 `allow` 是第 4 步、`ask` 是第 5 步 —— **用户写的任何一条 allow 都会
+ * 压过内建的 ask**。实测过：内建 `ask` 被本仓自己配置里的 `Write(./**)` 直接压掉，
+ * 「防止自我提权」在真实配置下一次都不会生效。于是当时只能跳到 `deny`（第 2 步）。
+ *
+ * 缺的就是中间这一档：**可以做，但每次都要人点一次，而且谁也压不过**。
+ *
+ * ## 为什么这张表只有这三条
+ *
+ * 独立评审否掉了本档的第一版范围（把 `settings*.json*` 和 `~/.zuse/cron/**` 从 deny
+ * 降到这一档）。理由是那是**实打实的削弱**：同意疲劳在本仓有现成温床（Bash 每条都要
+ * 确认，而权限卡上没有任何危险度分级），而一次误点写进 `defaultMode:"bypass"` 会让
+ * deny/ask **全表**失效、且没有任何界面告诉用户；何况那些用例已有结构化替代路径
+ *（`POST /api/mcp` → `setMcpServerInSettings`、`setModelInSettings`）。
+ * **为一个已有替代方案的用例去松最硬的那把锁，不划算。**
+ *
+ * 留在这里的三条是**今天完全零保护**的：它们**直接进系统提示词**
+ *（见 `instructions.ts`；`ZUSE.md` 的标题字面就是 "Project instructions"），
+ * 是最直接的指令注入面，而 deny/ask 两张默认表里对它们**一条规则都没有**。
+ * 从零到「必须确认」**不存在削弱**。
+ *
+ * ## 为什么是模块常量而不是第四张用户可配表
+ *
+ * 收益一模一样，但省掉 `PermissionsConfig` / `RawSettings` / `mergeLayers` /
+ * `/config` 输出一整圈改动面（以及全仓 26 处 `as ResolvedSettings` 假件在加必填字段后
+ * 的运行期 TypeError —— 那类编译器不报）。
+ *
+ * **已知代价（评审 5.4）**：用户**无法**从配置文件里关掉它 ——
+ * `mergeLayers` 只有 push、没有删除/否定语法。要关只能改源码。
+ */
+export const BUILTIN_CONFIRM_RULES: readonly string[] = [
+  'Write(~/.zuse/SYSTEM.md)', 'Edit(~/.zuse/SYSTEM.md)',
+  'Write(~/.zuse/MEMORY.md)', 'Edit(~/.zuse/MEMORY.md)',
+  'Write(**/ZUSE.md)', 'Edit(**/ZUSE.md)',
+]
+
+/**
+ * 这次调用落在「必须确认」档吗？纯函数，不需要 Tool 对象。
+ *
+ * 存在理由：`PermissionRequest`（交给 canUseTool 的载体）里**没有**「这是哪一档」的字段，
+ * 而 `SessionManager` 切全自主时必须能分辨出这一档的待决卡片、不去替用户按掉它。
+ * 与其给协议加一个字段（要动 protocol + 三个界面），不如就地再判一次 ——
+ * 判据只是一张常量表加一次 glob，代价可以忽略。
+ *
+ * **必须与 `decide()` 里第 3.2 步用同一张表、同一个 `matchesRule`**，
+ * 否则两处会漂移，而症状是「切全自主时某些卡片被按掉了、某些没有」——最难查的那类。
+ */
+export function isMustConfirm(toolName: string, specifier: string | null, cwd: string): boolean {
+  return BUILTIN_CONFIRM_RULES.some((r) => matchesRule(r, toolName, specifier, cwd))
+}
+
+/**
  * 权限模式的**唯一**解析入口：把外部来源（settings 文件、落盘的 cron 任务、WS 上行帧）
  * 的原始值归一化成正名，认不出的返回 undefined 交调用方兜底。
  *
@@ -649,6 +714,20 @@ export function decide(
   if (isBash && !hasWholeExactBashAllow(allowRules, specifier!)) {
     const sec = hasBlockingBashSecurityIssue(specifier!)
     if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
+  }
+
+  // 3.2 必须确认档：**allow 压不过、bypass 也压不过**。见 BUILTIN_CONFIRM_RULES。
+  //
+  // 位置有两条约束，都不能挪：
+  //   ① 必须在 bypass（3.5）**之前** —— 否则 cron 会话（permissionMode 默认 bypass）
+  //      整个跳过它，而那正是最需要它的场景之一；
+  //   ② 必须在 Bash 安全闸（3）**之后** —— 判定结果零差异，但安全闸返回的
+  //      `matched: 'security:…'` 与 `reason` 是权限对话框要渲染的（「⚠ 安全检查：…」），
+  //      放在闸前会把「为什么被拦」那句说明盖掉。
+  for (const r of BUILTIN_CONFIRM_RULES) {
+    if (matchesRule(r, name, specifier, cwd, kind)) {
+      return { decision: 'ask', rule, matched: `${MATCHED_CONFIRM_PREFIX}${r}` }
+    }
   }
 
   // 3.5 bypass（全自主）模式直接放行（deny 与安全闸已在上面检查过）。
