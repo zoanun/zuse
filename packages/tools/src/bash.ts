@@ -16,12 +16,24 @@ import {
   redecodeOemIfMojibake,
   resolvedShell,
   spawnShellCommand,
+  onChildSettled,
 } from './proc/index.js'
 
 // 对外 API 保持原样：这三个符号历史上就从 bash.ts 导出（index.ts 与既有测试都按此引入），
 // 抽层不改对外形态，故在此原样转出。
 export { buildChildEnv, getShellLabel, redecodeOemIfMojibake }
 
+/**
+ * `exit` 之后等 `close` 的宽限，见 `proc/settle.ts`。
+ * 代价为零：正常命令的 close 在 Δ=0ms 就到，这个计时器轮不到触发。
+ */
+const DRAIN_MS = 250
+/**
+ * killTree 之后的**硬截止**：到点无论如何 resolve。
+ *
+ * 比 run 那边的两段 grace（3s+3s）短，因为这里没有「升级重杀」那一步，等下去不会有转机。
+ */
+const KILL_HARD_DEADLINE_MS = 5_000
 /** 默认超时（毫秒）。 */
 const DEFAULT_TIMEOUT = 120_000
 /** 超时上限（毫秒）。 */
@@ -195,23 +207,52 @@ export const BashTool: Tool = {
       // 跨 chunk 的 UTF-8 解码 + Windows 原始字节留存（供收尾时 OEM 重解码），
       // 见 proc/output.ts。OEM 代码页在此惰性解析、进程内记忆化，检测成本不落在 server 启动路径。
       const decoder = new ProcOutputDecoder()
+      // **这两条监听必须同步挂在 spawn 之后，而且绝不能给流加 pause()/背压。**
+      // 收尾判据（proc/settle.ts）成立的前提是消费者一直 flowing：node 在 emit 'exit'
+      // **之后**才强制冲刷 stdio，不 flowing 的话那一冲的字节落在 exit 之后 —— 而我们
+      // 那时已经收尾了，输出会**静默丢一截**。
       child.stdout.on('data', (chunk: Buffer) => { append(decoder.writeStdout(chunk)) })
       child.stderr.on('data', (chunk: Buffer) => { append(decoder.writeStderr(chunk)) })
+
+      /**
+       * 杀之后的**硬截止**。
+       *
+       * 病根是「收尾寄托在一个可能永不到达的事件上」：超时定时器只置标志 + killTree，
+       * 自己不 resolve。收尾改判 `exit` 之后，「孙进程握管道」那一类已经解决了；
+       * 但一个**扛得住 taskkill 的前台进程**照样让这个 promise 永远挂着 ——
+       * 实测过一次 15 秒硬闸到点仍未 resolve（timeout 参数只有 2000ms）。
+       *
+       * 所以杀完再挂一条无条件的退路。取 5 秒：比 run 那边的两段 grace（3s+3s）短，
+       * 因为这里没有升级重杀那一步，等下去也不会有转机。
+       */
+      let hardTimer: ReturnType<typeof setTimeout> | null = null
+      let gaveUp = false
+      const armHardDeadline = (): void => {
+        if (hardTimer !== null) return
+        hardTimer = setTimeout(() => {
+          gaveUp = true
+          // 走和正常收尾同一条组装路径，别在这里另写一套输出拼接 —— 那必然和主路分叉。
+          settleNow(null, null)
+        }, KILL_HARD_DEADLINE_MS)
+      }
 
       const timer = setTimeout(() => {
         timedOut = true
         killTree(child.pid)
+        armHardDeadline()
       }, timeout)
 
       // ctx.signal 中断 -> kill 进程树（Ctrl+C 铺路）。
       const onAbort = (): void => {
         aborted = true
         killTree(child.pid)
+        armHardDeadline()
       }
       ctx.signal.addEventListener('abort', onAbort, { once: true })
 
       const finish = (result: ToolResult): void => {
         clearTimeout(timer)
+        if (hardTimer !== null) clearTimeout(hardTimer)
         ctx.signal.removeEventListener('abort', onAbort)
         resolvePromise(result)
       }
@@ -220,7 +261,17 @@ export const BashTool: Tool = {
         finish({ output: `Failed to spawn command: ${err.message}`, isError: true })
       })
 
-      child.on('close', (code, signal) => {
+      /**
+       * 收尾改判 `exit`，不再是 `close` —— 见 `proc/settle.ts` 的文件头。
+       *
+       * `close` 的语义是「进程退出 **且** 所有管道都关了」，而管道由**所有持有写端的
+       * 进程**决定，包括继承了同一根 stdout 的孙进程。`node x.js & echo done`
+       * 这类命令前台秒退、孙进程握着不放，close **永不到达** —— 而 `finish()` 原来
+       * 只挂在 close 上，超时定时器又不自己 resolve，于是整个工具调用**永不返回**
+       *（实测：timeout=2000ms 的调用 15 秒硬闸到点仍挂着），
+       * 期间 StreamShaper 的 spill 文件还在无上界地长。
+       */
+      const settleNow = (code: number | null, signal: NodeJS.Signals | null): void => {
         // 冲刷 decoder 里可能缓着的尾字节（已封顶则丢弃）。
         append(decoder.endStdout())
         append(decoder.endStderr())
@@ -240,14 +291,19 @@ export const BashTool: Tool = {
           reshaper.append(oem)
           body = reshaper.finalize().body
         }
+        // 硬截止到点 = 杀了但进程没退。必须点破：否则模型看到「timed out」会以为
+        // 进程已经没了，接着去改文件 / 重跑，而那个进程还在占端口、占锁、写盘。
+        const stuck = gaveUp
+          ? `\n[the process did not exit after being killed — it may still be running; check for leftover processes]`
+          : ''
         if (timedOut) {
           // 错误回传契约(Phase 8):timeout 是模型自己可调的入参,点给它。
           finish({
-            output: `${body}\n[timed out after ${timeout}ms; partial output above. Increase the timeout parameter for long-running commands]`,
+            output: `${body}\n[timed out after ${timeout}ms; partial output above. Increase the timeout parameter for long-running commands]${stuck}`,
             isError: true,
           })
         } else if (aborted) {
-          finish({ output: `${body}\n[interrupted]`, isError: true })
+          finish({ output: `${body}\n[interrupted]${stuck}`, isError: true })
         } else if (code === null) {
           // code 为 null 表示被信号杀死（段错误、被外部 kill 等），真正原因在 signal。
           finish({ output: `${body}\n[killed by signal: ${signal}]`, isError: true })
@@ -263,7 +319,9 @@ export const BashTool: Tool = {
         } else {
           finish({ output: body === '' ? '(no output)' : body, isError: false })
         }
-      })
+      }
+
+      onChildSettled(child, { drainMs: DRAIN_MS }, (r) => settleNow(r.code, r.signal))
     })
   },
 }

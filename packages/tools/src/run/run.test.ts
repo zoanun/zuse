@@ -21,8 +21,13 @@ const POLICY: RunPolicy = {
  *    这个顺序会变得不确定，测试时红时绿。EventEmitter 的 emit 是同步的。
  */
 function makeRun(policy: Partial<RunPolicy> = {}, depsOver: Partial<RunDeps> = {}) {
-  const stdout = new EventEmitter()
-  const stderr = new EventEmitter()
+  // 补一个 no-op `resume`：收尾时 `proc/settle.ts` 会对流做「摘 data 监听 + resume」
+  // （**不是 destroy** —— destroy 会让孙进程拿 EPIPE 自杀）。EventEmitter 没有 resume，
+  // 不补的话这里会以 `s.resume is not a function` 变红。故意补在假货这一侧、
+  // 不在生产代码里加 `typeof s.resume === 'function'` 之类的守卫：那种守卫会把
+  // 「传错了对象」这种真错误静默吞掉。
+  const stdout = Object.assign(new EventEmitter(), { resume: () => {} })
+  const stderr = Object.assign(new EventEmitter(), { resume: () => {} })
   const proc = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; pid: number }
   proc.stdout = stdout
   proc.stderr = stderr
@@ -46,6 +51,7 @@ function makeRun(policy: Partial<RunPolicy> = {}, depsOver: Partial<RunDeps> = {
     out: (b: Buffer) => stdout.emit('data', b),
     err: (b: Buffer) => stderr.emit('data', b),
     close: (code: number | null) => proc.emit('close', code),
+    exit: (code: number | null) => proc.emit('exit', code, null),
   }
 }
 
@@ -202,6 +208,43 @@ describe('Run —— kill 的兑现（spec §7.3）', () => {
     run.kill('killed')
     vi.advanceTimersByTime(50)                             // 升级
     vi.advanceTimersByTime(50)                             // 第二个宽限过去，还是没 close
+    expect(run.status).toBe('zombie')
+    expect(endOf(events)!.reason).toBe('zombie')
+  })
+
+  /**
+   * 收尾改判 `exit` 之后新出现的一个窗口，**必须堵住**。
+   *
+   * 对外的 end 事件推迟到 `exit + drainMs`（等 close 冲刷）。若「进程死了」这件事也
+   * 跟着推迟，那么 exit 落在 `[kill + 2×grace − drainMs, kill + 2×grace)` 里时，
+   * 第二个宽限会先到 → `toZombie()` → `ended = true` → 随后真正的 `finish(code)` 被吞。
+   * 结果：一条**已经正常退出**的 run 被记成 zombie，而 `isLive()` 把 zombie 算成活的
+   * → **永久占一个并发额度**，正是本次改动要修的那个失效模式，从另一个门回来。
+   *
+   * 堵法是 `onExit`：exit 那一刻同步停掉宽限表。于是 zombie 的判据从「close 没来」
+   * 变成「发了信号还等不到 exit」= 进程真的杀不掉。
+   */
+  it('exit 落在第二个宽限窗口里 → 是正常退出，不得判成 zombie', () => {
+    vi.useFakeTimers()
+    const { run, events, exit } = makeRun({ killGraceMs: 300 })
+    run.kill('killed')
+    vi.advanceTimersByTime(300)      // 升级重杀
+    vi.advanceTimersByTime(299)      // 第二个宽限还差 1ms 到点
+    exit(0)                          // 进程此刻真的退出了（close 被孙进程压着，不来）
+    vi.advanceTimersByTime(1)        // 原来的实现会在这一刻 toZombie()
+    expect(run.status).not.toBe('zombie')
+    vi.advanceTimersByTime(250)      // drainMs 到点，真正收尾
+    expect(run.status).toBe('exited')
+    expect(endOf(events)!.reason).toBe('killed')   // 原因仍是先前记下的那个
+    expect(endOf(events)!.exitCode).toBe(0)
+  })
+
+  /** 反面：进程**真的**杀不掉（exit 一直不来）时，zombie 这一档必须仍然生效。 */
+  it('信号发了、宽限过了、exit 一直不来 → 仍然判 zombie', () => {
+    vi.useFakeTimers()
+    const { run, events } = makeRun({ killGraceMs: 50 })
+    run.kill('killed')
+    vi.advanceTimersByTime(100)
     expect(run.status).toBe('zombie')
     expect(endOf(events)!.reason).toBe('zombie')
   })

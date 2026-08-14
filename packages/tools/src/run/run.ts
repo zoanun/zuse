@@ -3,6 +3,13 @@ import { winOemLabel } from '../proc/oem.js'
 import { RingSink, TruncateSink, type OutputSink } from './sink.js'
 import type { RunPolicy } from './policy.js'
 import type { ShellChildProcess } from '../proc/spawn.js'
+import { onChildSettled } from '../proc/settle.js'
+
+/**
+ * `exit` 之后等 `close` 的宽限，见 `proc/settle.ts`。
+ * 代价为零：正常命令的 close 在 Δ=0ms 就到，这个计时器轮不到触发。
+ */
+const DRAIN_MS = 250
 
 /**
  * 终止原因。**必须是枚举，不能是自由文本。**
@@ -110,6 +117,7 @@ export class Run {
   private wallTimer: ReturnType<typeof setTimeout> | null = null
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   private graceTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly settleHandle: { cancel(): void }
 
   constructor(init: RunInit) {
     this.id = init.id
@@ -126,9 +134,20 @@ export class Run {
     }
 
     this.child = init.deps.spawn(init.command, { cwd: init.cwd, env: init.env })
+    // **这两条监听必须同步挂在 spawn 之后，而且绝不能给流加 pause()/背压。**
+    // 收尾判据（proc/settle.ts）成立的前提就是消费者一直处在 flowing 模式：
+    // node 是在 emit 'exit' **之后**才强制冲刷 stdio 的，不 flowing 的话那一冲的字节
+    // 会落在 exit 之后 —— 而我们那时已经收尾了，输出会**静默丢一截**。
     this.child.stdout.on('data', (b: Buffer) => this.onBytes('out', b))
     this.child.stderr.on('data', (b: Buffer) => this.onBytes('err', b))
-    this.child.on('close', (code: number | null) => this.finish(code))
+    // 收尾改判 `exit`（不再是 `close`）—— 见 proc/settle.ts 的文件头。
+    // `onExit` 不能省：它在 exit 那一刻**同步**把 kill 的 grace 表停掉，
+    // 否则 exit 落在第二个 grace 窗口里会被判成 zombie，而 zombie 永久占并发额度。
+    this.settleHandle = onChildSettled(
+      this.child,
+      { drainMs: DRAIN_MS, onExit: () => this.onProcessExit() },
+      (r) => this.finish(r.code),
+    )
     // spawn 本身失败（ENOENT 之类）走 error 而不是 close。当成一次退出收场，
     // exitCode 记 null —— 调用方能从「没有任何输出 + exitCode null」看出来。
     // 若将来 UI 要把它和正常退出分开说，再给 EndReason 加一档，别在这里塞自由文本。
@@ -201,6 +220,9 @@ export class Run {
   /** 放弃这个 run（daemon 关停 / 注册表清场）：停表、断订阅，不再产出任何事件。 */
   dispose(): void {
     this.clearTimer('wall'); this.clearTimer('idle'); this.clearTimer('grace')
+    // 收尾 helper 的 drain 定时器也要停。不停的话，注册表淘汰这条 run 之后那个定时器
+    // 仍会在 250ms 后触发 → 往已经清空的订阅集合发事件；daemon 关停时还多挂一个活定时器。
+    this.settleHandle.cancel()
     this.decoders.out.dispose()
     this.decoders.err.dispose()
     this.subs.clear()
@@ -254,7 +276,32 @@ export class Run {
     if (typeof pid === 'number') this.deps.killTree(pid)
   }
 
+  /**
+   * `exit` 事件那一刻**同步**跑（早于对外的 end 事件 `drainMs` 毫秒）。
+   *
+   * 只做一件事:**把「进程还没死」为前提的那套兑现全部停掉**。
+   *
+   * 不做的话就有一个 250ms 宽的竞态：exit 落在 `[kill+2×grace-drainMs, kill+2×grace)`
+   * 里时，第二个 grace 先到 → `toZombie()` → `ended = true` → 随后真正的 `finish(code)`
+   * 被吞。结果是一条**已经正常退出**的 run 被记成 zombie，而 `isLive()` 把 zombie 算成
+   * 活的 → **永久占一个并发额度**，正是本次要修的那个失效模式。
+   *
+   * 顺带修掉一个今天就有的问题：孙进程握管道时 close 永不到，两次 `signal()` 会在
+   * kill 后 3s / 6s 打在**已死的 pid** 上；POSIX 分支是 `process.kill(-pid, …)`，
+   * pid 复用时会误杀无关进程组。
+   *
+   * 于是 zombie 的判据从「close 没来」变成「**发了信号还等不到 `exit`**」= 进程真的
+   * 杀不掉。语义比原来准：原来孙进程握管道会让一个已经死掉的进程被判成 zombie。
+   */
+  private onProcessExit(): void {
+    this.clearTimer('grace')
+  }
+
   private toZombie(): void {
+    // **这里不再加「进程是不是已经退出」的二道守卫。** 加过，实测是**不可达**的：
+    // `onProcessExit()` 已经把 grace 表停了，而 `toZombie` 只可能从那张表上被调起来。
+    // 不可达的守卫看着像防护、实际是死代码 —— 变异掉它一条测试都不会红，
+    // 那种「纸糊的护栏」正是本仓回溯审计在清的东西。
     if (this.ended) return
     this._status = 'zombie'
     this.settle('zombie', null)
