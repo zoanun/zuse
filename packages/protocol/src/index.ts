@@ -461,3 +461,6 @@ export interface CronRunDetail {
   run: CronRun
   messages: SnapshotMessage[]   // SnapshotMessage 已在本文件定义
 }
+
+// 终端输出净化（web 右栏的增量 buffer 与 RunOutput 的一次性切片共用同一份规则）。
+export { TermBuffer, sanitizeTerminalText } from './term-text.js'
