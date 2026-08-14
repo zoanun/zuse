@@ -167,10 +167,46 @@ function matchCommand(spec: string, command: string): boolean {
  * 读起来像是两样都有兜底，其实 `hasUnanalyzableShell` 只查 `$(` 和反引号、**不查反斜杠**。
  * 转义那一半当时既没实现、也没有兜底。
  */
-export function splitBashCommand(command: string): string[] {
-  const parts: string[] = []
+export interface BashSegment {
+  text: string
+  /**
+   * 这一段里有没有**写向文件**的重定向（`> f` / `>> f` / `&> f` / `2> f` / `>| f`）。
+   *
+   * **不算的**：`2>&1`、`>&2` 这类 fd 复制（不产生新的写入面）、`<` 与 `<<<` 输入重定向、
+   * 以及目标是 `/dev/null` / `NUL` 的（零写入面，而 `cmd 2>/dev/null` 太常见）。
+   *
+   * 用途见 `bashCoveredBy`：默认 allow 表是按「这些命令只读」挑的
+   * （`ls/pwd/cat/echo/which/head/tail/wc`），**而一个重定向就把其中任何一条变成写**。
+   */
+  hasFileRedirect: boolean
+}
+
+/**
+ * 与 `splitBashCommand` 同一次扫描，额外产出每段有没有文件重定向。
+ *
+ * **必须是同一次扫描，不能另写一个正则。** 仓里本来就有两套引号/转义扫描器
+ * （本函数，和 `bash-security.ts` 的 `extractQuotedContent`），而它们对同一条命令
+ * 解释不同 —— 评审实测 `bash-security` 的 output-redirection 正则
+ * `/(?:^|[^>&0-9])>(?![&(])/` 看不见 `&>f`、`1>f`、`2>f`、`>&f` 这四种**真的在写文件**
+ * 的形态，还会把 `echo a \> b`（转义的字面量 `>`）误报。
+ * 「两套扫描器对同一条命令有两种解释」正是本轮修过的越权洞（`af1e600`）的形状。
+ */
+export function splitBashSegments(command: string): BashSegment[] {
+  const parts: BashSegment[] = []
   let cur = ''
+  let redir = false
   let quote: "'" | '"' | null = null
+  /**
+   * `>` 之后紧跟的目标是不是 `/dev/null`（或 Windows 的 `NUL`）。
+   * 从 `i` 开始跳过空白读一个 token —— 只在引号外调用，所以不必处理引号态。
+   */
+  const targetIsNull = (from: number): boolean => {
+    let j = from
+    while (j < command.length && (command[j] === ' ' || command[j] === '\t')) j++
+    let t = ''
+    while (j < command.length && !/[\s;|&<>]/.test(command[j]!)) t += command[j++]!
+    return /^(?:\/dev\/null|nul)$/i.test(t)
+  }
   for (let i = 0; i < command.length; i++) {
     const c = command[i]!
     // **反斜杠转义：连同下一个字符整体吞掉，它不可能是分隔符、也不可能开关引号。**
@@ -202,15 +238,15 @@ export function splitBashCommand(command: string): string[] {
       continue
     }
     if (c === '\n' || c === ';') {
-      parts.push(cur)
-      cur = ''
+      parts.push({ text: cur, hasFileRedirect: redir })
+      cur = ''; redir = false
       continue
     }
     if (c === '&') {
       // `&&` 逻辑与：拆,跳过第二个 &
       if (command[i + 1] === '&') {
-        parts.push(cur)
-        cur = ''
+        parts.push({ text: cur, hasFileRedirect: redir })
+        cur = ''; redir = false
         i++
         continue
       }
@@ -220,25 +256,43 @@ export function splitBashCommand(command: string): string[] {
         continue
       }
       // 裸 &（后台执行）：也是顶层分隔符,按它拆
-      parts.push(cur)
-      cur = ''
+      parts.push({ text: cur, hasFileRedirect: redir })
+      cur = ''; redir = false
       continue
     }
     if (c === '|' && command[i + 1] === '|') {
-      parts.push(cur)
-      cur = ''
+      parts.push({ text: cur, hasFileRedirect: redir })
+      cur = ''; redir = false
       i++
       continue
     }
     if (c === '|') {
-      parts.push(cur)
-      cur = ''
+      parts.push({ text: cur, hasFileRedirect: redir })
+      cur = ''; redir = false
+      continue
+    }
+    // **文件重定向。** 到这里说明在引号外、未被转义（转义分支在最上面整体吞掉了 `\>`）。
+    // 判据：任何 `>`，**除非**其后是 `&` + 数字/`-`（fd 复制，如 `2>&1`、`>&-`）。
+    // 这样 `&>f`、`1>f`、`2>f`、`>>f`、`>|f` 全覆盖 —— 评审实测这四种里有三种
+    // 会被「只看裸 `>`」的写法漏掉，而 `echo x 1> ~/.ssh/authorized_keys`
+    // 就是那条 PoC 的一比一等价替换。
+    if (c === '>') {
+      let j = i + 1
+      while (command[j] === '>' || command[j] === '|') j++   // >> 与 >|
+      const isFdDup = command[j] === '&' && /[0-9-]/.test(command[j + 1] ?? '')
+      if (!isFdDup && !targetIsNull(j)) redir = true
+      cur += c
       continue
     }
     cur += c
   }
-  parts.push(cur)
-  return parts.map((s) => s.trim()).filter((s) => s.length > 0)
+  parts.push({ text: cur, hasFileRedirect: redir }); redir = false
+  return parts.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.text.length > 0)
+}
+
+/** 只要文本分段的老接口（`bash-security.ts` 与既有测试在用）。 */
+export function splitBashCommand(command: string): string[] {
+  return splitBashSegments(command).map((s) => s.text)
 }
 
 /**
@@ -264,10 +318,43 @@ function hasWholeExactBashAllow(rules: string[], command: string): boolean {
  * 子命令都被某条规则前缀/精确命中。含命令替换时不走逐子命令路径（见
  * hasUnanalyzableShell）。
  */
-function bashCoveredBy(rules: string[], command: string, subs: string[], cwd: string): boolean {
+function bashCoveredBy(rules: string[], command: string, subs: BashSegment[], cwd: string): boolean {
   if (hasWholeExactBashAllow(rules, command)) return true
   if (hasUnanalyzableShell(command)) return false
-  return subs.length > 0 && subs.every((s) => rules.some((r) => matchesRule(r, 'Bash', s, cwd)))
+  return subs.length > 0 && subs.every((s) => rules.some((r) => coversSegment(r, s, cwd)))
+}
+
+/**
+ * 一条规则能不能「批发放行」这一段。
+ *
+ * **带文件重定向的段，前缀规则不算覆盖。** 默认 allow 表
+ * （`ls/pwd/cat/echo/which/head/tail/wc`）是按「这些命令只读」挑的，
+ * 而一个重定向就把其中任何一条变成写。实测纯默认配置下这三条全部静默 allow：
+ *
+ * ```
+ * echo '{"permissions":{"defaultMode":"bypass"}}' > .zuse/settings.local.jsonc   ← 护栏自己拆自己
+ * echo x >> ~/.ssh/authorized_keys
+ * cat /etc/passwd > /tmp/leak
+ * ```
+ *
+ * 两个刻意的例外：
+ *
+ * 1. **`Bash(*)` 豁免。** 写这条的人是明示「任意命令」，重定向不构成新增风险面。
+ *    不豁免的话 `git log > /tmp/l`、`pnpm build > build.log 2>&1` 这类会全部开始弹框 ——
+ *    `bash-security.ts` 的文件头已经论证过一次：「这些写法太常见，若一律压过 allow
+ *    会把 `Bash(*)` 这类授权变得无法忍受」。
+ * 2. **整条精确规则仍然生效**（在 `bashCoveredBy` 上一行由 `hasWholeExactBashAllow` 处理）：
+ *    用户显式写 `Bash(echo x > /tmp/a)` 是他自己认了这一条，与「批发式前缀放行」不是一回事。
+ *
+ * **这条修法挡不住的等价路径**（已确认，别以为堵死了）：`echo x | tee f`
+ * （`tee` 不在默认表，靠「没规则覆盖」挡；用户一旦 allow 了 `Bash(tee *)` 就全线洞开）、
+ * 以及 **`Write`/`Edit` 工具直接写同一个文件** —— 后者由 `DEFAULT_ASK_RULES` 里的
+ * 配置文件规则去挡，不归这里。
+ */
+function coversSegment(rule: string, seg: BashSegment, cwd: string): boolean {
+  if (!matchesRule(rule, 'Bash', seg.text, cwd)) return false
+  if (!seg.hasFileRedirect) return true
+  return parseRule(rule)?.specifier === '*'
 }
 
 /** 把 glob 转成锚定正则。支持 `**`（含 /）、`*`（不含 /）、`?`；其余字符转义。 */
@@ -506,10 +593,12 @@ export function decide(
   // Bash 复合命令逐子命令校验：整条只前缀匹配会被 `safe && evil` 绕过。
   // 子命令列表供 deny/allow/ask 逐条比对；非 Bash 工具按整条 specifier 比对。
   const isBash = name === 'Bash' && specifier !== null
-  const subs = isBash ? splitBashCommand(specifier!) : []
+  const subs = isBash ? splitBashSegments(specifier!) : []
   const denyHit = (r: string): boolean =>
     isBash
-      ? matchesRule(r, name, specifier, cwd) || subs.some((s) => matchesRule(r, name, s, cwd))
+      // deny/ask 这一侧**不看重定向**：那道判据是「前缀规则能不能批发放行」，
+      // 而 deny 是「命中就拦」—— 拦得越宽越安全，不该被它收窄。
+      ? matchesRule(r, name, specifier, cwd) || subs.some((s) => matchesRule(r, name, s.text, cwd))
       : matchesRule(r, name, specifier, cwd, kind)
   const askHit = denyHit // ask 与 deny 同样"任一子命令命中即算命中"
 

@@ -6,7 +6,7 @@ import { startServer } from './startServer.js'
 import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID } from './config.js'
 import { fakeClient, fakeSnapshotStore } from './session/testFakes.js'
-import { DEFAULT_ALLOW_RULES, DEFAULT_DENY_RULES } from '@zuse/core'
+import { DEFAULT_ALLOW_RULES, DEFAULT_ASK_RULES, DEFAULT_DENY_RULES } from '@zuse/core'
 
 /**
  * **接线测试。** `validateRules` 是纯函数，直接调它 + spy console.warn 的测试
@@ -96,7 +96,10 @@ describe('startServer 的权限规则体检', () => {
     await boot()
     const all = warn.mock.calls.map((c) => String(c[0])).join('\n')
     warn.mockRestore()
-    for (const r of [...DEFAULT_ALLOW_RULES, ...DEFAULT_DENY_RULES]) expect(all).not.toContain(`"${r}"`)
+    // **三张表都要遍历。** 只走 allow+deny 的话，新加的 `DEFAULT_ASK_RULES`
+    // 就没有防漂移保护 —— 而这条测试的整个存在意义就是防漂移。
+    for (const r of [...DEFAULT_ALLOW_RULES, ...DEFAULT_ASK_RULES, ...DEFAULT_DENY_RULES])
+      expect(all).not.toContain(`"${r}"`)
   })
 
   it('合法规则不被点名（否则告警会被当噪音无视掉）', async () => {

@@ -4,6 +4,7 @@ import { sep, resolve, join } from 'node:path'
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { buildRule, parseRule, validateRules, matchesRule, decide, splitBashCommand, normalizePermissionMode, MATCHED_BYPASS } from './permission.js'
+import { DEFAULT_ALLOW_RULES, DEFAULT_ASK_RULES, DEFAULT_DENY_RULES } from './settings.js'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionMode } from './types.js'
 
@@ -70,6 +71,132 @@ describe('rule grammar', () => {
     for (const [n, s] of [['mcp__a__b-c', null], ['mcp__a__b-c', 'x'], ['Bash', 'git diff *']] as const) {
       expect(parseRule(buildRule(n, s))).toEqual({ tool: n, specifier: s })
     }
+  })
+})
+
+describe('文件重定向不能被前缀规则批发放行（D7：护栏自己拆自己）', () => {
+  const Bash = tool('Bash', false)
+  const withDefaults = (extra: string[] = []): ResolvedSettings =>
+    settings({ allow: [...DEFAULT_ALLOW_RULES, ...extra] })
+  const dec = (cmd: string, extra: string[] = []) => decide(Bash, cmd, withDefaults(extra), [], cwd).decision
+
+  /**
+   * **headline**：默认 allow 表按「这些命令只读」挑的（ls/pwd/cat/echo/…），
+   * 而一个重定向就把其中任何一条变成写。修之前这条是静默 allow ——
+   * `defaultMode` 一旦被改成 bypass，所有 deny/ask 从下个会话起全部失效。
+   */
+  it('echo … > .zuse/settings.local.jsonc 必须 ask，不能 allow', () => {
+    expect(dec(`echo '{"permissions":{"defaultMode":"bypass"}}' > .zuse/settings.local.jsonc`)).toBe('ask')
+  })
+
+  /**
+   * **这四种形态最容易漏。** `bash-security.ts` 现成的那个 output-redirection 正则
+   * `/(?:^|[^>&0-9])>(?![&(])/` 把 `&` 和数字排除在前导字符之外，于是 `&>f`、`1>f`、
+   * `2>f`、`>&f` **一个都看不见** —— 而 `echo x 1> ~/.ssh/authorized_keys` 就是
+   * 上面那条 PoC 的一比一等价替换。照抄那个正则等于什么都没修。
+   */
+  it.each(['echo x > f', 'echo x >> f', 'echo x 1> f', 'echo x 2> f', 'echo x &> f', 'echo x >| f', 'cat a > b'])(
+    '写向文件的各种写法都要 ask：%s', (cmd) => { expect(dec(cmd)).toBe('ask') },
+  )
+
+  /** 别把默认体验打死 —— 这几条今天 allow，改完必须还是 allow。 */
+  it.each([
+    'echo hi',
+    'echo "a > b"',        // 双引号内
+    "echo 'a > b'",        // 单引号内
+    String.raw`echo a \> b`, // 反斜杠转义 = 字面量，bash 里根本不是重定向
+    'ls 2>&1',             // fd 复制，不产生新的写入面
+    'ls >&-',              // fd 关闭（用表内命令 —— 写成 `cmd >&-` 的话它本来就 ask，测不到东西）
+    'ls a 2>/dev/null',    // 丢弃，零写入面且极常见
+  ])('这些不该被误伤：%s', (cmd) => { expect(dec(cmd)).toBe('allow') })
+
+  it('复合命令逐段判：ls && echo x > f 要 ask', () => {
+    expect(dec('ls && echo x > f')).toBe('ask')
+  })
+
+  /**
+   * **用户显式写的整条精确规则仍然生效** —— 那是他自己认了这条命令，
+   * 与「批发式前缀放行」不是一回事。
+   *
+   * **allow 表里只能有这一条**：留着 `DEFAULT_ALLOW_RULES` 的话
+   * `Bash(echo *)` 会先把它前缀覆盖掉，于是即使 `hasWholeExactBashAllow` 整个删掉
+   * 这条也绿 —— 那就成了假绿。
+   */
+  it('整条精确规则仍然放行（且 allow 表里只有它，否则这条测试是假绿）', () => {
+    const s = settings({ allow: ['Bash(echo x > /tmp/a)'] })
+    expect(decide(Bash, 'echo x > /tmp/a', s, [], cwd).decision).toBe('allow')
+  })
+
+  /**
+   * `Bash(*)` 豁免。写这条的人是明示「任意命令」，重定向不构成新增风险面；
+   * 不豁免的话 `git log > /tmp/l`、`pnpm build > build.log 2>&1` 会全部开始弹框 ——
+   * `bash-security.ts` 的文件头已经论证过一次这类噪音不可接受。
+   */
+  it('Bash(*) 豁免：git log > /tmp/l 仍然 allow', () => {
+    expect(dec('git log > /tmp/l', ['Bash(*)'])).toBe('allow')
+  })
+})
+
+describe('Memory 的写入面默认要人看一眼（D8：假 readOnly）', () => {
+  const mem = (readOnly = true): Tool => ({
+    name: 'Memory', description: '', inputSchema: { type: 'object', properties: {} },
+    run: async () => ({ output: '' }), readOnly, specifierKind: 'opaque',
+  })
+  const s = settings({ ask: [...DEFAULT_ASK_RULES] })
+
+  /**
+   * `Memory save` 写的东西经 MEMORY.md 进入机主**此后每一个会话的系统提示词**
+   * （工具自己的描述就是这么写的），而 `readOnly: true` 让它在 default 档不弹框。
+   * 一次提示注入即可把「以后遇到 X 就执行 Y」永久写进去。
+   */
+  it('save / delete 要 ask；search / recall / list 照旧静默', () => {
+    for (const a of ['save', 'delete']) expect(decide(mem(), a, s, [], cwd).decision).toBe('ask')
+    for (const a of ['search', 'recall', 'list']) expect(decide(mem(), a, s, [], cwd).decision).toBe('allow')
+  })
+
+  /**
+   * 逃生口要通：allow 在 decide 的第 4 步、早于 ask 的第 5 步。
+   * 嫌烦的用户能自己关掉，这是「内置 ask」可以接受的前提。
+   */
+  it('用户自己 allow 能压过内置 ask', () => {
+    expect(decide(mem(), 'save', settings({ allow: ['Memory'], ask: [...DEFAULT_ASK_RULES] }), [], cwd).decision).toBe('allow')
+  })
+
+  /**
+   * 非法 action 的组合安全性：闸门放行（specifier 不命中任何 ask，落到 readOnly 兜底），
+   * 但工具自己会返回 Unknown action 错误。**断言的是「放行 + 工具拒绝」这个组合**，
+   * 而不是「不崩」—— 后者是零信息断言，实现随便写都不崩。
+   */
+  it('非法 action 不命中任何规则（工具自己会拒）', () => {
+    expect(decide(mem(), 'Save', s, [], cwd).decision).toBe('allow')
+    expect(decide(mem(), null, s, [], cwd).decision).toBe('allow')
+  })
+})
+
+describe('配置文件的写入默认要人看一眼（D7 的 headline 威胁真正的入口）', () => {
+  const Write = tool('Write', false)
+  /**
+   * **Bash 重定向判定只堵了一条路。** 本仓自己的配置就有 `Write(./**)`，
+   * 而 `.zuse/settings.local.jsonc` 落在 cwd 内 —— 根本不需要任何 Bash 技巧就能
+   * 把 `defaultMode` 改成 bypass。
+   *
+   * **必须是 deny 不是 ask**：allow 在 `decide` 的第 4 步、早于 ask 的第 5 步，
+   * 我原本写成内置 ask，实测被这条 `Write(./**)` 直接压过 —— 也就是这道防护
+   * 在真实配置下一次都不会生效。这条断言把那个发现钉住。
+   */
+  it('用户 allow 了 Write(./**) 也改不了权限配置文件（allow 压不过 deny）', () => {
+    const s = settings({ allow: ['Write(./**)'], deny: [...DEFAULT_DENY_RULES] })
+    expect(decide(Write, join(cwd, '.zuse', 'settings.local.jsonc'), s, [], cwd).decision).toBe('deny')
+  })
+
+  it('连 bypass 全自主档也改不了（deny 是第 2 步，压过一切）', () => {
+    const s = settings({ mode: 'bypass', allow: ['Write(./**)'], deny: [...DEFAULT_DENY_RULES] })
+    expect(decide(Write, join(cwd, '.zuse', 'settings.local.jsonc'), s, [], cwd).decision).toBe('deny')
+  })
+
+  it('写别的文件不受影响', () => {
+    const s = settings({ allow: ['Write(./**)'], deny: [...DEFAULT_DENY_RULES] })
+    expect(decide(Write, join(cwd, 'src', 'a.ts'), s, [], cwd).decision).toBe('allow')
   })
 })
 

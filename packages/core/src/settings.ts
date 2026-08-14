@@ -92,7 +92,74 @@ export const DEFAULT_ALLOW_RULES: readonly string[] = [
  * 三层配置里按需添加 deny。若将来要按语义（而非字符串）拦截危险命令，应放进 bash-security.ts
  * 那套解析式检查，而不是这里的前缀规则。
  */
-export const DEFAULT_DENY_RULES: readonly string[] = []
+export const DEFAULT_DENY_RULES: readonly string[] = [
+  // ── **权限配置文件本身：模型不得改写自己的护栏。** ────────────────────────────
+  //
+  // 这是上面那段「deny 刻意为空」的**唯一例外**，理由要写清楚，否则下一个人会照那段
+  // 论证把它删掉：
+  //
+  // 那三条讲的是「按字符串前缀去猜危险的 **Bash 命令**」——等价变体列不全、
+  // 带尾通配会退化成前缀误伤。**这一条一样都不沾**：目标是几个确定的文件名，
+  // 用的是路径 glob，不存在等价类，也没有误伤面（除了它自己）。
+  //
+  // 为什么必须是 `deny` 而不是 `ask`：**allow 在 `decide` 的第 4 步、早于 ask 的第 5 步。**
+  // 我原本写成内置 ask，实测被用户配置里一条极常见的 `Write(./**)`（本仓自己就有）
+  // 直接压过 —— 而 `.zuse/settings.local.jsonc` 正好落在 cwd 内。也就是说
+  // 「防止自我提权」这个目标在真实配置下一次都不会生效。deny 是第 2 步、压过一切。
+  //
+  // 威胁：把 `defaultMode` 改成 `bypass` 之后，所有 deny/ask 从下一个会话起全部失效 ——
+  // **护栏可以自己拆自己**。而这一步不需要任何 Bash 技巧，一次 Write 就够。
+  //
+  // **代价，照实说**：模型从此不能替你改 zuse 自己的配置，包括「帮我把这个 MCP server
+  // 加进配置里」这种正当请求。它会拿到「这是硬性护栏，请让用户自己改」的明确回执。
+  // 这是刻意的取舍：**管着 agent 的那个文件，不该由 agent 来写。**
+  //
+  // 三种路径写法都要有：`.zuse/…` 命中「配置就在 cwd 根下」（最常见的形态，
+  // 而 `**/` 前缀**不**匹配空前缀，只写带 `**/` 的那条会漏掉它 —— 实测过，别省）；
+  // `**/.zuse/…` 命中子目录；`~/.zuse/…` 命中用户层。
+  'Write(.zuse/settings*.json*)',
+  'Edit(.zuse/settings*.json*)',
+  'Write(**/.zuse/settings*.json*)',
+  'Edit(**/.zuse/settings*.json*)',
+  'Write(~/.zuse/settings*.json*)',
+  'Edit(~/.zuse/settings*.json*)',
+]
+
+/**
+ * 内置默认 **ask**（不是 deny）——「这几件事默认值得看一眼」。
+ *
+ * ## 为什么它不与上面「deny 刻意为空」的三条论证冲突
+ *
+ * 那三条讲的是「按字符串前缀去猜危险的 **Bash 命令**」。这里的每一条都不是那种东西：
+ *
+ * 1. 「非只读工具在 default 档本就走 ask，所以不必加」—— **这正是这几条要补的前提**。
+ *    `Memory` 标了 `readOnly: true`，恰恰**不**走那条 ask（`decide` 末尾是
+ *    `tool.readOnly ? 'allow' : 'ask'`）；而 `Write(./**)` 这类常见配置会把配置文件
+ *    一起放行。两处都是「默认**没有**人审」。
+ * 2. 「前缀匹配对等价变体是打地鼠」—— **不适用**。`Memory(save)` 的限定符来自
+ *    `input.action`，而工具内部 `switch (inp.action)` 用的是**同一个字符串的严格相等**：
+ *    规则匹配的串 ≡ 代码分派的串，不存在 `rm -rf` / `rm -fr` 那种等价类。
+ *    `'Save'` / `'save '` 既不命中规则、也不命中 switch（工具直接报 Unknown action），fail-safe。
+ * 3. 「带尾通配会退化成前缀、误伤具体路径」—— 配置文件那几条的通配是**路径 glob**，
+ *    落点是确定的几个文件名，不存在退化。
+ *
+ * ## 逐条的理由
+ *
+ * - **`Memory(save)` / `Memory(delete)`**：保存的东西会经 MEMORY.md 进入机主**此后每一个
+ *   会话的系统提示词**（工具自己的描述就是这么写的）。一次提示注入即可把
+ *   「以后遇到 X 就执行 Y」永久写进去 —— 本轮所有洞里**持续时间最长**的一个。
+ *   读的三个 action（search/recall/list）照旧静默。
+ * - **配置文件**：`defaultMode` 改成 `bypass` 之后所有 deny/ask 从下个会话起全部失效 ——
+ *   **护栏可以自己拆自己**。而 `Write(./**)`（本仓自己的配置就有）让这一步不需要任何
+ *   Bash 技巧。这几条比「Bash 重定向判定」更直接、更完整地命中这个威胁：
+ *   重定向判定只在 `Bash(echo *)` 那条路上有效，这里是把所有写路径一网打尽。
+ *
+ * 用户想免掉任何一条，自己写 allow 即可（allow 在 decide 的第 4 步，早于 ask 的第 5 步）。
+ */
+export const DEFAULT_ASK_RULES: readonly string[] = [
+  'Memory(save)',
+  'Memory(delete)',
+]
 
 /** 通过查找 pnpm-workspace.yaml 定位项目根（从 env.ts 迁来，统一出口）。 */
 export function findProjectRoot(): string {
@@ -179,7 +246,7 @@ function mergeLayers(layers: RawSettings[]): ResolvedSettings {
   const out: ResolvedSettings = {
     tools: {},
     // 以内置默认 allow/deny 作基线，用户三层规则在其上叠加（dedupe 保留首现顺序 → 默认在前）。
-    permissions: { defaultMode: 'default', allow: [...DEFAULT_ALLOW_RULES], ask: [], deny: [...DEFAULT_DENY_RULES] },
+    permissions: { defaultMode: 'default', allow: [...DEFAULT_ALLOW_RULES], ask: [...DEFAULT_ASK_RULES], deny: [...DEFAULT_DENY_RULES] },
     providers: {},
   }
   for (const layer of layers) {

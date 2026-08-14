@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, resolveSttModelSelection, resolveTtsModelSelection, getProviderConfig, chatModelNames, modelNames, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
+import { loadSettings, appendAllowRule, resolveModelSelection, resolveImageModelSelection, resolveSttModelSelection, resolveTtsModelSelection, getProviderConfig, chatModelNames, modelNames, setModelInSettings, setMcpServerInSettings, getWebSearchConfig, resolveFailoverMode, DEFAULT_ALLOW_RULES, DEFAULT_ASK_RULES, DEFAULT_DENY_RULES, DEFAULT_PROVIDER_ID } from './settings.js'
 import type { ResolvedSettings } from './types.js'
 
 let dir: string
@@ -23,9 +23,11 @@ describe('loadSettings', () => {
   it('returns defaults when no files exist', () => {
     const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
     expect(s.permissions.defaultMode).toBe('default')
-    // 空配置带内置默认 allow 基线；默认 deny 刻意为空。
+    // 空配置带内置默认基线。**deny 不再为空** —— 权限配置文件本身在里面
+    //（模型不得改写自己的护栏；那是「deny 刻意为空」的唯一例外，理由见 settings.ts）。
     expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES])
-    expect(s.permissions.deny).toEqual([])
+    expect(s.permissions.deny).toEqual([...DEFAULT_DENY_RULES])
+    expect(s.permissions.ask).toEqual([...DEFAULT_ASK_RULES])
     expect(s.tools).toEqual({})
     expect(s.apiKey).toBeUndefined()
   })
@@ -45,7 +47,7 @@ describe('loadSettings', () => {
     expect(s.permissions.defaultMode).toBe('acceptEdits')
     // 内置默认 allow 基线在前，用户三层规则在其后叠加；deny 无默认基线。
     expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES, 'Read(./**)', 'Bash(git status)'])
-    expect(s.permissions.deny).toEqual(['Read(./.env)'])
+    expect(s.permissions.deny).toEqual([...DEFAULT_DENY_RULES, 'Read(./.env)'])
   })
 
   it('dedupes permission rules repeated across layers, preserving first-seen order', () => {
@@ -58,7 +60,7 @@ describe('loadSettings', () => {
     const s = loadSettings({ userPath: p('u.json'), projectPath: p('pj.json'), localPath: p('l.json') })
     // Bash(ls) 已在内置默认 allow 中，用户层重复的会被 dedupe 掉（保留默认里的首现）。
     expect(s.permissions.allow).toEqual([...DEFAULT_ALLOW_RULES, 'Read(./**)', 'Grep', 'Glob'])
-    expect(s.permissions.ask).toEqual(['Bash(*)', 'Write(./**)'])
+    expect(s.permissions.ask).toEqual([...DEFAULT_ASK_RULES, 'Bash(*)', 'Write(./**)'])
   })
 
   it('ZUSE_API_KEY env overrides file apiKey', () => {

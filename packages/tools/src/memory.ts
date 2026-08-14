@@ -160,8 +160,35 @@ Save sparingly: durable facts only (preferences, constraints, corrections). Do N
       },
       required: ['action'],
     },
-    // 有意拉伸(spec D3):写入面 = zuse 自有库,不碰用户工作区,符合 readOnly 实质语义。
+    /**
+     * **保留 `readOnly: true`，但写入面另由内置 ask 规则管住。**
+     *
+     * 原来的理由是「写入面 = zuse 自有库，不碰用户工作区」—— 那句话漏了这个工具
+     * **自己的描述**里就写着的一件事：`an index of them (MEMORY.md) is loaded into
+     * your system prompt at session start`。也就是说 `save` 写的东西会进入机主
+     * **此后每一个会话的系统提示词**，而 `readOnly` 让它在 default 档**不弹框**
+     *（`decide` 末尾是 `tool.readOnly ? 'allow' : 'ask'`）。
+     * 一次提示注入即可把「以后遇到 X 就执行 Y」永久写进去。
+     *
+     * **为什么不干脆翻成 `false`**：`readOnly` 是工具级静态属性，翻了之后
+     * `search`/`recall`/`list` 也一起弹框（噪音换不到安全），而且会把 Memory 踢出
+     * 同轮工具的并发批（`agent.ts` 用 `readOnly || parallelizable` 决定能否并发）——
+     * 那与安全性毫无关系。所以改用**限定符 + 内置 ask 规则**，只管住写的两个 action。
+     */
     readOnly: true,
+    /**
+     * 限定符 = action，配合 `DEFAULT_ASK_RULES` 里的 `Memory(save)` / `Memory(delete)`。
+     *
+     * **`specifierKind` 必须是 `'opaque'`**：不标的话限定符会被当**路径**
+     * `resolve(cwd, 'save')` 再判 cwd 围栏。干净 cwd 下碰巧能命中，但评审实测
+     * ——cwd 里只要有一个名叫 `save` 的符号链接指向外部，`realpath` 一解就逃出围栏、
+     * 规则**静默失效**。同 WebFetch 主机名那条先例。
+     */
+    specifierKind: 'opaque',
+    specifierFor: (input: unknown) => {
+      const a = (input as { action?: unknown } | null)?.action
+      return typeof a === 'string' ? a : null
+    },
 
     async run(input: unknown): Promise<ToolResult> {
       const inp = (input ?? {}) as MemoryInput
