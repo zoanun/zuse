@@ -1,6 +1,8 @@
+import { join } from 'node:path'
 import {
   Conversation,
   ToolRegistry,
+  appendAllowRule,
   decide,
   runAgent,
   resolveContextWindow,
@@ -672,14 +674,53 @@ export class SessionManager {
     // NOTE on session-scope: a verdict of allow_session/allow_persist makes core's
     // gateAndRunTool push the matched rule into this.sessionAllow (the same array we
     // pass to runAgent every turn), so the rule auto-allows identical calls for the rest
-    // of the session. allow_persist additionally writes the rule to disk via core's
-    // default onPersistAllow (appendAllowRule), since submit does not override it.
+    // of the session. allow_persist additionally writes the rule to disk via
+    // `persistAllowRule` below — which writes to THIS SESSION's root, not the daemon's.
     if (verdict !== 'allow' && verdict !== 'deny' && verdict !== 'allow_session' && verdict !== 'allow_persist') return
     const p = this.pending.get(id)
     if (!p) return
     this.pending.delete(id)
     p.resolve(verdict)
     this.emit({ type: 'permission-resolved', id, verdict })
+  }
+
+  /**
+   * 「总是允许」落盘 —— **写到本会话自己的目录，不是 daemon 的项目根**。
+   *
+   * ## 为什么要覆盖 core 的缺省
+   *
+   * core 的缺省是 `appendAllowRule(rule)`（`agent.ts`），它内部走
+   * `findProjectRoot()`，而那个函数是从 **daemon 进程的 cwd** 往上找的，与会话无关。
+   * 于是：在 `D:\别的项目` 里开的会话，用户点一次「总是允许」，规则被写进
+   * **zuse 仓库自己的** `.zuse/settings.local.json`，从此**对所有会话永久生效**。
+   *
+   * 这不是「配置不够新」，是**静默的权限累积**：用户以为自己在给「这个项目」放行，
+   * 实际是给所有项目、永久放行。而按钮上写的是「总是允许」——
+   * 对「总是」的合理理解是「在这个项目里总是」。
+   *
+   * ## 只改写、不改读（刻意的分步）
+   *
+   * 读路径（`loadSettings()`）本轮**不动**。独立评审指出：让会话根的
+   * `.zuse/settings.json` 成为受信配置层会**造出一个新的、更大的洞** ——
+   * 那个文件**不在 .gitignore 里**（只有 `.local.*` 是），也就是随仓库分发的。
+   * 而它能设 `permissions.defaultMode: "bypass"`（关掉全部 deny/ask）和
+   * `providers.default.baseURL`（把整段对话导向别人的 endpoint）。
+   * 「clone 一个仓库 → 在里面开会话」就成了一条提权 + 外传的路。
+   * 那需要一道显式的「信任这个目录」闸，是独立的一轮。
+   *
+   * 先修写这一半：它是两者中**更严重**的那个（安全阀被静默拆掉并扩散
+   * vs 安全阀没生效），且**零兼容性破坏、不引入任何信任边界**。
+   */
+  private persistAllowRule(rule: string): void {
+    try {
+      appendAllowRule(rule, join(this.cwd, '.zuse', 'settings.local.json'))
+    } catch (err) {
+      // 会话目录可能不可写（只读挂载、无权限）。**不要静默吞掉** ——
+      // 用户点了「总是允许」却什么都没发生，下次还会再弹，而他不知道为什么。
+      // 规则仍然在 sessionAllow 里（core 已经 push 过），所以本会话内照常生效。
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[zuse] 「总是允许」没能写入 ${this.cwd}：${msg}。本条规则只在当前会话内有效。`)
+    }
   }
 
   /** Provided to runAgent. Only invoked for 'ask'-classified tool calls. Must be concurrency-safe. */
@@ -1294,10 +1335,9 @@ export class SessionManager {
         tracker: this.tracker,
         // NOTE: sessionAllow accumulates across turns. core's gateAndRunTool mutates the
         // SAME array we pass here (push on allow_session/allow_persist), and we pass the
-        // stable this.sessionAllow every turn — so allow_session rules persist for the
-        // session. allow_persist additionally persists the rule to disk via core's default
-        // onPersistAllow (appendAllowRule), which runAgent applies since we don't override it.
+        // stable this.sessionAllow every turn — so allow_session rules persist for the session.
         sessionAllow: this.sessionAllow,
+        onPersistAllow: (rule) => this.persistAllowRule(rule),
         onCwdChange: (next: string) => {
           this.cwd = next
           this.emit({ type: 'cwd-change', cwd: next })

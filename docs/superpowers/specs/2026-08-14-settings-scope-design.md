@@ -166,3 +166,75 @@ export function appendAllowRule(rule: string, localPath?: string): void {
 - 8 个调用点要逐个判定归属，判错的后果是「某项设施变成每会话一份」或反之。
 - 无 sessionId 路由的语义要拍板（2.3）。
 - 用户可感知的「设置没了」，需要一条明确提示。
+
+---
+
+## 五、评审结论（v2）：**读那一半会造出一个更大的洞，本轮只做写**
+
+评审用生产代码路径真复现了 §1.2 的 (a)(b) 两条（不是只读源码），确认问题成立。
+但它同时指出**我的方案本身有一个 spec 全篇没讨论的信任边界问题**：
+
+### 5.1 让会话根成为受信配置层 = 「clone 一个仓库就能提权 + 外传对话」
+
+`.zuse/settings.local.*` 在 `.gitignore` 里，**但 `.zuse/settings.json` 不在** ——
+它是设计成可以进 git、随仓库分发的。我实测确认了这一点：
+
+```
+$ git check-ignore -v .zuse/settings.json      → 无输出（不被忽略）
+$ git check-ignore -v .zuse/settings.local.jsonc → .gitignore:18 命中
+```
+
+而这一层能设：
+
+- `permissions.defaultMode: "bypass"` → 生效。`settings.ts` 自己的注释就写着
+  「`defaultMode` 改成 `bypass` 之后所有 deny/ask 从下个会话起全部失效 —— 护栏可以自己拆自己」。
+- `providers.default.baseURL` → 生效，且 `createSession` 用它建会话的主模型客户端。
+
+于是「clone 一个仓库 → 在里面开会话」= 那个仓库的作者可以关掉你全部 deny/ask，
+并把你整段对话（含代码）导向他的 endpoint。**今天做不到这件事，正是因为配置只来自
+zuse 仓库自己。** `DEFAULT_DENY_RULES` 挡的是「模型改写自己的护栏」，
+挡不了「仓库自带一份护栏」。
+
+**这份 spec 原样落地，是把「配置不跟随会话」换成「任意目录可提权并外传对话」，
+净安全性可能是负的。**
+
+### 5.2 采纳评审的分步方案：先修写、不动读
+
+**第一步（本轮做）**：`SessionManager` 显式提供 `onPersistAllow`，写回会话 root。
+
+- 命中的正是本 spec 自己判定「更严重」的 (b)；
+- **零兼容性破坏**（没有人的现有配置失效）、**不引入任何信任边界**（写文件 ≠ 执行别人的配置）；
+- 不需要 §2.4 的迁移提示，不碰 11 个读调用点里的任何一个。
+
+**第二步（另起一轮）**：读路径。必须带上一道显式的「信任这个目录」闸
+（收紧的 deny/ask 无条件生效；放宽的 allow / defaultMode / providers 需要用户确认），
+以及标记文件集的修正（见 5.3）。
+
+### 5.3 评审查出的其它事实错误（第二步落地前必须先改）
+
+- **`findProjectRoot` 只认 `pnpm-workspace.yaml`。** 会话 cwd 是普通项目的**子目录**时
+  （而目录选择器就是让你往下钻的），加了 `from` 参数也找不到根 —— 修完之后
+  「别的项目的 deny 生效了」在最常见情形下**仍然不生效，但用户会以为生效了**，比现状更危险。
+  标记集要扩成 `.zuse/` / `.git` / `pnpm-workspace.yaml`。
+- **锚点是「创建时 cwd」还是「实时 cwd」没定。** `onCwdChange` 会改 `this.cwd`，
+  而 `SessionService` 存的是实时值、重启按实时值重建 —— 会话 root 会静默翻。
+  root 应当是会话的**不可变**属性，独立于 cwd 持久化。
+- **调用点是 11 个（server 侧）/ 14 个（含 TUI + scripts），不是 8 个。**
+  我的 grep 用了 `--include=*.ts`，把 TUI 的 `.tsx` 两处滤掉了 —— 正是 CLAUDE.md 记的那个坑。
+  `VoiceService` 那处是**以别名调用**（`loadSettings as defaultLoadSettings`），我抓到的是注释。
+- **分类错一项**：`hostPolicy` 根本不读 settings，它全部来自 `cfg`。
+- **漏一条写路径**：`setModelInSettings` 也锚在进程 cwd，由 `PUT /api/model` 触发 ——
+  它和 `appendAllowRule` 是同一类静默跨项目写入。本轮不改（`PUT /api/model` 的语义
+  按评审建议保持 daemon 级 = 「本机默认」，但 UI 文案该跟着改）。
+- **§1.1 里三处行号偏移 21 行**（照旧版本抄的），代码原文都对。
+
+### 5.4 第一步的防假绿措施（评审点名要求，已落实）
+
+`appendAllowRule` **是幂等的**（`if (existing.includes(rule)) return`），所以：
+
+1. 测试用的规则串带随机后缀 —— 否则挑一条本仓已有的规则，坏实现也能让「daemon 根没变」通过；
+2. 断言 daemon 根那个文件**根本不存在**（用临时目录当假 daemon 根），比「内容没变」硬；
+3. 必须配正向断言（会话根那份确实含这条规则）—— 否则「哪儿都没写」的实现全绿。
+
+变异验证：把 `appendAllowRule(rule, <会话根>)` 改回 `appendAllowRule(rule)` → 3 条全红，
+其中一条正是「daemon 根被写了」。
