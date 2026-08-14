@@ -49,7 +49,8 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .session-item:hover { background: var(--surface-2); color: var(--text); }
 .session-item.active { background: var(--surface-2); border: 1px solid transparent; color: var(--text); font-weight: 600; }
 .session-title { flex: 1; min-width: 0; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; background: transparent; color: var(--faint); font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s, background .15s; }
+/* opacity 的隐藏态**只在有 hover 的设备上**生效，见文件末尾的 `@media (any-hover: hover)`。 */
+.session-del { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: none; background: transparent; color: var(--faint); font-size: 17px; line-height: 1; cursor: pointer; border-radius: 6px; transition: opacity .15s, color .15s, background .15s; }
 .session-item:hover .session-del, .session-del:focus-visible { opacity: 1; }
 .session-del:hover { color: var(--bad); background: var(--surface-2); }
 .session-confirm { display: flex; gap: 4px; flex: none; }
@@ -163,11 +164,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .empty { margin: auto; color: var(--faint); font-size: 14.5px; }
 .msg.agent { align-self: stretch; max-width: 100%; }
 .msg.you { align-self: flex-end; max-width: 80%; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; opacity: 0; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
+.msg-revert { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; transition: opacity .15s, color .15s, background .15s; flex: none; order: -1; }
 .msg.you:hover .msg-revert, .msg-revert:focus-visible { opacity: 1; }
 .msg-revert:hover { color: var(--text); background: var(--surface-2); }
 .msg-actions { display: flex; gap: 6px; margin-top: 4px; }
-.msg-copy { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; font-size: 11px; opacity: 0; transition: opacity .15s, color .15s, background .15s; }
+/* 注意 `.msg-copy` 是 `MsgAction` 的**基类**：复制 / 朗读 / 分享 / **重试** 四个按钮共用它。
+   重试会回滚工作区并重跑，且前端没有确认框 —— 所以这一格的误触后果和 `.msg-revert` 同级，
+   不是「复制而已」。 */
+.msg-copy { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: none; background: transparent; color: var(--faint); cursor: pointer; border-radius: 6px; font-size: 11px; transition: opacity .15s, color .15s, background .15s; }
 .msg.agent:hover .msg-copy, .msg-copy:focus-visible { opacity: 0.6; }
 .msg-copy:hover { color: var(--text); background: var(--surface-2); opacity: 1; }
 /* Share-selection: a vertically-centred checkbox gutter on the left of every message row. */
@@ -250,7 +254,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .code-wrap pre { margin: 0; }
 /* 「运行」与「复制」并排悬浮在代码块右上角。运行按钮在流式输出期间禁用（见 CodeBlock）。 */
 .code-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; z-index: 1; }
-.code-copy, .code-run { opacity: 0; transition: opacity .15s, color .15s, border-color .15s; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.code-copy, .code-run { transition: opacity .15s, color .15s, border-color .15s; background: var(--surface-2); border: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .code-wrap:hover .code-copy, .code-copy:focus-visible,
 .code-wrap:hover .code-run, .code-run:focus-visible { opacity: 1; }
 .code-copy:hover, .code-run:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
@@ -914,3 +918,47 @@ button.head:hover .caret { opacity: 0.9; }
 .cron-warn { font-size: 12px; color: var(--warn); line-height: 1.4; }
 .cron-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
 .cron-detail-head { display: flex; align-items: center; gap: 10px; padding: 12px 22px 0; flex: none; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   悬停才显形的控件 —— **隐藏态只在有 hover 的设备上生效**。
+
+   原来这四类控件的基础规则里写死 `opacity: 0`，靠 `:hover` 显形。触屏没有 hover，
+   于是它们**看不见、却点得着**：73×21 的死区盖在代码块上，手指一碰就真触发。
+   `.code-run` 是整个预览/执行功能的**唯一入口**，`.session-del` 是**唯一**的删会话入口，
+   而 `.msg-copy` 底下挂着**重试**（回滚工作区并重跑，无确认框）。
+
+   ## 三条踩过的坑，都写下来
+
+   1. **极性必须是「默认可见 → 有 hover 才隐藏」，不能反过来。**
+      判据是硬件能力查询，我们无法在本机穷举验证（触屏笔记本、iPad 接触控板、
+      Android 接鼠标……而且插拔设备会实时重算）。极性这样写，判错的后果是
+      「多显示几个能点的按钮」；反过来写，判错的后果是**按钮死掉** ——
+      而第一版设计正是反的：媒体查询只恢复 opacity 不恢复 pointer-events，
+      实测（真 webkit + iPhone 13）修完之后手机上连点两次都到不了按钮。
+
+   2. **判据用 `any-hover` 而不是 `hover`。** `hover: none` 说的是「**主**输入不能悬停」，
+      而 iPad 接了鼠标、Android 接了鼠标时主输入仍是触屏 —— 那种情况下保留隐藏才对。
+      也不用 `pointer: coarse`：它说的是精度（电视遥控是 coarse 但**有** hover），文不对题。
+
+   3. **`pointer-events` 必须连容器一起管。** 只给按钮加 `none`，触点会落到
+      `.code-actions`（绝对定位的容器），代码块该拿到的横滑照样拿不到 ——
+      实测只有「容器与按钮都 none」时 `scrollLeft` 才动得了。
+      父容器 `none` 不影响子元素显式 `auto` 的命中，所以显形时只恢复按钮即可。
+
+   放在文件末尾是必须的：`@media` 不贡献特异性，与上面那些同特异性的规则相比只能靠源序取胜。
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (any-hover: hover) {
+  .session-del, .msg-revert, .msg-copy, .code-copy, .code-run { opacity: 0; pointer-events: none; }
+  .code-actions { pointer-events: none; }
+
+  /* 显形分支必须**成对**恢复 opacity 与 pointer-events。漏掉任何一条 = 那个状态下
+     「看得见、按不着」。`.code-wrap.running` 与 `.msg-speak.speaking` 这两条最容易漏 ——
+     它们不含 `:hover`，正是「跑起来之后按钮常驻」的那两个停止键。 */
+  .session-item:hover .session-del, .session-del:focus-visible,
+  .msg.you:hover .msg-revert, .msg-revert:focus-visible,
+  .msg.agent:hover .msg-copy, .msg-copy:focus-visible,
+  .code-wrap:hover .code-copy, .code-copy:focus-visible,
+  .code-wrap:hover .code-run, .code-run:focus-visible,
+  .code-wrap.running .code-run,
+  .msg-actions .msg-speak.speaking { pointer-events: auto; }
+}
