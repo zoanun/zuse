@@ -3,7 +3,7 @@ import { homedir, tmpdir } from 'node:os'
 import { sep, resolve, join } from 'node:path'
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { buildRule, parseRule, matchesRule, decide, splitBashCommand, normalizePermissionMode, MATCHED_BYPASS } from './permission.js'
+import { buildRule, parseRule, validateRules, matchesRule, decide, splitBashCommand, normalizePermissionMode, MATCHED_BYPASS } from './permission.js'
 import type { Tool } from './tool.js'
 import type { ResolvedSettings, PermissionMode } from './types.js'
 
@@ -38,6 +38,90 @@ describe('rule grammar', () => {
   it('parses bare and parenthesized rules', () => {
     expect(parseRule('Read')).toEqual({ tool: 'Read', specifier: null })
     expect(parseRule('Bash(git diff *)')).toEqual({ tool: 'Bash', specifier: 'git diff *' })
+  })
+
+  /**
+   * MCP 工具名是 `mcp__${serverName}__${toolDef.name}`，**两段都是外部输入**，
+   * 而 MCP 规范对 tool name 没有任何字符约束。实测这台机器 15 个 MCP 工具里
+   * **14 个带连字符** —— 修之前它们一条能生效的权限规则都写不出来。
+   */
+  it('接受任意字符的工具名（MCP 的名字不受我们控制）', () => {
+    for (const n of ['mcp__context7__resolve-library-id', 'mcp__foo__get.thing', 'mcp__本地__查询', 'mcp__foo__do this'])
+      expect(parseRule(n)).toEqual({ tool: n, specifier: null })
+  })
+
+  /**
+   * 放宽字符集的同时**必须**守住这条：`Bash(ls` 不能被当成「一个名叫 `Bash(ls` 的工具」，
+   * 那样比报错更隐蔽。这也是不能把工具名写成 `.*` 的原因。
+   */
+  it('形状不对的仍然是非法', () => {
+    for (const bad of ['Bash(ls', 'Bash(ls*) extra', '', '   '])
+      expect(parseRule(bad)).toBeNull()
+  })
+
+  /**
+   * **`buildRule` 与 `parseRule` 必须互逆。** 不互逆的后果不是解析问题，是
+   * 「本会话总是允许」对所有带连字符的 MCP 工具**完全失效**：
+   * `decide` 用 `buildRule` 造出规则 → 存进 sessionAllow → 下次 `matchesRule`
+   * 用 `parseRule` 解不出来 → 不命中 → **又弹一次框，无限循环**。
+   * 更糟的是「持久允许」会把这条自己都解析不了的规则永久写进 settings.local.json。
+   */
+  it('buildRule → parseRule 往返（否则「本会话总是允许」对 MCP 工具永远失效）', () => {
+    for (const [n, s] of [['mcp__a__b-c', null], ['mcp__a__b-c', 'x'], ['Bash', 'git diff *']] as const) {
+      expect(parseRule(buildRule(n, s))).toEqual({ tool: n, specifier: s })
+    }
+  })
+})
+
+describe('validateRules —— 非法规则今天是静默丢弃的', () => {
+  it('解析不了的报 unparsable', () => {
+    expect(validateRules(['Bash(ls'])).toEqual([{ rule: 'Bash(ls', problem: 'unparsable' }])
+  })
+
+  /**
+   * **这条抓的是字符集改不了的那一半。** 「大小写写错」在放宽之后是**合法**规则
+   * （`read(x)` 解析得出 `{tool:'read'}`），只是永不命中 —— 症状与非法规则完全一样，
+   * 而机制不同。只查 `parseRule === null` 的话它永远抓不到。
+   */
+  it('形状对但没有这个工具的报 unknown-tool（大小写写错就是这一类）', () => {
+    expect(validateRules(['read(x)', 'Bash(ls*)'], ['Bash', 'Read']))
+      .toEqual([{ rule: 'read(x)', problem: 'unknown-tool' }])
+  })
+
+  it('不给工具名单就只查解析（MCP 是异步连上来的，启动瞬间名单不全）', () => {
+    expect(validateRules(['read(x)'])).toEqual([])
+  })
+})
+
+describe('带连字符的工具名 —— 端到端的 decide 链路', () => {
+  const hyphen = tool('mcp__context7__resolve-library-id', false)
+
+  /**
+   * 只测 `parseRule` 证明不了这条链是通的。修之前实测:
+   * `deny:[该工具]` 在 bypass 档下得到 **allow**、default 档下得到 **ask**。
+   */
+  it('deny 一个带连字符的工具，在最宽松的 bypass 档下也必须拦下', () => {
+    const d = decide(hyphen, null, settings({ mode: 'bypass', deny: [hyphen.name] }), [], cwd)
+    expect(d.decision).toBe('deny')
+    expect(d.matched).toBe(hyphen.name)
+  })
+
+  it('sessionAllow 里的带连字符规则必须命中（「本会话总是允许」）', () => {
+    const d = decide(hyphen, null, settings(), [buildRule(hyphen.name, null)], cwd)
+    expect(d.decision).toBe('allow')
+  })
+
+  /**
+   * 评审推翻了我原来的论断「allow/ask 都是 fail closed，所以只有 deny 需要吵」。
+   * **`ask` 对只读工具是 fail open**：ask 表不命中就掉到 `decide` 末尾的
+   * `tool.readOnly ? 'allow' : 'ask'`。而「给敏感路径挂 ask」正是这类规则最典型的写法。
+   * 这条测试把那个事实钉住，免得下次有人又按「ask 反正是安全的」去简化告警。
+   */
+  it('【记录事实】只读工具的 ask 规则写错 → 静默放行，不是弹框', () => {
+    expect(decide(Read, '/repo/secret', settings({ ask: ['Read(/repo/**)'] }), [], cwd).decision).toBe('ask')
+    expect(decide(Read, '/repo/secret', settings({ ask: ['Read (/repo/**)'] }), [], cwd).decision).toBe('ask')
+    // 真正 fail open 的是「解析得了但工具名不对」这一类
+    expect(decide(Read, '/repo/secret', settings({ ask: ['read(/repo/**)'] }), [], cwd).decision).toBe('allow')
   })
 })
 

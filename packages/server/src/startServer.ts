@@ -25,11 +25,11 @@ import { createSession } from './session/createSession.js'
 import { DEFAULT_SESSION_ID, type ServerConfig } from './config.js'
 import type { SessionManager } from './session/SessionManager.js'
 import {
-  loadSettings, resolveModelSelection, resolveContextWindow, resolveImageModelSelection,
+  loadSettings, resolveModelSelection, resolveContextWindow, resolveImageModelSelection, validateRules, parseRule,
   getProviderConfig, createModelClient, setModelInSettings, McpManager, type ToolRegistry, type ModelClient,
 } from '@zuse/core'
 import { makeExpandAttachments } from './upload/imageExpand.js'
-import { LspManager, createLspTool, createLspInstallTool, RunRegistry, spawnShellCommand, killTree } from '@zuse/tools'
+import { LspManager, createLspTool, createLspInstallTool, RunRegistry, spawnShellCommand, killTree, createDefaultRegistry } from '@zuse/tools'
 
 export interface StartServerDeps {
   /** 注入用:测试传一个 fake-client session,跳过真件构建。 */
@@ -45,6 +45,68 @@ export interface StartServerDeps {
    * 注意这只关**启动时的首次连接**；M4 面板的运行时重连端点不受影响。
    */
   connectMcp?: boolean
+}
+
+/**
+ * 权限规则体检 —— 启动时把有问题的规则**逐字**打出来。
+ *
+ * ## 为什么必须有,以及为什么只告警不抛
+ *
+ * 非法规则在权限层是**静默丢弃**的（`matchesRule` 遇到解析失败就 `return false`），
+ * 于是一条打错的 deny = 没有这条 deny，而用户看到的是「我配了啊」。实测本机 15 个
+ * MCP 工具里 14 个带连字符，在修 `parseRule` 之前**一条能生效的规则都写不出来**。
+ *
+ * **不抛**:`loadSettings()` 在 daemon 启动、每建会话、**每个 `/api/models` 请求**
+ * 上都会调，抛在那里等于 daemon 起不来 —— 而用户改配置的唯一图形入口正是它托管的
+ * Web UI。把「部分安全降级」换成「整机不可用 + 自救入口一并没了」，代价不对等。
+ *
+ * **已知没覆盖到的**（照实写，别假装解决了）:
+ * - 启动横幅会被后续日志刷掉。把它搬进会话状态、让 UI 常驻提示，是下一步。
+ * - 非交互的 cron 会话看不到任何提示，而 cron 的默认档正是 `bypass` ——
+ *   恰好是 deny 表唯一兜底的那一档。
+ */
+/**
+ * 探测用的 registry 里**没有**、但运行期真实存在的工具名。
+ *
+ * `createDefaultRegistry()` 不带 opts 时会漏掉按配置启用的那几个（WebSearch / Skill），
+ * 而 Agent / TodoWrite 是**会话级**的（`SESSION_CAPABILITY_TOOLS`，需要 manager 的
+ * live client 才能构造，探测阶段拿不到）。
+ *
+ * **这是「同一个概念写两处」，本来该避免** —— 之所以还是写了，是因为另一条路
+ * （为了体检去构造一个完整会话）代价大得多。**防漂移的办法是测试**：
+ * `ruleCheckWiring.test.ts` 断言「内置默认规则集不产生任何告警」——
+ * 谁加了新工具、或改了默认规则，那条会红，会被引到这里来。
+ */
+const TOOLS_NOT_IN_PROBE_REGISTRY = ['Agent', 'TodoWrite', 'WebSearch', 'Skill']
+
+function reportBadPermissionRules(registerExtraTools: (r: ToolRegistry) => void): void {
+  try {
+    // 拿一份**当前真实**的工具名单（内置 + 已连上的 MCP + LSP）。用一个一次性 registry
+    // 探一下就行 —— 它不起任何进程。
+    const probe = createDefaultRegistry()
+    try { registerExtraTools(probe) } catch { /* 探测失败就退化成只查「解析得了吗」 */ }
+    const knownTools = [...probe.list().map((t) => t.name), ...TOOLS_NOT_IN_PROBE_REGISTRY]
+    const perms = loadSettings().permissions
+    const lines: string[] = []
+    for (const table of ['deny', 'ask', 'allow'] as const) {
+      for (const bad of validateRules(perms[table], knownTools)) {
+        lines.push(
+          bad.problem === 'unparsable'
+            ? `  permissions.${table}: "${bad.rule}" —— 格式不对（应是 Tool 或 Tool(限定符)）`
+            : `  permissions.${table}: "${bad.rule}" —— 找不到名为 "${parseRule(bad.rule)?.tool}" 的工具` +
+              `（若它来自尚未连上的 MCP server，可以忽略）`,
+        )
+      }
+    }
+    if (lines.length === 0) return
+    // **warn 不是 log**：这些规则以为自己在生效，实际一条都没生效。
+    console.warn('[zuse-server] ⚠ 有权限规则不会生效（写错的规则是被静默丢弃的）：')
+    for (const l of lines) console.warn(l)
+    console.warn('[zuse-server]   deny 里的规则失效 = 该拦的没拦，而且不会有任何运行期提示。')
+  } catch (err) {
+    // 体检本身绝不能拦住启动。
+    console.warn(`[zuse-server] 权限规则体检失败：${err instanceof Error ? err.message : String(err)}`)
+  }
 }
 
 function defaultWebDir(): string {
@@ -104,6 +166,10 @@ export async function startServer(
   }
   // 只跳过启动时的首次连接；上面 reconnectMcp 本体不变，M4 面板的运行时重连照常可用。
   if (deps.connectMcp !== false) await reconnectMcp()
+
+  // 权限规则体检。**必须在这里（MCP 连完之后）跑** —— 工具集这时才齐，
+  // 否则每条 MCP 规则都会被误报成「找不到这个工具」。
+  reportBadPermissionRules(registerExtraTools)
 
   // Reconnect a SINGLE server (per-row ↻ in the panel). Removed-from-settings → just disconnect.
   const reconnectOneMcp = async (name: string): Promise<void> => {
@@ -312,7 +378,9 @@ export async function startServer(
       // 而项目档（步骤 4）是 `wallClockMs: null` + `onDetach: 'keep'` —— 一个 dev server
       // 会永远活着占着端口，而本仓每次改 web 都要重启 daemon。
       // 这条是评估「跑整个项目」时顺带查出来的：`closeAll()` 此前全仓只有测试在调。
-      runs.closeAll()
+      // `disposeAll` 而不是 `closeAll`：后者只发信号，两级宽限定时器会在 3s/6s 后
+      // 各醒一次，对着已经没人管的 run 再 signal 一遍，还吊着事件循环。
+      runs.disposeAll()
       httpServer.close(() => resolve())
       ws.closeAll()
       httpServer.closeAllConnections()

@@ -47,11 +47,100 @@ export function buildRule(toolName: string, specifier: string | null): string {
   return specifier === null ? toolName : `${toolName}(${specifier})`
 }
 
-/** 解析规则；非法返回 null。`Tool` -> {tool, specifier:null}；`Tool(x)` -> {tool, specifier:'x'}。 */
+/**
+ * 解析规则；非法返回 null。`Tool` -> {tool, specifier:null}；`Tool(x)` -> {tool, specifier:'x'}。
+ *
+ * ## 为什么是**结构式**而不是字符白名单
+ *
+ * 原来是 `^([A-Za-z_][A-Za-z0-9_]*)(...)$` —— 不认连字符。而 MCP 工具名是
+ * `mcp__${serverName}__${toolDef.name}`（`mcp-registry.ts`），**两段都是外部输入**：
+ * serverName 是用户写的 JSON key，toolDef.name 来自 MCP server，而 MCP 规范对
+ * tool name **没有任何 pattern 约束**（`schema.json` 里就是裸 `"type":"string"`）。
+ *
+ * 实测这台机器：15 个 MCP 工具里 **14 个带连字符** —— 也就是说它们**一条能生效的
+ * 权限规则都写不出来**。`deny` 里写了等于没写：
+ *
+ * ```
+ * deny:[mcp__context7__resolve-library-id]  default → ask     bypass → allow
+ * 对照（同规则、名字去掉连字符）            default → deny    bypass → deny
+ * ```
+ *
+ * 所以**不能再对字符集下赌注**（今天补 `-`，明天有人把 server 叫 `my db` 或用中文，
+ * 又是同一个洞再修一遍）。改成结构式：工具名 = 「不含括号的一段」。
+ *
+ * 它仍然守住那条底线 —— `Bash(ls`（缺右括号）必须是**非法**，不能被当成
+ * 「一个名叫 `Bash(ls` 的工具」，那样错得更隐蔽。实测 `Bash(ls`、`Bash(ls*) extra`、
+ * 空串在结构式下都仍然返回 null。
+ *
+ * **已知的行为变更**（放宽，评审实测本机现有 41 条规则受影响数 = 0）：
+ * - `Bash (ls*)`（工具名与括号之间有空格）由非法变**生效**。对 deny 是收紧，对 allow 是放宽。
+ * - `-x`、`.zuse/**` 这类明显写错的东西，从「非法」变成「合法但永不命中」。
+ *   **所以本函数必须和 `validateRules` 的第二道校验捆绑使用** —— 单独放宽是净负收益。
+ */
 export function parseRule(rule: string): { tool: string; specifier: string | null } | null {
-  const m = /^([A-Za-z_][A-Za-z0-9_]*)(?:\((.*)\))?$/.exec(rule.trim())
+  const m = /^([^()]+?)\s*(?:\((.*)\))?$/.exec(rule.trim())
   if (!m) return null
   return { tool: m[1]!, specifier: m[2] === undefined ? null : m[2] }
+}
+
+/** 一条规则为什么不对。 */
+export type RuleProblem =
+  /** 连 `Tool` / `Tool(x)` 的形状都不是（缺右括号、空串……）。 */
+  | 'unparsable'
+  /** 形状对，但没有叫这个名字的工具 —— 大小写写错、拼错，或者来自尚未连上的 MCP server。 */
+  | 'unknown-tool'
+
+/**
+ * 找出一组规则里有问题的那些。**纯函数，绝不抛。**
+ *
+ * ## 为什么必须有它:非法规则今天是**静默丢弃**的
+ *
+ * `matchesRule` 遇到 `parseRule` 返回 null 时 `return false` —— 「非法 = 不匹配」。
+ * 于是一条打错的 deny 规则 = **没有这条 deny**，而用户看到的是「我配了啊」。
+ * 全仓此前**没有任何地方校验过规则合法性**。
+ *
+ * ## 三张表一视同仁,不给 deny 开特例
+ *
+ * 我原来的设计是「deny 非法就抛、allow/ask 只告警」，理由是后两者 fail closed。
+ * **那个理由是错的,评审实测推翻**:
+ *
+ * ```
+ * ask:["Read(~/.ssh/**)"]   → ask     matched=Read(~/.ssh/**)
+ * ask:["Read (~/.ssh/**)"]  → allow   matched=-      ← 多一个空格，护栏从「弹框」变「静默放行」
+ * ```
+ *
+ * 机制:`ask` 表不命中就掉到 `decide` 末尾的 `tool.readOnly ? 'allow' : 'ask'`。
+ * **只读工具（Read/Grep/Glob）的 ask 规则一旦写错就直接变 allow** —— 而「给敏感路径
+ * 挂 ask」正是这类规则最典型的写法。allow 侧确实 fail closed（实测），但既然 ask 会
+ * fail open，就不该写成 deny-only 的分支 —— 那等于把一个错误认知固化进代码。
+ *
+ * ## 为什么只告警、不抛
+ *
+ * `loadSettings()` 的调用点包括 **daemon 启动**、**每建一个会话**、
+ * **每个 `GET /api/models` / `PUT /api/model` 请求**、每次 STT/TTS。抛在那里不是
+ * 「开不了新会话」，是 **daemon 根本起不来** —— 而用户改配置的唯一图形入口正是这个
+ * daemon 托管的 Web UI。把「部分安全降级」换成「整机不可用 + 自救入口一并没了」，
+ * 代价不对等。
+ *
+ * （`CLAUDE.md` 里「注册表遇重复键直接抛」那条先例**不适用**：那说的是源码级不变量，
+ * 在模块加载期触发、由开发者修、fail 时仓库还没发出去；权限规则是**用户数据**，
+ * fail 时人已经在用了。同型不同类。）
+ *
+ * @param knownTools 给了就顺带查「有没有这个工具」。**只能告警不能硬失败** ——
+ *   MCP 工具是异步连上来的，启动瞬间工具集不全，一条针对暂时断线的 server 的规则会被误报。
+ */
+export function validateRules(
+  rules: readonly string[],
+  knownTools?: readonly string[],
+): Array<{ rule: string; problem: RuleProblem }> {
+  const known = knownTools ? new Set(knownTools) : null
+  const out: Array<{ rule: string; problem: RuleProblem }> = []
+  for (const rule of rules) {
+    const p = parseRule(rule)
+    if (!p) { out.push({ rule, problem: 'unparsable' }); continue }
+    if (known && !known.has(p.tool)) out.push({ rule, problem: 'unknown-tool' })
+  }
+  return out
 }
 
 /** Bash 限定符匹配：`*` 全匹配；尾 `*` 前缀匹配；否则精确。 */

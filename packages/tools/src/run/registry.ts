@@ -139,6 +139,27 @@ export class RunRegistry {
   }
 
   /**
+   * 彻底拆掉：先发信号，再把每条 run 的定时器与订阅全停掉。
+   *
+   * **`closeAll()` 单独用不够。** 它只发信号 —— 而 `kill()` 会排两级 `killGraceMs`
+   * 宽限表，进程若一直不给 `close`（关停时很正常），那两个定时器会在 3 秒、6 秒后
+   * 各醒一次，对着**已经没人管的 run** 再 `signal()` 一遍。
+   *
+   * 这在测试里表现为一类极难查的串扰：`runsRoutes.test.ts` 的 `killTree` 假件往一个
+   * **模块级**数组里 push，而那个数组每个用例 `beforeEach` 换新的 —— 于是上一个用例
+   * 留下的宽限定时器会把 pid 塞进**下一个用例**的数组，让一条毫不相干的断言
+   * 「前置：有人看着的时候不许杀」随机变红。实测约 1/6 的概率。
+   *
+   * 生产侧影响小但同源：daemon 关停后那几个定时器还吊着事件循环。
+   */
+  disposeAll(): void {
+    this.closeAll()
+    for (const run of this.runs.values()) run.dispose()
+    this.runs.clear()
+    this.finished.length = 0
+  }
+
+  /**
    * 在飞的数量。**zombie 也算** —— 它的语义是「信号发了、升级也发了，进程还活着」，
    * 那个进程还在占系统资源。不算的话，一串杀不掉的进程会被无限放行。
    */

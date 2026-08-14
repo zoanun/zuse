@@ -67,7 +67,7 @@ beforeEach(async () => {
   base = `http://127.0.0.1:${port}`
   sessionId = (await service.create({ cwd: 'E:/proj-a' })).id
 })
-afterEach(async () => { runs.closeAll(); await new Promise<void>((r) => srv.close(() => r())); rmSync(dir, { recursive: true, force: true }) })
+afterEach(async () => { runs.disposeAll(); await new Promise<void>((r) => srv.close(() => r())); rmSync(dir, { recursive: true, force: true }) })
 
 const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } })
 async function authCookie(): Promise<string> {
@@ -155,7 +155,7 @@ describe('run 端点 —— 并发上限', () => {
     try {
       expect((await send()).status).toBe(201)
       expect((await send()).status).toBe(429)
-    } finally { small.closeAll(); await new Promise<void>((r) => s2.close(() => r())) }
+    } finally { small.disposeAll(); await new Promise<void>((r) => s2.close(() => r())) }
   })
 })
 
@@ -283,7 +283,7 @@ describe('run 端点 —— SSE 写失败必须退订', () => {
       // 退订成功 → 订阅者归零 → 片段档 onDetach:'kill' 触发。
       // 补退订那行如果没了，订阅会留在 set 里，这里就是空数组。
       expect(killed).toEqual([proc.pid])
-    } finally { reg.closeAll() }
+    } finally { reg.disposeAll() }
   })
 })
 
