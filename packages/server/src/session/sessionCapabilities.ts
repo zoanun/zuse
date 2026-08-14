@@ -1,8 +1,10 @@
 import {
   createAgentTool,
+  createRunOutputTool,
   createScheduleWakeupTool,
   createTodoWriteTool,
   type TodoItem,
+  type RunRegistry,
 } from '@zuse/tools'
 import type {
   Tool,
@@ -27,6 +29,13 @@ export interface SessionCapabilityContext {
   canUseTool: (req: PermissionRequest) => Promise<PermissionVerdict>
   /** 全自主档放行了一次调用（含子代理内部的）。见 core 的 RunAgentOptions.onAutoAllow。 */
   onAutoAllow: (toolName: string, specifier: string | null) => void
+  /** 本会话的 id —— `RunOutput` 靠它做会话隔离（别的会话的 run 一律「没有这个运行」）。 */
+  sessionId: string
+  /**
+   * run 注册表。**可选** —— TUI 那条路径没有它（run 服务是 daemon 的东西），
+   * 缺省即**不注册** `RunOutput`，而不是注册一个一调就抛的工具。
+   */
+  runs?: RunRegistry
   setTodos: (todos: TodoItem[]) => void
   /**
    * 安排一次自唤醒（B2）。返回 false = 被唤醒链的 deadline 拒绝（cron 会话额度用完）。
@@ -45,7 +54,7 @@ export interface SessionCapabilityContext {
  * 会话级工具清单：每项把能力上下文映射成一个 Tool。数组顺序即注册顺序。
  * 加会话级工具 = 往这里加一项（并按需给 SessionCapabilityContext 加字段）。
  */
-export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => Tool> = [
+export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => Tool | null> = [
   // 逐字段构造 AgentToolDeps，不用 `{ ...ctx, onBackground }`：spread 会绕过 TS 的多余属性检查，
   // 于是把能力面某个字段改名（如 sessionAllow）时，AgentToolDeps 上的同名可选字段会**静默**变成
   // undefined —— 不报类型错、不红任何测试，症状却是「子代理突然没有 session allow 了」这种最难查的形态。
@@ -60,6 +69,9 @@ export const SESSION_CAPABILITY_TOOLS: Array<(ctx: SessionCapabilityContext) => 
     onBackground: ctx.startBackgroundAgent,   // 能力面叫「登记后台 Agent」，工具侧叫 onBackground
   }),
   (ctx) => createTodoWriteTool({ onUpdate: ctx.setTodos }),
+  // RunOutput（步骤 5）。**没有 run 注册表就不注册**，返回 null 而不是注册一个一调就抛的
+  // 工具：后者会让模型在 TUI 里看到一个存在但永远失败的工具，比看不到更糟。
+  (ctx) => (ctx.runs ? createRunOutputTool({ registry: ctx.runs, sessionId: ctx.sessionId }) : null),
   // ScheduleWakeup（B2）。**不为 cron 会话开特例** —— 按会话类型加 if 等于把特例贴回共享机制，
   // 正是这张清单要消灭的东西；cron 的差异由 CronScheduler 用 deadline 表达。
   // 措辞也刻意不提 cron：设额度的一方将来可能不止 cron，而上限值只住在 CronScheduler 里。

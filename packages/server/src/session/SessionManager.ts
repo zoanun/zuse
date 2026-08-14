@@ -48,7 +48,7 @@ import {
   type Usage,
   type ErrorCategory,
 } from '@zuse/core'
-import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug } from '@zuse/tools'
+import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug, type RunRegistry } from '@zuse/tools'
 import type {
   SessionEvent,
   SessionSnapshot,
@@ -148,6 +148,8 @@ export interface PermissionPolicy {
 
 export interface SessionManagerOptions {
   sessionId: string
+  /** run 注册表；给了才注册 `RunOutput` 工具（TUI 那条路径不给）。 */
+  runs?: RunRegistry
   cwd: string
   client: ModelClient
   registry: ToolRegistry
@@ -237,6 +239,8 @@ function echoAttachments(images?: UploadedImageRef[], pastedTexts?: PastedTextIn
 
 export class SessionManager {
   private readonly sessionId: string
+  /** run 注册表（daemon 提供）。TUI 那条路径没有 —— 缺省即不注册 `RunOutput`。 */
+  private readonly runs: RunRegistry | undefined
   private conversation: Conversation
   private client: ModelClient
   private readonly registry: ToolRegistry
@@ -327,6 +331,7 @@ export class SessionManager {
     // Spec §9's "client uninitialised → emit error, reject" row is unreachable by
     // construction: client is a required (non-null) constructor arg, so no runtime guard.
     this.sessionId = opts.sessionId
+    this.runs = opts.runs
     this.cwd = opts.cwd
     this.client = opts.client
     this.registry = opts.registry
@@ -371,12 +376,17 @@ export class SessionManager {
       sessionAllow: this.sessionAllow,
       canUseTool: this.canUseTool,
       onAutoAllow: this.onAutoAllow,
+      sessionId: this.sessionId,
+      ...(this.runs ? { runs: this.runs } : {}),
       setTodos: (todos) => this.setTodos(todos),
       scheduleWakeup: (delayMs, message) => this.scheduleWakeup(delayMs, message),
       startBackgroundAgent: (description) => this.startBackgroundAgent(description),
     }
     for (const make of SESSION_CAPABILITY_TOOLS) {
       const tool = make(capabilityCtx)
+      // null = 这条能力在本运行环境不可用（如 TUI 没有 run 注册表）。
+      // 不注册好过注册一个一调就抛的工具：后者会让模型看到一个存在但永远失败的工具。
+      if (!tool) continue
       if (this.registry.get(tool.name)) {
         // Fresh registries never hit this. If the name is already taken — e.g. an extra tool
         // from registerExtraTools (which now runs before this loop) claimed it — skip but warn:

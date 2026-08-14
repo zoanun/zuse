@@ -12,6 +12,7 @@ function fakeCtx(over: Partial<SessionCapabilityContext> = {}): SessionCapabilit
     sessionAllow: [],
     canUseTool: async () => ({ behavior: 'allow' }) as never,
     onAutoAllow: () => {},
+    sessionId: 's1',
     setTodos: () => {},
     scheduleWakeup: () => true,
     startBackgroundAgent: () => () => {},
@@ -22,13 +23,20 @@ function fakeCtx(over: Partial<SessionCapabilityContext> = {}): SessionCapabilit
 describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
   it('产出 Agent / TodoWrite / ScheduleWakeup 三个工具，名字正确、顺序 Agent 在前', () => {
     const tools = SESSION_CAPABILITY_TOOLS.map((make) => make(fakeCtx()))
-    expect(tools.map((t) => t.name)).toEqual(['Agent', 'TodoWrite', 'ScheduleWakeup'])
+    // 没给 `runs` → RunOutput 返回 null、不注册。这正是 TUI 那条路径的形状。
+    expect(tools.filter((t) => t !== null).map((t) => t.name)).toEqual(['Agent', 'TodoWrite', 'ScheduleWakeup'])
+  })
+
+  it('给了 runs → RunOutput 也在清单里', () => {
+    const runs = { list: () => [], get: () => undefined } as unknown as SessionCapabilityContext['runs']
+    const tools = SESSION_CAPABILITY_TOOLS.map((make) => make(fakeCtx({ runs })))
+    expect(tools.filter((t) => t !== null).map((t) => t.name)).toContain('RunOutput')
   })
 
   it('TodoWrite.onUpdate 透传到 ctx.setTodos', async () => {
     let got: TodoItem[] | undefined
     const ctx = fakeCtx({ setTodos: (todos) => { got = todos } })
-    const todoTool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'TodoWrite')!
+    const todoTool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).filter((t) => t !== null).find((t) => t.name === 'TodoWrite')!
     await todoTool.run({ todos: [{ content: 'do x', status: 'pending' }] }, {} as never)
     expect(got).toEqual([{ content: 'do x', status: 'pending' }])
   })
@@ -36,7 +44,7 @@ describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
   it('ScheduleWakeup.onSchedule 透传到 ctx.scheduleWakeup(秒 → 毫秒)', async () => {
     const calls: Array<[number, string]> = []
     const ctx = fakeCtx({ scheduleWakeup: (ms, msg) => { calls.push([ms, msg]); return true } })
-    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'ScheduleWakeup')!
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).filter((t) => t !== null).find((t) => t.name === 'ScheduleWakeup')!
     const r = await tool.run({ delaySeconds: 30, message: '看 CI' }, {} as never)
     expect(calls).toEqual([[30_000, '看 CI']])
     expect(r.isError).toBeFalsy()
@@ -44,7 +52,7 @@ describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
 
   it('被 deadline 拒绝时如实抛错（core 的 runOneTool 会转成 isError 回喂模型，不会打断回合）', async () => {
     const ctx = fakeCtx({ scheduleWakeup: () => false })
-    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'ScheduleWakeup')!
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).filter((t) => t !== null).find((t) => t.name === 'ScheduleWakeup')!
     await expect(tool.run({ delaySeconds: 30, message: 'x' }, {} as never)).rejects.toThrow(/额度|上限/)
   })
 
@@ -55,7 +63,7 @@ describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
   it('Agent.onBackground 透传到 ctx.startBackgroundAgent（run_in_background 立即返回 ack）', async () => {
     const started: string[] = []
     const ctx = fakeCtx({ startBackgroundAgent: (desc) => { started.push(desc); return () => {} } })
-    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'Agent')!
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).filter((t) => t !== null).find((t) => t.name === 'Agent')!
 
     const r = await tool.run(
       { prompt: 'p', description: '后台活儿', runInBackground: true },
@@ -69,7 +77,7 @@ describe('SESSION_CAPABILITY_TOOLS —— 会话级工具清单', () => {
 
   it('并发上限的 throw 从能力面一路冒到工具外（不被吞掉）', async () => {
     const ctx = fakeCtx({ startBackgroundAgent: () => { throw new Error('本会话已有 5 个后台 Agent 在跑') } })
-    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).find((t) => t.name === 'Agent')!
+    const tool = SESSION_CAPABILITY_TOOLS.map((make) => make(ctx)).filter((t) => t !== null).find((t) => t.name === 'Agent')!
     await expect(
       tool.run(
         { prompt: 'p', description: 'x', runInBackground: true },
