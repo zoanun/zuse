@@ -18,7 +18,14 @@
    （旧配色是 #E8E3D8 那种偏黄的米色，配冷紫强调显脏。） */
 :root[data-theme="light"] {
   --ground: #F7F6F3; --surface: #FFFFFF; --surface-2: #F1F0EC; --user-bubble: #F1F0EC;
-  --line: #E9E7E2; --text: #232220; --muted: #6E6B65; --faint: #A5A19A;
+  /* muted / faint 是**算出来的**，不是挑好看的 —— 改之前先跑 styles.tokens.test.ts。
+     原来的 --faint(#A5A19A) 对三种底色只有 2.26 / 2.38 / 2.57:1，**连大字要求的 3:1
+     都不到**，而它的 55 个引用点字号全在 9–14.5px（属于「正文」，要求 4.5:1）。
+     把 faint 提到 4.5 会顶到原 muted 的位置，所以 muted 必须跟着让开（提到 7:1），
+     否则三档层级名存实亡 —— 这是这次连 muted 一起动的唯一原因。
+     取值方式：保持原有暖灰色相，只按同一比例缩放 RGB 明度，取刚好满足阈值的那档。 */
+  --line: #E9E7E2; --text: #232220; --muted: #53504C; --faint: #706D69;
+  --hover: rgba(0,0,0,0.06);
   --accent: #6B57E0; --accent-2: #8B7BF0;
   --accent-soft: rgba(107,87,224,0.09); --accent-border: rgba(107,87,224,0.24); --accent-glow: rgba(107,87,224,0.22);
   --on-accent: #FFFFFF; --shadow: rgba(30,29,26,0.06); --header-bg: rgba(255,255,255,0.86);
@@ -26,7 +33,11 @@
 }
 :root[data-theme="dark"] {
   --ground: #191918; --surface: #212120; --surface-2: #2B2A28; --user-bubble: #2E2D2A;
-  --line: #33322E; --text: #ECEAE5; --muted: #A29E96; --faint: #6F6B64;
+  --line: #33322E; --text: #ECEAE5; --muted: #B9B5AC; --faint: #959086;
+  /* 深色下**必须**是白色叠加。原来这里根本没定义 --hover，用的是引用点上的兜底
+     `rgb(0 0 0 / 6%)` —— 在深底上叠黑等于什么都没发生（实测对比度 1.013:1，
+     run 菜单的 hover 肉眼看不出来）。 */
+  --hover: rgba(255,255,255,0.09);
   --accent: #9A8CFF; --accent-2: #B7A0FF;
   --accent-soft: rgba(154,140,255,0.13); --accent-border: rgba(154,140,255,0.30); --accent-glow: rgba(154,140,255,0.30);
   --on-accent: #1A1726; --shadow: rgba(0,0,0,0.35); --header-bg: rgba(33,33,32,0.86);
@@ -209,8 +220,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .lightbox-close { position: fixed; top: 18px; right: 22px; width: 40px; height: 40px; border-radius: 999px; border: none; background: rgba(255,255,255,0.14); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
 .lightbox-close:hover { background: rgba(255,255,255,0.26); }
 .textbox-panel { max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; background: var(--surface, #1e1e1e); border-radius: 8px; box-shadow: 0 12px 48px rgba(0,0,0,0.5); cursor: default; overflow: hidden; }
-.textbox-title { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--fg); }
-.textbox-pre { margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; color: var(--fg); }
+.textbox-title { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--text); }
+.textbox-pre { margin: 0; padding: 14px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; color: var(--text); }
 .msg-img-badge { align-self: flex-start; font-size: 10.5px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 7px; white-space: nowrap; }
 .msg-img-desc { font-size: 11.5px; color: var(--faint); }
 .msg-img-desc > summary { cursor: pointer; color: var(--faint); }
@@ -228,7 +239,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .pending-steer { display: flex; align-items: baseline; gap: 8px; padding-left: 4px; opacity: 0.65; }
 .pending-steer-tag { flex: none; font-size: 11px; line-height: 1; color: var(--faint); background: var(--surface-2); border-radius: 999px; padding: 3px 8px; white-space: nowrap; }
 .pending-steer-text { font-size: 14px; line-height: 1.5; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
-.pending-steer-attach { font-size: 12px; color: var(--muted, var(--fg)); margin-left: 6px; }
+.pending-steer-attach { font-size: 12px; color: var(--muted); margin-left: 6px; }
 .text { font-size: 15.5px; line-height: 1.75; word-break: break-word; color: var(--text); }
 .text h1, .text h2, .text h3, .text h4 { line-height: 1.3; margin: 16px 0 8px; font-weight: 650; }
 .text h1 { font-size: 1.4em; } .text h2 { font-size: 1.22em; } .text h3 { font-size: 1.08em; }
@@ -391,7 +402,7 @@ button.head:hover .caret { opacity: 0.9; }
 }
 .rail-exec-bar .rx-spacer { flex: 1; }
 .rail-exec-bar button { background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 0; }
-.rail-exec-bar button:hover { color: var(--fg); }
+.rail-exec-bar button:hover { color: var(--text); }
 .rx-title { font-weight: 600; }
 /* 「还在跑」的指示。用动画而不是文字：文字会跟着输出一起滚走。 */
 .rx-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent, #4a9); animation: rx-pulse 1.2s ease-in-out infinite; }
@@ -401,10 +412,10 @@ button.head:hover .caret { opacity: 0.9; }
   margin: 6px 0; white-space: pre-wrap; word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.5;
 }
-.rx-err-head { font-size: 11px; color: var(--danger, #c55); margin-top: 8px; }
-.rx-err { color: var(--danger, #c55); }
+.rx-err-head { font-size: 11px; color: var(--bad); margin-top: 8px; }
+.rx-err { color: var(--bad); }
 .rx-note { font-size: 12px; color: var(--muted); padding: 6px 0; }
-.rx-note.bad { color: var(--danger, #c55); }
+.rx-note.bad { color: var(--bad); }
 .rx-note button { font-size: 12px; cursor: pointer; }
 .rx-hint { margin-bottom: 6px; }
 /* 「这里没有键盘输入」—— 常驻，不做检测。理由见 RailExec.tsx：
@@ -425,8 +436,8 @@ button.head:hover .caret { opacity: 0.9; }
    而 `.rm-cmd` 恰好自己设了灰色，所以「只看得到命令、看不到脚本名」。
    单测抓不到：`allTextContents()` 查的是 DOM 里有没有这段文字，不查你能不能看见它。 */
 .run-menu-item { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-  color: var(--fg); background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
-.run-menu-item:hover { background: var(--hover, rgb(0 0 0 / 6%)); }
+  color: var(--text); background: none; border: 0; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 13px; }
+.run-menu-item:hover { background: var(--hover); }
 .rm-name { font-weight: 600; flex: none; }
 .rm-badge { flex: none; font-size: 10px; padding: 1px 5px; border-radius: 4px;
   background: var(--accent, #4a9); color: #fff; }
@@ -597,7 +608,7 @@ button.head:hover .caret { opacity: 0.9; }
 .paste-card { position: relative; display: flex; align-items: center; gap: 6px; height: 60px; padding: 0 26px 0 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); flex: none; max-width: 220px; }
 .paste-card.error { border-color: var(--bad); }
 .paste-card-icon { font-size: 18px; line-height: 1; }
-.paste-card-label { font-size: 12px; color: var(--fg-2, var(--fg)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.paste-card-label { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .paste-card-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; cursor: pointer; color: inherit; overflow: hidden; }
 .attach-retry { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 12px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
 .attach-spinner { position: absolute; top: 50%; left: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--faint); border-top-color: var(--accent); border-radius: 50%; animation: attach-spin 0.7s linear infinite; }
