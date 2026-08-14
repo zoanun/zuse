@@ -9,7 +9,12 @@ const { chromium } = require('C:/Users/nhn/.npm-global/node_modules/playwright')
 
 const SHOT = 'C:/Users/nhn/AppData/Local/Temp/claude/e--ai-study-zuse/62bdc16d-7d61-4c8c-9d21-818ae1677d96/scratchpad'
 const log = (...a) => console.log(...a)
-const ok = (c, msg) => log(`${c ? '  ✓' : '  ✗ 失败:'} ${msg}`)
+// **失败必须影响退出码。** 这里原来只是 `log(...)` —— 一条检查失败时打出「✗ 失败」，
+// 脚本照样 exit 0。谁把它接进门禁或者只看退出码，得到的就是一个永远通过的验证脚本。
+// 本仓同目录下 verify-touch-controls.mjs / verify-step4-browser.mjs 都是这么做的，
+// 只有这一份漏了。
+let failed = 0
+const ok = (c, msg) => { if (!c) failed++; log(`${c ? '  ✓' : '  ✗ 失败:'} ${msg}`) }
 
 const browser = await chromium.launch({ headless: false, args: ['--window-size=1500,950'] })
 const page = await browser.newPage({ viewport: { width: 1460, height: 900 } })
@@ -101,6 +106,8 @@ if (pageErrors.length) pageErrors.slice(0, 5).forEach((e) => log('     ' + e))
 
 writeFileSync(`${SHOT}/verify-result.txt`, `out=${outText}\nerr=${errText}\nnote=${noteText}\nerrors=${pageErrors.length}`)
 log('\n截图: shot-1-button.png / shot-2-confirm.png / shot-3-output.png')
+log(failed === 0 ? '\n全过。' : `\n${failed} 条未通过。`)
 log('跑完，5 秒后关闭浏览器。')
 await page.waitForTimeout(5000)
 await browser.close()
+process.exit(failed === 0 ? 0 : 1)

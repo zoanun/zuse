@@ -1,7 +1,7 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
 import { createReadStream } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
-import { join, normalize, extname, basename } from 'node:path'
+import { join, normalize, extname, basename, sep } from 'node:path'
 import { VERSION, loadSettings, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
@@ -1194,7 +1194,11 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
         // Resolve within webDir; reject traversal.
         const rel = normalize(path).replace(/^(\.\.[/\\])+/, '').replace(/^[/\\]+/, '')
         const abs = join(deps.webDir, rel)
-        if (abs.startsWith(deps.webDir)) {
+        // `startsWith` 是纯字符串前缀比较：webDir 为 `/srv/web` 时，`/srv/web-evil/x`
+        // 也会通过。加一道边界判定（相等，或紧跟一个路径分隔符）把兄弟目录挡掉。
+        // 老实说：我没能构造出真能走到这一步的载荷 —— 上面 normalize + 剥前导 `..`
+        // 已经把 rel 关在 webDir 里了。这是纵深防御，不是在修一个已复现的洞。
+        if (abs === deps.webDir || abs.startsWith(deps.webDir + sep)) {
           // CORS 只跟着真实存在的 vendor 文件走，不跟着 SPA 回退的 index.html 走。
           if (path !== '/' && (await tryServeFile(res, abs, previewVendorHeaders(path)))) return
           if (await tryServeFile(res, join(deps.webDir, 'index.html'))) return

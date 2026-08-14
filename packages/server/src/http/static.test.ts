@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createServer, type Server } from 'node:http'
+import { connect as netConnect } from 'node:net'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -79,12 +80,62 @@ describe('static SPA serving', () => {
     expect(await r.text()).toContain('DEV TEST PAGE')
   })
 
-  it('blocks path traversal', async () => {
+  /**
+   * 路径穿越。**这条测试原来是假绿的，两处都错：**
+   *
+   * 1. 用 `fetch(base + '/../../etc/passwd')` 发请求 —— WHATWG 的 URL 解析器会在
+   *    **客户端**就把 `..` 归一掉。实测（node v22，自建 http 服务器打印 req.url）：
+   *
+   *        请求 /../../etc/passwd          → 服务端看到 "/etc/passwd"
+   *        请求 /a/../../etc/passwd        → 服务端看到 "/etc/passwd"
+   *        裸 socket 发 /../../etc/passwd  → 服务端看到 "/../../etc/passwd"
+   *
+   *    也就是说 `..` **从来没到达过服务端**，这条测试对它自称要防的东西完全无感。
+   *
+   * 2. 断言写成 `expect([403, 404, 200].includes(r.status)).toBe(true)` ——
+   *    把 200 也算通过，等于这半条断言不可能失败。
+   *
+   * 现在改成裸 socket 发原始报文，并且落一个**真的**秘密文件在 webDir 外面，
+   * 断言它的内容一个字都不能出现在响应里。同一实测还发现 `%2e%2e%2f` 这种
+   * 百分号编码形态**能穿过 fetch**（服务端原样收到），原来的测试同样没覆盖。
+   */
+  async function rawGet(rawPath: string): Promise<string> {
+    const port = Number(base.split(':')[2])
+    return await new Promise<string>((resolve, reject) => {
+      const sock = netConnect(port, '127.0.0.1', () => {
+        sock.write(`GET ${rawPath} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`)
+      })
+      let buf = ''
+      sock.on('data', (d: Buffer) => { buf += d.toString('utf8') })
+      sock.on('close', () => resolve(buf))
+      sock.on('error', reject)
+    })
+  }
+
+  it('blocks path traversal (裸 socket，让 `..` 真的到达服务端)', async () => {
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>SPA</title>')
-    await start(dir)
-    const r = await fetch(base + '/../../etc/passwd')
-    expect([403, 404, 200].includes(r.status)).toBe(true)
-    expect(await r.text()).not.toContain('root:')
+    // 秘密文件放在 webDir 的**父目录**里 —— 穿越成功的话正好够得着。
+    const secretName = 'zuse-traversal-secret.txt'
+    const secretPath = join(dir, '..', secretName)
+    writeFileSync(secretPath, 'TRAVERSAL-SECRET-MARKER')
+    try {
+      await start(dir)
+      const attacks = [
+        `/../${secretName}`,
+        `/../../${secretName}`,
+        `/a/../../${secretName}`,
+        `/%2e%2e%2f${secretName}`,          // 百分号编码：实测能穿过 fetch，必须单独覆盖
+        `/%2e%2e/${secretName}`,
+        `/..%2f${secretName}`,
+        `/..\\${secretName}`,               // Windows 分隔符
+      ]
+      for (const a of attacks) {
+        const raw = await rawGet(a)
+        expect(raw, `攻击载荷 ${a} 把文件内容读出来了`).not.toContain('TRAVERSAL-SECRET-MARKER')
+      }
+    } finally {
+      rmSync(secretPath, { force: true })
+    }
   })
 
   /**
