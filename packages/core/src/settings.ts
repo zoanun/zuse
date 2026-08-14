@@ -183,13 +183,72 @@ export const DEFAULT_ASK_RULES: readonly string[] = [
 ]
 
 /** 通过查找 pnpm-workspace.yaml 定位项目根（从 env.ts 迁来，统一出口）。 */
-export function findProjectRoot(): string {
-  let dir = cwd()
+/**
+ * 项目根的标记文件/目录，**就近命中优先**。
+ *
+ * 原来只认 `pnpm-workspace.yaml`，那对本仓成立、对绝大多数项目不成立。
+ * 会话可以 root 到任意目录（目录选择器就是让你往下钻的），
+ * 只认一个 pnpm 标记的话，「在 `某项目/src` 下开会话」永远找不到 `某项目/.zuse/`。
+ */
+const ROOT_MARKERS = ['.zuse', '.git', 'pnpm-workspace.yaml'] as const
+
+/**
+ * 从 `from`（缺省为进程 cwd）向上找项目根；找不到就返回起点。
+ *
+ * **`from` 参数是给会话用的** —— 不传时行为与从前完全一致（锚在 daemon 进程的 cwd）。
+ */
+export function findProjectRoot(from?: string): string {
+  const start = from ?? cwd()
+  let dir = start
   while (dir !== resolve(dir, '..')) {
-    if (existsSync(resolve(dir, 'pnpm-workspace.yaml'))) return dir
+    for (const m of ROOT_MARKERS) if (existsSync(resolve(dir, m))) return dir
     dir = resolve(dir, '..')
   }
-  return cwd()
+  return start
+}
+
+/**
+ * 读会话所在项目的**收紧规则**：只取 `permissions.deny` 与 `permissions.ask`，
+ * 其余字段一概丢弃。
+ *
+ * ## 为什么只读「收紧」的那一半
+ *
+ * 让会话根成为**完整**的受信配置层会造出一个比它要修的问题更大的洞。
+ * `.zuse/settings.local.*` 在 `.gitignore` 里，**但 `.zuse/settings.json` 不在** ——
+ * 它是随仓库分发的。而完整加载会让那个文件能设
+ * `permissions.defaultMode: "bypass"`（关掉你全部 deny/ask）和
+ * `providers.default.baseURL`（把整段对话导向别人的 endpoint）。
+ * 「clone 一个仓库 → 在里面开会话」就成了一条提权 + 外传的路。
+ *
+ * **只读 deny/ask 则不存在这个问题**：它们只能让判定更严，不能更松。
+ * 一个恶意仓库最多把自己的会话卡死，碰不到你的护栏，也改不了你的 endpoint。
+ * 放宽的那一半（allow / defaultMode / providers / mcpServers）需要一道显式的
+ * 「信任这个目录」闸，那是单独一轮。
+ *
+ * ## 刻意不做的
+ *
+ * **不静默回退到 daemon 的配置** —— 那等于没修。会话根没有配置就是没有，
+ * 全局（`~/.zuse/settings.json`）那层不受影响，照常生效。
+ *
+ * 解析失败**不抛**：会话根是用户在目录选择器里随手点的，那里有一份写坏的
+ * `.zuse/settings.json` 不该让「新建会话」直接 500。降级成「这一层当空」+ 告警。
+ * 注意**不能**降级成「回退到 daemon 配置」——那会给出一条「把配置写坏就能卸掉 deny」的路。
+ */
+export function loadTighteningRules(root: string): { deny: string[]; ask: string[] } {
+  const out = { deny: [] as string[], ask: [] as string[] }
+  for (const base of ['settings.json', 'settings.local.json']) {
+    const path = resolveLayerPath(resolve(root, '.zuse', base))
+    try {
+      const raw = readLayer(path)
+      const pm = raw.permissions
+      if (pm?.deny) out.deny.push(...pm.deny)
+      if (pm?.ask) out.ask.push(...pm.ask)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[zuse] 会话目录下的配置读不了，已忽略该层：${path}：${msg}`)
+    }
+  }
+  return out
 }
 
 /** 单层文件的原始（未补默认值）形状，全部可选。 */

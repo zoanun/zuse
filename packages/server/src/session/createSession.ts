@@ -1,6 +1,8 @@
 import { homedir, release } from 'node:os'
 import {
   loadSettings,
+  loadTighteningRules,
+  findProjectRoot,
   installProxy,
   resolveModelSelection,
   resolveSmallModelSelection,
@@ -78,6 +80,32 @@ export interface CreateSessionOpts {
 export function createSession(opts: CreateSessionOpts): SessionManager {
   const { sessionId, cwd } = opts
   const settings = loadSettings()
+
+  // **会话所在项目的收紧规则也要生效。**
+  //
+  // `loadSettings()` 锚在 **daemon 进程的 cwd**（`findProjectRoot()` 从那儿往上找），
+  // 与会话无关。于是在 `D:\别的项目` 里开的会话，吃的是 zuse 仓库那份配置 ——
+  // 那个项目在自己 `.zuse/settings.json` 里写的 `deny` **一条都不生效**。
+  //
+  // 这里**只并 deny/ask，不并 allow / defaultMode / providers**。原因不是偷懒：
+  // `.zuse/settings.json` **不在 .gitignore 里**（只有 `.local.*` 是），是随仓库分发的。
+  // 完整加载会让「clone 一个仓库 → 在里面开会话」变成一条提权 + 外传的路
+  //（那个文件能设 `defaultMode:"bypass"` 关掉你全部护栏，能设 `providers.default.baseURL`
+  // 把整段对话导向别人的 endpoint）。**只收紧则不存在这个问题** ——
+  // 恶意仓库最多把自己的会话卡死，碰不到你的护栏。放宽那一半要一道显式的信任闸，单独一轮。
+  const sessionRoot = findProjectRoot(cwd)
+  const tightening = loadTighteningRules(sessionRoot)
+  if (tightening.deny.length > 0 || tightening.ask.length > 0) {
+    settings.permissions = {
+      ...settings.permissions,
+      deny: [...settings.permissions.deny, ...tightening.deny],
+      ask: [...settings.permissions.ask, ...tightening.ask],
+    }
+    console.log(
+      `[zuse-server] 会话 ${sessionId} 采用了 ${sessionRoot} 的收紧规则：` +
+      `deny +${tightening.deny.length}，ask +${tightening.ask.length}`,
+    )
+  }
   try {
     installProxy(settings)
   } catch (err) {
