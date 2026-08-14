@@ -518,3 +518,51 @@ describe('Run —— 订阅者异常不得掀掉投递方', () => {
     } finally { spy.mockRestore() }
   })
 })
+
+/**
+ * 读取口（步骤 5 落地 2）。`RunOutput` 工具要靠它把「服务端持有哪一段原始字符」
+ * 一次拿全，游标才对得齐。
+ */
+describe('Run.read —— 每流各自的原始坐标', () => {
+  it('两条流各有各的计数，互不干扰', () => {
+    vi.useFakeTimers()
+    const { run, out, err } = makeRun()
+    out(Buffer.from('hello'))
+    err(Buffer.from('E'))
+    // 首窗定码之前字节还压在解码器里、没进 sink —— 与本文件其它用例同一个前提。
+    vi.advanceTimersByTime(300)
+    expect(run.read('out').totalChars).toBe(5)
+    expect(run.read('err').totalChars).toBe(1)
+    expect(run.read('out').text).toBe('hello')
+    expect(run.read('err').text).toBe('E')
+  })
+
+  /**
+   * **`firstChar` 必须由 sink 给，不能让调用方用 `totalChars - text.length` 算。**
+   * 那个公式假定「丢的一定是前缀」—— 只对 ring 成立；truncate 留的是最先来的、丢的是尾巴。
+   * 算错的后果是把「尾部丢了」报成「开头丢了」，而且测试全绿（v1 被评审推翻的正是这条）。
+   */
+  it('truncate 档：丢的是尾巴，firstChar 仍然是 0', () => {
+    vi.useFakeTimers()
+    const { run, out } = makeRun({ sink: { kind: 'truncate', budget: 4 } })
+    out(Buffer.from('abcdefgh'))
+    vi.advanceTimersByTime(300)
+    const r = run.read('out')
+    expect(r.firstChar).toBe(0)                 // 开头一个字符都没丢
+    expect(r.totalChars).toBe(8)                // 但确实产生了 8 个
+    expect(r.text.length).toBeLessThanOrEqual(4)
+    // 反面：那个错误公式会算出 4，等于谎称「前 4 个字符丢了」。
+    expect(r.totalChars - r.text.length).not.toBe(r.firstChar)
+  })
+
+  it('ring 档：丢的是前缀，firstChar 跟着前进', () => {
+    vi.useFakeTimers()
+    const { run, out } = makeRun({ sink: { kind: 'ring', chars: 4 } })
+    out(Buffer.from('abcdefgh'))
+    vi.advanceTimersByTime(300)
+    const r = run.read('out')
+    expect(r.totalChars).toBe(8)
+    expect(r.firstChar).toBe(8 - r.text.length)  // ring 下这个公式才成立
+    expect(r.text).toBe('efgh')
+  })
+})

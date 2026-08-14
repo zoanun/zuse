@@ -212,6 +212,29 @@ export class Run {
   }
 
   /**
+   * 读取口：把一条流的**原始坐标系**信息一次给全（步骤 5 §5.2）。
+   *
+   * ## 为什么要 `firstChar` 而不是让调用方算
+   *
+   * 调用方最自然的写法是 `totalChars - snapshot().length` —— 那个公式假定
+   * 「丢掉的一定是前缀」，**只对 ring 档成立**。truncate 档留的是**最先来的**那段、
+   * 丢的是尾巴，那个公式会把「尾部丢了」报成「开头丢了」，而且**测试全绿**
+   *（这正是本 spec v1 被评审推翻的那条）。所以由 sink 自己给。
+   *
+   * ## 为什么每条流各一份，而不是一个标量
+   *
+   * 单标量游标在 `both` 档下会让 **stderr 永久读不到** —— 而 traceback 就在那。
+   * 两条流的产出速率差几个数量级是常态。
+   *
+   * 坐标系是**原始（未净化）字符**：净化是读取侧的事（`@zuse/protocol` 的
+   * `sanitizeTerminalText`），游标必须锚在服务端真实持有的那份上，否则两侧对不齐。
+   */
+  read(stream: 'out' | 'err'): { text: string; firstChar: number; totalChars: number } {
+    const sink = this.sinks[stream]
+    return { text: sink.snapshot(), firstChar: sink.firstChar, totalChars: sink.totalChars }
+  }
+
+  /**
    * 订阅事件流，返回退订函数。
    *
    * `replay` = 先把已有输出当成 chunk 事件补给这个订阅者。SSE 的 GET 接进来时要用它，
