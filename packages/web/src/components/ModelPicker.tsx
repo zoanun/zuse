@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { listModels, type ModelOption } from '../state/manageApi.js'
+import { useEscapeToClose } from './useEscapeToClose.js'
 
 /**
  * Model switcher popover (parity with TUI /model). Loads the configured {providerId, model}
@@ -30,6 +31,10 @@ export function ModelPicker({ current, currentProviderId, onPick, onPersist, onC
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
   // Optimistic: set true the moment the user ticks the box (persist fires immediately).
   const [savedNow, setSavedNow] = useState(false)
+
+  // 这个浮层挂着 role="dialog" 却没有 Esc —— 打开后按 Esc 关不掉，
+  // 而且会穿透到 Composer 的 window 级监听把**正在跑的回合**停掉。
+  useEscapeToClose(true, onClose)
 
   useEffect(() => {
     let cancelled = false

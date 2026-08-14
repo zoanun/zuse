@@ -1,8 +1,9 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { DirNav } from '@zuse/protocol'
 import { navigateDirs } from '../state/manageApi.js'
 import { FolderIcon } from './icons.js'
+import { useEscapeToClose } from './useEscapeToClose.js'
 
 /** Last path segment for a compact button label (handles both / and \ separators). */
 function basename(p: string): string {
@@ -54,6 +55,10 @@ export const DirPicker = forwardRef<DirPickerHandle, { cwd: string; onChange: (c
     void go(cwd || undefined)
   }
   useImperativeHandle(ref, () => ({ open: openPicker }), [cwd])
+  // 这个浮层挂着 role="dialog" 却没有 Esc —— 打开后按 Esc 关不掉，
+  // 而且会穿透到 Composer 的 window 级监听把**正在跑的回合**停掉。
+  // 传 `open` 而不是恒 true：关着的时候不该抢 Esc。
+  useEscapeToClose(open, useCallback(() => setOpen(false), []))
   const confirm = () => {
     if (nav) {
       onChange(nav.path)
