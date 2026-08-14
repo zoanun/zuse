@@ -1,6 +1,8 @@
 import { createAppServer } from './http/appServer.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve, join } from 'node:path'
+import { writeFileSync, chmodSync, existsSync, rmSync } from 'node:fs'
+import { generateSetupToken, isExposedDeployment } from './auth/setupToken.js'
 import { PasswordStore } from './auth/passwordStore.js'
 import { LocalPasswordAuth } from './auth/authProvider.js'
 import { makeRequestHandler } from './http/server.js'
@@ -228,7 +230,43 @@ export async function startServer(
   // 证书路径也喂进去 —— DNS SAN 自动进白名单，否则 docs/remote-access.md 里两条直连 TLS
   // 的配方会当场坏掉（用户没配 --allowed-host 却本该能用）。
   const hostPolicy = buildHostPolicy({ host: cfg.host, allowedHosts: cfg.allowedHosts, tlsCertPath: cfg.tlsCert })
-  const handler = makeRequestHandler({ auth, service, runs, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false, hostPolicy })
+
+  // 一次性 setup token（见 `auth/setupToken.ts`）：暴露形态下才有，回环形态刻意为空。
+  // 挡的是「局域网/隧道那头的任意人抢先设口令 → login → POST /api/runs 任意命令」，
+  // 那条链 curl 就能走完，Host/Origin 两把锁**够不着**（它们只约束浏览器）。
+  const exposed = isExposedDeployment(cfg)
+  const setupToken = exposed ? generateSetupToken() : undefined
+  const setupTokenPath = join(cfg.authDir, 'setup-token')
+  const alreadyConfigured = await auth.isConfigured()
+  if (setupToken !== undefined && !alreadyConfigured) {
+    // **落盘是必需的第二条取回途径。** nohup / systemd / Windows 服务形态看不到 stderr，
+    // 而「找不回来就重启」在那里是死循环 —— 重启只换一个同样看不见的新 token。
+    //
+    // **别把 0600 当成跨账户的保护 —— 在 Windows 上它是 no-op。** 实测：chmod 0600
+    // 之后 `icacls` 仍是 `BUILTIN\Users:(I)(RX)`（node 只把 chmod 映射到只读属性，不碰 DACL）。
+    // 真正在保护默认 authDir 的是 `%USERPROFILE%\.zuse` 继承来的 ACL。
+    // **authDir 被指到 ACL 更宽的地方（ProgramData / 共享盘 / CI workdir）时这层保护为零。**
+    // 写入时就带 mode，别先建再 chmod —— POSIX 上那中间有一个 umask 窗口。
+    try {
+      writeFileSync(setupTokenPath, setupToken + '\n', { encoding: 'utf8', mode: 0o600 })
+      try { chmodSync(setupTokenPath, 0o600) } catch { /* 文件已存在时 mode 不生效，补一刀；windows 上是 no-op */ }
+    } catch (err) {
+      console.warn(`[zuse-server] setup token 落盘失败(${setupTokenPath}):${err instanceof Error ? err.message : String(err)}`)
+    }
+  } else if (alreadyConfigured && existsSync(setupTokenPath)) {
+    // 清理陈旧文件 —— **但只在「口令已设」时清**。
+    //
+    // 评审实测过一个被这行删掉的真实场景：同机两个 daemon 共用默认 `~/.zuse`，
+    // 后起的那个（本机形态）会把先起的那个（暴露形态）**正在用的活 token 文件**删掉。
+    // 那恰好打死了落盘存在的唯一理由 —— headless 形态看不到横幅，文件没了就永久取不回。
+    //
+    // 条件收紧到 `alreadyConfigured` 之后是安全的：共用 authDir 的实例共用同一份
+    // `web-auth.json`，口令一旦设上，**所有**实例的 token 都已经不可能再被用到
+    // （setup 路由第一件事就是 `isConfigured() → 409`，排在 token 校验之前）。
+    try { rmSync(setupTokenPath, { force: true }) } catch { /* best-effort */ }
+  }
+
+  const handler = makeRequestHandler({ auth, service, runs, memory, search, persona, skill, usage, file, mcp: mcpService, cron: cronService, upload, voice, persistModel: (spec) => setModelInSettings(spec), devPage: true, tokenTtlSec: cfg.tokenTtlSec, webDir: cfg.webDir ?? defaultWebDir(), trustProxy: cfg.trustProxy ?? false, hostPolicy, ...(setupToken !== undefined ? { setupToken } : {}) })
   // A2:配了证书对就起 https(WS 随之变 wss —— 同一个 server 的 upgrade 事件)。
   const { server: httpServer, scheme } = createAppServer(handler, { cert: cfg.tlsCert, key: cfg.tlsKey })
   // hostPolicy 不能漏：upgrade 事件不经过 HTTP handler，漏了的话 rebinding 页面
@@ -249,6 +287,16 @@ export async function startServer(
   }
   // Host 白名单的状态必须打出来 —— 被闸门拒绝的用户（尤其隧道用户）只有这一行和
   // 403 里的提示两个线索。裸 `*` 是把这次防护整个关掉，必须是 warn 不是 log。
+  // setup token 必须打在横幅上 —— 它是用户拿到它的**第一条**途径（第二条是 authDir 里的文件）。
+  // 用 warn（stderr）与其他安全横幅一致。
+  if (setupToken !== undefined && !alreadyConfigured) {
+    console.warn(`[zuse-server] setup token: ${setupToken}`)
+    console.warn(`[zuse-server]   首次设置口令要贴这串（也存在 ${setupTokenPath}）。这台 daemon 对外可达，没有它任何人都能抢先设口令。`)
+  } else if (!exposed && !alreadyConfigured) {
+    // 判据只看启动参数，**看不见另一个进程里的 cloudflared**。这是 spec §2.1 列出的
+    // 残留漏报，只能靠这一行提示兜底：用户加了 --allowed-host 之后判据就认得出来了。
+    console.log('[zuse-server] 提示:若你把它放在隧道 / 反向代理后面，请加 --allowed-host <域名> —— 那既是浏览器访问的必要条件，也会启用 setup token 保护')
+  }
   if (hostPolicy.anyName) {
     console.warn('[zuse-server] ⚠ --allowed-host * :已关闭 Host 白名单，任何域名都能打到这个端口（DNS rebinding 防护失效）')
   } else if (hostPolicy.names.length > 0) {

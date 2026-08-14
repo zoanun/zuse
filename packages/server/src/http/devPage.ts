@@ -599,17 +599,24 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
   }
 
   // ── auth flow ────────────────────────────────────────────────
-  function renderSetup(msg) {
+  function renderSetup(msg, tokenRequired) {
     var v = el('auth-view'); v.hidden = false;
     v.innerHTML =
       '<h2>Protect this server</h2>' +
       '<p>No password is set yet. Create one to lock the web console — it is hashed and stored locally.</p>' +
       '<div class="field"><input type="password" id="setup-pw" placeholder="New password" autocomplete="new-password"></div>' +
+      (tokenRequired
+        ? '<div class="field"><input type="text" id="setup-token" placeholder="setup token" autocomplete="off"></div>' +
+          '<p>This daemon is reachable from the network — paste the one-time setup token printed at startup ' +
+          '("setup token:" line), or read the <code>setup-token</code> file in the daemon data dir.</p>'
+        : '') +
       '<button id="setup-btn" style="margin-top:14px;width:100%">Set password</button>' +
       '<div class="msg-error" id="setup-msg">' + (msg || '') + '</div>';
     el('setup-btn').addEventListener('click', function () {
       var pw = el('setup-pw').value; if (!pw) return;
-      post('/api/auth/setup', { password: pw }).then(function (r) {
+      var body = { password: pw };
+      if (tokenRequired) body.setupToken = (el('setup-token') || {}).value || '';
+      post('/api/auth/setup', body).then(function (r) {
         if (r.ok) {
           var m = el('setup-msg'); m.className = 'msg-ok'; m.textContent = 'Password set — reloading…';
           setTimeout(function () { location.reload(); }, 700);
@@ -645,8 +652,20 @@ export const DEV_PAGE_HTML: string = `<!doctype html>
     el('login-pw').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') el('login-btn').click(); });
   }
 
-  fetch('/api/auth/status').then(function (r) { return r.json(); }).then(function (d) {
-    if (!d.configured) renderSetup('');
+  fetch('/api/auth/status').then(function (r) {
+    return r.json().then(function (d) { return { ok: r.ok, status: r.status, d: d }; });
+  }).then(function (res) {
+    // r.ok 必须先看：Host/Origin 闸与 setup token 会在登录之前就回 403，那时 body 是
+    // {error:{…}}、没有 configured 字段 —— 不看的话 !undefined 为真，用户掉进设密码表单。
+    if (!res.ok) {
+      var m = (res.d && res.d.error && res.d.error.message) || ('error ' + res.status);
+      el('auth-view').hidden = false;
+      el('auth-view').innerHTML = '<h2>Request rejected</h2><p class="msg-error"></p>';
+      el('auth-view').querySelector('.msg-error').textContent = m;
+      return;
+    }
+    var d = res.d;
+    if (!d.configured) renderSetup('', d.setupTokenRequired === true);
     else if (!d.authenticated) renderLogin('');
     else showChat();
   }).catch(function (e) {

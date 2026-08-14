@@ -7,6 +7,7 @@ import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { isSecureRequest } from './requestSecurity.js'
 import { guardRequest, type HostPolicy, type GuardReject } from './originGuard.js'
+import { checkSetupToken } from '../auth/setupToken.js'
 import { SESSION_COOKIE } from '../config.js'
 import { DEV_PAGE_HTML } from './devPage.js'
 import type { SessionService } from '../session/SessionService.js'
@@ -64,6 +65,17 @@ export interface RequestHandlerDeps {
    * 少一层防护而不是整个服务不可用。而生产只有一个构造点，漏不掉。
    */
   hostPolicy?: HostPolicy
+  /**
+   * 暴露形态下 `POST /api/auth/setup` 必须携带的一次性 token（见 `auth/setupToken.ts`）。
+   * 不传 = 不要求（回环形态刻意如此，理由见那个模块的文件头）。
+   *
+   * **注意：上面 `hostPolicy` 那句「生产只有一个构造点，漏不掉」在这里不成立。**
+   * `hostPolicy` 是无条件传的，而这个是 `startServer` **按判据条件传**的 —— 判据本身
+   * 就是要测的东西。判据写反 / 忘了传，下面所有路由测试都不会红，因为它们自己构造 deps。
+   * 所以另有一条**穿过 `startServer` 的**接线测试（`setupTokenWiring.test.ts`）盯着它。
+   * 这与已修的 iframe sandbox 假绿（三条安全测试锁的是常量、不是那行属性）是同一个失效模式。
+   */
+  setupToken?: string
   memory: MemoryService
   search: SearchService
   persona: PersonaService
@@ -207,6 +219,24 @@ const AUDIO_MAX_BYTES = 25 * 1024 * 1024
 const AUDIO_BODY_CAP = Math.ceil(AUDIO_MAX_BYTES * 4 / 3) + 1024 * 1024
 
 /**
+ * `/api/auth/setup` 与 `/api/auth/login` 的 body 上界。这两条是**未鉴权**路由，
+ * 而 `readJsonBody` 不给 cap 就是「读完再解析」—— 未鉴权的无限缓冲。
+ * 真实 body 是 `{password, setupToken}` 两个短串，8 KiB 有三个数量级的余量。
+ */
+const AUTH_BODY_CAP = 8 * 1024
+
+/**
+ * setup token 的 403 文案。**必须写出怎么拿到它** —— 一个没有可操作指引的 403
+ * 在用户看来就是「远程访问被封死了」。
+ *
+ * **刻意不回显 authDir 的真实路径**：这条路由未鉴权，真实路径会连带泄露用户名。
+ * 说到「daemon 数据目录」就够了，横幅那边会打印绝对路径。
+ */
+const SETUP_TOKEN_HINT =
+  '这个 daemon 对外可达，首次设置口令必须带上 setup token（请求体的 setupToken 字段）。' +
+  'token 打印在启动 daemon 的终端里（"setup token:" 那一行），也存在 daemon 数据目录下的 setup-token 文件里。'
+
+/**
  * 语音路由的错误映射。只有**用户侧**问题才降级成 4xx:未配置 → 400、mime 不支持 → 415。
  * 其余(provider 宕机、网络抖动、SDK 内部错)一律原样抛出 → 顶层兜底成 500。把真故障伪装成
  * 4xx 会让前端「以为是自己传错了」而不重试/不报警 —— 同 PATCH /api/skills 的收窄原则。
@@ -303,6 +333,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       return sendJson(res, 200, {
         configured: await deps.auth.isConfigured(),
         authenticated: isAuthed(req),
+        // **只回布尔，绝不回 token 本体。** 这条路由是未鉴权的 —— 把 `setupTokenRequired`
+        // 手滑写成 `setupToken` 就是一击致命。有一条测试专门断言正文里不含 token 值。
+        setupTokenRequired: deps.setupToken !== undefined,
       })
     }
 
@@ -313,9 +346,22 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
       }
       let body: unknown
       try {
-        body = await readJsonBody(req)
-      } catch {
+        body = await readJsonBody(req, AUTH_BODY_CAP)
+      } catch (e) {
+        if (e instanceof PayloadTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
+      }
+      // token 校验放在读 body 之后、写口令之前。**顺序上唯一硬性的一条是它必须在
+      // `auth.setup()` 之前** —— 放在 `isConfigured()` 之后不多泄露任何东西，
+      // 因为 `configured` 本来就由未鉴权的 /api/auth/status 无条件回传。
+      if (deps.setupToken !== undefined) {
+        const given = (body as { setupToken?: unknown })?.setupToken
+        if (given === undefined || given === null || given === '') {
+          return sendJson(res, 403, { error: { code: 'setup_token_required', message: SETUP_TOKEN_HINT } })
+        }
+        if (!checkSetupToken(deps.setupToken, given)) {
+          return sendJson(res, 403, { error: { code: 'setup_token_invalid', message: `setup token 不正确。${SETUP_TOKEN_HINT}` } })
+        }
       }
       const password = (body as { password?: unknown })?.password
       if (typeof password !== 'string') {
@@ -333,8 +379,9 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     if (method === 'POST' && path === '/api/auth/login') {
       let body: unknown
       try {
-        body = await readJsonBody(req)
-      } catch {
+        body = await readJsonBody(req, AUTH_BODY_CAP)
+      } catch (e) {
+        if (e instanceof PayloadTooLargeError) return sendJson(res, 413, { error: { code: 'too_large', message: e.message } })
         return sendJson(res, 400, { error: { code: 'bad_request', message: 'Invalid JSON body' } })
       }
       const password = (body as { password?: unknown })?.password
