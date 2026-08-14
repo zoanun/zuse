@@ -271,3 +271,29 @@ describe('RunRegistry —— 清场', () => {
     expect(() => start()).not.toThrow()
   })
 })
+
+/**
+ * `label` 是给模型看的（步骤 5 落地 3）。命令串是带绝对路径和临时目录的一长条，
+ * 模型在 run 列表里要靠它认出「哪个是我刚起的那个」。
+ * 纯增量：不传时是 undefined，消费方回落到 command。
+ */
+describe('RunSummary.label', () => {
+  it('传了就出现在列表里', () => {
+    const { reg } = harness()
+    reg.start({ command: 'uv run x.py', label: '用 uv 跑 Python', cwd: 'E:/tmp', sessionId: 's1', policy: POLICY })
+    expect(reg.list()[0]!.label).toBe('用 uv 跑 Python')
+  })
+
+  /**
+   * 不传时**必须是 undefined，不许在这一层伪造成 command** —— 回落是消费方的事。
+   * 在这里伪造的话，消费方就再也分不出「作者给了标签」和「没给、我替他填的」，
+   * 而 UI 想对这两种情况分别处理（比如只对真标签加粗）时就没有依据了。
+   */
+  it('不传 label 时字段存在且为 undefined', () => {
+    const { reg, start } = harness()
+    start()
+    const s = reg.list()[0]!
+    expect('label' in s).toBe(true)
+    expect(s.label).toBeUndefined()
+  })
+})

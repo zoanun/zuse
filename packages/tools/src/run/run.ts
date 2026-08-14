@@ -76,6 +76,8 @@ export interface RunDeps {
 export interface RunInit {
   id: string
   command: string
+  /** 人话标签；见 `Run.label`。 */
+  label?: string
   cwd: string
   sessionId: string
   policy: RunPolicy
@@ -110,6 +112,8 @@ export interface RunInit {
 export class Run {
   readonly id: string
   readonly command: string
+  /** 人话标签（`planExec` 给的「用 uv 跑 Python」之类）；缺省时消费方回落到 `command`。 */
+  readonly label: string | undefined
   readonly cwd: string
   readonly sessionId: string
   readonly policy: RunPolicy
@@ -158,6 +162,7 @@ export class Run {
   constructor(init: RunInit) {
     this.id = init.id
     this.command = init.command
+    this.label = init.label
     this.cwd = init.cwd
     this.sessionId = init.sessionId
     this.policy = init.policy

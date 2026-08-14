@@ -230,7 +230,9 @@ function startExec(
   const command = plan.command.split(EXEC_DIR_PLACEHOLDER).join(dir.replace(/\\/g, '/'))
   try {
     // cwd 用**会话的** cwd，不是临时目录 —— 脚本里 open("data.csv") 该读到用户项目里的文件。
-    const run = deps.runs.start({ command, cwd, sessionId, policy: makePolicy(), env: buildEnv(cwd) })
+    // 带上 plan 的人话标签（「用 uv 跑 Python」）：命令串是带绝对路径和临时目录的一长条，
+    // 模型在 run 列表里要靠 label 认出「哪个是我刚起的那个」。
+    const run = deps.runs.start({ command, label: plan.label, cwd, sessionId, policy: makePolicy(), env: buildEnv(cwd) })
     // 清理挂在 run 的结束事件上。**必须 internal: true** —— 否则这个订阅会算进
     // 「有没有人在看」，把片段档的 onDetach:'kill' 顶掉（步骤 2 刚踩过这个坑）。
     // 故意不在进程退出前删：Windows 上文件被占用时删除会失败。

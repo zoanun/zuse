@@ -16,6 +16,8 @@ export interface RunSummary {
   cwd: string
   sessionId: string
   status: RunStatus
+  /** 人话标签；缺省 undefined，消费方回落到 `command`。 */
+  label: string | undefined
   endReason: EndReason | null
   exitCode: number | null
   startedAt: number
@@ -43,6 +45,14 @@ export interface StartRunInit {
   sessionId: string
   policy: RunPolicy
   env?: NodeJS.ProcessEnv
+  /**
+   * 人话标签（`planExec` 给的「用 uv 跑 Python」之类）。
+   *
+   * 给模型看的：`command` 是一条真实命令（可能很长、带绝对路径和临时目录），
+   * 而模型在列表里要认出「哪个是我刚起的那个」。`label` 缺省时列表回落到 `command`，
+   * 所以它是纯增量，不传也不会坏。
+   */
+  label?: string
 }
 
 /**
@@ -108,7 +118,7 @@ export class RunRegistry {
 
   list(): RunSummary[] {
     return [...this.runs.values()].map((r) => ({
-      id: r.id, command: r.command, cwd: r.cwd, sessionId: r.sessionId,
+      id: r.id, command: r.command, label: r.label, cwd: r.cwd, sessionId: r.sessionId,
       status: r.status, endReason: r.endReason, exitCode: r.exitCode, startedAt: r.startedAt,
       orphaned: r.hasOrphan,
     }))
