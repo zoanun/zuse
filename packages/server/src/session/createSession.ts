@@ -24,6 +24,7 @@ import {
   scanSkills,
   createSnapshotStore,
   cwdSlug,
+  runStatusNote,
   type RunRegistry,
 } from '@zuse/tools'
 import { SessionManager } from './SessionManager.js'
@@ -205,6 +206,35 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
 
   const snapshotStore = opts.snapshotStore ?? createSnapshotStore(cwd)
 
+  // §8(b)：每回合往**发给模型的那份副本**里追加一行后台命令现状。
+  //
+  // **绝不能走 `applyUserStamp`。** 那条路有 4 个消费者：拼进去的话用户气泡里会出现
+  // 自己没打过的字、**会话标题会变成 run 状态**、点 retry 会把这段状态当用户原话重发
+  // 并反复叠加。`expandAttachments` 是**请求专用副本** —— 不进账本、不进标题、不进搜索、
+  // 不被 retry 重发，且每回合按当时状态重算（旧回合不会留下过期的「运行中」）。
+  //
+  // 为什么在这里包而不是在 startServer 包：那边的 expandAttachments 是**跨会话共享**的
+  // 一个实例，拿不到 sessionId，包不出「本会话的 run」。
+  const runs = opts.runs
+  const baseExpand = opts.expandAttachments
+  const expandWithRunStatus = runs
+    ? async (messages: Message[]): Promise<Message[]> => {
+        const out = baseExpand ? await baseExpand(messages) : messages
+        const note = runStatusNote(runs.list().filter((r) => r.sessionId === sessionId))
+        if (!note) return out
+        const last = out[out.length - 1]
+        if (!last || last.role !== 'user') return out
+        // 只动最后一条 user 消息，且是**副本**（baseExpand 的契约就是返回新副本；
+        // 没有 baseExpand 时这里自己拷一层，绝不 mutate 账本里的消息）。
+        const copy = [...out]
+        copy[copy.length - 1] = {
+          ...last,
+          content: [...last.content, { type: 'text' as const, text: `\n\n${note}` }],
+        }
+        return copy
+      }
+    : baseExpand
+
   const mgr = new SessionManager({
     sessionId,
     // 有 run 注册表才注册 RunOutput（TUI 那条路径没有 run 服务）。
@@ -231,7 +261,7 @@ export function createSession(opts: CreateSessionOpts): SessionManager {
     imageClient: opts.imageClient,
     imageModel: opts.imageModel,
     readImageBase64: opts.readImageBase64,
-    expandAttachments: opts.expandAttachments,
+    expandAttachments: expandWithRunStatus,
   })
   return mgr
 }

@@ -83,6 +83,7 @@ export {
 export { createScheduleWakeupTool, type ScheduleWakeupDeps } from './schedule-wakeup.js'
 export { createTodoWriteTool, type TodoWriteDeps, type TodoItem, type TodoStatus } from './todo.js'
 export { createRunOutputTool, type RunOutputDeps } from './run/runOutput.js'
+export { runStatusNote } from './run/statusNote.js'
 export { createWebSearchTool } from './websearch.js'
 export { createLspTool } from './lsp/index.js'
 export { createLspInstallTool } from './lsp/install.js'
