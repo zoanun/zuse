@@ -80,6 +80,25 @@ describe('BashTool', () => {
     expect(result.output).toMatch(/exit code: 3/)
   })
 
+  /**
+   * 设计审计（2026-08-14）说孤儿提示在 6 个输出分支里被丢了 4 个（timeout /
+   * interrupted / signal / 127），并断言「超时被杀 → 孙进程还在跑」是它最该出现的场景。
+   *
+   * **前半对，后半在 Windows 上不成立 —— 我写了测试才发现。**
+   *
+   * 超时路径调的是 `killTree`，Windows 分支是 `taskkill /T`：**整棵树一起杀**，
+   * 孙进程跟着没了 → `close` 正常到达 → `drained:true` → 本来就没有孤儿。
+   * 我按审计的说法写了「超时 + 后台孙进程」的用例，它红了，红在
+   * 「输出里没有孤儿提示」—— 因为那个场景在 Windows 上根本构造不出来。
+   *
+   * 那条 suffix 修改仍然是对的，但它的价值在 **POSIX**：那边 `killTree` 只对进程组
+   * 发 SIGTERM、没有 SIGKILL 升级（`kill-tree.ts` 与 `bash.ts` 的 KILL_HARD_DEADLINE
+   * 注释都记着这条），一个 detach 出去或 trap 掉 SIGTERM 的孙进程会活下来。
+   *
+   * 所以这里**不写一条在本平台构造不出来的用例**（那会变成假绿或长期红）。
+   * 真正可达的孤儿场景是「前台正常退出 + 后台孙进程」，那条走 `else` 分支，
+   * 本来就有提示、`proc/settle.e2e.test.ts` 已经覆盖。
+   */
   it('times out a long-running command', async () => {
     const result = await BashTool.run(
       { command: `node -e "setTimeout(function(){}, 10000)"`, timeout: 200 },

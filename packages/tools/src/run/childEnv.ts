@@ -41,6 +41,23 @@ const COMMON_PASSTHROUGH = [
 const WIN_PASSTHROUGH = [
   'PATHEXT', 'COMSPEC', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR',
   'HOMEDRIVE', 'HOMEPATH', 'USERPROFILE', 'USERNAME', 'USERDOMAIN',
+  // **APPDATA / LOCALAPPDATA 曾经漏在这里，而它属于下面「语义敏感」那一类** ——
+  // 砍掉不会崩，会「结果悄悄不一样」。实测（绕开用户 .npmrc，只让这两个变量当唯一变量）：
+  //
+  //   npm  cache : 无 APPDATA → C:\Users\nhn\npm-cache
+  //                有 APPDATA → C:\Users\nhn\AppData\Local\npm-cache
+  //   pnpm store : 无 APPDATA → C:\Users\nhn\.pnpm\store\v3
+  //                有 APPDATA → C:\Users\nhn\AppData\Local\pnpm\store\v3
+  //
+  // 项目档的定位就是「在项目目录里跑长命令」。从 run 服务点一次 `pnpm install`，
+  // 用的是和用户终端、和 Bash 工具**不同的 store**：全量重下一遍；而 pnpm 的
+  // node_modules 是硬链到 store 的，两个 store 交替使用会得到「link 到了另一个 store」
+  // 这类看不懂的报错。
+  //
+  // 同一类别的 PROGRAMDATA/PROGRAMFILES 一并补上（安装类工具按它们定位系统级依赖）。
+  // 这几项都是路径/机器信息，不含任何凭据 —— `*_KEY` / `*_TOKEN` 仍然照旧被挡在外面。
+  'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA',
+  'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432',
 ] as const
 
 /**

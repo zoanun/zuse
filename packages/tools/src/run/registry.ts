@@ -19,6 +19,11 @@ export interface RunSummary {
   endReason: EndReason | null
   exitCode: number | null
   startedAt: number
+  /**
+   * 结束时管道还被别人握着 = 有东西还在后台跑（占端口、占锁、写盘）。
+   * 与 `endReason` 正交：正常退出也可能留孤儿，所以是独立字段而不是一个 reason 档。
+   */
+  orphaned: boolean
 }
 
 export interface RunRegistryOptions {
@@ -105,6 +110,7 @@ export class RunRegistry {
     return [...this.runs.values()].map((r) => ({
       id: r.id, command: r.command, cwd: r.cwd, sessionId: r.sessionId,
       status: r.status, endReason: r.endReason, exitCode: r.exitCode, startedAt: r.startedAt,
+      orphaned: r.hasOrphan,
     }))
   }
 

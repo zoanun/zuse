@@ -107,6 +107,41 @@ describe('runEnv —— 名单', () => {
     expect(runEnv(BASE, {}).JAVA_HOME).toBe('C:/fake/jdk21')
   })
 
+  /**
+   * 设计审计（2026-08-14）：`APPDATA` / `LOCALAPPDATA` 曾经漏在 Windows 名单外，
+   * 而它属于「砍掉不会崩、会**结果悄悄不一样**」那一类 —— 比崩了更难查。
+   *
+   * 实测（绕开用户 `.npmrc`，只让这两个变量当唯一变量）：
+   *
+   *   npm  cache : 无 → C:\Users\nhn\npm-cache          有 → C:\Users\nhn\AppData\Local\npm-cache
+   *   pnpm store : 无 → C:\Users\nhn\.pnpm\store\v3     有 → C:\Users\nhn\AppData\Local\pnpm\store\v3
+   *
+   * 项目档就是拿来跑 `pnpm install` / 构建的。用错 store = 全量重下，
+   * 而 pnpm 的 node_modules 硬链到 store，两个 store 交替用会报「link 到了另一个 store」。
+   */
+  it('Windows 路径类变量放行（漏了会静默换掉 npm 缓存与 pnpm store）', () => {
+    const base = {
+      APPDATA: 'C:/Users/x/AppData/Roaming',
+      LOCALAPPDATA: 'C:/Users/x/AppData/Local',
+      PROGRAMDATA: 'C:/ProgramData',
+      PROGRAMFILES: 'C:/Program Files',
+    }
+    const e = runEnv(base, {})
+    expect(e.APPDATA).toBe('C:/Users/x/AppData/Roaming')
+    expect(e.LOCALAPPDATA).toBe('C:/Users/x/AppData/Local')
+    expect(e.PROGRAMDATA).toBe('C:/ProgramData')
+    expect(e.PROGRAMFILES).toBe('C:/Program Files')
+  })
+
+  it('补名单没有顺带放行凭据', () => {
+    const e = runEnv({
+      APPDATA: 'C:/a',
+      GH_TOKEN: 'SECRET-1', OSS_ACCESS_KEY: 'SECRET-2', BAILIAN_CODING_PLAN_API_KEY: 'SECRET-3',
+    }, {})
+    expect(e.APPDATA).toBe('C:/a')
+    expect(Object.values(e).join('|')).not.toMatch(/SECRET-/)
+  })
+
   it('npm_config_* 按前缀整组放行', () => {
     const e = runEnv({ npm_config_registry: 'r', npm_config_cache: 'c', npmfoo: 'x' }, {})
     expect(e.npm_config_registry).toBe('r')

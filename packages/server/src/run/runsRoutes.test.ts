@@ -203,7 +203,9 @@ describe('run 端点 —— SSE', () => {
     const events = raw.split('\n\n').filter(Boolean).map((f) => JSON.parse(f.replace(/^data: /, '')))
     expect(events.filter((e) => e.type === 'chunk').map((e) => e.text).join('')).toBe('你好')
     const end = events.find((e) => e.type === 'end')
-    expect(end).toEqual({ type: 'end', reason: 'exit', exitCode: 0 })
+    // orphaned 是新加的字段：孤儿事实以前只有 `hasOrphan` 这个内部 getter 知道，
+    // SSE / GET /api/runs / UI 一律看不到。这条顺带锁住它确实序列化出去了。
+    expect(end).toEqual({ type: 'end', reason: 'exit', exitCode: 0, orphaned: false })
   })
 
   /**

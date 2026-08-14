@@ -338,28 +338,36 @@ export const BashTool: Tool = {
         const stuck = gaveUp
           ? `\n[the process did not exit after being killed — it may still be running; check for leftover processes]`
           : ''
+        // `stuck`（前台进程杀不死）和 `orphanNote`（孙进程还握着管道）是**两件不同的事**，
+        // 两条都必须出现在**每一个**分支里。
+        //
+        // 原来只有最后两个分支带 orphanNote，前四个（timeout / interrupted / signal / 127）
+        // 全丢了 —— 而「超时被杀 → 前台 shell 退了 → 孙进程还在跑」正是这条提示最该出现的
+        // 场景：drain 到点 drained:false → orphanNote 被赋值 → 然后被丢弃。
+        // 拼成一个后缀，新增分支时不可能再漏。
+        const suffix = `${stuck}${orphanNote}`
         if (timedOut) {
           // 错误回传契约(Phase 8):timeout 是模型自己可调的入参,点给它。
           finish({
-            output: `${body}\n[timed out after ${timeout}ms; partial output above. Increase the timeout parameter for long-running commands]${stuck}`,
+            output: `${body}\n[timed out after ${timeout}ms; partial output above. Increase the timeout parameter for long-running commands]${suffix}`,
             isError: true,
           })
         } else if (aborted) {
-          finish({ output: `${body}\n[interrupted]${stuck}`, isError: true })
+          finish({ output: `${body}\n[interrupted]${suffix}`, isError: true })
         } else if (code === null) {
           // code 为 null 表示被信号杀死（段错误、被外部 kill 等），真正原因在 signal。
-          finish({ output: `${body}\n[killed by signal: ${signal}]`, isError: true })
+          finish({ output: `${body}\n[killed by signal: ${signal}]${suffix}`, isError: true })
         } else if (code === 127) {
           // 127 = POSIX/git-bash 的"command not found",高频失因,点破并给下一步。
           // 其余非零码不猜原因——stderr 已在 body 里,模型自己读。
           finish({
-            output: `${body}\n[exit code: 127 — command not found. Check the spelling, install it, or use an absolute path]`,
+            output: `${body}\n[exit code: 127 — command not found. Check the spelling, install it, or use an absolute path]${suffix}`,
             isError: true,
           })
         } else if (code !== 0) {
-          finish({ output: `${body}\n[exit code: ${code}]${orphanNote}`, isError: true })
+          finish({ output: `${body}\n[exit code: ${code}]${suffix}`, isError: true })
         } else {
-          finish({ output: (body === '' ? '(no output)' : body) + orphanNote, isError: false })
+          finish({ output: (body === '' ? '(no output)' : body) + suffix, isError: false })
         }
       }
 

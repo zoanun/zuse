@@ -39,7 +39,17 @@ export type RunStatus = 'running' | 'killing' | 'exited' | 'zombie'
 
 export type RunEvent =
   | { type: 'chunk'; stream: 'out' | 'err'; text: string }
-  | { type: 'end'; reason: EndReason; exitCode: number | null }
+  /**
+   * `orphaned`：进程退了、但管道还被别人握着 = **有东西还在后台跑**。
+   *
+   * 不放进 `EndReason`：那个枚举回答的是「为什么结束」，孤儿是**正交**的事实
+   *（正常退出也可能留孤儿）。塞进去会让两个维度互相污染。
+   *
+   * 加这个字段是因为 `hasOrphan` 此前**只有测试在读** —— SSE、`GET /api/runs`、UI
+   * 一律看不到。而项目档是 `onDetach:'keep'` + 无墙钟，最容易留下
+   * 「前台退了、dev server 还占着 5173」的场面。
+   */
+  | { type: 'end'; reason: EndReason; exitCode: number | null; orphaned: boolean }
 
 /**
  * 外部依赖，**全部注入**。
@@ -213,7 +223,7 @@ export class Run {
         const text = this.sinks[stream].snapshot()
         if (text) this.deliver(fn, { type: 'chunk', stream, text })
       }
-      if (this.ended && this._endReason) this.deliver(fn, { type: 'end', reason: this._endReason, exitCode: this._exitCode })
+      if (this.ended && this._endReason) this.deliver(fn, { type: 'end', reason: this._endReason, exitCode: this._exitCode, orphaned: this.orphaned })
     }
     return () => {
       if (!set.delete(fn)) return
@@ -368,7 +378,7 @@ export class Run {
     // 先冲刷解码器 —— 它可能还缓着首窗或半个多字符，那些文本必须排在 end 事件**前面**。
     this.decoders.out.end()
     this.decoders.err.end()
-    this.emit({ type: 'end', reason, exitCode: code })
+    this.emit({ type: 'end', reason, exitCode: code, orphaned: this.orphaned })
   }
 
   private emit(e: RunEvent): void {
