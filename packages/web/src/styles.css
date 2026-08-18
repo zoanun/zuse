@@ -996,6 +996,14 @@ button.head:hover .caret { opacity: 0.9; }
 .trust-row.missing { background: var(--hover); }
 .trust-stale { flex: none; font-size: 12px; color: var(--faint); }
 
+/* 侧栏底部的登出。刻意最不显眼：低频，而误点的代价是要重新输口令。 */
+.side-foot { display: flex; align-items: center; justify-content: space-between; }
+.side-foot-logout {
+  background: none; border: 0; padding: 2px 4px; cursor: pointer;
+  font-size: 11px; color: var(--faint);
+}
+.side-foot-logout:hover { color: var(--text); text-decoration: underline; }
+
 /* 权限卡片上的「为什么被拦」。放在命令上面：先说原因，再看是什么。 */
 .perm-reason { margin: 2px 0 6px; font-size: 12px; color: var(--faint); }
 

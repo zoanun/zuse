@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import type { SessionMeta } from '@zuse/protocol'
+import * as manageApi from '../state/manageApi.js'
 import { Sidebar } from './Sidebar.js'
 import { searchSessions } from '../state/session.js'
 
@@ -165,4 +166,15 @@ describe('Sidebar', () => {
     await waitFor(() => expect(screen.getByText('Alpha')).toBeInTheDocument())
     expect(screen.queryByText('会话一')).not.toBeInTheDocument()
   })
+})
+
+/**
+ * 登出端点服务端一直有、前端一直没入口（回溯审计 C4）。
+ * 登录态是一枚 30 天的 cookie —— 没有这个按钮，「换个人用这台机器」只能去清浏览器数据。
+ */
+it('侧栏底部有登出入口，点了会调 /api/auth/logout', async () => {
+  const spy = vi.spyOn(manageApi, 'logout').mockResolvedValue(undefined)
+  renderSidebar()
+  fireEvent.click(screen.getByRole('button', { name: /退出登录/ }))
+  await waitFor(() => expect(spy).toHaveBeenCalled())
 })

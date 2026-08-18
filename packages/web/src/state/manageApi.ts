@@ -284,3 +284,14 @@ export async function untrustRoot(root: string): Promise<void> {
     method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ root, trusted: false }),
   }, 'untrust root')
 }
+
+/**
+ * POST /api/auth/logout → 清掉会话 cookie。
+ *
+ * 这个端点服务端一直有、**前端一直没有入口**（回溯审计 C4）。
+ * 它不是可有可无的：本机 daemon 的登录态是一枚 30 天的 cookie，
+ * 没有登出就意味着「换个人用这台机器」只能去清浏览器数据。
+ */
+export async function logout(): Promise<void> {
+  await request('/api/auth/logout', { method: 'POST' }, 'logout')
+}

@@ -1,3 +1,4 @@
+import { logout } from '../state/manageApi.js'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { SessionMeta, SessionSearchResult } from '@zuse/protocol'
 import { searchSessions } from '../state/session.js'
@@ -206,7 +207,19 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar(
           ))}
         </ul>
       )}
-      <div className="side-foot"><span className="eyebrow">DEV</span></div>
+      <div className="side-foot">
+        <span className="eyebrow">DEV</span>
+        {/*
+          登出端点服务端一直有、前端一直没入口（回溯审计 C4）。登录态是一枚 30 天的
+          cookie —— 没有这个按钮，「换个人用这台机器」只能去清浏览器数据。
+          放在最不显眼的角落：它是低频操作，而误点的代价是要重新输口令。
+        */}
+        <button
+          className="side-foot-logout"
+          title="退出登录（清掉本机的登录态）"
+          onClick={() => { void logout().then(() => { window.location.reload() }) }}
+        >退出登录</button>
+      </div>
     </aside>
   )
 })

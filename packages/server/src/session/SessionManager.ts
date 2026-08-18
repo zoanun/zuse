@@ -51,7 +51,7 @@ import {
   type Usage,
   type ErrorCategory,
 } from '@zuse/core'
-import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug, type RunRegistry } from '@zuse/tools'
+import { openMemoryStore, renderMemoryMarkdown, applyMemoryConsolidation, cwdSlug, runStatusNote, type RunRegistry } from '@zuse/tools'
 import type {
   SessionEvent,
   SessionSnapshot,
@@ -838,6 +838,18 @@ export class SessionManager {
    * todos panel; future snapshots will report messageCount 0, so no extra event is needed
    * for the conversation itself (the frontend resets its message view locally).
    */
+  /**
+   * **注意：产品里目前没有任何地方调它。**
+   *
+   * 唯一的入口是 WS 的 `reset-session` 消息，而两个前端都不发它 ——
+   * 网页的「新对话」是**新建一个会话**（新的 SessionManager），TUI 是清本地状态。
+   * 也就是说「就地重置一个会话」这个功能产品并不提供。
+   *
+   * 留着没删：它下面那些不变量（先 interrupt 再清、把待决权限结算成 deny 否则
+   * 中断的回合会永远挂着、清待投递与唤醒额度、turnEpoch++ 让在飞回合的尾巴作废、
+   * 权限档复位）是被 6 条测试真实钉住的知识。**删它要连那 6 条一起重写**，
+   * 那是一次单独的、该由人拍板的取舍，不该在一次顺手清理里做掉。
+   */
   reset(): void {
     // Abort any running turn BEFORE clearing — an in-progress turn would otherwise keep
     // writing into the conversation/usage/checkpoints we are about to throw away.
@@ -1397,7 +1409,17 @@ export class SessionManager {
           // as a "↪ 插话" bubble. Server-driven so it lands at the real injection point, not
           // optimistically mid-stream where it would split the reply.
           this.emit({ type: 'user-echo', text: combined, steer: true, messageId: foldable[0]?.messageId ?? genMsgId() })
-          return combined
+          // **§8(b) 的另一半。** 正常提交那条路由 `expandAttachments` 挂上后台运行现状，
+          // 而**回合中插话**是折进 tool_result 的，完全不经过那个通路 ——
+          // 于是「插话说『修一下』」恰恰是最需要这行现状、却唯一拿不到它的场景。
+          //
+          // 只贴在**发给模型**的那一份上：`combined` 是折进 tool_result 的文本，
+          // 不进账本、不进 user-echo（上一行已经用不带 note 的 `combined` 发过了），
+          // 所以你的气泡里不会出现自己没打过的字。这一点与 §8(b) 的既有约束一致。
+          const note = this.runs
+            ? runStatusNote(this.runs.list().filter((r) => r.sessionId === this.sessionId))
+            : null
+          return note ? `${combined}\n\n${note}` : combined
         },
         canUseTool: this.canUseTool,
         onAutoAllow: this.onAutoAllow,

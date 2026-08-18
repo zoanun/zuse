@@ -904,8 +904,12 @@ export function useConversation({
     checkpointsRef.current = [] // 新会话从零开始;影子仓库不清(历史 commit 无害)
     // 待触发的自唤醒必须一起取消:它到点会调 sendMessageRef，而那个 ref 指向的是
     // **当前**会话的 sendMessage —— 不取消的话，旧对话安排的唤醒会驱动新对话跑一轮，
-    // 而新对话对那条消息毫无上下文。(server 侧同一个坑由 SessionManager.reset() 堵，
-    // 见 packages/server/src/session/SessionManager.ts 的待投递表。)
+    // 而新对话对那条消息毫无上下文。
+    //
+    // （原注释写的是「server 侧同一个坑由 SessionManager.reset() 堵」——**机制上不准确**：
+    // `reset()` 确实清待投递表和唤醒额度，但**产品里没有任何地方调它**（网页的「新对话」
+    // 是新建一个会话）。server 侧真正的保护是「新对话 = 新的 SessionManager」，
+    // 旧的那个连同它的定时器一起被丢掉。）
     if (wakeupTimerRef.current) clearTimeout(wakeupTimerRef.current)
     wakeupTimerRef.current = null
     // 整体替换消息 → 自增 generation 令 <Static> remount，不再沿用旧会话的高水位。
