@@ -284,6 +284,17 @@ export function groupTodos<T extends { group?: string }>(
 export interface PendingPermissionLite {
   id: string
   req: PermissionRequest
+  /**
+   * 这张卡属于「必须确认」档吗（allow 与 bypass 都压不过、放行也不会被记住）。
+   *
+   * 界面要据此**藏掉「本次会话」与「始终」两个按钮** —— 服务端对这一档
+   * 什么都不记（`agent.ts` 里那段「什么都不记：既不进 sessionAllow，也不落盘」），
+   * 所以那两个按钮点了和「允许」完全一样。**显示一个点了不算数的按钮，
+   * 比不显示更坏**：用户以为自己已经免掉了以后的询问。
+   *
+   * 老 daemon 不给这个字段 → `undefined` → 界面按「普通卡片」渲染，行为不变。
+   */
+  mustConfirm?: boolean
 }
 
 /**

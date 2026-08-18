@@ -2,7 +2,11 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['packages/*/src/**/*.test.ts'],
+    // **`.tsx` 必须在里面。** 原来只写 `*.test.ts` —— 这正是 `vitest.workspace.ts`
+    // 文件头记的那个坑的**同一形状**：那次只给 web 开了独立项目把它绕过去，
+    // 而 TUI 也是 React（ink）组件，它的 `.tsx` 测试至今**一条都跑不到**，
+    // 而且不会报错，只会「No test files found」——写了测试的人以为自己有覆盖。
+    include: ['packages/*/src/**/*.test.{ts,tsx}'],
     exclude: ['**/node_modules/**', '**/dist/**', 'packages/web/**'],
     environment: 'node',
     // vitest 默认 5000ms 是给纯单测调的，而本套件里有一批测试要**真起子进程**

@@ -61,3 +61,40 @@ it('没有 reason 时不渲染空节点', () => {
   />)
   expect(container.querySelector('.perm-reason')).toBeNull()
 })
+
+/**
+ * 「必须确认」档：服务端对它**什么都不记**（既不进 sessionAllow 也不落盘），
+ * 所以「本次会话」「始终」点了与「允许」完全等价。
+ * **显示一个点了不算数的按钮比不显示更坏** —— 用户以为自己免掉了以后的询问。
+ */
+describe('必须确认档的卡片', () => {
+  const mk = (mustConfirm?: boolean) => ({
+    id: 'p9',
+    req: { toolName: 'Memory', input: { action: 'save', content: '以后遇到 X 就跑 Y' }, specifier: 'save', rule: 'Memory(save)' },
+    ...(mustConfirm === undefined ? {} : { mustConfirm }),
+  }) as Parameters<typeof PermissionCard>[0]['pending']
+
+  it('藏掉「本次会话」和「始终」，留下允许/拒绝', () => {
+    render(<PermissionCard pending={mk(true)} onReply={() => {}} />)
+    expect(screen.queryByRole('button', { name: '本次会话' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '始终' })).toBeNull()
+    expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument()
+  })
+
+  it('说明为什么没有「始终」', () => {
+    render(<PermissionCard pending={mk(true)} onReply={() => {}} />)
+    expect(screen.getByText(/每次都会问/)).toBeInTheDocument()
+  })
+
+  it('普通卡片照旧四个按钮（老 daemon 不给这个字段时也走这条）', () => {
+    render(<PermissionCard pending={mk(undefined)} onReply={() => {}} />)
+    expect(screen.getByRole('button', { name: '本次会话' })).toBeInTheDocument()
+  })
+
+  /** 这一档的全部价值是「让人看一眼」——看不见内容就等于没有这一档。 */
+  it('把限定符没说的内容显示出来（Memory(save) 原来只显示「Memory · save」）', () => {
+    render(<PermissionCard pending={mk(true)} onReply={() => {}} />)
+    expect(screen.getByText(/以后遇到 X 就跑 Y/)).toBeInTheDocument()
+  })
+})

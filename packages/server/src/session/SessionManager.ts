@@ -612,6 +612,9 @@ export class SessionManager {
     const pendingPermissions: PendingPermissionLite[] = [...this.pending.entries()].map(([id, p]) => ({
       id,
       req: p.req,
+      // 界面要据此藏掉「本次会话」「始终」——这一档服务端什么都不记，
+      // 那两个按钮点了与「允许」完全等价。显示一个点了不算数的按钮比不显示更坏。
+      mustConfirm: p.mustConfirm === true,
     }))
     return {
       sessionId: this.sessionId,
