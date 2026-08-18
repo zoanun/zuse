@@ -262,6 +262,10 @@ export const BashTool: Tool = {
       let gaveUp = false
       let orphanNote = ''
       // 在下面赋值 —— 硬截止（可能先跑）要用它，所以声明提到这里。
+      // prefer-const 在这个形态上给不出可行的建议：声明与赋值必须分开，
+      // 而 `const` 不允许无初始值声明。改成 const 会让整个文件解析失败 ——
+      // 而 vitest 那边表现为「这个文件的测试一条都不跑、总数悄悄少 449 条、结果还是绿的」。
+      // eslint-disable-next-line prefer-const
       let settleHandle: { stopNow(): void }
       const armHardDeadline = (): void => {
         if (hardTimer !== null) return

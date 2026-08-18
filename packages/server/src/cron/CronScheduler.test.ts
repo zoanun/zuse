@@ -1,3 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- 测试夹具刻意抹掉类型：
+   这里造的是「只实现了被测那几个方法」的假对象，写全真类型等于把被测接口抄一遍，
+   而那份抄件会自己变成需要维护的东西。改成 `never` 试过 —— 那会让读取属性直接不通过。 */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'

@@ -130,7 +130,7 @@ describe('compileVue —— 错误文本是直接给用户看的', () => {
     const r = await compileVue(`<template><b/></template>\n<style scoped>.a { color: red;</style>`)
     expect(r.errors.length).toBeGreaterThan(0)
     const text = r.errors.join('\n')
-    // eslint-disable-next-line no-control-regex
+     
     expect(text).not.toMatch(/\u001b\[/)
     expect(text).not.toMatch(/[A-Za-z]:[\\/]/) // E:\ai-study\... 这类盘符路径
     expect(text).not.toContain('packages')

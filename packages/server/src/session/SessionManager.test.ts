@@ -115,7 +115,8 @@ describe('SessionManager skeleton', () => {
     // @ts-expect-error reach a test-only emit hook
     mgr._emitForTest({ type: 'warning', message: 'x' })
     off()
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     mgr._emitForTest({ type: 'warning', message: 'y' })
     expect(seen).toEqual(['warning'])
   })
@@ -350,9 +351,11 @@ describe('SessionManager permissions', () => {
 
   it('interactive: two concurrent asks resolve independently', async () => {
     const { mgr } = makeManager()
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     const p1 = mgr.canUseTool({ toolName: 'Bash', input: { command: 'a' }, specifier: 'a', rule: 'Bash(a)', reason: 'ask' })
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     const p2 = mgr.canUseTool({ toolName: 'Bash', input: { command: 'b' }, specifier: 'b', rule: 'Bash(b)', reason: 'ask' })
     const ids = mgr.getState().pendingPermissions.map((x) => x.id)
     expect(ids.length).toBe(2)
@@ -381,9 +384,11 @@ describe('SessionManager permissions', () => {
     })
     const events: string[] = []
     mgr.subscribe((e) => events.push(e.type))
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'ls' }, specifier: 'ls', rule: 'Bash(ls)', reason: 'ask' })).resolves.toBe('allow')
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'rm' }, specifier: 'rm', rule: 'Bash(rm)', reason: 'ask' })).resolves.toBe('deny')
     expect(events).not.toContain('permission-request')
   })
@@ -409,7 +414,8 @@ describe('SessionManager permissions', () => {
       snapshotStore: fakeSnapshotStore(),
     })
     const compound = 'git status && rm -rf /tmp/x'
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: compound }, specifier: compound, rule: `Bash(${compound})`, reason: 'ask' })).resolves.toBe('deny')
   })
 
@@ -432,13 +438,15 @@ describe('SessionManager permissions', () => {
       },
       snapshotStore: fakeSnapshotStore(),
     })
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     await expect(mgr.canUseTool({ toolName: 'Bash', input: { command: 'rm -rf /' }, specifier: 'rm -rf /', rule: 'Bash(rm -rf /)', reason: 'ask' })).resolves.toBe('deny')
   })
 
   it('resolvePermission ignores invalid verdict strings', async () => {
     const { mgr } = makeManager()
-    // @ts-expect-error
+    // @ts-expect-error 测试要直接戳私有成员：这一层的行为（订阅解绑、待决卡片排队）
+    // 没有公开入口能触发，走公开 API 得先跑一整轮真实对话。
     const p = mgr.canUseTool({ toolName: 'Bash', input: { command: 'ls' }, specifier: 'ls', rule: 'Bash(ls)', reason: 'ask' })
     const id = mgr.getState().pendingPermissions[0]!.id
     // @ts-expect-error intentionally invalid verdict
@@ -1293,6 +1301,9 @@ describe('SessionManager Stop during auto-compaction', () => {
       },
     }
     const registry = new ToolRegistry()
+    // 声明与赋值必须分开（下面的闭包要先引用它，再由 makeManager 回填），
+    // 而 `const` 不允许 `!` 定值断言 —— prefer-const 在这个形态上给不出可行的建议。
+    // eslint-disable-next-line prefer-const
     let mgrRef!: SessionManager
     registry.register({
       name: 'Plan', description: 'plan', inputSchema: { type: 'object', properties: {} }, readOnly: true,
@@ -2268,7 +2279,7 @@ describe('SessionManager image routing (I2)', () => {
     const seen: (boolean | undefined)[] = []
     const imageClient: ModelClient = {
       getModel: () => 'vision-helper',
-      // eslint-disable-next-line require-yield
+       
       async *sendMessages(_m, _c, _t, signal) {
         seen.push(signal?.aborted)          // 派生 signal 必须已经是 aborted
         throw new Error('aborted')
@@ -2293,7 +2304,7 @@ describe('SessionManager image routing (I2)', () => {
     // 客户端永远不吐字节，只等 signal —— 正是 60s 墙钟要对付的形态。
     const imageClient: ModelClient = {
       getModel: () => 'vision-helper',
-      // eslint-disable-next-line require-yield
+       
       async *sendMessages(_m, _c, _t, signal) {
         await new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }))
         // 真实 client 在 abort 后走自己的中断分支，抛出的是 SDK 原话，毫无信息量。

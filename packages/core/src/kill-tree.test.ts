@@ -63,6 +63,10 @@ describe('killTreeSync', () => {
       const child = spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' })
       expect(child.status).toBe(0)
       // 起一个真的长跑进程，拿 pid 再同步杀掉
+      // 用 require 而不是 import：这段函数体会被**序列化后交给另一个 node 进程**执行
+      // （WSL 里的子进程），那边没有本模块的 ESM 作用域；改成 await import 还会让它变成
+      // async，而它是同步 toString() 出去的。
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { spawn } = require('node:child_process') as typeof import('node:child_process')
       const p = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
       expect(p.pid).toBeGreaterThan(0)

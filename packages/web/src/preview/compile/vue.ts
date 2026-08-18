@@ -22,7 +22,7 @@ const FILENAME = 'Preview.vue'
 
 // ANSI SGR 序列。postcss 的 CssSyntaxError 默认带终端色码（\u001b[1m\u001b[31m…），
 // 而 ConsolePanel 把错误当**纯文本**渲染 —— 不剥掉就是一屏乱码。
-// eslint-disable-next-line no-control-regex
+ 
 const ANSI = /\u001b\[[0-9;]*m/g
 // postcss 把 filename 解析成了**构建机的绝对路径**（实测
 // `E:\ai-study\zuse\packages\web\Preview.vue`）。对用户毫无意义，还泄漏本机目录结构。
