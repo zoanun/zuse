@@ -882,7 +882,11 @@ export function decide(
   // 一个无人值守任务写出混淆命令时会失败而不是照跑 —— 也是刻意的。
   if (isBash && !hasWholeExactBashAllow(allowRules, specifier!)) {
     const sec = hasBlockingBashSecurityIssue(specifier!)
-    if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: sec.reason }
+    // **框定写进 reason 本身**，不留给界面去猜。原来 TUI 把「⚠ 安全检查：」硬编码在
+    // 渲染处，那时只有这一档会填 reason；现在重定向判定和后台记忆整理都会填，
+    // 再写死前缀就会造出「⚠ 安全检查：后台记忆整理：新增 3 条」这种假话。
+    // 类别只有这里知道，就该在这里说清楚。
+    if (sec) return { decision: 'ask', rule, matched: `security:${sec.checkId} ${sec.name}`, reason: `安全检查：${sec.reason}` }
   }
 
   // 3.2 必须确认档：**allow 压不过、bypass 也压不过**。见 BUILTIN_CONFIRM_RULES。

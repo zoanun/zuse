@@ -4,6 +4,7 @@ import {
   buildConsolidationPrompt,
   parseConsolidationOps,
   CONSOLIDATION_MAX_DELETES,
+  effectiveConsolidationWatermark,
 } from './memory-consolidation.js'
 
 describe('shouldConsolidateMemories(触发门槛)', () => {
@@ -72,5 +73,39 @@ describe('parseConsolidationOps', () => {
 
   it('坏 type 的 SAVE 行忽略', () => {
     expect(parseConsolidationOps('SAVE banana|x|y').saves).toEqual([])
+  })
+})
+
+/**
+ * **拒绝必须留下水位。** 触发判据是「投影 ≥ 阈值」，而拒绝不会让投影变小 ——
+ * 只记「跑过」的话，越过阈值那天起用户每 24h 被问一次、**永远问下去**，
+ * 而唯一「让它闭嘴」的按钮（「始终」）对这一档是空操作（confirm 在 allow 之前返回）。
+ */
+describe('拒绝之后不该每天再问', () => {
+  const cap = 8000
+  const over = cap // 稳稳超过 0.7 阈值
+  const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
+
+  it('只被拒绝过（从没跑过）→ 24h 内不再问', () => {
+    const wm = effectiveConsolidationWatermark(null, iso(60_000))
+    expect(shouldConsolidateMemories({ projectionChars: over, indexCap: cap, lastRunAt: wm })).toBe(false)
+  })
+
+  it('拒绝比上次跑更晚 → 以拒绝时间为准', () => {
+    const wm = effectiveConsolidationWatermark(iso(72 * 3600_000), iso(60_000))
+    expect(shouldConsolidateMemories({ projectionChars: over, indexCap: cap, lastRunAt: wm })).toBe(false)
+  })
+
+  it('拒绝过很久了 → 可以再问一次（不是永久闭嘴）', () => {
+    const wm = effectiveConsolidationWatermark(null, iso(72 * 3600_000))
+    expect(shouldConsolidateMemories({ projectionChars: over, indexCap: cap, lastRunAt: wm })).toBe(true)
+  })
+
+  it('两个都没有 → null（首次）', () => {
+    expect(effectiveConsolidationWatermark(null, null)).toBe(null)
+  })
+
+  it('坏时间戳当没有，不参与比较', () => {
+    expect(effectiveConsolidationWatermark('不是时间', null)).toBe(null)
   })
 })

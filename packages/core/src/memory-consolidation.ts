@@ -53,6 +53,27 @@ export function shouldConsolidateMemories(opts: {
   return true
 }
 
+/**
+ * 「上一次动过这件事」是什么时候 —— 取**跑过**和**被拒绝过**两个水位里更晚的那个。
+ *
+ * ## 为什么拒绝也要算水位
+ *
+ * 触发判据是「投影体积 ≥ 阈值」，而**拒绝不会让投影变小**。只记「跑过」的话，
+ * 越过阈值那天起，用户每 24h 被问一次，**永远问下去** —— 而唯一「让它闭嘴」的按钮
+ * （权限卡上的「始终」）对这一档是空操作：`decide()` 第 3.2 步在第 4 步 allow 之前
+ * 就返回了，写进 settings 的 allow 规则永远压不过。
+ *
+ * 也就是说：不记拒绝水位，用户就会陷入一个**按不掉**的每日提示。
+ */
+export function effectiveConsolidationWatermark(
+  lastRunAt: string | null,
+  declinedAt: string | null,
+): string | null {
+  const both = [lastRunAt, declinedAt].filter((v): v is string => v !== null && Number.isFinite(Date.parse(v)))
+  if (both.length === 0) return null
+  return both.sort((a, b) => Date.parse(a) - Date.parse(b))[both.length - 1]!
+}
+
 /** 巩固请求的提示词:全量记忆清单 + 操作行协议。 */
 export function buildConsolidationPrompt(memories: ConsolidationMemory[]): string {
   const lines = memories.map((m) => {

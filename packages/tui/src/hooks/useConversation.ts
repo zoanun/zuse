@@ -482,7 +482,23 @@ export function useConversation({
         notify('🧠 记忆巩固:模型判定无需调整。')
         return
       }
-      const { saved, deleted } = applyMemoryConsolidation(ops, cwdSlug(cwd))
+      // 与 server 同一套闸：入队一张权限卡，等人点。两个前端的记忆写入语义
+      // 不能分叉 —— 那是最难查的一类不一致。
+      const { saved, deleted, approved } = await applyMemoryConsolidation(
+        ops, cwdSlug(cwd),
+        (plan) => new Promise<boolean>((resolve) => {
+          queueRef.current = [...queueRef.current, {
+            id: generateId(),
+            req: {
+              toolName: 'Memory', input: { action: 'save' }, specifier: 'save',
+              rule: 'Memory(save)', reason: `后台记忆整理：${plan.summary}`,
+            },
+            resolve: (v) => resolve(v !== 'deny'),
+          }]
+          setPermissionQueue(queueRef.current)
+        }),
+      )
+      if (!approved) return
       notify(`🧠 记忆巩固完成:合并新增 ${saved} 条,删除 ${deleted} 条。`)
     } catch {
       // 巩固是增值动作,任何失败都不能成为新故障点。

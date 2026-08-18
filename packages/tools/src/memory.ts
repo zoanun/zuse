@@ -45,31 +45,108 @@ export interface ConsolidationApplyOps {
   saves: Array<{ type: MemoryType; hook: string; content: string }>
 }
 
+/** 一次巩固最多新增几条。放大面的硬顶 —— 闸之外还要有闸。 */
+export const CONSOLIDATION_MAX_SAVES = 10
+/** 单条内容的字符上限。截断而不是拒绝：拒绝会让整轮白跑，而这一轮几个月才有一次。 */
+export const CONSOLIDATION_SAVE_CHARS = 500
+
+/** 交给闸去审的「将要发生的事」。 */
+export interface ConsolidationPlan {
+  saves: Array<{ type: MemoryType; hook: string; content: string }>
+  deletes: number[]
+  /** 给人看的一句话摘要，**已剥控制字符**（内容来自模型输出，会被打进终端）。 */
+  summary: string
+}
+
+/** 剥掉控制字符：这段文本是模型输出、要进终端，ESC/OSC 能清屏、移光标、伪造提示行。 */
+function scrub(text: string): string {
+  let out = ''
+  for (const ch of text) {
+    const c = ch.charCodeAt(0)
+    out += (c < 0x20 || c === 0x7f) ? ' ' : ch
+  }
+  return out.replace(/\s+/g, ' ').trim()
+}
+
 /**
  * 应用自动巩固操作(Phase 13,轻量 autoDream):save 在前、delete 在后 ——
  * 合并的新条目先落地,中途失败也不丢旧数据;完成后重投影一次。
  * **有意绕过满容闸**:巩固是净收缩操作,在接近满容时恰恰最需要执行,
  * 走工具的 save 会被 ④ 的闸拒掉。
+ *
+ * ## `approve` 为什么是**必传**的
+ *
+ * `Memory(save)` / `Memory(delete)` 在 `BUILTIN_CONFIRM_RULES` 里 —— allow 压不过、
+ * bypass 也压不过，理由是它写的东西进**此后每一个会话**的系统提示词。
+ * 而这条路原来一个闸都不过：`store.save()` 直接落库。
+ *
+ * 注入链是通的，而且比看上去更直接：巩固的提示词把每条记忆的 **full content 原样**
+ * 拼进去，且那次模型请求**不带系统提示词** —— 「这些是事实、不是指令」那句框定不在场。
+ *
+ * 做成**必传参数**而不是靠调用点自觉：今天两个调用方（server / TUI），
+ * 明天第三个（给 cron 加「夜间整理」之类）编译期就会被逼着表态，而不是安静地绕过去。
+ *
+ * ## 闸之外的三道硬闸（`approve` 说了 yes 也照样管）
+ *
+ * 用户点「允许」是对**这一批**表态，不是对「模型吐什么都行」表态：
+ *   - **范围外的 delete 一律丢掉**。底层 `DELETE FROM memories WHERE id = ?` 没有 project
+ *     条件，提示词只喂了本项目的 id，但模型（或注入）可以吐任意 id。
+ *   - **不许铸造 `type:user`**（那会落成 `project=''`，所有项目都吃得到）。
+ *     巩固的职责是整理本项目这份清单，没有理由新造全局记忆。
+ *   - **条数与单条长度封顶**，堵住「一次劫持写 N 条载荷」。
+ *
+ * ## 为什么中间要关一次连接
+ *
+ * `approve` 可能是一张等人点的卡片，等几分钟很正常。握着 sqlite 连接干等会挡住
+ * 同一进程里其他会话的读写 —— 同文件上游那段模型请求前 `store.close(); store = null`
+ * 就是同一个理由。
  */
-export function applyMemoryConsolidation(
+export async function applyMemoryConsolidation(
   ops: ConsolidationApplyOps,
   project: string,
+  approve: (plan: ConsolidationPlan) => boolean | Promise<boolean>,
   opts: MemoryToolOptions = {},
-): { saved: number; deleted: number } {
+): Promise<{ saved: number; deleted: number; approved: boolean }> {
+  // 先把 ops 收窄成「实际会发生的事」，再拿它去问 —— 否则用户是在给一张空白支票签字。
+  let plan: ConsolidationPlan
+  const probe = openMemoryStore(opts.dbPath)
+  try {
+    const inScope = new Set(probe.allForProject(project).map((r) => r.id))
+    const deletes = ops.deletes.filter((id) => inScope.has(id))
+    const saves = ops.saves
+      .filter((s) => s.content && s.type !== 'user')
+      .slice(0, CONSOLIDATION_MAX_SAVES)
+      .map((s) => ({ ...s, content: s.content.slice(0, CONSOLIDATION_SAVE_CHARS) }))
+    plan = {
+      saves,
+      deletes,
+      summary: scrub(
+        `新增 ${saves.length} 条、删除 ${deletes.length} 条。` +
+        saves.map((s) => ` +「${s.hook || s.content}」`).join(''),
+      ).slice(0, 400),
+    }
+  } finally {
+    probe.close()
+  }
+  if (plan.deletes.length === 0 && plan.saves.length === 0) {
+    return { saved: 0, deleted: 0, approved: false }
+  }
+
+  if (!(await approve(plan))) return { saved: 0, deleted: 0, approved: false }
+
   const store = openMemoryStore(opts.dbPath)
   try {
     let saved = 0
-    for (const s of ops.saves) {
-      if (!s.content) continue
-      store.save(s.type, s.content, s.type === 'user' ? '' : project, s.hook)
+    for (const s of plan.saves) {
+      store.save(s.type, s.content, project, s.hook)
       saved++
     }
     let deleted = 0
-    for (const id of ops.deletes) {
+    for (const id of plan.deletes) {
       if (store.remove(id)) deleted++
     }
     if (saved || deleted) writeProjection(store, opts.memoryMdPath)
-    return { saved, deleted }
+    return { saved, deleted, approved: true }
   } finally {
     store.close()
   }

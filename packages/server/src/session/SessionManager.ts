@@ -30,6 +30,7 @@ import {
   createFileTracker,
   MEMORY_INDEX_CAP,
   shouldConsolidateMemories,
+  effectiveConsolidationWatermark,
   buildConsolidationPrompt,
   parseConsolidationOps,
   generateSessionTitle,
@@ -1912,7 +1913,11 @@ export class SessionManager {
       // 却把 24h 防抖设上了，B 永远轮不到。
       const watermarkKey = `consolidated_at:${slug}`
       const lastRunAt = store.getMeta(watermarkKey)
-      if (!shouldConsolidateMemories({ projectionChars: projection.length, indexCap: MEMORY_INDEX_CAP, lastRunAt })) {
+      // 拒绝过的话，用**拒绝时间**当水位一起防抖：拒绝不会让投影变小，
+      // 不这么做的话下一个回合又会到点重问（见下方拒绝分支的注释）。
+      const declinedAt = store.getMeta(`consolidation_declined_at:${slug}`)
+      const effectiveLast = effectiveConsolidationWatermark(lastRunAt, declinedAt)
+      if (!shouldConsolidateMemories({ projectionChars: projection.length, indexCap: MEMORY_INDEX_CAP, lastRunAt: effectiveLast })) {
         return
       }
       // Write the watermark first: even a failed run is debounced for 24h (debounce
@@ -1935,10 +1940,36 @@ export class SessionManager {
         this.emit({ type: 'memory-notice', text: 'Memory consolidation: model judged no changes needed.' })
         return
       }
-      const { saved, deleted } = applyMemoryConsolidation(ops, cwdSlug(this.cwd))
+      // **必须过闸。** 这条路原来直接落库，而 `Memory(save)`/`Memory(delete)` 在
+      // 「必须确认」档里（allow 与 bypass 都压不过）。注入链是通的：被污染的记忆
+      // → 巩固提示词（原样拼 full content、且那次请求不带系统提示词）→ 模型吐 SAVE 行。
+      const { saved, deleted, approved } = await applyMemoryConsolidation(
+        ops, slug,
+        async (plan) => {
+          if (!this.canUseTool) return false
+          const verdict = await this.canUseTool({
+            toolName: 'Memory', input: { action: 'save' }, specifier: 'save',
+            rule: 'Memory(save)',
+            reason: `后台记忆整理：${plan.summary}`,
+          })
+          return verdict !== 'deny'
+        },
+      )
+      if (!approved) {
+        // **拒绝必须留下抑制水位。** 触发判据是「投影 ≥ 阈值」，而拒绝不会让投影变小 ——
+        // 不记的话，越过阈值那天起用户每 24h 被问一次，永远问下去；
+        // 而唯一「让它闭嘴」的按钮（「始终」）对这一档是空操作（confirm 在 allow 之前返回）。
+        const s2 = openMemoryStore()
+        try { s2.setMeta(`consolidation_declined_at:${slug}`, new Date().toISOString()) } finally { s2.close() }
+        this.emit({ type: 'memory-notice', text: '记忆整理已跳过（你拒绝了这次写入）。' })
+        return
+      }
       this.emit({ type: 'memory-notice', text: `Memory consolidated: ${saved} merged/added, ${deleted} removed.` })
-    } catch {
+    } catch (err) {
       // Consolidation is value-add; any failure must not become a new failure point.
+      // **但不能静默无痕**：原来这里是空的，于是「拒绝」和「出错」根本分不开 ——
+      // 分不开的原因不在拒绝那侧，是出错这侧一个字都不留。仍然不抛。
+      console.warn('[zuse-server] 记忆整理失败（不影响本次会话）：', err)
     } finally {
       store?.close()
       this.consolidating = false

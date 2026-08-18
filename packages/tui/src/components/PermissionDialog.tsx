@@ -30,7 +30,13 @@ export function PermissionDialog({ req, onDecision, queueLength }: PermissionDia
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
       <Text bold color="yellow">{title}</Text>
       <Text>{detail}</Text>
-      {req.reason && <Text color="red">⚠ 安全检查：{req.reason}</Text>}
+      {/*
+        **不要在这里加类别前缀。** 原来这行写死了「⚠ 安全检查：」——那时只有 Bash
+        安全检查会填 reason；现在重定向判定、后台记忆整理都会填，写死前缀就会造出
+        「⚠ 安全检查：后台记忆整理：新增 3 条」这种假话。框定现在由 `decide()`
+        写进 reason 本身（类别只有它知道）。这里只负责显示。
+      */}
+      {req.reason && <Text color="yellow">{req.reason}</Text>}
       <Box marginTop={1}>
         <SelectList
           items={OPTIONS}

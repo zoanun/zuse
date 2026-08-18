@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -143,9 +143,13 @@ describe('applyMemoryConsolidation(自动巩固应用)', () => {
     s.save('user', '保留的', '', '')
     s.close()
 
-    const { saved, deleted } = applyMemoryConsolidation(
+    // 第三个参数是**必传的闸**（2026-08-18）：巩固原来一个权限判定都不过。
+    // 这里给一个恒 true 的闸，测的是「批准之后的行为」；拒绝路径在
+    // memoryConsolidationGate.test.ts 里单独测。
+    const { saved, deleted } = await applyMemoryConsolidation(
       { saves: [{ type: 'project', hook: 'pnpm', content: '本项目统一用 pnpm 管依赖' }], deletes: [1, 2] },
       'E--proj',
+      () => true,
       { dbPath: join(dir, 'memory.db'), memoryMdPath: mdPath() },
     )
     expect(saved).toBe(1)
@@ -166,14 +170,18 @@ describe('applyMemoryConsolidation(自动巩固应用)', () => {
     s.close()
   })
 
-  it('删除不存在的 id 不计数也不抛;空操作不写投影', () => {
-    const res = applyMemoryConsolidation(
+  it('删除不存在的 id 不计数也不抛;空操作不写投影,而且**根本不问**', async () => {
+    const approve = vi.fn((_p: unknown) => true)
+    const res = await applyMemoryConsolidation(
       { saves: [], deletes: [99] },
       'E--proj',
+      approve,
       { dbPath: join(dir, 'memory.db'), memoryMdPath: mdPath() },
     )
-    expect(res).toEqual({ saved: 0, deleted: 0 })
+    expect(res).toEqual({ saved: 0, deleted: 0, approved: false })
     expect(existsSync(mdPath())).toBe(false)
+    // 收窄之后没有任何事要发生 → 不该为了一个空计划打断用户。
+    expect(approve).not.toHaveBeenCalled()
   })
 })
 
