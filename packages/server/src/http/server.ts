@@ -1,12 +1,12 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { join, normalize, extname, basename, sep } from 'node:path'
 import { VERSION, loadSettings, loadTrustedRoots, trustRoot, untrustRoot, DEFAULT_PROVIDER_ID, listSelectableModels, resolveModelSelection, resolveVision, isNonChatModel } from '@zuse/core'
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { isSecureRequest } from './requestSecurity.js'
-import { parseTrustedRootsRequest } from './trustedRoots.js'
+import { parseTrustedRootsRequest, partitionTrustedRoots } from './trustedRoots.js'
 import { guardRequest, type HostPolicy, type GuardReject } from './originGuard.js'
 import { checkSetupToken } from '../auth/setupToken.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -989,7 +989,12 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     // .gitignore 里、随仓库分发，无条件读它等于「clone 一个仓库就能关掉你的护栏」。
     if (method === 'GET' && path === '/api/trusted-roots') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
-      return sendJson(res, 200, { roots: loadTrustedRoots() })
+      // 顺带告诉界面哪些条目的目录**已经不在了**。陈旧条目是这个功能最危险的形态：
+      // 信任比的是路径字面量，同一路径日后被重建（把另一个仓库 clone 回原位）
+      // 会直接继承信任 —— 用户看不见它就不会去清。
+      // `existsSync` 而不是 `stat`：这里只要「还在不在」，而且一次要判一整张表。
+      const all = loadTrustedRoots()
+      return sendJson(res, 200, partitionTrustedRoots(all, (r) => existsSync(r)))
     }
 
     // POST /api/trusted-roots — body {root, trusted}. trusted:false 即撤销。

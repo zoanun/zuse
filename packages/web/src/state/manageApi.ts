@@ -269,3 +269,18 @@ export async function reconnectMcp(): Promise<void> {
 export async function reconnectMcpServer(name: string): Promise<void> {
   await request('/api/mcp/' + encodeURIComponent(name) + '/reconnect', { method: 'POST' }, 'reconnect mcp server')
 }
+
+/** GET /api/trusted-roots → 受信目录，外加「目录已经不在了」的那些。 */
+export async function listTrustedRoots(): Promise<{ roots: string[]; missing: string[] }> {
+  const r = await request('/api/trusted-roots', {}, 'list trusted roots')
+  const j = (await r.json()) as { roots?: string[]; missing?: string[] }
+  // `missing` 是后加的字段：老 daemon 不给，当空处理，别让面板整个炸掉。
+  return { roots: j.roots ?? [], missing: j.missing ?? [] }
+}
+
+/** POST /api/trusted-roots {trusted:false} → 撤销。**必须显式发 false**：非布尔值会被 400。 */
+export async function untrustRoot(root: string): Promise<void> {
+  await request('/api/trusted-roots', {
+    method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ root, trusted: false }),
+  }, 'untrust root')
+}

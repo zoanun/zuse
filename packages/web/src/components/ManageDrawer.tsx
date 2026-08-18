@@ -6,6 +6,7 @@ import { listSkills, updateSkill } from '../state/manageApi.js'
 import { getUsage } from '../state/manageApi.js'
 import { listDir, readFilePreview, writeFile, deleteFile, rawFileUrl, rawDownloadUrl, searchFiles } from '../state/manageApi.js'
 import { listMcp, addMcp, deleteMcp, reconnectMcp, reconnectMcpServer } from '../state/manageApi.js'
+import { listTrustedRoots, untrustRoot } from '../state/manageApi.js'
 import { ConfirmDialog } from './ConfirmDialog.js'
 import { useFocusTrap } from './useFocusTrap.js'
 import type { CreateMemoryBody, UpdateMemoryBody, AddMcpBody } from '../state/manageApi.js'
@@ -15,8 +16,9 @@ import { SkillsPanel } from './SkillsPanel.js'
 import { UsagePanel } from './UsagePanel.js'
 import { FilesPanel } from './FilesPanel.js'
 import { McpPanel } from './McpPanel.js'
+import { TrustedRootsPanel } from './TrustedRootsPanel.js'
 
-export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage' | 'files'
+export type ManagePanel = 'memory' | 'prompts' | 'skills' | 'mcp' | 'usage' | 'files' | 'trust'
 
 interface NavEntry { id: ManagePanel; label: string; enabled: boolean }
 const NAV: NavEntry[] = [
@@ -26,6 +28,7 @@ const NAV: NavEntry[] = [
   { id: 'mcp', label: 'MCP', enabled: true },
   { id: 'usage', label: '用量', enabled: true },
   { id: 'files', label: '文件', enabled: true },
+  { id: 'trust', label: '受信目录', enabled: true },
 ]
 
 interface Props {
@@ -198,6 +201,19 @@ function useMcpData(active: boolean) {
   }
 }
 
+function TrustContainer({ active }: { active: boolean }) {
+  const { data, loading, error, mutate } = useResource(active, listTrustedRoots)
+  return (
+    <TrustedRootsPanel
+      roots={data?.roots ?? []}
+      missing={data?.missing ?? []}
+      loading={loading}
+      error={error}
+      onUntrust={useCallback((root: string) => mutate(untrustRoot(root)), [mutate])}
+    />
+  )
+}
+
 function McpContainer({ active }: { active: boolean }) {
   const m = useMcpData(active)
   return <McpPanel servers={m.servers} loading={m.loading} error={m.error} onAdd={m.onAdd} onDelete={m.onDelete} onReconnect={m.onReconnect} onReconnectServer={m.onReconnectServer} />
@@ -288,6 +304,8 @@ export function ManageDrawer({ open, activePanel, onClose, onSelectPanel, cwd }:
               ? <UsageContainer active={open && activePanel === 'usage'} />
               : activePanel === 'files'
               ? <FilesContainer active={open && activePanel === 'files'} cwd={cwd} dirtyRef={filesDirtyRef} guardLeave={guardLeave} />
+              : activePanel === 'trust'
+              ? <TrustContainer active={open && activePanel === 'trust'} />
               : <div className="mem-empty">敬请期待</div>}
           </div>
         </div>

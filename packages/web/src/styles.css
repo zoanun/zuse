@@ -975,6 +975,18 @@ button.head:hover .caret { opacity: 0.9; }
 .trust-notice-btn:disabled { opacity: 0.6; cursor: default; }
 .trust-notice-err { flex: none; color: var(--bad); }
 
+/* 受信目录面板（设置抽屉里）。行是「路径 + 陈旧标记 + 撤销」三段。 */
+.trust-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.trust-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 6px;
+}
+.trust-row + .trust-row { margin-top: 4px; }
+.trust-path { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+/* 陈旧条目要看得出来，但不该像报错 —— 它是「建议清理」，不是「出事了」。 */
+.trust-row.missing { background: var(--hover); }
+.trust-stale { flex: none; font-size: 12px; color: var(--faint); }
+
 @media (any-hover: hover) {
   .session-del, .msg-revert, .msg-copy, .code-copy, .code-run { opacity: 0; pointer-events: none; }
   .code-actions { pointer-events: none; }

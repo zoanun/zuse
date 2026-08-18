@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTrustedRootsRequest } from './trustedRoots.js'
+import { parseTrustedRootsRequest, partitionTrustedRoots } from './trustedRoots.js'
 
 /**
  * 这两条都是**实测**出来的，不是读代码推的（独立评审对着在跑的 daemon 复现过）：
@@ -52,5 +52,23 @@ describe('POST /api/trusted-roots 的请求体解析', () => {
    */
   it('空 root 即使带 trusted:false 也拒绝', () => {
     expect(parseTrustedRootsRequest({ root: '  ', trusted: false }).kind).toBe('reject')
+  })
+})
+
+describe('信任表里的陈旧条目', () => {
+  it('目录不在的挑出来放进 missing，roots 仍是全量', () => {
+    const r = partitionTrustedRoots(['E:/a', 'E:/gone', 'E:/b'], (p) => p !== 'E:/gone')
+    expect(r.roots).toEqual(['E:/a', 'E:/gone', 'E:/b'])
+    expect(r.missing).toEqual(['E:/gone'])
+  })
+
+  it('全都在 → missing 为空', () => {
+    expect(partitionTrustedRoots(['E:/a'], () => true).missing).toEqual([])
+  })
+
+  /** roots 必须是副本：直接把内部数组透出去，调用方一改就改到了信任表本身。 */
+  it('roots 是副本，不是同一个数组', () => {
+    const src = ['E:/a']
+    expect(partitionTrustedRoots(src, () => true).roots).not.toBe(src)
   })
 })

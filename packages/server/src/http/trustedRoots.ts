@@ -39,3 +39,19 @@ export function parseTrustedRootsRequest(body: unknown): TrustedRootsAction {
   if (trusted === undefined || trusted === true) return { kind: 'trust', root }
   return { kind: 'reject', message: 'trusted must be a boolean' }
 }
+
+/**
+ * 把信任表分成「目录还在」和「目录已经没了」两拨。
+ *
+ * 存在与否交给调用方注入，是为了让这段能纯测 —— 也为了不在这里再写一次
+ * fs 访问。**这个信息必须给到界面**：陈旧条目是这个功能最危险的形态
+ * （信任比的是路径字面量，同一路径日后被重建会直接继承信任），
+ * 而用户看不见它就不会去清。
+ */
+export function partitionTrustedRoots(
+  roots: readonly string[],
+  exists: (root: string) => boolean,
+): { roots: string[]; missing: string[] } {
+  const missing = roots.filter((r) => !exists(r))
+  return { roots: [...roots], missing }
+}
