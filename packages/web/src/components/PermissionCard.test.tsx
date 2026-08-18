@@ -41,3 +41,23 @@ describe('PermissionCard', () => {
     expect(onReply).toHaveBeenCalledWith('p1', 'allow_persist')
   })
 })
+
+/**
+ * `reason` 的注释一直写着「供权限对话框展示」，而这个组件从来没渲染过它。
+ * Bash 的命令可能上百行，不说清楚是哪一处触发的，这张卡就只剩「打断」没有「告知」。
+ */
+it('把 reason 显示出来（不显示的话卡片只剩打断，没有告知）', () => {
+  render(<PermissionCard
+    pending={{ id: 'p1', req: { toolName: 'Bash', input: {}, specifier: 'echo x > ZUSE.md', rule: 'Bash(echo x > ZUSE.md)', reason: '这条命令里有一处写向 ZUSE.md 的重定向' } }}
+    onReply={() => {}}
+  />)
+  expect(screen.getByText(/写向 ZUSE.md 的重定向/)).toBeInTheDocument()
+})
+
+it('没有 reason 时不渲染空节点', () => {
+  const { container } = render(<PermissionCard
+    pending={{ id: 'p2', req: { toolName: 'Read', input: {}, specifier: 'a.ts', rule: 'Read(a.ts)' } }}
+    onReply={() => {}}
+  />)
+  expect(container.querySelector('.perm-reason')).toBeNull()
+})

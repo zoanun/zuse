@@ -155,11 +155,36 @@ describe('Memory 的写入面默认要人看一眼（D8：假 readOnly）', () =
   })
 
   /**
-   * 逃生口要通：allow 在 decide 的第 4 步、早于 ask 的第 5 步。
-   * 嫌烦的用户能自己关掉，这是「内置 ask」可以接受的前提。
+   * **这条断言换过主体，原因要写清楚，否则就是为了让新测试变绿而改旧测试。**
+   *
+   * 原文用 `Memory(save)` 举例，注释写着「嫌烦的用户能自己关掉，
+   * 这是『内置 ask』可以接受的前提」。2026-08-18 起 `Memory(save)` / `Memory(delete)`
+   * 进了 `BUILTIN_CONFIRM_RULES`（第 3.2 步，在 allow 和 bypass 之前），
+   * **那个逃生口对它们已经关掉了** —— 那句前提就此退役。
+   *
+   * 被断言的**机制**没变（allow 在第 4 步、早于 ask 的第 5 步），所以这里换一个
+   * 合成工具继续钉住它；覆盖率一分不少。下面紧跟一条相反的断言，钉住新行为。
    */
-  it('用户自己 allow 能压过内置 ask', () => {
-    expect(decide(mem(), 'save', settings({ allow: ['Memory'], ask: [...DEFAULT_ASK_RULES] }), [], cwd).decision).toBe('allow')
+  it('用户自己 allow 能压过内置 ask（机制本身没变）', () => {
+    const t: Tool = {
+      name: 'Widget', description: '', inputSchema: { type: 'object', properties: {} },
+      run: async () => ({ output: '' }), specifierKind: 'opaque',
+    }
+    expect(decide(t, 'poke', settings({ ask: ['Widget(poke)'] }), [], cwd).decision).toBe('ask')
+    expect(decide(t, 'poke', settings({ allow: ['Widget'], ask: ['Widget(poke)'] }), [], cwd).decision).toBe('allow')
+  })
+
+  /**
+   * 而 Memory 现在**压不过** —— 它和 `Write(~/.zuse/MEMORY.md)` 写的是同一份东西，
+   * 而后者今天就已经压不过了。更要紧的是顺序是**倒置**的：
+   * `Write(~/.zuse/MEMORY.md)` 写的是**生成物**（投影，下次 save 就被覆盖），
+   * 而 `Memory(save)` 写的是 `memory.db` —— **唯一真相源**，此后每次投影都从它渲染。
+   * 持久性更强的那条路保护更弱，这不是不一致，是倒置。
+   */
+  it('但 Memory 的写入面现在 allow 也压不过了（它进了必须确认档）', () => {
+    const r = decide(mem(), 'save', settings({ allow: ['Memory'], ask: [...DEFAULT_ASK_RULES] }), [], cwd)
+    expect(r.decision).toBe('ask')
+    expect(r.matched?.startsWith('confirm:')).toBe(true)
   })
 
   /**
@@ -319,6 +344,20 @@ describe('splitBashCommand', () => {
     expect(splitBashCommand('cmd 2>&1')).toEqual(['cmd 2>&1'])
     expect(splitBashCommand('cmd >&2')).toEqual(['cmd >&2'])
     expect(splitBashCommand('cmd &>out.log')).toEqual(['cmd &>out.log'])
+  })
+
+  /**
+   * **`>|` 里的 `|` 不是管道。** 原来的 `>` 分支只做前瞻（把 `j` 推过 `>>`/`>|`）
+   * 却不推进 `i`，于是下一轮 `|` 落到管道分支上被当成分隔符：
+   * `echo x >| f` 被拆成 `echo x >` 和 `f` 两段。
+   *
+   * 这条一直是绿的假象：文件头注释声称「`>|f` 全覆盖」，指的是**重定向标志**对，
+   * 而**分段**是错的；既有的 it.each 只断言最终 decision 是 ask，
+   * 而 `f` 那段恰好没有 allow 规则覆盖，所以症状被盖住了。
+   */
+  it('does not split >| (it is a clobber redirect, not a pipe)', () => {
+    expect(splitBashCommand('echo x >| f')).toEqual(['echo x >| f'])
+    expect(splitBashCommand('echo x >| f | wc -l')).toEqual(['echo x >| f', 'wc -l'])
   })
 
   /**

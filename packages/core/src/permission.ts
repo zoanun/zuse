@@ -63,6 +63,31 @@ export const BUILTIN_CONFIRM_RULES: readonly string[] = [
   'Write(~/.zuse/SYSTEM.md)', 'Edit(~/.zuse/SYSTEM.md)',
   'Write(~/.zuse/MEMORY.md)', 'Edit(~/.zuse/MEMORY.md)',
   'Write(**/ZUSE.md)', 'Edit(**/ZUSE.md)',
+  // **`~/.zuse/MEMORY.md` 的官方写入器。** 上面那三对是按**路径**挂的，
+  // 而 `Memory` 的 specifierKind 是 `opaque`（限定符是动作名），
+  // 于是 `Write(~/.zuse/MEMORY.md)` 对它永不命中 —— 它 save/delete 成功后
+  // 必定重写那个文件。实测（补这两条之前）全自主档下 `Memory(save)` → allow，
+  // 一声不吭，而 features.md 当时正写着「这几个文件即使全自主也永远问你一声」。
+  // 只挂写入面的两个动作，`list` 之类的读不受影响。
+  //
+  // **这一条不满足这张表原本的准入标准**（「今天完全零保护，从零到必须确认不存在削弱」）——
+  // 它今天在 `DEFAULT_ASK_RULES` 里，是有部分保护的，收它是**实打实的新增限制**。
+  // 仍然收，两条理由：
+  //   ① **保护顺序是倒置的。** `Write(~/.zuse/MEMORY.md)` 写的是**生成物**
+  //      （投影，下一次 save 就被 writeProjection 覆盖），而 `Memory(save)` 写的是
+  //      `memory.db` —— **唯一真相源**，此后每次投影都从它渲染。
+  //      持久性更强的那条路保护更弱。
+  //   ② 默认配置下 **default 档的弹框次数一次都不增加**（这两条本来就在 ask 表里），
+  //      新增的只有 bypass 档 —— 而那正是这张表存在的意义。
+  //
+  // **代价，如实记：非交互会话（cron）从此存不了记忆。** 非交互下 ask→deny，
+  // 定时任务调 Memory(save) 会拿到一条 isError。这是刻意选的失败模式
+  //（响亮地失败，且与 `Write(~/.zuse/SYSTEM.md)` 在 cron 下的现状一致），但它是真实的功能损失。
+  //
+  // 注入面上要诚实：MEMORY.md 的投影是**高度结构化**的（每行 `\s+` 拍平、120 字符截断、
+  // 总量 8000 且在保存那一刻就闸住），伪造不出标题、换行注入不可能 ——
+  // 比 `Write` 的自由文本小得多。所以理由是「最**持久**的注入面」，不是「最直接的」。
+  'Memory(save)', 'Memory(delete)',
 ]
 
 /**
@@ -77,7 +102,101 @@ export const BUILTIN_CONFIRM_RULES: readonly string[] = [
  * 否则两处会漂移，而症状是「切全自主时某些卡片被按掉了、某些没有」——最难查的那类。
  */
 export function isMustConfirm(toolName: string, specifier: string | null, cwd: string): boolean {
-  return BUILTIN_CONFIRM_RULES.some((r) => matchesRule(r, toolName, specifier, cwd))
+  if (BUILTIN_CONFIRM_RULES.some((r) => matchesRule(r, toolName, specifier, cwd))) return true
+  // **Bash 的重定向目标走同一张表。** 不加这一段，`SessionManager` 切全自主时的结算
+  // （`if (p.mustConfirm) continue`）看不出这张卡是这一档的，会替用户按成 allow ——
+  // 卡片弹出来了，然后被自动点掉。注意「目标判不出来」那种 ask **不算**这一档：
+  // 它是 fail-closed 兜底，不是受保护路径，用户切全自主时结算掉它是对的。
+  if (toolName === 'Bash' && specifier !== null) {
+    const v = bashRedirectVerdict(specifier, [], cwd)
+    return v !== null && v.matched.startsWith(MATCHED_CONFIRM_PREFIX)
+  }
+  return false
+}
+
+/**
+ * Bash 命令里的**重定向目标**撞上路径护栏了吗？
+ *
+ * ## 为什么需要这一步
+ *
+ * 权限规则是 `工具名(限定符)` 的形状，匹配拿 `toolName + specifier` 比。
+ * Bash 的 specifier 是命令行文本，于是 `Write(~/.zuse/**)` 这类**路径**规则对
+ * `Bash("echo x > ~/.zuse/f")` **永不命中**。实测（全自主档，真浏览器 + 真会话记录）：
+ * `Write(ZUSE.md)` 被人点了拒绝之后，模型改用 `echo "探针" > ZUSE.md`，无卡片、文件落地。
+ *
+ * ## 它挡不住什么 —— 必须说清楚，否则会变成「以为不漏」
+ *
+ * **只挡文件重定向。** `cp` / `mv` / `tee` / `sed -i` / `dd of=` /
+ * `python -c "open(...,'w')"` / MCP 工具，一个都不管。
+ * 目标解析是**静态**的：前一段 `cd` 改了基准目录会判错
+ * （`cd ~ && echo x > .zuse/cron/tasks.json` 是实测的漏例），
+ * heredoc 正文里的伪 `>` 会误判成重定向。
+ * 目标含变量/命令替换时**不猜**，落 ask（见 `BashRedirect.decidable`）。
+ *
+ * ## 为什么不覆盖 ask 档
+ *
+ * `ask` 在 bypass 之后，加在那里对全自主档毫无作用；要有用就得挪到 bypass 之前，
+ * 而那样**用户手写的 ask 规则会在全自主档下开始生效** —— 本机全局配置里就有
+ * `ask: ["Write(./**)"]`，项目内每一个 `> 任何文件` 都会弹卡。
+ * deny 与 confirm 都是内建的、封闭的、路径明确的表，没有这个问题。
+ *
+ * @param denyRules 传空数组 = 只问「是不是必须确认档」（`isMustConfirm` 就是这么用的）。
+ */
+export function bashRedirectVerdict(
+  command: string,
+  denyRules: readonly string[],
+  cwd: string,
+): { decision: 'deny' | 'ask'; matched: string; reason: string } | null {
+  const redirects = splitBashSegments(command).flatMap((s) => s.redirects)
+  if (redirects.length === 0) return null
+  // **`~` 必须展开。** `matchPath` 刻意不展开目标侧的 `~`（因为 Write 的 resolvePath
+  // 也不展开，展开了会让「判定的路径」和「打开的路径」分叉）——**但 bash 会真的展开**。
+  // 判据要跟着真正执行它的那个程序走。别来「统一」这一处，那会重开一个洞。
+  const expand = (t: string): string =>
+    t === '~' || t.startsWith('~/') ? homedir().replace(/\\/g, '/') + t.slice(1) : t
+  const decidable = redirects.filter((r) => r.decidable)
+
+  // deny 先于 confirm —— 与 decide() 的分档顺序一致。
+  for (const rd of decidable) {
+    for (const r of denyRules) {
+      for (const asTool of ['Write', 'Edit']) {
+        if (matchesRule(r, asTool, expand(rd.target), cwd)) {
+          return {
+            decision: 'deny', matched: `redirect:${r}`,
+            reason: `这条命令里有一处写向 ${rd.target} 的重定向`,
+          }
+        }
+      }
+    }
+  }
+  for (const rd of decidable) {
+    for (const r of BUILTIN_CONFIRM_RULES) {
+      for (const asTool of ['Write', 'Edit']) {
+        if (matchesRule(r, asTool, expand(rd.target), cwd)) {
+          // 卡片上要看得出**是哪个目标**触发的：整条命令可能上百行（heredoc），
+          // 只显示命令的话用户看不出是哪个字。但也不能只显示目标 ——
+          // 调用方会把整条命令一起渲染。文案说「有一处写向 X 的重定向」，
+          // 不说「这条命令会写入 X」：后者在 heredoc 误判下是假话。
+          return {
+            decision: 'ask', matched: `${MATCHED_CONFIRM_PREFIX}redirect ${rd.target}`,
+            // **文案说「有一处写向 X 的重定向」，不说「这条命令会写入 X」。**
+            // 后者在 heredoc 误判下是假话（正文里一个 `->` 就会被当成重定向），
+            // 而一句假话会比不提示更快地训练用户闭眼点「允许」。
+            reason: `这条命令里有一处写向 ${rd.target} 的重定向`,
+          }
+        }
+      }
+    }
+  }
+  // 目标判不出来 → fail closed。实测这一类只占重定向的 ~0.9%，噪声可忽略，
+  // 却堵掉「把路径塞进变量」这条绕过静态分析最省事的路。
+  if (decidable.length !== redirects.length) {
+    return {
+      decision: 'ask', matched: 'redirect:目标判不出来',
+      reason: '这条命令里有重定向，但目标是变量或命令替换，静态判不出写到哪里',
+    }
+  }
+  return null
 }
 
 /**
@@ -258,7 +377,26 @@ export interface BashSegment {
    * 用途见 `bashCoveredBy`：默认 allow 表是按「这些命令只读」挑的
    * （`ls/pwd/cat/echo/which/head/tail/wc`），**而一个重定向就把其中任何一条变成写**。
    */
-  hasFileRedirect: boolean
+  redirects: BashRedirect[]
+}
+
+/** 一处写向文件的重定向：目标 + 这个目标能不能静态判定。 */
+export interface BashRedirect {
+  /**
+   * 目标 token，**已去引号**。
+   *
+   * 去引号是必须的，不是美观问题：`echo x > "~/.zuse/settings.json"` 如果原样带着
+   * 引号交给路径匹配，会被当成一个字面含引号字符的路径，**任何规则都不命中** ——
+   * 一个字符就绕过整层判定。
+   */
+  target: string
+  /**
+   * 目标能不能静态判定出来。含 `$` / 反引号（变量、命令替换）或读不出正经 token 时为 false。
+   *
+   * **这类必须 fail closed**（调用方落 ask，别放过）：「把路径塞进变量」是绕过静态
+   * 分析最省事的一招，而实测这一类只占重定向的 ~0.9%，噪声几乎为零。
+   */
+  decidable: boolean
 }
 
 /**
@@ -274,18 +412,38 @@ export interface BashSegment {
 export function splitBashSegments(command: string): BashSegment[] {
   const parts: BashSegment[] = []
   let cur = ''
-  let redir = false
+  let redirects: BashRedirect[] = []
   let quote: "'" | '"' | null = null
   /**
-   * `>` 之后紧跟的目标是不是 `/dev/null`（或 Windows 的 `NUL`）。
-   * 从 `i` 开始跳过空白读一个 token —— 只在引号外调用，所以不必处理引号态。
+   * 读 `>` 之后的目标 token。
+   *
+   * **原来这里只判「是不是 /dev/null」，注释写着「只在引号外调用，所以不必处理引号态」——
+   * 那个前提对目标本身不成立**：`> "my file.txt"` 会在空格处截断，
+   * `> "~/.zuse/f"` 会带着引号出来，而带引号的路径任何规则都不命中。
+   * 所以这里按**带引号态的 word** 读：引号内的空格不算结束，引号本身不进结果。
+   *
+   * 返回 null 表示「这不是一次写向文件的重定向」（fd 复制、/dev/null、读不出东西）。
    */
-  const targetIsNull = (from: number): boolean => {
+  const readTarget = (from: number): BashRedirect | null => {
     let j = from
     while (j < command.length && (command[j] === ' ' || command[j] === '\t')) j++
     let t = ''
-    while (j < command.length && !/[\s;|&<>]/.test(command[j]!)) t += command[j++]!
-    return /^(?:\/dev\/null|nul)$/i.test(t)
+    let raw = ''
+    let q: "'" | '"' | null = null
+    while (j < command.length) {
+      const ch = command[j]!
+      if (q === null && /[\s;|&<>]/.test(ch)) break
+      raw += ch
+      if (q === null && (ch === "'" || ch === '"')) { q = ch; j++; continue }
+      if (q !== null && ch === q) { q = null; j++; continue }
+      t += ch
+      j++
+    }
+    if (t === '') return null
+    if (/^(?:\/dev\/null|nul)$/i.test(t)) return null
+    // 变量 / 命令替换：读出来的字面量不是真正会被写的那个路径。
+    // 保守判定 —— raw 里出现 $ 或反引号就算不可判定，不去区分它在不在单引号里。
+    return { target: t, decidable: !/[$`]/.test(raw) }
   }
   for (let i = 0; i < command.length; i++) {
     const c = command[i]!
@@ -318,15 +476,15 @@ export function splitBashSegments(command: string): BashSegment[] {
       continue
     }
     if (c === '\n' || c === ';') {
-      parts.push({ text: cur, hasFileRedirect: redir })
-      cur = ''; redir = false
+      parts.push({ text: cur, redirects })
+      cur = ''; redirects = []
       continue
     }
     if (c === '&') {
       // `&&` 逻辑与：拆,跳过第二个 &
       if (command[i + 1] === '&') {
-        parts.push({ text: cur, hasFileRedirect: redir })
-        cur = ''; redir = false
+        parts.push({ text: cur, redirects })
+        cur = ''; redirects = []
         i++
         continue
       }
@@ -336,19 +494,19 @@ export function splitBashSegments(command: string): BashSegment[] {
         continue
       }
       // 裸 &（后台执行）：也是顶层分隔符,按它拆
-      parts.push({ text: cur, hasFileRedirect: redir })
-      cur = ''; redir = false
+      parts.push({ text: cur, redirects })
+      cur = ''; redirects = []
       continue
     }
     if (c === '|' && command[i + 1] === '|') {
-      parts.push({ text: cur, hasFileRedirect: redir })
-      cur = ''; redir = false
+      parts.push({ text: cur, redirects })
+      cur = ''; redirects = []
       i++
       continue
     }
     if (c === '|') {
-      parts.push({ text: cur, hasFileRedirect: redir })
-      cur = ''; redir = false
+      parts.push({ text: cur, redirects })
+      cur = ''; redirects = []
       continue
     }
     // **文件重定向。** 到这里说明在引号外、未被转义（转义分支在最上面整体吞掉了 `\>`）。
@@ -360,13 +518,24 @@ export function splitBashSegments(command: string): BashSegment[] {
       let j = i + 1
       while (command[j] === '>' || command[j] === '|') j++   // >> 与 >|
       const isFdDup = command[j] === '&' && /[0-9-]/.test(command[j + 1] ?? '')
-      if (!isFdDup && !targetIsNull(j)) redir = true
-      cur += c
+      // **每一处重定向都要记**，不能只记第一处：`cmd > /tmp/ok 2> ~/.zuse/x`
+      // 只看第一个的话一行就绕过去了。
+      if (!isFdDup) {
+        const r = readTarget(j)
+        if (r !== null) redirects.push(r)
+      }
+      // **把 `>>` / `>|` 整体吞掉，不能只吞一个 `>`。** 原来是 `cur += c`：
+      // `j` 只用于前瞻，`i` 仍然只前进一格，于是 `>|` 的 `|` 下一轮落到上面的
+      // 管道分支被当成分隔符 —— `echo x >| f` 被拆成 `echo x >` 和 `f` 两段。
+      // 重定向**标志**当时是对的，错的是**分段**，所以既有测试（只断言最终 decision）
+      // 一直绿着。
+      cur += command.slice(i, j)
+      i = j - 1
       continue
     }
     cur += c
   }
-  parts.push({ text: cur, hasFileRedirect: redir }); redir = false
+  parts.push({ text: cur, redirects }); redirects = []
   return parts.map((s) => ({ ...s, text: s.text.trim() })).filter((s) => s.text.length > 0)
 }
 
@@ -433,7 +602,7 @@ function bashCoveredBy(rules: string[], command: string, subs: BashSegment[], cw
  */
 function coversSegment(rule: string, seg: BashSegment, cwd: string): boolean {
   if (!matchesRule(rule, 'Bash', seg.text, cwd)) return false
-  if (!seg.hasFileRedirect) return true
+  if (seg.redirects.length === 0) return true
   return parseRule(rule)?.specifier === '*'
 }
 
@@ -728,6 +897,16 @@ export function decide(
     if (matchesRule(r, name, specifier, cwd, kind)) {
       return { decision: 'ask', rule, matched: `${MATCHED_CONFIRM_PREFIX}${r}` }
     }
+  }
+
+  // 3.3 Bash 的**重定向目标**再过一遍 deny 与 confirm。
+  //
+  // 位置与 3.2 同理：必须在 bypass（3.5）**之前**，否则全自主档整个跳过它 ——
+  // 而全自主档正是实测中这条绕行路径唯一敞开的地方
+  //（default / acceptEdits 档下 `coversSegment` 已经把带重定向的段逼进 ask 了）。
+  if (isBash) {
+    const v = bashRedirectVerdict(specifier!, perms.deny, cwd)
+    if (v !== null) return { decision: v.decision, rule, matched: v.matched, reason: v.reason }
   }
 
   // 3.5 bypass（全自主）模式直接放行（deny 与安全闸已在上面检查过）。

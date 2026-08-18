@@ -987,6 +987,9 @@ button.head:hover .caret { opacity: 0.9; }
 .trust-row.missing { background: var(--hover); }
 .trust-stale { flex: none; font-size: 12px; color: var(--faint); }
 
+/* 权限卡片上的「为什么被拦」。放在命令上面：先说原因，再看是什么。 */
+.perm-reason { margin: 2px 0 6px; font-size: 12px; color: var(--faint); }
+
 @media (any-hover: hover) {
   .session-del, .msg-revert, .msg-copy, .code-copy, .code-run { opacity: 0; pointer-events: none; }
   .code-actions { pointer-events: none; }

@@ -175,7 +175,14 @@ export const DEFAULT_DENY_RULES: readonly string[] = [
  *   Bash 技巧。这几条比「Bash 重定向判定」更直接、更完整地命中这个威胁：
  *   重定向判定只在 `Bash(echo *)` 那条路上有效，这里是把所有写路径一网打尽。
  *
- * 用户想免掉任何一条，自己写 allow 即可（allow 在 decide 的第 4 步，早于 ask 的第 5 步）。
+ * **这句话在 2026-08-18 之后不再成立，留着是为了记住它变过：**
+ * 原文写的是「用户想免掉任何一条，自己写 allow 即可（allow 在第 4 步，早于 ask 的第 5 步）」。
+ * `Memory(save)` / `Memory(delete)` 现在同时在 `BUILTIN_CONFIRM_RULES` 里，而那一档是
+ * 第 3.2 步，**在 allow 和 bypass 之前**，谁也压不过。所以这个数组现在是**纵深防御**：
+ * 实际生效的是 3.2，这两条永远轮不到第 5 步。
+ *
+ * 不删掉它，是因为 3.2 那张表是按「影响以后每一个会话」这个理由收的；
+ * 哪天有人把 Memory 从那张表里拿出来，这两条要能立刻接住，而不是变成零保护。
  */
 export const DEFAULT_ASK_RULES: readonly string[] = [
   'Memory(save)',

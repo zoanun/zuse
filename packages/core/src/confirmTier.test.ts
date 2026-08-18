@@ -99,3 +99,50 @@ describe('isMustConfirm 与 decide 用同一张表（漂移会让切全自主时
     expect(BUILTIN_CONFIRM_RULES.length).toBeGreaterThan(0)
   })
 })
+
+/**
+ * **`~/.zuse/MEMORY.md` 有一个官方写入器，而它原来不受这一档管。**
+ *
+ * `Memory` 工具的 `specifierKind` 是 `opaque`（限定符是动作名，不是路径），
+ * 于是 `Write(~/.zuse/MEMORY.md)` 这条规则对它**永不命中** —— 而它 save/delete
+ * 成功后必定重写那个文件（`memory.ts` 的 `writeProjection`）。
+ *
+ * 实测（修之前）：全自主档下 `Memory(save)` → **allow，一声不吭**。
+ * 也就是说 features.md 里那句「这几个文件即使你开着全自主也永远问你一声」
+ * 对这条路是**假的**。要么管住它，要么改文案；两者都行，什么都不做不行。
+ * 这里选管住它 —— 它写的东西正是这一档的立档理由：影响以后每一个会话。
+ */
+describe('Memory 工具：写的是同一个文件，就该受同一档管', () => {
+  const Memory = mk('Memory')
+
+  it('全自主档下 Memory(save) 仍然要确认', () => {
+    const r = decide(Memory, 'save', settings({ defaultMode: 'bypass' }), [], cwd)
+    expect(r.decision).toBe('ask')
+    expect(r.matched?.startsWith(MATCHED_CONFIRM_PREFIX)).toBe(true)
+  })
+
+  it('Memory(delete) 同样 —— 删掉一条记忆也是在改那份系统提示词', () => {
+    const r = decide(Memory, 'delete', settings({ defaultMode: 'bypass' }), [], cwd)
+    expect(r.decision).toBe('ask')
+  })
+
+  /**
+   * `isMustConfirm` 必须跟着一起认。否则用户一按「全自主」，
+   * `SessionManager` 的结算逻辑（`if (p.mustConfirm) continue`）看不出这张卡是这一档的，
+   * 会替用户把它按成 allow —— 卡片弹出来了，然后被自动点掉。
+   */
+  it('isMustConfirm 认得出它（否则切全自主时会被自动按掉）', () => {
+    expect(isMustConfirm('Memory', 'save', cwd)).toBe(true)
+    expect(isMustConfirm('Memory', 'delete', cwd)).toBe(true)
+  })
+
+  it('只读的那些动作不该被拖下水', () => {
+    expect(isMustConfirm('Memory', 'list', cwd)).toBe(false)
+    expect(decide(Memory, 'list', settings({ defaultMode: 'bypass' }), [], cwd).decision).toBe('allow')
+  })
+
+  it('规则表里确实有这两条（防止有人改表时漏掉）', () => {
+    expect(BUILTIN_CONFIRM_RULES).toContain('Memory(save)')
+    expect(BUILTIN_CONFIRM_RULES).toContain('Memory(delete)')
+  })
+})
