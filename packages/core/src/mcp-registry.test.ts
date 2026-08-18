@@ -163,17 +163,21 @@ describe('McpSearch tool', () => {
 })
 
 describe('McpManager.toolListing', () => {
-  it('returns name + full description when under 80 chars', () => {
-    expect(McpManager.toolListing('foo', 'short desc')).toBe('foo: short desc')
+  // 2026-08-18：多了 serverName 参数，因为这条清单**以前完全绕过净化**
+  // （延迟注册在「描述总量超阈值」时启用 —— 描述越多越容易走这条路，而这条路不扫）。
+  // 净化后的串带 `[MCP: <server>] ` 前缀，所以截断阈值一并从 80 提到 120。
+  it('returns name + description', () => {
+    expect(McpManager.toolListing('foo', 'short desc', 'srv')).toBe('foo: [MCP: srv] short desc')
   })
 
-  it('truncates description at 80 chars with ellipsis', () => {
-    const long = 'a'.repeat(100)
-    const result = McpManager.toolListing('bar', long)
-    expect(result).toBe(`bar: ${'a'.repeat(80)}...`)
+  it('truncates long descriptions', () => {
+    const long = 'a'.repeat(300)
+    const result = McpManager.toolListing('bar', long, 'srv')
+    expect(result.endsWith('...')).toBe(true)
+    expect(result.length).toBeLessThan(200)
   })
 
   it('handles undefined description', () => {
-    expect(McpManager.toolListing('baz', undefined)).toBe('baz: ')
+    expect(McpManager.toolListing('baz', undefined, 'srv')).toBe('baz: [MCP: srv] ')
   })
 })

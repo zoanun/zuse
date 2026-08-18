@@ -101,8 +101,33 @@ export const BUILTIN_CONFIRM_RULES: readonly string[] = [
  * **必须与 `decide()` 里第 3.2 步用同一张表、同一个 `matchesRule`**，
  * 否则两处会漂移，而症状是「切全自主时某些卡片被按掉了、某些没有」——最难查的那类。
  */
-export function isMustConfirm(toolName: string, specifier: string | null, cwd: string): boolean {
-  if (BUILTIN_CONFIRM_RULES.some((r) => matchesRule(r, toolName, specifier, cwd))) return true
+/**
+ * 这个工具名是 MCP server 提供的吗？
+ *
+ * 命名来自 `mcp-registry.ts` 的 `mcp__${serverName}__${toolDef.name}` ——
+ * 两段都是**外部输入**，所以只认前缀，不去解析中间那两段。
+ */
+export function isMcpTool(toolName: string): boolean {
+  return toolName.startsWith('mcp__')
+}
+
+export function isMustConfirm(
+  toolName: string,
+  specifier: string | null,
+  cwd: string,
+  /**
+   * **必须跟着传。** 这个函数的 docblock 写着「必须与 `decide()` 里第 3.2 步用同一张表、
+   * 同一个 `matchesRule`」—— 表和函数一直是同一个，**kind 不是**：这里原来恒按 `'path'`，
+   * 而 3.2 传的是工具自己的 `specifierKind`。
+   *
+   * 今天没炸是运气：那张表里唯一的 opaque 条目是 `Memory(save)`/`Memory(delete)`，
+   * 限定符是无斜杠无 `..` 的裸词，两档结果相同。只要往表里收一条限定符含 `/`、`..`
+   * 或 URL 的 opaque 规则，两条路立刻分叉 —— 症状正是那段注释自己预言的
+   * 「切全自主时某些卡片被按掉了、某些没有」。
+   */
+  kind: 'path' | 'opaque' = 'path',
+): boolean {
+  if (BUILTIN_CONFIRM_RULES.some((r) => matchesRule(r, toolName, specifier, cwd, kind))) return true
   // **Bash 的重定向目标走同一张表。** 不加这一段，`SessionManager` 切全自主时的结算
   // （`if (p.mustConfirm) continue`）看不出这张卡是这一档的，会替用户按成 allow ——
   // 卡片弹出来了，然后被自动点掉。注意「目标判不出来」那种 ask **不算**这一档：
@@ -911,6 +936,32 @@ export function decide(
   if (isBash) {
     const v = bashRedirectVerdict(specifier!, perms.deny, cwd)
     if (v !== null) return { decision: v.decision, rule, matched: v.matched, reason: v.reason }
+  }
+
+  // 3.4 **MCP 工具不吃 bypass 那张白卡。**
+  //
+  // 实测（评审推翻了我原来的判断，我以为「MCP 一律 ask」就是今天的行为）：
+  // 无任何规则 + bypass → `{decision:'allow', matched:'bypass'}`，**无条件放行**。
+  //
+  // 而 MCP 工具：没有 `readOnly`；`buildMcpTool` 不设 `specifierFor`，
+  // 于是**任何带限定符的规则对它们都不可能命中**（`matchesRule` 在 specifier 为 null
+  // 时对带限定符的规则直接 return false）；也不过 Bash 那 23 项安全检查（按工具名挂的）。
+  // 一个 filesystem / git / shell 类的 server 就是一个完整的写入面。
+  //
+  // 这一档**零启发式**：不去猜它要动什么资源（那条路命中率实测只有 3/15，
+  // 而且命中里还有一半挑错了字段），只是不给它那张白卡。
+  // 用户仍可显式 allow —— 裸工具名就够，那是他明确表态。
+  //
+  // 位置与 3.2 / 3.3 同理：**必须在 bypass 之前**，否则全自主档整个跳过它。
+  //
+  // 代价照实记：非交互会话（cron 默认就是 bypass）下 ask→deny，
+  // 定时任务用不了 MCP，除非在 allow 表里显式写上工具名。
+  // 这个失败模式本仓已经为 `Memory(save)` 接受过一次，是一致的。
+  //
+  // **不看 `readOnly`**：MCP 的 `readOnlyHint` 来自服务端，谎报「我只读」换取自动放行
+  // 是有攻击动机的。annotations 只用来**收紧**，绝不用来放松。
+  if (perms.defaultMode === 'bypass' && isMcpTool(name) && !allowRules.some((r) => matchesRule(r, name, specifier, cwd, kind))) {
+    return { decision: 'ask', rule, matched: 'mcp:no-bypass', reason: 'MCP 工具不自动放行：它没有路径限定符，带限定符的规则对它不生效' }
   }
 
   // 3.5 bypass（全自主）模式直接放行（deny 与安全闸已在上面检查过）。

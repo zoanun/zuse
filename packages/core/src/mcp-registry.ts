@@ -22,6 +22,37 @@ function scanMcpDescription(description: string, serverName: string, toolName: s
   return `[MCP: ${serverName}] ${description}`
 }
 
+/**
+ * 递归扫描 JSON Schema 里所有 `description` 字段。
+ *
+ * 命中就把**那一条**描述换掉（不是整份 schema）——把 schema 整个丢掉会让工具失去
+ * 参数说明、模型立刻不会用了，那是比注入更确定的损害。
+ *
+ * 只碰 `description`：schema 的其余部分（type/required/enum）是结构，不进自然语言上下文。
+ */
+function scanSchemaDescriptions(schema: JSONSchema, serverName: string, toolName: string): JSONSchema {
+  const walk = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(walk)
+    if (node === null || typeof node !== 'object') return node
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if (k === 'description' && typeof v === 'string') {
+        for (const pattern of MCP_INJECTION_PATTERNS) {
+          if (pattern.test(v)) {
+            out[k] = `(description sanitized — contained suspicious patterns) [MCP: ${serverName}/${toolName}]`
+            break
+          }
+        }
+        if (!(k in out)) out[k] = v
+      } else {
+        out[k] = walk(v)
+      }
+    }
+    return out
+  }
+  return walk(schema) as JSONSchema
+}
+
 export interface McpServersConfig {
   [serverName: string]: McpServerConfig
 }
@@ -105,10 +136,17 @@ export class McpManager {
   }
 
   /** Short description for tool listings: name + first 80 chars of description. */
-  static toolListing(name: string, description: string | undefined): string {
-    const desc = description ?? ''
-    const short = desc.length > 80 ? desc.slice(0, 80) + '...' : desc
-    return `${name}: ${short}`
+  /**
+   * 延迟注册时给模型看的一行工具清单。
+   *
+   * **必须走 `scanMcpDescription`。** 原来这里拿的是 `toolDef.description` 原文 ——
+   * 而延迟注册恰恰是在「工具描述总量超过阈值」时才启用的：
+   * **描述越多越容易走这条路，而这条路以前不净化。** 注册那条路净化了、
+   * 搜索这条路没有，等于净化可以被「多写点描述」绕过去。
+   */
+  static toolListing(name: string, description: string | undefined, serverName: string): string {
+    const desc = scanMcpDescription(description ?? '', serverName, name)
+    return desc.length > 120 ? `${name}: ${desc.slice(0, 120)}...` : `${name}: ${desc}`
   }
 
   /** Gather all tools from all connected servers, skipping already-registered ones. */
@@ -130,7 +168,9 @@ export class McpManager {
     return {
       name: zuseToolName,
       description: scanMcpDescription(toolDef.description ?? '', serverName, toolDef.name),
-      inputSchema: toolDef.inputSchema as JSONSchema,
+      // **入参 schema 里的属性描述同样进模型上下文、同样来自 server。**
+      // 原来只扫工具描述，schema 一个字符都没扫 —— 同一条信道、同一个信任级别、零覆盖。
+      inputSchema: scanSchemaDescriptions(toolDef.inputSchema as JSONSchema, serverName, toolDef.name),
       async run(input: unknown) {
         try {
           const result = await client.callTool(toolDef.name, input)
@@ -160,7 +200,7 @@ export class McpManager {
 
     const allNames = [...toolMap.keys()]
     const listing = allTools
-      .map((e) => McpManager.toolListing(e.zuseToolName, e.toolDef.description))
+      .map((e) => McpManager.toolListing(e.zuseToolName, e.toolDef.description, e.serverName))
       .join('\n')
 
     const mcpSearch: Tool = {
@@ -197,7 +237,7 @@ export class McpManager {
             return { output: `No MCP tools matched '${query}'. Available: ${names}` }
           }
           const result = matches
-            .map((e) => McpManager.toolListing(e.zuseToolName, e.toolDef.description))
+            .map((e) => McpManager.toolListing(e.zuseToolName, e.toolDef.description, e.serverName))
             .join('\n')
           return { output: result }
         }
