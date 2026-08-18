@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { isTrustedRoot, trustRoot, untrustRoot, loadTrustedRoots, trustedRootsPath } from './trusted-roots.js'
 
 let home: string
@@ -80,5 +80,34 @@ describe('信任 / 撤销', () => {
     const before = readFileSync(trustedRootsPath(home), 'utf8')
     untrustRoot(proj('never'), home)
     expect(readFileSync(trustedRootsPath(home), 'utf8')).toBe(before)
+  })
+
+  /**
+   * **别把 `resolve()` 换成裸字符串比较。** 存进表里的路径来自 `findProjectRoot`
+   * （Windows 上是反斜杠），而手工调 API 或写配置时给的常是正斜杠 ——
+   * 两边都过 `resolve` 才对得上。去掉它的症状是「正斜杠输入永远撤不掉」，
+   * 而表还在，用户会以为是撤销功能坏了。
+   */
+  it('正斜杠输入能撤销反斜杠存储的条目', () => {
+    const a = proj('slash')
+    trustRoot(a, home)
+    expect(isTrustedRoot(a, home)).toBe(true)
+    untrustRoot(a.split(sep).join('/'), home)
+    expect(isTrustedRoot(a, home)).toBe(false)
+    expect(loadTrustedRoots(home)).toHaveLength(0)
+  })
+
+  /**
+   * 反过来的一侧：**表里**存的是正斜杠。这不是假想 —— 在补上撤销界面之前，
+   * 手改这个 JSON 是用户唯一能撤销的办法，手写出来的路径基本都是正斜杠。
+   * 所以比对时两边都得过 `resolve`，只归一化入参是不够的。
+   */
+  it('表里存的是正斜杠时，仍然撤得掉', () => {
+    const a = proj('stored')
+    mkdirSync(join(home, '.zuse'), { recursive: true })
+    writeFileSync(trustedRootsPath(home), JSON.stringify({ roots: [a.split(sep).join('/')] }, null, 2), 'utf8')
+    expect(isTrustedRoot(a, home)).toBe(true)
+    untrustRoot(a, home)
+    expect(loadTrustedRoots(home)).toHaveLength(0)
   })
 })

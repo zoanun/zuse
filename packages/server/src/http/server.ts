@@ -6,6 +6,7 @@ import { VERSION, loadSettings, loadTrustedRoots, trustRoot, untrustRoot, DEFAUL
 import type { AuthProvider } from '../auth/authProvider.js'
 import { parseCookies, serializeCookie } from './cookies.js'
 import { isSecureRequest } from './requestSecurity.js'
+import { parseTrustedRootsRequest } from './trustedRoots.js'
 import { guardRequest, type HostPolicy, type GuardReject } from './originGuard.js'
 import { checkSetupToken } from '../auth/setupToken.js'
 import { SESSION_COOKIE } from '../config.js'
@@ -992,23 +993,32 @@ export function makeRequestHandler(deps: RequestHandlerDeps): RequestListener {
     }
 
     // POST /api/trusted-roots — body {root, trusted}. trusted:false 即撤销。
+    //
+    // **存在性校验只挂在授予那条分支上。** 原来它写在分派之前，于是撤销也被挡住：
+    // 目录删掉之后那条记录再也删不掉，而信任比的是路径字面量，同一路径日后被重建
+    // （把另一个仓库 clone 回原位）就会直接继承信任 —— 唯一的补救路被 400 堵死。
     if (method === 'POST' && path === '/api/trusted-roots') {
       if (!isAuthed(req)) return sendJson(res, 401, { error: { code: 'unauthorized', message: 'Not authenticated' } })
-      const body = (await readJsonBody(req)) as { root?: unknown; trusted?: unknown } | null
-      const root = body?.root
-      if (typeof root !== 'string' || root.trim() === '') {
-        return sendJson(res, 400, { error: { code: 'bad_request', message: 'root is required' } })
+      const action = parseTrustedRootsRequest(await readJsonBody(req))
+      if (action.kind === 'reject') {
+        return sendJson(res, 400, { error: { code: 'bad_request', message: action.message } })
       }
-      // 只接受**已存在的目录**：信任一个不存在的路径没有意义，而且会让表里堆垃圾。
-      try {
-        if (!(await stat(root)).isDirectory()) {
-          return sendJson(res, 400, { error: { code: 'bad_request', message: 'root is not a directory' } })
+      if (action.kind === 'trust') {
+        // 信任一个不存在的路径没有意义，而且会让表里堆垃圾 —— 但这只该拦授予。
+        try {
+          if (!(await stat(action.root)).isDirectory()) {
+            return sendJson(res, 400, { error: { code: 'bad_request', message: 'root is not a directory' } })
+          }
+        } catch {
+          return sendJson(res, 400, { error: { code: 'bad_request', message: 'root does not exist' } })
         }
-      } catch {
-        return sendJson(res, 400, { error: { code: 'bad_request', message: 'root does not exist' } })
+        trustRoot(action.root)
+      } else {
+        // 撤销**幂等**：撤一个从没信任过的路径返回 200 而不是 404 ——
+        // 两个标签页同时点删除，第二个不该报错；而且同一个已鉴权用户
+        // 本来就能 GET 到全表，没有信息泄露顾虑。
+        untrustRoot(action.root)
       }
-      if (body?.trusted === false) untrustRoot(root)
-      else trustRoot(root)
       // 已经开着的会话**不受影响** —— 配置每会话只读一次（本仓既有约定）。
       // 说清楚，否则用户点了信任却发现没变化。
       return sendJson(res, 200, { roots: loadTrustedRoots(), note: '新开的会话才生效' })
