@@ -161,13 +161,25 @@ export interface RawProviderConfig {
   vision?: boolean
 }
 
-/** 解析后、可直接交给 client 工厂的完整 provider 配置。 */
+/**
+ * 解析后、可直接交给 client 工厂的完整 provider 配置。
+ *
+ * **曾有一个 `models: string[]` 字段 —— 2026-08-18 删。** 它是 `modelNames(raw)`，
+ * 也就是**未过滤**的那一份（含 ocr/tts/embedding 这些非对话模型），
+ * 却挂在这个「最权威」的对象上。全仓**零读取**，但它正是下一个人会顺手拿的那个字段 ——
+ * 而「拿了未过滤的清单去挑主模型」是本仓**已经发生过的生产事故**：
+ * 主模型报 quota 后降级按顺序取下一个，正好取到 `{name:'qwen3.5-ocr', type:'ocr'}`，
+ * 会话从此每句话都回 `{"text":"..."}`，顶栏还显示着旧模型名。
+ *
+ * 要模型清单请显式选一个：`chatModelNames(raw)`（能当主模型的）
+ * 或 `modelNames(raw)`（全部，你得自己知道为什么要全部）。
+ * **别把清单挂回这个对象上** —— 挂上去就没人会再想「我要的是哪一份」。
+ */
 export interface ProviderConfig {
   id: string
   protocol: ProviderProtocol
   baseURL?: string
   apiKey: string
-  models: string[]
 }
 
 /** 当前选中：哪个 provider 的哪个 model。 */

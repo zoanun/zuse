@@ -177,7 +177,7 @@ describe('streamToEvents', () => {
 
 // ——— sendMessages 的中断/空闲超时接线 ———
 
-const PROVIDER: ProviderConfig = { id: 'p', protocol: 'openai', apiKey: 'k', models: ['m'] }
+const PROVIDER: ProviderConfig = { id: 'p', protocol: 'openai', apiKey: 'k' }
 const CFG: ModelConfig = { model: 'm', max_tokens: 16 }
 const MSGS: Message[] = [{ role: 'user', id: 'm-msgs', content: [{ type: 'text', text: 'hi' }] }]
 

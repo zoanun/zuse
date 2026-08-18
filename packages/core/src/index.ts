@@ -28,7 +28,10 @@ export * from './instructions.js'
 export * from './compaction.js'
 export * from './title.js'
 export * from './memory-consolidation.js'
-export * from './workflow.js'
+// **`workflow.ts` 刻意不从这里导出。** 它是一个完整实现但**零生产调用方**的子系统
+// （291 行实现 + 570 行测试，没有任何工具/命令/接口接上它）。留着代码是因为它没有已知缺陷、
+// 测试也是绿的；但把它挂在公共 barrel 上等于让一个没人用的东西成为 @zuse/core 的 API 面。
+// 要接它的时候，从这里加回来 —— 那一刻它需要一份自己的 spec 和评审。
 export * from './mcp-transport.js'
 export * from './mcp-client.js'
 export * from './mcp-registry.js'

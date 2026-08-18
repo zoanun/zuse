@@ -6,9 +6,8 @@ import { Conversation } from './conversation.js'
 import { ToolRegistry } from './tool.js'
 import type { FileReadTracker } from './tool.js'
 import { runAgent } from './agent.js'
-import { createModelClient } from './model-client.js'
+import { parseModelSpec } from './model-client.js'
 import type { ModelClient } from './model-client.js'
-import { getProviderConfig } from './settings.js'
 import type { ResolvedSettings, PermissionRequest, PermissionVerdict } from './types.js'
 
 // ── Journal (Workflow Resume) ────────────────────────────────────────
@@ -170,17 +169,11 @@ export function createWorkflow(ctx: WorkflowContext) {
     try {
       let client: ModelClient
       if (typeof opts?.model === 'string' && opts.model !== '') {
-        const slash = opts.model.indexOf('/')
-        if (slash <= 0) return null
-        const providerId = opts.model.slice(0, slash)
-        const modelName = opts.model.slice(slash + 1)
-        if (!modelName) return null
-        try {
-          const providerConfig = getProviderConfig(ctx.settings, providerId)
-          client = createModelClient(providerConfig, modelName)
-        } catch {
-          return null
-        }
+        // 与 agent-tool 共用同一份解析（`parseModelSpec`）。这里丢掉 error 文本返回 null，
+        // 是这一层既有的失败语义 —— 但**解析规则本身只有一份**，不会再分叉。
+        const r = parseModelSpec(opts.model, ctx.settings)
+        if (!r.client) return null
+        client = r.client
       } else {
         client = ctx.getClient()
       }

@@ -5,8 +5,8 @@ import { AnthropicClient, anthropicProviderModule } from './anthropic-client.js'
 import { OpenAIClient } from './openai-client.js'
 import type { ProviderConfig } from './types.js'
 
-const anthropic: ProviderConfig = { id: 'q', protocol: 'anthropic', baseURL: 'https://h', apiKey: 'k', models: [] }
-const openai: ProviderConfig = { id: 'd', protocol: 'openai', baseURL: 'https://h/v1', apiKey: 'k', models: [] }
+const anthropic: ProviderConfig = { id: 'q', protocol: 'anthropic', baseURL: 'https://h', apiKey: 'k' }
+const openai: ProviderConfig = { id: 'd', protocol: 'openai', baseURL: 'https://h/v1', apiKey: 'k' }
 
 describe('createModelClient', () => {
   it('builds an AnthropicClient for protocol "anthropic"', () => {

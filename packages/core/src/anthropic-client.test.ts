@@ -66,7 +66,7 @@ describe('buildAnthropicRequest cache_control', () => {
 // AnthropicClient 的重试/守卫循环与 OpenAIClient 是各自一份的镜像实现,
 // 这里用注入的假 SDK 锁住同样的行为契约。
 
-const FAKE_PROVIDER: ProviderConfig = { id: 'p', protocol: 'anthropic', apiKey: 'k', models: ['m'] }
+const FAKE_PROVIDER: ProviderConfig = { id: 'p', protocol: 'anthropic', apiKey: 'k' }
 const FAKE_CFG: ModelConfig = { model: 'm', max_tokens: 16 }
 const FAKE_MSGS: Message[] = [{ role: 'user', id: 'm-fake', content: [{ type: 'text', text: 'hi' }] }]
 

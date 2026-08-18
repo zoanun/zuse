@@ -1,4 +1,5 @@
-import type { Message, StreamEvent, ModelConfig, ProviderConfig } from './types.js'
+import type { Message, StreamEvent, ModelConfig, ProviderConfig, ResolvedSettings } from './types.js'
+import { getProviderConfig } from './settings.js'
 import type { ToolDefinition } from './tool.js'
 import type { ProviderModule } from './provider-module.js'
 import { BUILTIN_PROVIDER_MODULES } from './builtin-providers.js'
@@ -63,4 +64,36 @@ export function createModelClient(provider: ProviderConfig, model: string): Mode
     )
   }
   return mod.make(provider, model)
+}
+
+/**
+ * 把 `"providerId/modelName"` 解析成一个 client。
+ *
+ * **这段曾经有两份**：`tools/agent-tool.ts` 一份，`core/workflow.ts` 里内联一份。
+ * 两份的行为已经开始分叉（一份返回错误信息，一份返回 null 静默失败），
+ * 而 workflow 那份还带着一句注释承认「本文件目前没有生产调用方，但照样要改 ——
+ * 留一份不一致的副本，等它哪天被接上，这个洞会以只在 workflow 里复现的形态回来」。
+ * 与其两边同步改，不如只留一份。
+ *
+ * 放在 core 而不是 tools：`core/workflow.ts` 用得着它，而 core 不能反向依赖 tools。
+ */
+export function parseModelSpec(
+  spec: string,
+  settings: ResolvedSettings,
+): { client?: ModelClient; error?: string } {
+  const slash = spec.indexOf('/')
+  if (slash <= 0) {
+    return { error: `Invalid model format: "${spec}". Expected "providerId/modelName".` }
+  }
+  const providerId = spec.slice(0, slash)
+  const modelName = spec.slice(slash + 1)
+  if (!modelName) {
+    return { error: `Invalid model format: "${spec}". Model name is empty.` }
+  }
+  try {
+    return { client: createModelClient(getProviderConfig(settings, providerId), modelName) }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { error: `Failed to create client for "${spec}": ${msg}` }
+  }
 }

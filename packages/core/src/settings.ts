@@ -587,9 +587,6 @@ export function getProviderConfig(settings: ResolvedSettings, providerId: string
         protocol: 'anthropic',
         baseURL: settings.baseURL,
         apiKey,
-        // 用 resolveModelSelection 取「裸模型名」：即便 settings.model 误写成 "default/xxx"
-        // （旧版 --save 的遗留），也只把 xxx 放进列表，避免 /model 列出 "default/default/xxx"。
-        models: settings.model ? [resolveModelSelection(settings).model] : [],
       }
     }
     throw new Error(`Provider "${providerId}" is not configured in settings.providers.`)
@@ -607,7 +604,6 @@ export function getProviderConfig(settings: ResolvedSettings, providerId: string
     protocol: raw.protocol ?? 'anthropic',
     baseURL: raw.baseURL,
     apiKey,
-    models: modelNames(raw),
   }
 }
 

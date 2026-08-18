@@ -92,6 +92,15 @@ body { font-family: var(--sans); color: var(--text); background: var(--ground); 
 .chip.down .dot { background: var(--bad); }
 .icon-btn { background: transparent; border: 0; color: var(--faint); border-radius: 8px; width: 30px; height: 30px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+/*
+  **`.on` 一直没有对应规则。** 精简视图开关的两态只差一个字形（`◧`/`▤`），
+  实测像素差异 4.1%、对比度 2.57:1 —— 也就是「开着还是关着」基本看不出来。
+  `aria-pressed` 早就写对了，缺的只是让眼睛也能看见。
+  **底色单独用不够**：`.icon-btn:hover` 用的就是同一个底色，于是「开着」和「鼠标正悬在上面」
+  长得一模一样 —— 鼠标一移开，状态就没了。所以再加一道极细的描边。
+  用 outline 而不是 border：border 会改变盒子尺寸，让这一栏的按钮在切换时跳一下。
+*/
+.icon-btn.on { background: var(--surface-2); color: var(--text); outline: 1px solid var(--line); }
 .menu-btn { display: none; }
 .backdrop { display: none; }
 

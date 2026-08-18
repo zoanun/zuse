@@ -1,4 +1,4 @@
-import { Conversation, ToolRegistry, runAgent, createModelClient, getProviderConfig, createFileTracker } from '@zuse/core'
+import { Conversation, ToolRegistry, runAgent, createFileTracker, parseModelSpec } from '@zuse/core'
 import type { ModelClient, Tool, ToolContext, ResolvedSettings, PermissionRequest, PermissionVerdict } from '@zuse/core'
 import { findGitRoot, createWorktree, hasWorktreeChanges, worktreeDiffStat, removeWorktree } from './worktree.js'
 import type { WorktreeInfo } from './worktree.js'
@@ -285,24 +285,3 @@ export function buildChildRegistry(
   return child
 }
 
-function parseModelSpec(
-  spec: string,
-  settings: ResolvedSettings,
-): { client?: ModelClient; error?: string } {
-  const slash = spec.indexOf('/')
-  if (slash <= 0) {
-    return { error: `Invalid model format: "${spec}". Expected "providerId/modelName".` }
-  }
-  const providerId = spec.slice(0, slash)
-  const modelName = spec.slice(slash + 1)
-  if (!modelName) {
-    return { error: `Invalid model format: "${spec}". Model name is empty.` }
-  }
-  try {
-    const providerConfig = getProviderConfig(settings, providerId)
-    return { client: createModelClient(providerConfig, modelName) }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return { error: `Failed to create client for "${spec}": ${msg}` }
-  }
-}

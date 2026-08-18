@@ -233,7 +233,9 @@ describe('语音模型解析 (V1/V2)', () => {
 describe('getProviderConfig', () => {
   it('synthesizes a default anthropic provider from flat fields when no registry', () => {
     const cfg = getProviderConfig(base({ model: 'claude-x', baseURL: 'https://h', apiKey: 'sk-flat' }), 'default')
-    expect(cfg).toEqual({ id: 'default', protocol: 'anthropic', baseURL: 'https://h', apiKey: 'sk-flat', models: ['claude-x'] })
+    // `models` 字段 2026-08-18 从 ProviderConfig 上删掉了（未过滤的清单挂在最权威的对象上，
+    // 是那次「降级取到 ocr 模型」事故的复现器）。断言改成不含它 —— 这条要是又冒出来，这里会红。
+    expect(cfg).toEqual({ id: 'default', protocol: 'anthropic', baseURL: 'https://h', apiKey: 'sk-flat' })
   })
   it('uses ZUSE_API_KEY (folded into settings.apiKey by loadSettings) for the synthesized default provider', () => {
     const s = base({ model: 'claude-x', apiKey: 'sk-from-env' }) // 模拟 mergeLayers 已把 ZUSE_API_KEY 落到 apiKey
@@ -241,7 +243,7 @@ describe('getProviderConfig', () => {
   })
   it('reads a named provider from the registry, defaulting protocol to anthropic', () => {
     const s = base({ providers: { qwen: { baseURL: 'https://d', apiKey: 'sk-q', models: ['m'] } } })
-    expect(getProviderConfig(s, 'qwen')).toEqual({ id: 'qwen', protocol: 'anthropic', baseURL: 'https://d', apiKey: 'sk-q', models: ['m'] })
+    expect(getProviderConfig(s, 'qwen')).toEqual({ id: 'qwen', protocol: 'anthropic', baseURL: 'https://d', apiKey: 'sk-q' })
   })
   it('prefers ZUSE_API_KEY_<ID> env over literal apiKey', () => {
     process.env.ZUSE_API_KEY_QWEN = 'sk-env'
