@@ -787,7 +787,7 @@ export class SessionManager {
     const id = `perm-${++this.permSeq}`
     return new Promise<PermissionVerdict>((resolve) => {
       this.pending.set(id, { req, resolve, mustConfirm: isMustConfirm(req.toolName, req.specifier, this.cwd) })
-      this.emit({ type: 'permission-request', id, req })
+      this.emit({ type: 'permission-request', id, req, mustConfirm: this.pending.get(id)?.mustConfirm === true })
     })
   }
 

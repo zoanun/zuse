@@ -383,3 +383,18 @@ describe('pending steer previews (transient, client-only)', () => {
     expect(snap.pendingSteers).toEqual([])
   })
 })
+
+/**
+ * **`mustConfirm` 必须跟着事件走。** 真浏览器抓到的：只加 `getState()` 快照字段不够 ——
+ * 快照那条路只在重连/首屏用，实时弹出来的卡片走的是 `permission-request` 事件。
+ * 单测当时发现不了，因为它是直接把 pending 对象喂给组件的。
+ */
+it('permission-request 事件把 mustConfirm 带进 pending', () => {
+  const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'permission-request', id: 'p1', req: { toolName: 'Memory', input: {}, specifier: 'save', rule: 'Memory(save)' }, mustConfirm: true }) })
+  expect(s.pendingPermissions[0]?.mustConfirm).toBe(true)
+})
+
+it('老 daemon 不给这个字段 → undefined，按普通卡片渲染', () => {
+  const s = reduce(initialState, { kind: 'server', msg: ev({ type: 'permission-request', id: 'p2', req: { toolName: 'Read', input: {}, specifier: 'a.ts', rule: 'Read(a.ts)' } }) })
+  expect(s.pendingPermissions[0]?.mustConfirm).toBeUndefined()
+})

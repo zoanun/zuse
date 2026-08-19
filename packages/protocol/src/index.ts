@@ -311,7 +311,13 @@ export type SessionEvent =
   | { type: 'turn-end' }
   | { type: 'usage-update'; totalUsage: Usage | undefined }
   | { type: 'context-update'; contextTokens: number | undefined; contextWindow: number | undefined }
-  | { type: 'permission-request'; id: string; req: PermissionRequest }
+  /**
+   * `mustConfirm` **必须跟着事件走，光放在 `getState()` 快照里不够**。
+   * 实测（真浏览器）：快照那条路只在重连/首屏用，实时弹出来的卡片走的是这个事件 ——
+   * 只加快照字段的话，界面上那张卡照样显示「本次会话」「始终」两个点了不算数的按钮。
+   * 单测发现不了：那边是直接把 pending 对象喂给组件的。
+   */
+  | { type: 'permission-request'; id: string; req: PermissionRequest; mustConfirm?: boolean }
   | { type: 'permission-resolved'; id: string; verdict: PermissionVerdict }
   | { type: 'compaction-start'; keep: number }
   | { type: 'compaction-done'; summaryText: string }

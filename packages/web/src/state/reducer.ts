@@ -161,7 +161,7 @@ function reduceEvent(state: AppState, e: SessionEvent): AppState {
     case 'context-update': return { ...state, contextTokens: e.contextTokens, contextWindow: e.contextWindow }
     case 'todos-update': return { ...state, todos: e.todos }
     case 'background-agents': return { ...state, backgroundAgents: e.labels }
-    case 'permission-request': return { ...state, pendingPermissions: [...state.pendingPermissions, { id: e.id, req: e.req }] }
+    case 'permission-request': return { ...state, pendingPermissions: [...state.pendingPermissions, { id: e.id, req: e.req, mustConfirm: e.mustConfirm }] }
     case 'permission-resolved': return { ...state, pendingPermissions: state.pendingPermissions.filter((p) => p.id !== e.id) }
     case 'failover': return withNotice({ ...state, model: e.toModel }, '故障切换：' + e.fromModel + ' → ' + e.toModel + ' (' + e.reason + ')', 'warn')
     // Authoritative model truth from the server after a switch-model (SessionEvent, NOT the local
