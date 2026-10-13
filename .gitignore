@@ -23,13 +23,9 @@ packages/web/public/preview-vendor/
 # Bash 工具溢出的超大输出（运行时生成，非源码）
 .zuse/tool-output/
 
-# spec 旁的探针/验证脚本：为了跑通常把真 key 写死（42204fd 就这样泄露过），只留本地；
-# .md 设计文档照常入库
-docs/superpowers/**/*.mjs
-docs/superpowers/**/*.mts
-docs/superpowers/**/*.cjs
-docs/superpowers/**/*.js
-docs/superpowers/**/*.ts
+# 设计文档、计划、探针脚本整体只留本地，不进公开仓库
+# （探针曾把真 key 写死，42204fd 就这样泄露过）
+docs/
 
 # logs
 *.log
