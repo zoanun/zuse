@@ -1,6 +1,7 @@
 // 逐个真调一次，确认模型名有效、额度可用。每次只要 1 个 token。
 const base = 'https://dashscope.aliyuncs.com/apps/anthropic'
-const key = 'sk-158c10cd3b9043d59f3352cf86cfe33a'
+const key = process.env.DASHSCOPE_API_KEY
+if (!key) { console.error('请先设置环境变量 DASHSCOPE_API_KEY'); process.exit(1) }
 const models = [
   'qwen3.8-max',
   'qwen3.8-2.4t-a95b',
